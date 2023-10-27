@@ -58,7 +58,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 ---
 
 <p align="center">
-  <img src="saga_logo.png" alt="pg_saga logo" width="200"/>
+  <img src="assets/pg_saga_logo.png" alt="pg_saga logo" width="200"/>
 </p>
 
 ---
