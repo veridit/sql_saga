@@ -24,11 +24,65 @@ TODO: Build a docker image with postgres and the sql_saga extension.
 
 TODO: Build an Ubuntu packate with sql_saga.
 
-`CREATE EXTENSION sql_saga`
+`CREATE EXTENSION sql_saga;`
 
 ## Usage
 
 Detailed examples and explanations on how to use the `sql_saga` system.
+
+### Activate
+
+```
+CREATE TABLE legal_unit_era (
+  id SERIAL NOT NULL,
+  legal_ident VARCHAR NOT NULL,
+  name VARCHAR NOT NULL,
+  valid_from TIMESTAMPTZ,
+  valid_to TIMESTAMPTZ,
+  PRIMARY KEY (id, valid_from, valid_to)
+);
+
+sql_saga.add_era('legal_unit_era','valid_from','valid_to');
+sql_saga.add_unique_key('legal_unit_era', ARRAY['id']);
+sql_saga.add_unique_key('legal_unit_era', ARRAY['name']);
+sql_saga.add_unique_key('legal_unit_era', ARRAY['legal_ident']);
+sql_saga.add_api('legal_unit_era');
+
+
+CREATE TABLE establishment_era (
+  id SERIAL NOT NULL,
+  name VARCHAR NOT NULL,
+  address TEXT NOT NULL,
+  legal_unit_id INTEGER NOT NULL,
+  valid_from TIMESTAMPTZ,
+  valid_to TIMESTAMPTZ,
+  PRIMARY KEY (id, valid_from, valid_to)
+);
+
+sql_saga.add_era('establishment_era','valid_from','valid_to');
+sql_saga.add_unique_key('establishment_era', ARRAY['id']);
+sql_saga.add_unique_key('establishment_era', ARRAY['name']);
+sql_saga.add_foreign_key('establishment_era', ARRAY['legal_unit_id'], 'legal_unit_era', ARRAY['id'])
+sql_saga.add_api('establishment_era');
+
+```
+
+### Deactivate
+
+```
+sql_saga.drop_api('establishment_era');
+sql_saga.drop_unique_key('establishment_era', ARRAY['id']);
+sql_saga.drop_unique_key('establishment_era', ARRAY['name']);
+sql_saga.drop_foreign_key('establishment_era', ARRAY['legal_unit_id'], 'legal_unit_era', ARRAY['id'])
+sql_saga.drop_era('establishment_era','valid_from','valid_to');
+
+
+sql_saga.drop_api('person_era');
+sql_saga.drop_unique_key('legal_unit_era', ARRAY['id']);
+sql_saga.drop_unique_key('legal_unit_era', ARRAY['name']);
+sql_saga.drop_unique_key('legal_unit_era', ARRAY['legal_ident']);
+sql_saga.drop_era('person_era','valid_from','valid_to');
+```
 
 ## Dependencies
 
