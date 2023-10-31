@@ -1,0 +1,5 @@
+sql_saga.o
+sql_saga.so
+regression.diffs
+regression.out
+results/
