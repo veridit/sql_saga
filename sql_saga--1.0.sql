@@ -33,7 +33,7 @@ CREATE TABLE sql_saga.era (
     audit_table_name regclass -- NOT NULL
     -- audit_trigger name NOT NULL,
     -- delete_trigger name NOT NULL,
-    -- excluded_column_names name[] NOT NULL DEFAULT '{}',
+    --excluded_column_names name[] NOT NULL DEFAULT '{}',
     CHECK (era_name = 'valid'),
     -- UNIQUE(...) for each trigger/function name.
 
@@ -2546,17 +2546,17 @@ BEGIN
      * We can't reliably find out what a column was renamed to, so just error
      * out in this case.
      */
-    FOR r IN
-        SELECT stp.table_name, u.column_name
-        FROM sql_saga.era AS stp
-        CROSS JOIN LATERAL unnest(stp.excluded_column_names) AS u (column_name)
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_attribute AS a
-            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from an era',
-            r.column_name, r.table_name;
-    END LOOP;
+--    FOR r IN
+--        SELECT stp.table_name, u.column_name
+--        FROM sql_saga.era AS stp
+--        CROSS JOIN LATERAL unnest(stp.excluded_column_names) AS u (column_name)
+--        WHERE NOT EXISTS (
+--            SELECT FROM pg_catalog.pg_attribute AS a
+--            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
+--    LOOP
+--        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from an era',
+--            r.column_name, r.table_name;
+--    END LOOP;
 
     ---
     --- api_view
