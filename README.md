@@ -1,6 +1,6 @@
-# pg_saga
+# sql_saga
 
-`pg_saga` is a PostgreSQL plugin tailored for National Statistical Offices (NSOs) worldwide,
+`sql_saga` is a PostgreSQL plugin tailored for National Statistical Offices (NSOs) worldwide,
 enabling efficient and intuitive handling of temporal tables.
 
 Drawing inspiration from Nordic sagas, the project aims at the seamless blending of
@@ -18,15 +18,15 @@ ancient narrative with the contemporary purpose of global statistics.
 
 ## Installation
 
-TODO: Build a docker image with postgres and the pg_saga extension.
+TODO: Build a docker image with postgres and the sql_saga extension.
 
-TODO: Build an Ubuntu packate with pg_saga.
+TODO: Build an Ubuntu packate with sql_saga.
 
-`CREATE EXTENSION pg_saga`
+`CREATE EXTENSION sql_saga`
 
 ## Usage
 
-Detailed examples and explanations on how to use the `pg_saga` system.
+Detailed examples and explanations on how to use the `sql_saga` system.
 
 ## Dependencies
 
@@ -35,7 +35,7 @@ Detailed examples and explanations on how to use the `pg_saga` system.
 
 ## Honorable Mentions
 
-`pg_saga` draws upon code and concepts from the following GitHub projects:
+`sql_saga` draws upon code and concepts from the following GitHub projects:
 
 - [`periods`](https://github.com/xocolatl/periods/): Support for SQL:2016 in postgres with valid time (period) and known time (system time/transaction time).
 - [`time_for_keys`](https://github.com/pjungwir/time_for_keys): Triggers for foreign keys with time.
@@ -44,7 +44,7 @@ We express our gratitude to the authors and contributors of these projects for t
 
 ## License
 
-`pg_saga` is licensed under the MIT License. See [LICENSE](LICENSE) for more details.
+`sql_saga` is licensed under the MIT License. See [LICENSE](LICENSE) for more details.
 
 ## Contributing
 
@@ -53,12 +53,12 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 ## Acknowledgements
 
 - The PostgreSQL community for their continued support and development of an exceptional database system.
-- All contributors and users of `pg_saga` who have provided feedback, suggestions, and code.
+- All contributors and users of `sql_saga` who have provided feedback, suggestions, and code.
 
 ---
 
 <p align="center">
-  <img src="assets/pg_saga_logo.png" alt="pg_saga logo" width="200"/>
+  <img src="assets/sql_saga_logo.png" alt="sql_saga logo" width="200"/>
 </p>
 
 ---

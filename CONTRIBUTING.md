@@ -1,10 +1,10 @@
-# Contributing to pg_saga
+# Contributing to sql_saga
 
-First and foremost, thank you! We appreciate that you want to contribute to `pg_saga`, and we value your input. Here are a few guidelines to help you get started.
+First and foremost, thank you! We appreciate that you want to contribute to `sql_saga`, and we value your input. Here are a few guidelines to help you get started.
 
 ## Getting Started
 
-- **Forking and Cloning**: Start by forking the `pg_saga` repository and then clone it to your local machine. This will give you a sandboxed environment to make and test your changes.
+- **Forking and Cloning**: Start by forking the `sql_saga` repository and then clone it to your local machine. This will give you a sandboxed environment to make and test your changes.
 
 - **Create a Branch**: Always create a new branch from `main` (or the current default branch) for your changes. This keeps the history clean and your changes isolated.
 
@@ -49,4 +49,4 @@ Should you have any questions or concerns, please reach out to us via [appropria
 
 ---
 
-Thank you again for your interest in contributing to `pg_saga`. We look forward to working together to make it even better!
+Thank you again for your interest in contributing to `sql_saga`. We look forward to working together to make it even better!
