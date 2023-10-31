@@ -1,14 +1,11 @@
-/* Once support for 9.5 has passed, use CASCADE */
-CREATE EXTENSION IF NOT EXISTS btree_gist;
-/* Once support for 9.6 has passed, just create the extension */
-CREATE EXTENSION periods VERSION '1.2';
+CREATE EXTENSION sql_saga VERSION '1.0' CASCADE;
 
 SELECT extversion
 FROM pg_extension
-WHERE extname = 'periods';
+WHERE extname = 'sql_saga';
 
-DROP ROLE periods_unprivileged_user;
-CREATE ROLE periods_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
+CREATE ROLE sql_saga_unprivileged_user;
 
-/* Make tests work on PG 15 */
+/* Make tests work on PG 15+ */
 GRANT CREATE ON SCHEMA public TO PUBLIC;

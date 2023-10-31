@@ -1,13 +1,12 @@
-SELECT setting::integer < 100000 AS pre_10,
-       setting::integer < 120000 AS pre_12
+SELECT setting::integer < 120000 AS pre_12
 FROM pg_settings WHERE name = 'server_version_num';
- pre_10 | pre_12 
---------+--------
- f      | f
+ pre_12 
+--------
+ f
 (1 row)
 
 /* Run tests as unprivileged user */
-SET ROLE TO periods_unprivileged_user;
+SET ROLE TO sql_saga_unprivileged_user;
 /*
  * Create a sequence to test non-serial primary keys.  This actually tests
  * things like uuid primary keys, but makes for reproducible test cases.
@@ -27,22 +26,22 @@ CREATE TABLE pricing (id1 bigserial,
                       id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
                       product text, min_quantity integer, max_quantity integer, price numeric);
 ERROR:  relation "pricing" already exists
-SELECT periods.add_period('pricing', 'quantities', 'min_quantity', 'max_quantity');
- add_period 
-------------
+SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+ add_era 
+---------
  t
 (1 row)
 
-SELECT periods.add_for_portion_view('pricing', 'quantities');
- add_for_portion_view 
-----------------------
+SELECT sql_saga.add_api('pricing', 'quantities');
+ add_api 
+---------
  t
 (1 row)
 
-TABLE periods.for_portion_views;
- table_name | period_name |             view_name              |       trigger_name        
-------------+-------------+------------------------------------+---------------------------
- pricing    | quantities  | pricing__for_portion_of_quantities | for_portion_of_quantities
+TABLE sql_saga.api_view;
+ table_name |  era_name  |             view_name              |       trigger_name        
+------------+------------+------------------------------------+---------------------------
+ pricing    | quantities | pricing__for_portion_of_quantities | for_portion_of_quantities
 (1 row)
 
 /* Test UPDATE FOR PORTION */
@@ -99,27 +98,27 @@ TABLE pricing ORDER BY min_quantity;
 
 -- If we drop the period (without CASCADE) then the FOR PORTION views should be
 -- dropped, too.
-SELECT periods.drop_period('pricing', 'quantities');
- drop_period 
--------------
+SELECT sql_saga.drop_era('pricing', 'quantities');
+ drop_era 
+----------
  t
 (1 row)
 
-TABLE periods.for_portion_views;
- table_name | period_name | view_name | trigger_name 
-------------+-------------+-----------+--------------
+TABLE sql_saga.api_view;
+ table_name | era_name | view_name | trigger_name 
+------------+----------+-----------+--------------
 (0 rows)
 
 -- Add it back to test the drop_for_portion_view function
-SELECT periods.add_period('pricing', 'quantities', 'min_quantity', 'max_quantity');
- add_period 
-------------
+SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+ add_era 
+---------
  t
 (1 row)
 
-SELECT periods.add_for_portion_view('pricing', 'quantities');
- add_for_portion_view 
-----------------------
+SELECT sql_saga.add_api('pricing', 'quantities');
+ add_api 
+---------
  t
 (1 row)
 
@@ -130,15 +129,15 @@ DROP TABLE pricing;
 ERROR:  cannot drop table pricing because other objects depend on it
 DETAIL:  view pricing__for_portion_of_quantities depends on table pricing
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
-SELECT periods.drop_for_portion_view('pricing', NULL);
- drop_for_portion_view 
------------------------
+SELECT sql_saga.drop_api('pricing', NULL);
+ drop_api 
+----------
  t
 (1 row)
 
-TABLE periods.for_portion_views;
- table_name | period_name | view_name | trigger_name 
-------------+-------------+-----------+--------------
+TABLE sql_saga.api_view;
+ table_name | era_name | view_name | trigger_name 
+------------+----------+-----------+--------------
 (0 rows)
 
 DROP TABLE pricing;
@@ -161,15 +160,15 @@ CREATE TABLE bt (
     e integer
 );
 ERROR:  relation "bt" already exists
-SELECT periods.add_period('bt', 'p', 's', 'e');
- add_period 
-------------
+SELECT sql_saga.add_era('bt', 's', 'e', 'p');
+ add_era 
+---------
  t
 (1 row)
 
-SELECT periods.add_for_portion_view('bt', 'p');
- add_for_portion_view 
-----------------------
+SELECT sql_saga.add_api('bt', 'p');
+ add_api 
+---------
  t
 (1 row)
 
@@ -189,9 +188,9 @@ TABLE bt ORDER BY s, e;
   3 | (0,0) | sample | 30 | 40
 (3 rows)
 
-SELECT periods.drop_for_portion_view('bt', 'p');
- drop_for_portion_view 
------------------------
+SELECT sql_saga.drop_api('bt', 'p');
+ drop_api 
+----------
  t
 (1 row)
 

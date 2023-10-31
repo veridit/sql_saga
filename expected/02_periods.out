@@ -1,75 +1,68 @@
-SELECT setting::integer < 130000 AS pre_13
-FROM pg_settings WHERE name = 'server_version_num';
- pre_13 
---------
- f
-(1 row)
-
 /* Run tests as unprivileged user */
-SET ROLE TO periods_unprivileged_user;
+SET ROLE TO sql_saga_unprivileged_user;
 /* Basic period definitions with dates */
 CREATE TABLE basic (val text, s date, e date);
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
 (0 rows)
 
-SELECT periods.add_period('basic', 'bp', 's', 'e');
- add_period 
-------------
+SELECT sql_saga.add_era('basic', 's', 'e', 'bp');
+ add_era 
+---------
  t
 (1 row)
 
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
- basic      | bp          | s                 | e               | daterange  | basic_bp_check
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
+ basic      | bp       | s                 | e               | daterange  | basic_bp_check          | 
 (1 row)
 
-SELECT periods.drop_period('basic', 'bp');
- drop_period 
--------------
+SELECT sql_saga.drop_era('basic', 'bp');
+ drop_era 
+----------
  t
 (1 row)
 
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
 (0 rows)
 
-SELECT periods.add_period('basic', 'bp', 's', 'e', bounds_check_constraint => 'c');
- add_period 
-------------
+SELECT sql_saga.add_era('basic', 's', 'e', 'bp', bounds_check_constraint => 'c');
+ add_era 
+---------
  t
 (1 row)
 
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
- basic      | bp          | s                 | e               | daterange  | c
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
+ basic      | bp       | s                 | e               | daterange  | c                       | 
 (1 row)
 
-SELECT periods.drop_period('basic', 'bp', purge => true);
- drop_period 
--------------
+SELECT sql_saga.drop_era('basic', 'bp', purge => true);
+ drop_era 
+----------
  t
 (1 row)
 
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
 (0 rows)
 
-SELECT periods.add_period('basic', 'bp', 's', 'e');
- add_period 
-------------
+SELECT sql_saga.add_era('basic', 's', 'e', 'bp');
+ add_era 
+---------
  t
 (1 row)
 
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
- basic      | bp          | s                 | e               | daterange  | basic_bp_check
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
+ basic      | bp       | s                 | e               | daterange  | basic_bp_check          | 
 (1 row)
 
 /* Test constraints */
@@ -94,8 +87,8 @@ TABLE basic;
 
 /* Test dropping the whole thing */
 DROP TABLE basic;
-TABLE periods.periods;
- table_name | period_name | start_column_name | end_column_name | range_type | bounds_check_constraint 
-------------+-------------+-------------------+-----------------+------------+-------------------------
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
 (0 rows)
 

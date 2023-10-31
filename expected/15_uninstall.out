@@ -1,3 +1,3 @@
-DROP EXTENSION periods;
+DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;
-DROP ROLE periods_unprivileged_user;
+DROP ROLE sql_saga_unprivileged_user;

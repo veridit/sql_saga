@@ -30,11 +30,10 @@ CREATE TABLE sql_saga.era (
     bounds_check_constraint name NOT NULL,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
-    audit_table_name regclass -- NOT NULL
+    audit_table_name regclass, -- NOT NULL
     -- audit_trigger name NOT NULL,
     -- delete_trigger name NOT NULL,
     --excluded_column_names name[] NOT NULL DEFAULT '{}',
-    CHECK (era_name = 'valid'),
     -- UNIQUE(...) for each trigger/function name.
 
     PRIMARY KEY (table_name, era_name),
@@ -280,14 +279,14 @@ BEGIN
     END IF;
 
     /*
-     * Check if period already exists.  Actually no other application time
-     * periods are allowed per spec, but we don't obey that.  We can have as
-     * many application time periods as we want.
+     * Check if era already exists.  Actually no other application time
+     * eras are allowed per spec, but we don't obey that.  We can have as
+     * many application time eras as we want.
      *
      * SQL:2016 11.27 SR 5.b
      */
     IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_name, p.era_name) = (table_name, era_name)) THEN
-        RAISE EXCEPTION 'period for "%" already exists on table "%"', era_name, table_name;
+        RAISE EXCEPTION 'era for "%" already exists on table "%"', era_name, table_name;
     END IF;
 
     /*
@@ -435,54 +434,55 @@ BEGIN
         END IF;
     END;
 
-    /*
-     * Find and appropriate a CHECK constraint to make sure that end = 'infinity'.
-     * Create one if necessary.
-     *
-     * SQL:2016 4.15.2.2
-     */
-    DECLARE
-        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', end_column_name);
-        context text;
-    BEGIN
-        IF infinity_check_constraint IS NOT NULL THEN
-            /* We were given a name, does it exist? */
-            SELECT pg_catalog.pg_get_constraintdef(c.oid)
-            INTO context
-            FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (table_class, infinity_check_constraint)
-              AND c.contype = 'c';
-
-            IF FOUND THEN
-                /* Does it match? */
-                IF context <> condef THEN
-                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', infinity_check_constraint, table_class;
-                END IF;
-            ELSE
-                /* If it doesn't exist, we'll use the name for the one we create. */
-                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
-            END IF;
-        ELSE
-            /* No name given, can we appropriate one? */
-            SELECT c.conname
-            INTO infinity_check_constraint
-            FROM pg_catalog.pg_constraint AS c
-            WHERE c.conrelid = table_class
-              AND c.contype = 'c'
-              AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
-
-            /* Make our own then */
-            IF NOT FOUND THEN
-                SELECT c.relname
-                INTO table_name
-                FROM pg_catalog.pg_class AS c
-                WHERE c.oid = table_class;
-
-                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, end_column_name], 'infinity_check');
-                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
-            END IF;
-        END IF;
-    END;
+-- TODO: Ensure that infinity is the default.
+--    /*
+--     * Find and appropriate a CHECK constraint to make sure that end = 'infinity'.
+--     * Create one if necessary.
+--     *
+--     * SQL:2016 4.15.2.2
+--     */
+--    DECLARE
+--        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', end_column_name);
+--        context text;
+--    BEGIN
+--        IF infinity_check_constraint IS NOT NULL THEN
+--            /* We were given a name, does it exist? */
+--            SELECT pg_catalog.pg_get_constraintdef(c.oid)
+--            INTO context
+--            FROM pg_catalog.pg_constraint AS c
+--            WHERE (c.conrelid, c.conname) = (table_class, infinity_check_constraint)
+--              AND c.contype = 'c';
+--
+--            IF FOUND THEN
+--                /* Does it match? */
+--                IF context <> condef THEN
+--                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', infinity_check_constraint, table_class;
+--                END IF;
+--            ELSE
+--                /* If it doesn't exist, we'll use the name for the one we create. */
+--                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+--            END IF;
+--        ELSE
+--            /* No name given, can we appropriate one? */
+--            SELECT c.conname
+--            INTO infinity_check_constraint
+--            FROM pg_catalog.pg_constraint AS c
+--            WHERE c.conrelid = table_class
+--              AND c.contype = 'c'
+--              AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
+--
+--            /* Make our own then */
+--            IF NOT FOUND THEN
+--                SELECT c.relname
+--                INTO table_name
+--                FROM pg_catalog.pg_class AS c
+--                WHERE c.oid = table_class;
+--
+--                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, end_column_name], 'infinity_check');
+--                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+--            END IF;
+--        END IF;
+--    END;
 
 
     /* If we've created any work for ourselves, do it now */
@@ -576,7 +576,7 @@ BEGIN
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_for_portion_view(table_name, era_name, drop_behavior, purge);
+    PERFORM sql_saga.drop_api(table_name, era_name, drop_behavior, purge);
 
     /* If this is a system_time period, get rid of the triggers */
     --    DELETE FROM sql_saga.system_time_periods AS stp
@@ -1758,7 +1758,7 @@ DECLARE
         '     WHERE ROW(%9$s) = ROW(%4$s)'
         '       AND EXISTS(SELECT '
         '                    FROM holes h '
-        '                   WHERE PERIODS.CONTAINS(%10$I, %11$I, h.s, h.e)) '
+        '                   WHERE sql_saga.contains(%10$I, %11$I, h.s, h.e)) '
         ')';
 BEGIN
     -- gets metadata about the periods, foreign-keys and unique-keys
@@ -2421,7 +2421,7 @@ $function$;
 --      * all.
 --      */
 --     IF NOT is_dropped AND purge THEN
---         PERFORM sql_saga.drop_period(table_name, 'system_time', drop_behavior, purge);
+--         PERFORM sql_saga.drop_era(table_name, 'system_time', drop_behavior, purge);
 --         EXECUTE format('DROP TABLE %s %s', system_versioning_row.audit_table_name, drop_behavior);
 --     END IF;
 -- 
@@ -2461,7 +2461,7 @@ BEGIN
         WHERE dobj.object_type = 'table'
         ORDER BY dobj.ordinality
     LOOP
-        PERFORM sql_saga.drop_period(table_name, era_name, 'CASCADE', true);
+        PERFORM sql_saga.drop_era(table_name, era_name, 'CASCADE', true);
     END LOOP;
 
     /*
@@ -3094,10 +3094,10 @@ BEGIN
 --                UNION ALL
 --
                 SELECT fpv.table_name,
-                       c.oid::regclass::text,
-                       c.relkind,
+                       c.oid::regclass::text AS object_name,
+                       c.relkind AS object_type,
                        acl.privilege_type,
-                       acl.privilege_type,
+                       acl.privilege_type AS base_privilege_type,
                        acl.grantee,
                        'p' AS history_or_portion
                 FROM sql_saga.api_view AS fpv
@@ -3154,9 +3154,9 @@ BEGIN
 --
 --                UNION ALL
 --
-                SELECT 'TABLE',
-                       fpc.oid::regclass::text,
-                       acl.privilege_type,
+                SELECT 'TABLE' AS object_type,
+                       fpc.oid::regclass::text AS object_name,
+                       acl.privilege_type AS privilege_type,
                        acl.grantee
                 FROM sql_saga.api_view AS fpv
                 JOIN pg_class AS c ON c.oid = fpv.table_name
@@ -3164,8 +3164,8 @@ BEGIN
                 JOIN pg_class AS fpc ON fpc.oid = fpv.view_name
                 WHERE NOT has_table_privilege(acl.grantee, fpc.oid, acl.privilege_type)
 
-                UNION ALL
-
+--                UNION ALL
+--
 --                SELECT 'FUNCTION',
 --                       hp.oid::regprocedure::text,
 --                       'EXECUTE',
@@ -3208,9 +3208,9 @@ BEGIN
 --            UNION ALL
 
             SELECT fpv.table_name,
-                   hc.oid::regclass::text,
+                   hc.oid::regclass::text AS object_name,
                    acl.privilege_type,
-                   acl.privilege_type
+                   acl.privilege_type AS base_privilege_type
             FROM sql_saga.api_view AS fpv
             JOIN pg_class AS c ON c.oid = fpv.table_name
             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl

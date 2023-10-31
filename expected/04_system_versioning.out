@@ -13,7 +13,7 @@ FROM pg_settings WHERE name = 'server_version_num';
 (1 row)
 
 /* Run tests as unprivileged user */
-SET ROLE TO periods_unprivileged_user;
+SET ROLE TO sql_saga_unprivileged_user;
 /* Basic SYSTEM VERSIONING */
 CREATE TABLE sysver (val text, flap boolean);
 SELECT periods.add_system_time_period('sysver', excluded_column_names => ARRAY['flap']);
