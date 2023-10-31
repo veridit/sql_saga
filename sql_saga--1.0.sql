@@ -1,9 +1,9 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
-\echo Use "CREATE EXTENSION periods" to load this file. \quit
+\echo Use "CREATE EXTENSION sql_saga" to load this file. \quit
 
 /* This extension is non-relocatable */
-CREATE SCHEMA periods;
-GRANT USAGE ON SCHEMA periods TO PUBLIC;
+CREATE SCHEMA sql_saga;
+GRANT USAGE ON SCHEMA sql_saga TO PUBLIC;
 
 CREATE TYPE sql_saga.drop_behavior AS ENUM ('CASCADE', 'RESTRICT');
 CREATE TYPE sql_saga.fk_actions AS ENUM ('CASCADE', 'SET NULL', 'SET DEFAULT', 'RESTRICT', 'NO ACTION');
@@ -20,60 +20,60 @@ CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
  * also.
  */
 
-CREATE TABLE sql_saga.periods (
+CREATE TABLE sql_saga.era (
     table_name regclass NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     start_column_name name NOT NULL,
     end_column_name name NOT NULL,
     range_type regtype NOT NULL,
     bounds_check_constraint name NOT NULL,
 
-    PRIMARY KEY (table_name, period_name),
+    PRIMARY KEY (table_name, era_name),
 
     CHECK (start_column_name <> end_column_name)
 );
-GRANT SELECT ON TABLE sql_saga.periods TO PUBLIC;
-SELECT pg_catalog.pg_extension_config_dump('sql_saga.periods', '');
+GRANT SELECT ON TABLE sql_saga.era TO PUBLIC;
+SELECT pg_catalog.pg_extension_config_dump('sql_saga.era', '');
 
 CREATE TABLE sql_saga.system_time_periods (
     table_name regclass NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     infinity_check_constraint name NOT NULL,
     generated_always_trigger name NOT NULL,
     write_history_trigger name NOT NULL,
     truncate_trigger name NOT NULL,
     excluded_column_names name[] NOT NULL DEFAULT '{}',
 
-    PRIMARY KEY (table_name, period_name),
-    FOREIGN KEY (table_name, period_name) REFERENCES sql_saga.periods,
+    PRIMARY KEY (table_name, era_name),
+    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
 
-    CHECK (period_name = 'system_time')
+    CHECK (era_name = 'system_time')
 );
 GRANT SELECT ON TABLE sql_saga.system_time_periods TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_time_periods', '');
 
-COMMENT ON TABLE sql_saga.periods IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
+COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
 
-CREATE VIEW sql_saga.information_schema__periods AS
+CREATE VIEW sql_saga.information_schema__era AS
     SELECT current_catalog AS table_catalog,
            n.nspname AS table_schema,
            c.relname AS table_name,
-           p.period_name,
+           p.era_name,
            p.start_column_name,
            p.end_column_name
-    FROM sql_saga.periods AS p
+    FROM sql_saga.era AS p
     JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace;
 
 CREATE TABLE sql_saga.for_portion_views (
     table_name regclass NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     view_name regclass NOT NULL,
     trigger_name name NOT NULL,
 
-    PRIMARY KEY (table_name, period_name),
+    PRIMARY KEY (table_name, era_name),
 
-    FOREIGN KEY (table_name, period_name) REFERENCES sql_saga.periods,
+    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
 
     UNIQUE (view_name)
 );
@@ -84,13 +84,13 @@ CREATE TABLE sql_saga.unique_keys (
     key_name name NOT NULL,
     table_name regclass NOT NULL,
     column_names name[] NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     unique_constraint name NOT NULL,
     exclude_constraint name NOT NULL,
 
     PRIMARY KEY (key_name),
 
-    FOREIGN KEY (table_name, period_name) REFERENCES sql_saga.periods
+    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era
 );
 GRANT SELECT ON TABLE sql_saga.unique_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
@@ -101,7 +101,7 @@ CREATE TABLE sql_saga.foreign_keys (
     key_name name NOT NULL,
     table_name regclass NOT NULL,
     column_names name[] NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     unique_key name NOT NULL,
     match_type sql_saga.fk_match_types NOT NULL DEFAULT 'SIMPLE',
     delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
@@ -113,7 +113,7 @@ CREATE TABLE sql_saga.foreign_keys (
 
     PRIMARY KEY (key_name),
 
-    FOREIGN KEY (table_name, period_name) REFERENCES sql_saga.periods,
+    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
     FOREIGN KEY (unique_key) REFERENCES sql_saga.unique_keys,
 
     CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
@@ -126,7 +126,7 @@ COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys using peri
 
 CREATE TABLE sql_saga.system_versioning (
     table_name regclass NOT NULL,
-    period_name name NOT NULL,
+    era_name name NOT NULL,
     history_table_name regclass NOT NULL,
     view_name regclass NOT NULL,
 
@@ -138,9 +138,9 @@ CREATE TABLE sql_saga.system_versioning (
 
     PRIMARY KEY (table_name),
 
-    FOREIGN KEY (table_name, period_name) REFERENCES sql_saga.periods,
+    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
 
-    CHECK (period_name = 'system_time'),
+    CHECK (era_name = 'system_time'),
 
     UNIQUE (history_table_name),
     UNIQUE (view_name),
@@ -166,7 +166,7 @@ CREATE FUNCTION sql_saga._serialize(table_name regclass)
 AS
 $function$
 /* XXX: Is this the best way to do locking? */
-SELECT pg_catalog.pg_advisory_xact_lock('sql_saga.periods'::regclass::oid::integer, table_name::oid::integer);
+SELECT pg_catalog.pg_advisory_xact_lock('sql_saga.era'::regclass::oid::integer, table_name::oid::integer);
 $function$;
 
 CREATE FUNCTION sql_saga._choose_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
@@ -208,7 +208,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga._choose_portion_view_name(table_name name, period_name name)
+CREATE FUNCTION sql_saga._choose_portion_view_name(table_name name, era_name name)
  RETURNS name
  IMMUTABLE
  LANGUAGE plpgsql
@@ -227,17 +227,17 @@ BEGIN
      * don't care.
      */
 
-    max_length := greatest(length(table_name), length(period_name));
+    max_length := greatest(length(table_name), length(era_name));
 
     LOOP
-        result := format('%s__for_portion_of_%s', table_name, period_name);
+        result := format('%s__for_portion_of_%s', table_name, era_name);
         IF octet_length(result) <= NAMEDATALEN-1 THEN
             RETURN result;
         END IF;
 
         max_length := max_length - 1;
         table_name := left(table_name, max_length);
-        period_name := left(period_name, max_length);
+        era_name := left(era_name, max_length);
     END LOOP;
 END;
 $function$;
@@ -245,7 +245,7 @@ $function$;
 
 CREATE FUNCTION sql_saga.add_period(
     table_name regclass,
-    period_name name,
+    era_name name,
     start_column_name name,
     end_column_name name,
     range_type regtype DEFAULT NULL,
@@ -276,7 +276,7 @@ BEGIN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
-    IF period_name IS NULL THEN
+    IF era_name IS NULL THEN
         RAISE EXCEPTION 'no period name specified';
     END IF;
 
@@ -294,12 +294,12 @@ BEGIN
     END IF;
 
     /* Period names are limited to lowercase alphanumeric characters for now */
-    period_name := lower(period_name);
-    IF period_name !~ '^[a-z_][0-9a-z_]*$' THEN
+    era_name := lower(era_name);
+    IF era_name !~ '^[a-z_][0-9a-z_]*$' THEN
         RAISE EXCEPTION 'only alphanumeric characters are currently allowed';
     END IF;
 
-    IF period_name = 'system_time' THEN
+    IF era_name = 'system_time' THEN
         RETURN sql_saga.add_system_time_period(table_name, start_column_name, end_column_name);
     END IF;
 
@@ -335,8 +335,8 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.b
      */
-    IF EXISTS (SELECT FROM sql_saga.periods AS p WHERE (p.table_name, p.period_name) = (table_name, period_name)) THEN
-        RAISE EXCEPTION 'period for "%" already exists on table "%"', period_name, table_name;
+    IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_name, p.era_name) = (table_name, era_name)) THEN
+        RAISE EXCEPTION 'period for "%" already exists on table "%"', era_name, table_name;
     END IF;
 
     /*
@@ -347,9 +347,9 @@ BEGIN
      */
     IF EXISTS (
         SELECT FROM pg_catalog.pg_attribute AS a
-        WHERE (a.attrelid, a.attname) = (table_name, period_name))
+        WHERE (a.attrelid, a.attname) = (table_name, era_name))
     THEN
-        RAISE EXCEPTION 'a column named "%" already exists for table "%"', period_name, table_name;
+        RAISE EXCEPTION 'a column named "%" already exists for table "%"', era_name, table_name;
     END IF;
 
     /*
@@ -478,7 +478,7 @@ BEGIN
                 FROM pg_catalog.pg_class AS c
                 WHERE c.oid = table_name;
 
-                bounds_check_constraint := sql_saga._choose_name(ARRAY[table_name_only, period_name], 'check');
+                bounds_check_constraint := sql_saga._choose_name(ARRAY[table_name_only, era_name], 'check');
                 alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
             END IF;
         END IF;
@@ -489,14 +489,14 @@ BEGIN
         EXECUTE format('ALTER TABLE %s %s', table_name, array_to_string(alter_commands, ', '));
     END IF;
 
-    INSERT INTO sql_saga.periods (table_name, period_name, start_column_name, end_column_name, range_type, bounds_check_constraint)
-    VALUES (table_name, period_name, start_column_name, end_column_name, range_type, bounds_check_constraint);
+    INSERT INTO sql_saga.era (table_name, era_name, start_column_name, end_column_name, range_type, bounds_check_constraint)
+    VALUES (table_name, era_name, start_column_name, end_column_name, range_type, bounds_check_constraint);
 
     RETURN true;
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_period(table_name regclass, period_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_period(table_name regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -504,7 +504,7 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.periods;
+    period_row sql_saga.era;
     system_time_period_row sql_saga.system_time_periods;
     system_versioning_row sql_saga.system_versioning;
     portion_view regclass;
@@ -514,7 +514,7 @@ BEGIN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
-    IF period_name IS NULL THEN
+    IF era_name IS NULL THEN
         RAISE EXCEPTION 'no period name specified';
     END IF;
 
@@ -530,16 +530,16 @@ BEGIN
 
     SELECT p.*
     INTO period_row
-    FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (table_name, period_name);
+    FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     IF NOT FOUND THEN
-        RAISE NOTICE 'period % not found on table %', period_name, table_name;
+        RAISE NOTICE 'period % not found on table %', era_name, table_name;
         RETURN false;
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_for_portion_view(table_name, period_name, drop_behavior, purge);
+    PERFORM sql_saga.drop_for_portion_view(table_name, era_name, drop_behavior, purge);
 
     /* If this is a system_time period, get rid of the triggers */
     DELETE FROM sql_saga.system_time_periods AS stp
@@ -557,23 +557,23 @@ BEGIN
         /* Check for UNIQUE or PRIMARY KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.unique_keys AS uk
-            WHERE (uk.table_name, uk.period_name) = (table_name, period_name))
+            WHERE (uk.table_name, uk.era_name) = (table_name, era_name))
         THEN
-            RAISE EXCEPTION 'period % is part of a UNIQUE or PRIMARY KEY', period_name;
+            RAISE EXCEPTION 'period % is part of a UNIQUE or PRIMARY KEY', era_name;
         END IF;
 
         /* Check for FOREIGN KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.foreign_keys AS fk
-            WHERE (fk.table_name, fk.period_name) = (table_name, period_name))
+            WHERE (fk.table_name, fk.era_name) = (table_name, era_name))
         THEN
-            RAISE EXCEPTION 'period % is part of a FOREIGN KEY', period_name;
+            RAISE EXCEPTION 'period % is part of a FOREIGN KEY', era_name;
         END IF;
 
         /* Check for SYSTEM VERSIONING */
         IF EXISTS (
             SELECT FROM sql_saga.system_versioning AS sv
-            WHERE (sv.table_name, sv.period_name) = (table_name, period_name))
+            WHERE (sv.table_name, sv.era_name) = (table_name, era_name))
         THEN
             RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_name;
         END IF;
@@ -585,8 +585,8 @@ BEGIN
         END IF;
 
         /* Remove from catalog */
-        DELETE FROM sql_saga.periods AS p
-        WHERE (p.table_name, p.period_name) = (table_name, period_name);
+        DELETE FROM sql_saga.era AS p
+        WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
         RETURN true;
     END IF;
@@ -595,11 +595,11 @@ BEGIN
 
     PERFORM sql_saga.drop_foreign_key(table_name, fk.key_name)
     FROM sql_saga.foreign_keys AS fk
-    WHERE (fk.table_name, fk.period_name) = (table_name, period_name);
+    WHERE (fk.table_name, fk.era_name) = (table_name, era_name);
 
     PERFORM sql_saga.drop_unique_key(table_name, uk.key_name, drop_behavior, purge)
     FROM sql_saga.unique_keys AS uk
-    WHERE (uk.table_name, uk.period_name) = (table_name, period_name);
+    WHERE (uk.table_name, uk.era_name) = (table_name, era_name);
 
     /*
      * Save ourselves the NOTICE if this table doesn't have SYSTEM
@@ -611,7 +611,7 @@ BEGIN
      */
     IF EXISTS (
         SELECT FROM sql_saga.system_versioning AS sv
-        WHERE (sv.table_name, sv.period_name) = (table_name, period_name))
+        WHERE (sv.table_name, sv.era_name) = (table_name, era_name))
     THEN
         PERFORM sql_saga.drop_system_versioning(table_name, drop_behavior, purge);
     END IF;
@@ -623,8 +623,8 @@ BEGIN
     END IF;
 
     /* Remove from catalog */
-    DELETE FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (table_name, period_name);
+    DELETE FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     RETURN true;
 END;
@@ -647,7 +647,7 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_name CONSTANT name := 'system_time';
+    era_name CONSTANT name := 'system_time';
 
     schema_name name;
     table_name name;
@@ -725,7 +725,7 @@ BEGIN
      *
      * SQL:2016 11.27 SR 4.a
      */
-    IF EXISTS (SELECT FROM sql_saga.periods AS p WHERE (p.table_name, p.period_name) = (table_class, period_name)) THEN
+    IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_name, p.era_name) = (table_class, era_name)) THEN
         RAISE EXCEPTION 'period for SYSTEM_TIME already exists on table "%"', table_class;
     END IF;
 
@@ -735,7 +735,7 @@ BEGIN
      *
      * SQL:2016 11.27 SR 4.b
      */
-    IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_class, period_name)) THEN
+    IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_class, era_name)) THEN
         RAISE EXCEPTION 'a column named system_time already exists for table "%"', table_class;
     END IF;
 
@@ -867,7 +867,7 @@ BEGIN
                 FROM pg_catalog.pg_class AS c
                 WHERE c.oid = table_class;
 
-                bounds_check_constraint := sql_saga._choose_name(ARRAY[table_name, period_name], 'check');
+                bounds_check_constraint := sql_saga._choose_name(ARRAY[table_name, era_name], 'check');
                 alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
             END IF;
         END IF;
@@ -977,15 +977,15 @@ BEGIN
         sql_saga._choose_name(ARRAY[table_name], 'truncate'));
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger, table_class);
 
-    INSERT INTO sql_saga.periods (table_name, period_name, start_column_name, end_column_name, range_type, bounds_check_constraint)
-    VALUES (table_class, period_name, start_column_name, end_column_name, range_type, bounds_check_constraint);
+    INSERT INTO sql_saga.era (table_name, era_name, start_column_name, end_column_name, range_type, bounds_check_constraint)
+    VALUES (table_class, era_name, start_column_name, end_column_name, range_type, bounds_check_constraint);
 
     INSERT INTO sql_saga.system_time_periods (
-        table_name, period_name, infinity_check_constraint,
+        table_name, era_name, infinity_check_constraint,
         generated_always_trigger, write_history_trigger, truncate_trigger,
         excluded_column_names)
     VALUES (
-        table_class, period_name, infinity_check_constraint,
+        table_class, era_name, infinity_check_constraint,
         generated_always_trigger, write_history_trigger, truncate_trigger,
         excluded_column_names);
 
@@ -1083,7 +1083,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.add_for_portion_view(table_name regclass DEFAULT NULL, period_name name DEFAULT NULL)
+CREATE FUNCTION sql_saga.add_for_portion_view(table_name regclass DEFAULT NULL, era_name name DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1096,7 +1096,7 @@ DECLARE
     trigger_name name;
 BEGIN
     /*
-     * If table_name and period_name are specified, then just add the views for that.
+     * If table_name and era_name are specified, then just add the views for that.
      *
      * If no period is specified, add the views for all periods of the table.
      *
@@ -1104,12 +1104,12 @@ BEGIN
      *
      * If no table is specified but a period is, that doesn't make any sense.
      */
-    IF table_name IS NULL AND period_name IS NOT NULL THEN
+    IF table_name IS NULL AND era_name IS NOT NULL THEN
         RAISE EXCEPTION 'cannot specify period name without table name';
     END IF;
 
     /* Can't use FOR PORTION OF on SYSTEM_TIME columns */
-    IF period_name = 'system_time' THEN
+    IF era_name = 'system_time' THEN
         RAISE EXCEPTION 'cannot use FOR PORTION OF on SYSTEM_TIME periods';
     END IF;
 
@@ -1132,32 +1132,32 @@ BEGIN
     END IF;
 
     FOR r IN
-        SELECT n.nspname AS schema_name, c.relname AS table_name, c.relowner AS table_owner, p.period_name
-        FROM sql_saga.periods AS p
+        SELECT n.nspname AS schema_name, c.relname AS table_name, c.relowner AS table_owner, p.era_name
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
         WHERE (table_name IS NULL OR p.table_name = table_name)
-          AND (period_name IS NULL OR p.period_name = period_name)
-          AND p.period_name <> 'system_time'
+          AND (era_name IS NULL OR p.era_name = era_name)
+          AND p.era_name <> 'system_time'
           AND NOT EXISTS (
                 SELECT FROM sql_saga.for_portion_views AS _fpv
-                WHERE (_fpv.table_name, _fpv.period_name) = (p.table_name, p.period_name))
+                WHERE (_fpv.table_name, _fpv.era_name) = (p.table_name, p.era_name))
     LOOP
-        view_name := sql_saga._choose_portion_view_name(r.table_name, r.period_name);
-        trigger_name := 'for_portion_of_' || r.period_name;
+        view_name := sql_saga._choose_portion_view_name(r.table_name, r.era_name);
+        trigger_name := 'for_portion_of_' || r.era_name;
         EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
         EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
         EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
             trigger_name, r.schema_name, view_name);
-        INSERT INTO sql_saga.for_portion_views (table_name, period_name, view_name, trigger_name)
-            VALUES (format('%I.%I', r.schema_name, r.table_name), r.period_name, format('%I.%I', r.schema_name, view_name), trigger_name);
+        INSERT INTO sql_saga.for_portion_views (table_name, era_name, view_name, trigger_name)
+            VALUES (format('%I.%I', r.schema_name, r.table_name), r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
     END LOOP;
 
     RETURN true;
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_for_portion_view(table_name regclass, period_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_for_portion_view(table_name regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1169,7 +1169,7 @@ DECLARE
     trigger_name name;
 BEGIN
     /*
-     * If table_name and period_name are specified, then just drop the views for that.
+     * If table_name and era_name are specified, then just drop the views for that.
      *
      * If no period is specified, drop the views for all periods of the table.
      *
@@ -1177,7 +1177,7 @@ BEGIN
      *
      * If no table is specified but a period is, that doesn't make any sense.
      */
-    IF table_name IS NULL AND period_name IS NOT NULL THEN
+    IF table_name IS NULL AND era_name IS NOT NULL THEN
         RAISE EXCEPTION 'cannot specify period name without table name';
     END IF;
 
@@ -1187,7 +1187,7 @@ BEGIN
     FOR view_name, trigger_name IN
         DELETE FROM sql_saga.for_portion_views AS fp
         WHERE (table_name IS NULL OR fp.table_name = table_name)
-          AND (period_name IS NULL OR fp.period_name = period_name)
+          AND (era_name IS NULL OR fp.era_name = era_name)
         RETURNING fp.view_name, fp.trigger_name
     LOOP
         EXECUTE format('DROP TRIGGER %I on %s', trigger_name, view_name);
@@ -1241,8 +1241,8 @@ DECLARE
         '               WHERE _c.conrelid = a.attrelid '
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
-        '    OR EXISTS (SELECT FROM sql_saga.periods AS _p '
-        '               WHERE (_p.table_name, _p.period_name) = (a.attrelid, ''system_time'') '
+        '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
+        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_column_name, _p.end_column_name)))';
 
     GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text :=
@@ -1257,8 +1257,8 @@ DECLARE
         '               WHERE _c.conrelid = a.attrelid '
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
-        '    OR EXISTS (SELECT FROM sql_saga.periods AS _p '
-        '               WHERE (_p.table_name, _p.period_name) = (a.attrelid, ''system_time'') '
+        '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
+        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_column_name, _p.end_column_name)))';
 
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text :=
@@ -1274,8 +1274,8 @@ DECLARE
         '               WHERE _c.conrelid = a.attrelid '
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
-        '    OR EXISTS (SELECT FROM sql_saga.periods AS _p '
-        '               WHERE (_p.table_name, _p.period_name) = (a.attrelid, ''system_time'') '
+        '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
+        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_column_name, _p.end_column_name)))';
 
 BEGIN
@@ -1285,12 +1285,12 @@ BEGIN
      */
 
     /* Get the table information from this view */
-    SELECT p.table_name, p.period_name,
+    SELECT p.table_name, p.era_name,
            p.start_column_name, p.end_column_name,
            format_type(a.atttypid, a.atttypmod) AS datatype
     INTO info
     FROM sql_saga.for_portion_views AS fpv
-    JOIN sql_saga.periods AS p ON (p.table_name, p.period_name) = (fpv.table_name, fpv.period_name)
+    JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (fpv.table_name, fpv.era_name)
     JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (p.table_name, p.start_column_name)
     WHERE fpv.view_name = TG_RELID;
 
@@ -1426,7 +1426,7 @@ $function$;
 CREATE FUNCTION sql_saga.add_unique_key(
         table_name regclass,
         column_names name[],
-        period_name name,
+        era_name name,
         key_name name DEFAULT NULL,
         unique_constraint name DEFAULT NULL,
         exclude_constraint name DEFAULT NULL)
@@ -1437,7 +1437,7 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.periods;
+    period_row sql_saga.era;
     column_attnums smallint[];
     period_attnums smallint[];
     idx integer;
@@ -1459,15 +1459,15 @@ BEGIN
 
     SELECT p.*
     INTO period_row
-    FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (table_name, period_name);
+    FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'period "%" does not exist', period_name;
+        RAISE EXCEPTION 'period "%" does not exist', era_name;
     END IF;
 
     /* SYSTEM_TIME is not allowed in UNIQUE constraints. SQL:2016 11.7 SR 5)b) */
-    IF period_name = 'system_time' THEN
+    IF era_name = 'system_time' THEN
         RAISE EXCEPTION 'periods for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
 
@@ -1507,8 +1507,8 @@ BEGIN
      * key. SQL:2016 11.7 SR 5)b)
      */
     IF EXISTS (
-        SELECT FROM sql_saga.periods AS p
-        WHERE (p.table_name, p.period_name) = (period_row.table_name, 'system_time')
+        SELECT FROM sql_saga.era AS p
+        WHERE (p.table_name, p.era_name) = (period_row.table_name, 'system_time')
           AND ARRAY[p.start_column_name, p.end_column_name] && column_names)
     THEN
         RAISE EXCEPTION 'columns in period for SYSTEM_TIME are not allowed in UNIQUE keys';
@@ -1601,7 +1601,7 @@ BEGIN
         key_name := sql_saga._choose_name(
             ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_name)]
                 || column_names
-                || ARRAY[period_name]);
+                || ARRAY[era_name]);
     END IF;
     pass := 0;
     WHILE EXISTS (
@@ -1652,8 +1652,8 @@ BEGIN
         LIMIT 1;
     END IF;
 
-    INSERT INTO sql_saga.unique_keys (key_name, table_name, column_names, period_name, unique_constraint, exclude_constraint)
-    VALUES (key_name, table_name, column_names, period_name, unique_constraint, exclude_constraint);
+    INSERT INTO sql_saga.unique_keys (key_name, table_name, column_names, era_name, unique_constraint, exclude_constraint)
+    VALUES (key_name, table_name, column_names, era_name, unique_constraint, exclude_constraint);
 
     RETURN key_name;
 END;
@@ -1777,7 +1777,7 @@ $function$;
 CREATE FUNCTION sql_saga.add_foreign_key(
         table_name regclass,
         column_names name[],
-        period_name name,
+        era_name name,
         ref_unique_name name,
         match_type sql_saga.fk_match_types DEFAULT 'SIMPLE',
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
@@ -1794,8 +1794,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.periods;
-    ref_period_row sql_saga.periods;
+    period_row sql_saga.era;
+    ref_period_row sql_saga.era;
     unique_row sql_saga.unique_keys;
     column_attnums smallint[];
     idx integer;
@@ -1815,15 +1815,15 @@ BEGIN
     /* Get the period involved */
     SELECT p.*
     INTO period_row
-    FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (table_name, period_name);
+    FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'period "%" does not exist', period_name;
+        RAISE EXCEPTION 'period "%" does not exist', era_name;
     END IF;
 
     /* SYSTEM_TIME is not allowed in referential constraints. SQL:2016 11.8 SR 10 */
-    IF period_row.period_name = 'system_time' THEN
+    IF period_row.era_name = 'system_time' THEN
         RAISE EXCEPTION 'periods for SYSTEM_TIME are not allowed in foreign keys';
     END IF;
 
@@ -1832,8 +1832,8 @@ BEGIN
      * key. SQL:2016 11.8 SR 10
      */
     IF EXISTS (
-        SELECT FROM sql_saga.periods AS p
-        WHERE (p.table_name, p.period_name) = (period_row.table_name, 'system_time')
+        SELECT FROM sql_saga.era AS p
+        WHERE (p.table_name, p.era_name) = (period_row.table_name, 'system_time')
           AND ARRAY[p.start_column_name, p.end_column_name] && column_names)
     THEN
         RAISE EXCEPTION 'columns in period for SYSTEM_TIME are not allowed in UNIQUE keys';
@@ -1866,8 +1866,8 @@ BEGIN
 
     /* Columns can't be part of any SYSTEM_TIME period */
     IF EXISTS (
-        SELECT FROM sql_saga.periods AS p
-        WHERE (p.table_name, p.period_name) = (table_name, 'system_time')
+        SELECT FROM sql_saga.era AS p
+        WHERE (p.table_name, p.era_name) = (table_name, 'system_time')
           AND ARRAY[p.start_column_name, p.end_column_name] && column_names)
     THEN
         RAISE EXCEPTION 'columns for SYSTEM_TIME must not be part of foreign keys';
@@ -1886,12 +1886,12 @@ BEGIN
     /* Get the unique key's period */
     SELECT p.*
     INTO ref_period_row
-    FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (unique_row.table_name, unique_row.period_name);
+    FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (unique_row.table_name, unique_row.era_name);
 
     IF period_row.range_type <> ref_period_row.range_type THEN
         RAISE EXCEPTION 'period types "%" and "%" are incompatible',
-            period_row.period_name, ref_period_row.period_name;
+            period_row.era_name, ref_period_row.era_name;
     END IF;
 
     /* Check that all the columns match */
@@ -1917,7 +1917,7 @@ BEGIN
         key_name := sql_saga._choose_name(
             ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_name)]
                || column_names
-               || ARRAY[period_name]);
+               || ARRAY[era_name]);
     END IF;
     pass := 0;
     WHILE EXISTS (
@@ -1959,9 +1959,9 @@ BEGIN
     EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %s FROM %s%s FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
         uk_delete_trigger, unique_row.table_name, table_name, del_action, key_name);
 
-    INSERT INTO sql_saga.foreign_keys (key_name, table_name, column_names, period_name, unique_key, match_type, update_action, delete_action,
+    INSERT INTO sql_saga.foreign_keys (key_name, table_name, column_names, era_name, unique_key, match_type, update_action, delete_action,
                                       fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
-    VALUES (key_name, table_name, column_names, period_name, unique_row.key_name, match_type, update_action, delete_action,
+    VALUES (key_name, table_name, column_names, era_name, unique_row.key_name, match_type, update_action, delete_action,
             fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
 
     /* Validate the constraint on existing data */
@@ -2155,14 +2155,14 @@ BEGIN
            fn.nspname AS fk_schema_name,
            fc.relname AS fk_table_name,
            fk.column_names AS fk_column_names,
-           fp.period_name AS fk_period_name,
+           fp.era_name AS fk_era_name,
            fp.start_column_name AS fk_start_column_name,
            fp.end_column_name AS fk_end_column_name,
            uc.oid AS uk_table_oid,
            un.nspname AS uk_schema_name,
            uc.relname AS uk_table_name,
            uk.column_names AS uk_column_names,
-           up.period_name AS uk_period_name,
+           up.era_name AS uk_era_name,
            up.start_column_name AS uk_start_column_name,
            up.end_column_name AS uk_end_column_name,
            fk.match_type,
@@ -2170,11 +2170,11 @@ BEGIN
            fk.delete_action
     INTO foreign_key_info
     FROM sql_saga.foreign_keys AS fk
-    JOIN sql_saga.periods AS fp ON (fp.table_name, fp.period_name) = (fk.table_name, fk.period_name)
+    JOIN sql_saga.era AS fp ON (fp.table_name, fp.era_name) = (fk.table_name, fk.era_name)
     JOIN pg_catalog.pg_class AS fc ON fc.oid = fk.table_name
     JOIN pg_catalog.pg_namespace AS fn ON fn.oid = fc.relnamespace
     JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
-    JOIN sql_saga.periods AS up ON (up.table_name, up.period_name) = (uk.table_name, uk.period_name)
+    JOIN sql_saga.era AS up ON (up.table_name, up.era_name) = (uk.table_name, uk.era_name)
     JOIN pg_catalog.pg_class AS uc ON uc.oid = uk.table_name
     JOIN pg_catalog.pg_namespace AS un ON un.oid = uc.relnamespace
     WHERE fk.key_name = foreign_key_name;
@@ -2329,14 +2329,14 @@ BEGIN
            fn.nspname AS fk_schema_name,
            fc.relname AS fk_table_name,
            fk.column_names AS fk_column_names,
-           fp.period_name AS fk_period_name,
+           fp.era_name AS fk_era_name,
            fp.start_column_name AS fk_start_column_name,
            fp.end_column_name AS fk_end_column_name,
 
            un.nspname AS uk_schema_name,
            uc.relname AS uk_table_name,
            uk.column_names AS uk_column_names,
-           up.period_name AS uk_period_name,
+           up.era_name AS uk_era_name,
            up.start_column_name AS uk_start_column_name,
            up.end_column_name AS uk_end_column_name,
 
@@ -2345,11 +2345,11 @@ BEGIN
            fk.delete_action
     INTO foreign_key_info
     FROM sql_saga.foreign_keys AS fk
-    JOIN sql_saga.periods AS fp ON (fp.table_name, fp.period_name) = (fk.table_name, fk.period_name)
+    JOIN sql_saga.era AS fp ON (fp.table_name, fp.era_name) = (fk.table_name, fk.era_name)
     JOIN pg_catalog.pg_class AS fc ON fc.oid = fk.table_name
     JOIN pg_catalog.pg_namespace AS fn ON fn.oid = fc.relnamespace
     JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
-    JOIN sql_saga.periods AS up ON (up.table_name, up.period_name) = (uk.table_name, uk.period_name)
+    JOIN sql_saga.era AS up ON (up.table_name, up.era_name) = (uk.table_name, uk.era_name)
     JOIN pg_catalog.pg_class AS uc ON uc.oid = uk.table_name
     JOIN pg_catalog.pg_namespace AS un ON un.oid = uc.relnamespace
     WHERE fk.key_name = foreign_key_name;
@@ -2452,7 +2452,7 @@ DECLARE
     table_owner regrole;
     persistence "char";
     kind "char";
-    period_row sql_saga.periods;
+    period_row sql_saga.era;
     history_table_id oid;
     sql text;
     grantees text;
@@ -2509,8 +2509,8 @@ BEGIN
     /* We need a SYSTEM_TIME period. SQL:2016 11.29 SR 4 */
     SELECT p.*
     INTO period_row
-    FROM sql_saga.periods AS p
-    WHERE (p.table_name, p.period_name) = (table_class, 'system_time');
+    FROM sql_saga.era AS p
+    WHERE (p.table_name, p.era_name) = (table_class, 'system_time');
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'no period for SYSTEM_TIME found for table %', table_class;
@@ -2542,7 +2542,7 @@ BEGIN
 
     IF FOUND THEN
         /* Don't allow any periods on the history table (this might be relaxed later) */
-        IF EXISTS (SELECT FROM sql_saga.periods AS p WHERE p.table_name = history_table_id) THEN
+        IF EXISTS (SELECT FROM sql_saga.era AS p WHERE p.table_name = history_table_id) THEN
             RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have periods';
         END IF;
 
@@ -2727,7 +2727,7 @@ BEGIN
     END LOOP;
 
     /* Register it */
-    INSERT INTO sql_saga.system_versioning (table_name, period_name, history_table_name, view_name,
+    INSERT INTO sql_saga.system_versioning (table_name, era_name, history_table_name, view_name,
                                            func_as_of, func_between, func_between_symmetric, func_from_to)
     VALUES (
         table_class,
@@ -2826,7 +2826,7 @@ $function$
 DECLARE
     r record;
     table_name regclass;
-    period_name name;
+    era_name name;
 BEGIN
     /*
      * This function is called after the fact, so we have to just look to see
@@ -2839,15 +2839,15 @@ BEGIN
     ---
 
     /* If one of our tables is being dropped, remove references to it */
-    FOR table_name, period_name IN
-        SELECT p.table_name, p.period_name
-        FROM sql_saga.periods AS p
+    FOR table_name, era_name IN
+        SELECT p.table_name, p.era_name
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
                 ON dobj.objid = p.table_name
         WHERE dobj.object_type = 'table'
         ORDER BY dobj.ordinality
     LOOP
-        PERFORM sql_saga.drop_period(table_name, period_name, 'CASCADE', true);
+        PERFORM sql_saga.drop_period(table_name, era_name, 'CASCADE', true);
     END LOOP;
 
     /*
@@ -2855,8 +2855,8 @@ BEGIN
      * SQL:2016 11.23 SR 6
      */
     FOR r IN
-        SELECT dobj.object_identity, p.period_name
-        FROM sql_saga.periods AS p
+        SELECT dobj.object_identity, p.era_name
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_attribute AS sa ON (sa.attrelid, sa.attname) = (p.table_name, p.start_column_name)
         JOIN pg_catalog.pg_attribute AS ea ON (ea.attrelid, ea.attname) = (p.table_name, p.end_column_name)
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
@@ -2865,19 +2865,19 @@ BEGIN
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop column "%" because it is part of the period "%"',
-            r.object_identity, r.period_name;
+            r.object_identity, r.era_name;
     END LOOP;
 
     /* Also reject dropping the rangetype */
     FOR r IN
-        SELECT dobj.object_identity, p.table_name, p.period_name
-        FROM sql_saga.periods AS p
+        SELECT dobj.object_identity, p.table_name, p.era_name
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
                 ON dobj.objid = p.range_type
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop rangetype "%" because it is used in period "%" on table "%"',
-            r.object_identity, r.period_name, r.table_name;
+            r.object_identity, r.era_name, r.table_name;
     END LOOP;
 
     ---
@@ -2967,26 +2967,26 @@ BEGIN
 
     /* Complain if the FOR PORTION OF trigger is missing. */
     FOR r IN
-        SELECT fpv.table_name, fpv.period_name, fpv.view_name, fpv.trigger_name
+        SELECT fpv.table_name, fpv.era_name, fpv.view_name, fpv.trigger_name
         FROM sql_saga.for_portion_views AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (fpv.view_name, fpv.trigger_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is used in FOR PORTION OF view for period "%" on table "%"',
-            r.trigger_name, r.view_name, r.period_name, r.table_name;
+            r.trigger_name, r.view_name, r.era_name, r.table_name;
     END LOOP;
 
     /* Complain if the table's primary key has been dropped. */
     FOR r IN
-        SELECT fpv.table_name, fpv.period_name
+        SELECT fpv.table_name, fpv.era_name
         FROM sql_saga.for_portion_views AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.contype) = (fpv.table_name, 'p'))
     LOOP
         RAISE EXCEPTION 'cannot drop primary key on table "%" because it has a FOR PORTION OF view for period "%"',
-            r.table_name, r.period_name;
+            r.table_name, r.era_name;
     END LOOP;
 
     ---
@@ -3143,9 +3143,9 @@ BEGIN
      * constraint.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.periods SET start_column_name = %L, end_column_name = %L WHERE (table_name, period_name) = (%L::regclass, %L)',
-            sa.attname, ea.attname, p.table_name, p.period_name)
-        FROM sql_saga.periods AS p
+        SELECT pg_catalog.format('UPDATE sql_saga.era SET start_column_name = %L, end_column_name = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
+            sa.attname, ea.attname, p.table_name, p.era_name)
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (p.table_name, p.bounds_check_constraint)
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = p.table_name
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
@@ -3160,9 +3160,9 @@ BEGIN
      * and end columns.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.periods SET bounds_check_constraint = %L WHERE (table_name, period_name) = (%L::regclass, %L)',
-            c.conname, p.table_name, p.period_name)
-        FROM sql_saga.periods AS p
+        SELECT pg_catalog.format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
+            c.conname, p.table_name, p.era_name)
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = p.table_name
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = p.table_name
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
@@ -3181,8 +3181,8 @@ BEGIN
     FOR sql IN
         SELECT pg_catalog.format('UPDATE sql_saga.system_time_periods SET infinity_check_constraint = %L WHERE table_name = %L::regclass',
             c.conname, p.table_name)
-        FROM sql_saga.periods AS p
-        JOIN sql_saga.system_time_periods AS stp ON (stp.table_name, stp.period_name) = (p.table_name, p.period_name)
+        FROM sql_saga.era AS p
+        JOIN sql_saga.system_time_periods AS stp ON (stp.table_name, stp.era_name) = (p.table_name, p.era_name)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = p.table_name
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
         WHERE stp.infinity_check_constraint <> c.conname
@@ -3250,8 +3250,8 @@ BEGIN
     ---
 
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.for_portion_views SET trigger_name = %L WHERE (table_name, period_name) = (%L::regclass, %L)',
-            t.tgname, fpv.table_name, fpv.period_name)
+        SELECT pg_catalog.format('UPDATE sql_saga.for_portion_views SET trigger_name = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
+            t.tgname, fpv.table_name, fpv.era_name)
         FROM sql_saga.for_portion_views AS fpv
         JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = fpv.view_name
         WHERE t.tgname <> fpv.trigger_name
@@ -3269,7 +3269,7 @@ BEGIN
         SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE key_name = %L',
             a.column_names, uk.key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.periods AS p ON (p.table_name, p.period_name) = (uk.table_name, uk.period_name)
+        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
         JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (uk.table_name, uk.unique_constraint)
         JOIN LATERAL (
             SELECT array_agg(a.attname ORDER BY u.ordinality) AS column_names
@@ -3286,7 +3286,7 @@ BEGIN
         SELECT format('UPDATE sql_saga.unique_keys SET unique_constraint = %L WHERE key_name = %L',
             c.conname, uk.key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.periods AS p ON (p.table_name, p.period_name) = (uk.table_name, uk.period_name)
+        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
         CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[p.start_column_name, p.end_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
         WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.unique_constraint))
@@ -3300,7 +3300,7 @@ BEGIN
         SELECT format('UPDATE sql_saga.unique_keys SET exclude_constraint = %L WHERE key_name = %L',
             c.conname, uk.key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.periods AS p ON (p.table_name, p.period_name) = (uk.table_name, uk.period_name)
+        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
         CROSS JOIN LATERAL unnest(uk.column_names) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
         WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.exclude_constraint))
@@ -3394,7 +3394,7 @@ BEGIN
     /* Make sure that all of our tables are still persistent */
     FOR r IN
         SELECT p.table_name
-        FROM sql_saga.periods AS p
+        FROM sql_saga.era AS p
         JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
         WHERE c.relpersistence <> 'p'
     LOOP

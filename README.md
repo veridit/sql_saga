@@ -6,6 +6,8 @@ enabling efficient and intuitive handling of temporal tables.
 Drawing inspiration from Nordic sagas, the project aims at the seamless blending of
 ancient narrative with the contemporary purpose of global statistics.
 
+An Sql Saga is the history of a table (an era) over multiple periods of time.
+
 ## Features
 
 - Temporal Table Design Suggestions
