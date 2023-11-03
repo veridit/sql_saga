@@ -1,0 +1,19 @@
+{
+   "name": "sql_saga",
+   "abstract": "Valid Time Temporal Table with Foreign Keys",
+   "version": "1.0.0",
+   "maintainer": "Jørgen H. Fjeld <jorgen@veridit.no>",
+   "license": "postgresql",
+   "provides": {
+      "sql_saga": {
+         "abstract": "Valid Time Temporal Table with Foreign Keys",
+         "file": "sql_saga.sql",
+         "docfile": "README.md",
+         "version": "1.0.0"
+      }
+   },
+   "meta-spec": {
+      "version": "1.0.0",
+      "url": "https://pgxn.org/meta/spec.txt"
+   }
+}
