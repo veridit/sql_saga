@@ -48,6 +48,10 @@ ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 TABLE sql_saga.foreign_keys;
-DROP TABLE rename_test_ref;
 
+SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1_col3_q');
+SELECT sql_saga.drop_unique_key('rename_test', 'rename_test_col2_col1_col3_p');
 DROP TABLE rename_test;
+
+SELECT sql_saga.drop_era('rename_test_ref','embedded " symbols');
+DROP TABLE rename_test_ref;

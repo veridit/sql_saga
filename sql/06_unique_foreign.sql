@@ -3,7 +3,7 @@ SET ROLE TO sql_saga_unprivileged_user;
 
 -- Unique keys are already pretty much guaranteed by the underlying features of
 -- PostgreSQL, but test them anyway.
-CREATE TABLE uk (id integer, s integer, e integer, CONSTRAINT uk_pkey PRIMARY KEY (id, s, e));
+CREATE TABLE uk (id integer, s integer, e integer, CONSTRAINT uk_pkey PRIMARY KEY (id, s, e) DEFERRABLE);
 SELECT sql_saga.add_era('uk', 's', 'e', 'p');
 SELECT sql_saga.add_unique_key('uk', ARRAY['id'], 'p', key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
 TABLE sql_saga.unique_keys;

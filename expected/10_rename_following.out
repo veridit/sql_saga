@@ -92,9 +92,9 @@ ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT "rename_test_col2_col1_col3_s < e_embedded "" symbols_key" TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_int4range_excl TO exconst;
 TABLE sql_saga.unique_keys;
-           key_name           | table_name  |    column_names     | era_name | unique_constraint | exclude_constraint 
-------------------------------+-------------+---------------------+----------+-------------------+--------------------
- rename_test_col2_col1_col3_p | rename_test | {col2,COLUMN1,col3} | p        | unconst           | exconst
+           key_name           | table_name  |    column_names     | era_name | unique_constraint |            exclude_constraint             
+------------------------------+-------------+---------------------+----------+-------------------+-------------------------------------------
+ rename_test_col2_col1_col3_p | rename_test | {col2,COLUMN1,col3} | p        | unconst           | rename_test_col2_col1_col3_int4range_excl
 (1 row)
 
 /* foreign_keys */

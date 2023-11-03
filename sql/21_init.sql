@@ -1,20 +1,102 @@
-CREATE EXTENSION btree_gist;  -- for the GIST exclusion constraints
-CREATE EXTENSION time_for_keys;
+CREATE EXTENSION sql_saga CASCADE;
+
 CREATE TABLE shifts (
   job_id INTEGER,
   worker_id INTEGER,
-  valid_at tstzrange,
-  EXCLUDE USING gist (worker_id WITH =, valid_at WITH &&)
+  valid_from timestamptz,
+  valid_to timestamptz,
+  PRIMARY KEY (job_id, worker_id, valid_from, valid_to)
 );
+
 CREATE TABLE houses (
   id INTEGER,
   assessment FLOAT,
-  valid_at tstzrange,
-  CONSTRAINT tpk_houses_id EXCLUDE USING gist (id WITH =, valid_at WITH &&) DEFERRABLE INITIALLY IMMEDIATE
+  valid_from timestamptz,
+  valid_to timestamptz,
+  PRIMARY KEY (id, valid_from, valid_to)
 );
+
 CREATE TABLE rooms (
   id INTEGER,
   house_id INTEGER,
-  valid_at tstzrange,
-  CONSTRAINT tpk_rooms_id EXCLUDE USING gist (id WITH =, valid_at WITH &&) DEFERRABLE INITIALLY IMMEDIATE
+  valid_from timestamptz,
+  valid_to timestamptz,
+  PRIMARY KEY (id, valid_from, valid_to)
 );
+
+-- Before using sql_saga
+\d rooms
+\d houses
+\d shifts
+
+-- Verify that enable and disable each work correctly.
+SELECT sql_saga.add_era('shifts', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('houses', 'valid_from', 'valid_to', 'valid');
+SELECT sql_saga.add_era('rooms', 'valid_from', 'valid_to');
+TABLE sql_saga.era;
+
+SELECT sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
+SELECT sql_saga.add_unique_key('houses', ARRAY['id'], 'valid');
+SELECT sql_saga.add_unique_key('rooms', ARRAY['id'], 'valid');
+TABLE sql_saga.unique_keys;
+
+SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
+TABLE sql_saga.foreign_keys;
+
+SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
+TABLE sql_saga.foreign_keys;
+
+-- While sql_saga is active
+\d rooms
+\d houses
+\d shifts
+
+SELECT sql_saga.drop_unique_key('rooms', 'rooms_id_valid');
+SELECT sql_saga.drop_unique_key('houses','houses_id_valid');
+-- TODO: Simplify this API, to take the same parameters when created.
+-- TODO: Detect and raise an error if there is no match in "sql_saga.unique_keys".
+SELECT sql_saga.drop_unique_key('shifts', 'shifts_job_id_worker_id_valid');
+TABLE sql_saga.unique_keys;
+
+SELECT sql_saga.drop_era('rooms');
+SELECT sql_saga.drop_era('houses');
+SELECT sql_saga.drop_era('shifts');
+TABLE sql_saga.era;
+
+-- After removing sql_saga, it should be as before.
+\d rooms
+\d houses
+\d shifts
+
+-- Make convenience functions for later tests.
+CREATE FUNCTION enable_sql_saga_for_shifts_houses_and_rooms() RETURNS void LANGUAGE plpgsql AS $EOF$
+BEGIN
+  PERFORM sql_saga.add_era('shifts', 'valid_from', 'valid_to');
+  PERFORM sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
+
+  PERFORM sql_saga.add_era('houses', 'valid_from', 'valid_to', 'valid');
+  PERFORM sql_saga.add_unique_key('houses', ARRAY['id'], 'valid');
+
+  PERFORM sql_saga.add_era('rooms', 'valid_from', 'valid_to');
+  PERFORM sql_saga.add_unique_key('rooms', ARRAY['id'], 'valid');
+  PERFORM sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
+END;
+$EOF$;
+
+CREATE FUNCTION disable_sql_saga_for_shifts_houses_and_rooms() RETURNS void LANGUAGE plpgsql AS $EOF$
+BEGIN
+  PERFORM sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
+
+  PERFORM sql_saga.drop_unique_key('rooms', 'rooms_id_valid');
+  PERFORM sql_saga.drop_unique_key('houses','houses_id_valid');
+  PERFORM sql_saga.drop_unique_key('shifts', 'shifts_job_id_worker_id_valid');
+
+  PERFORM sql_saga.drop_era('rooms');
+  PERFORM sql_saga.drop_era('houses');
+  PERFORM sql_saga.drop_era('shifts');
+END;
+$EOF$;
+
+-- Test the convenience functions.
+SELECT enable_sql_saga_for_shifts_houses_and_rooms();
+SELECT disable_sql_saga_for_shifts_houses_and_rooms()

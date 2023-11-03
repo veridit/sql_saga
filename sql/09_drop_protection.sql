@@ -26,8 +26,8 @@ ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 
 /* unique_keys */
 ALTER TABLE dp
-    ADD CONSTRAINT u UNIQUE (id, s, e),
-    ADD CONSTRAINT x EXCLUDE USING gist (id WITH =, integerrange(s, e, '[)') WITH &&);
+    ADD CONSTRAINT u UNIQUE (id, s, e) DEFERRABLE,
+    ADD CONSTRAINT x EXCLUDE USING gist (id WITH =, integerrange(s, e, '[)') WITH &&)  DEFERRABLE;
 SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ALTER TABLE dp DROP CONSTRAINT x; -- fails

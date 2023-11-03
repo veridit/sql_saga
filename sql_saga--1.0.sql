@@ -38,7 +38,8 @@ CREATE TABLE sql_saga.era (
 
     PRIMARY KEY (table_name, era_name),
 
-    CHECK (start_column_name <> end_column_name)
+    CHECK (start_column_name <> end_column_name),
+    CHECK (era_name <> 'system_time')
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
 GRANT SELECT ON TABLE sql_saga.era TO PUBLIC;
@@ -117,6 +118,32 @@ CREATE TABLE sql_saga.api_view (
 );
 GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
+
+/*
+ * C Helper functions
+ */
+CREATE OR REPLACE FUNCTION sql_saga.completely_covers_transfn(internal, tstzrange, tstzrange)
+RETURNS internal
+AS 'sql_saga', 'completely_covers_transfn'
+LANGUAGE c;
+
+CREATE OR REPLACE FUNCTION sql_saga.completely_covers_finalfn(internal, tstzrange, tstzrange)
+RETURNS boolean
+AS 'sql_saga', 'completely_covers_finalfn'
+LANGUAGE c;
+
+/*
+ * completely_covers(period tstzrange, target tstzrange) -
+ * Returns true if the fixed arg `target`
+ * is completely covered by the sum of the `period` values.
+ */
+CREATE AGGREGATE sql_saga.completely_covers(tstzrange, tstzrange) (
+  sfunc = sql_saga.completely_covers_transfn,
+  stype = internal,
+  finalfunc = sql_saga.completely_covers_finalfn,
+  finalfunc_extra
+);
+
 
 
 /*
@@ -241,7 +268,7 @@ BEGIN
     END IF;
 
     IF era_name IS NULL THEN
-        RAISE EXCEPTION 'no period name specified';
+        RAISE EXCEPTION 'no era name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
@@ -320,7 +347,7 @@ BEGIN
     END IF;
 
     IF start_attnum < 0 THEN
-        RAISE EXCEPTION 'system columns cannot be used in periods';
+        RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
     /* Get end column information */
@@ -334,7 +361,7 @@ BEGIN
     END IF;
 
     IF end_attnum < 0 THEN
-        RAISE EXCEPTION 'system columns cannot be used in periods';
+        RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
     /*
@@ -543,7 +570,7 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.era;
+    era_row sql_saga.era;
     portion_view regclass;
     is_dropped boolean;
 BEGIN
@@ -552,7 +579,7 @@ BEGIN
     END IF;
 
     IF era_name IS NULL THEN
-        RAISE EXCEPTION 'no period name specified';
+        RAISE EXCEPTION 'no era name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
@@ -566,12 +593,12 @@ BEGIN
     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_name);
 
     SELECT p.*
-    INTO period_row
+    INTO era_row
     FROM sql_saga.era AS p
     WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     IF NOT FOUND THEN
-        RAISE NOTICE 'period % not found on table %', era_name, table_name;
+        RAISE NOTICE 'era % not found for table %', era_name, table_name;
         RETURN false;
     END IF;
 
@@ -581,13 +608,13 @@ BEGIN
     /* If this is a system_time period, get rid of the triggers */
     --    DELETE FROM sql_saga.system_time_periods AS stp
     --    WHERE stp.table_name = table_name
-    --    RETURNING stp.* INTO system_time_period_row;
+    --    RETURNING stp.* INTO system_time_era_row;
     --
     --    IF FOUND AND NOT is_dropped THEN
-    --        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_name, system_time_period_row.infinity_check_constraint);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_period_row.generated_always_trigger, table_name);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_period_row.write_history_trigger, table_name);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_period_row.truncate_trigger, table_name);
+    --        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_name, system_time_era_row.infinity_check_constraint);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_name);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_name);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_name);
     --    END IF;
 
     IF drop_behavior = 'RESTRICT' THEN
@@ -596,7 +623,7 @@ BEGIN
             SELECT FROM sql_saga.unique_keys AS uk
             WHERE (uk.table_name, uk.era_name) = (table_name, era_name))
         THEN
-            RAISE EXCEPTION 'period % is part of a UNIQUE or PRIMARY KEY', era_name;
+            RAISE EXCEPTION 'era % is part of a UNIQUE or PRIMARY KEY', era_name;
         END IF;
 
         /* Check for FOREIGN KEYs */
@@ -604,7 +631,7 @@ BEGIN
             SELECT FROM sql_saga.foreign_keys AS fk
             WHERE (fk.table_name, fk.era_name) = (table_name, era_name))
         THEN
-            RAISE EXCEPTION 'period % is part of a FOREIGN KEY', era_name;
+            RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
         END IF;
 
 --        /* Check for SYSTEM VERSIONING */
@@ -618,7 +645,7 @@ BEGIN
         /* Delete bounds check constraint if purging */
         IF NOT is_dropped AND purge THEN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-                table_name, period_row.bounds_check_constraint);
+                table_name, era_row.bounds_check_constraint);
         END IF;
 
         /* Remove from catalog */
@@ -641,7 +668,7 @@ BEGIN
     /* Delete bounds check constraint if purging */
     IF NOT is_dropped AND purge THEN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-            table_name, period_row.bounds_check_constraint);
+            table_name, era_row.bounds_check_constraint);
     END IF;
 
     /* Remove from catalog */
@@ -743,7 +770,7 @@ BEGIN
      * If no table is specified but a period is, that doesn't make any sense.
      */
     IF table_name IS NULL AND era_name IS NOT NULL THEN
-        RAISE EXCEPTION 'cannot specify period name without table name';
+        RAISE EXCEPTION 'cannot specify era name without table name';
     END IF;
 
     /* Always serialize operations on our catalogs */
@@ -811,7 +838,7 @@ BEGIN
      * If no table is specified but a period is, that doesn't make any sense.
      */
     IF table_name IS NULL AND era_name IS NOT NULL THEN
-        RAISE EXCEPTION 'cannot specify period name without table name';
+        RAISE EXCEPTION 'cannot specify era name without table name';
     END IF;
 
     /* Always serialize operations on our catalogs */
@@ -928,14 +955,14 @@ BEGIN
     WHERE fpv.view_name = TG_RELID;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'table and period information not found for view "%"', TG_RELID::regclass;
+        RAISE EXCEPTION 'table and era information not found for view "%"', TG_RELID::regclass;
     END IF;
 
-    jnew := row_to_json(NEW);
+    jnew := to_jsonb(NEW);
     fromval := jnew->info.start_column_name;
     toval := jnew->info.end_column_name;
 
-    jold := row_to_json(OLD);
+    jold := to_jsonb(OLD);
     bstartval := jold->info.start_column_name;
     bendval := jold->info.end_column_name;
 
@@ -1070,9 +1097,9 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.era;
+    era_row sql_saga.era;
     column_attnums smallint[];
-    period_attnums smallint[];
+    era_attnums smallint[];
     idx integer;
     constraint_record record;
     pass integer;
@@ -1091,7 +1118,7 @@ BEGIN
     PERFORM sql_saga._serialize(table_name);
 
     SELECT p.*
-    INTO period_row
+    INTO era_row
     FROM sql_saga.era AS p
     WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
@@ -1100,9 +1127,9 @@ BEGIN
     END IF;
 
     /* For convenience, put the period's attnums in an array */
-    period_attnums := ARRAY[
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (period_row.table_name, period_row.start_column_name)),
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (period_row.table_name, period_row.end_column_name))
+    era_attnums := ARRAY[
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_name, era_row.start_column_name)),
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_name, era_row.end_column_name))
     ];
 
     /* Get attnums from column names */
@@ -1123,11 +1150,11 @@ BEGIN
     END IF;
 
     /* Make sure the period columns aren't also in the normal columns */
-    IF period_row.start_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', period_row.start_column_name;
+    IF era_row.start_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.start_column_name;
     END IF;
-    IF period_row.end_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', period_row.end_column_name;
+    IF era_row.end_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.end_column_name;
     END IF;
 
     /*
@@ -1136,19 +1163,19 @@ BEGIN
      */
     IF EXISTS (
         SELECT FROM sql_saga.era AS p
-        WHERE (p.table_name, p.era_name) = (period_row.table_name, 'system_time')
+        WHERE (p.table_name, p.era_name) = (era_row.table_name, 'system_time')
           AND ARRAY[p.start_column_name, p.end_column_name] && column_names)
     THEN
-        RAISE EXCEPTION 'columns in period for SYSTEM_TIME are not allowed in UNIQUE keys';
+        RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
 
     /* If we were given a unique constraint to use, look it up and make sure it matches */
     SELECT format('UNIQUE (%s)', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality))
     INTO unique_sql
-    FROM unnest(column_names || period_row.start_column_name || period_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(column_names || era_row.start_column_name || era_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     IF unique_constraint IS NOT NULL THEN
-        SELECT c.oid, c.contype, c.condeferrable, c.conkey
+        SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
         INTO constraint_record
         FROM pg_catalog.pg_constraint AS c
         WHERE (c.conrelid, c.conname) = (table_name, unique_constraint);
@@ -1161,12 +1188,21 @@ BEGIN
             RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
         END IF;
 
-        IF constraint_record.condeferrable THEN
-            /* SQL:2016 11.8 SR 5 */
-            RAISE EXCEPTION 'constraint "%" must not be DEFERRABLE', unique_constraint;
+        IF NOT constraint_record.condeferrable THEN
+            /* For restore purposes, constraints may be deferred,
+             * but everything must be valid at the end fo the transaction
+             */
+            RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', unique_constraint;
         END IF;
 
-        IF NOT constraint_record.conkey = column_attnums || period_attnums THEN
+        IF constraint_record.condeferred THEN
+            /* By default constraints are NOT deferred,
+             * and the user receives a timely validation error.
+             */
+            RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', unique_constraint;
+        END IF;
+
+        IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
             RAISE EXCEPTION 'constraint "%" does not match', unique_constraint;
         END IF;
 
@@ -1190,13 +1226,13 @@ BEGIN
         FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
 
         withs := withs || format('%I(%I, %I, ''[)''::text) WITH &&',
-            period_row.range_type, period_row.start_column_name, period_row.end_column_name);
+            era_row.range_type, era_row.start_column_name, era_row.end_column_name);
 
-        exclude_sql := format('EXCLUDE USING gist (%s)', array_to_string(withs, ', '));
+        exclude_sql := format('EXCLUDE USING gist (%s) DEFERRABLE', array_to_string(withs, ', '));
     END;
 
     IF exclude_constraint IS NOT NULL THEN
-        SELECT c.oid, c.contype, c.condeferrable, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+        SELECT c.oid, c.contype, c.condeferrable, c.condeferred, pg_catalog.pg_get_constraintdef(c.oid) AS definition
         INTO constraint_record
         FROM pg_catalog.pg_constraint AS c
         WHERE (c.conrelid, c.conname) = (table_name, exclude_constraint);
@@ -1209,9 +1245,18 @@ BEGIN
             RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
         END IF;
 
-        IF constraint_record.condeferrable THEN
-            /* SQL:2016 11.8 SR 5 */
-            RAISE EXCEPTION 'constraint "%" must not be DEFERRABLE', exclude_constraint;
+        IF NOT constraint_record.condeferrable THEN
+            /* For restore purposes, constraints may be deferred,
+             * but everything must be valid at the end fo the transaction
+             */
+            RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
+        END IF;
+
+        IF constraint_record.condeferred THEN
+            /* By default constraints are NOT deferred,
+             * and the user receives a timely validation error.
+             */
+            RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
         END IF;
 
         IF constraint_record.definition <> exclude_sql THEN
@@ -1287,7 +1332,12 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_unique_key(table_name regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_unique_key(
+    table_name regclass,
+    key_name name,
+    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
+    purge boolean DEFAULT false
+ )
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1337,6 +1387,7 @@ BEGIN
                 unique_key_row.table_name, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
         END IF;
     END LOOP;
+
 END;
 $function$;
 
@@ -1362,7 +1413,7 @@ BEGIN
      */
 
     /* Use jsonb to look up values by parameterized names */
-    jold := row_to_json(OLD);
+    jold := to_jsonb(OLD);
 
     /* Check the constraint */
     PERFORM sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true);
@@ -1392,7 +1443,7 @@ BEGIN
      */
 
     /* Use jsonb to look up values by parameterized names */
-    jold := row_to_json(OLD);
+    jold := to_jsonb(OLD);
 
     /* Check the constraint */
     PERFORM sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false);
@@ -1425,8 +1476,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    period_row sql_saga.era;
-    ref_period_row sql_saga.era;
+    era_row sql_saga.era;
+    ref_era_row sql_saga.era;
     unique_row sql_saga.unique_keys;
     column_attnums smallint[];
     idx integer;
@@ -1445,7 +1496,7 @@ BEGIN
 
     /* Get the period involved */
     SELECT p.*
-    INTO period_row
+    INTO era_row
     FROM sql_saga.era AS p
     WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
@@ -1471,11 +1522,11 @@ BEGIN
     END IF;
 
     /* Make sure the period columns aren't also in the normal columns */
-    IF period_row.start_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', period_row.start_column_name;
+    IF era_row.start_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.start_column_name;
     END IF;
-    IF period_row.end_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', period_row.end_column_name;
+    IF era_row.end_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.end_column_name;
     END IF;
 
     /* Get the unique key we're linking to */
@@ -1490,13 +1541,13 @@ BEGIN
 
     /* Get the unique key's period */
     SELECT p.*
-    INTO ref_period_row
+    INTO ref_era_row
     FROM sql_saga.era AS p
     WHERE (p.table_name, p.era_name) = (unique_row.table_name, unique_row.era_name);
 
-    IF period_row.range_type <> ref_period_row.range_type THEN
+    IF era_row.range_type <> ref_era_row.range_type THEN
         RAISE EXCEPTION 'period types "%" and "%" are incompatible',
-            period_row.era_name, ref_period_row.era_name;
+            era_row.era_name, ref_era_row.era_name;
     END IF;
 
     /* Check that all the columns match */
@@ -1510,7 +1561,7 @@ BEGIN
     END IF;
 
     /* The range types must match, too */
-    IF period_row.range_type <> ref_period_row.range_type THEN
+    IF era_row.range_type <> ref_era_row.range_type THEN
         RAISE EXCEPTION 'period types do not match';
     END IF;
 
@@ -1544,11 +1595,11 @@ BEGIN
     /* Get the columns that require checking the constraint */
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
     INTO foreign_columns
-    FROM unnest(column_names || period_row.start_column_name || period_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(column_names || era_row.start_column_name || era_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
     INTO unique_columns
-    FROM unnest(unique_row.column_names || ref_period_row.start_column_name || ref_period_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(unique_row.column_names || ref_era_row.start_column_name || ref_era_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     /* Time to make the underlying triggers */
     fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_insert'));
@@ -1569,8 +1620,9 @@ BEGIN
     VALUES (key_name, table_name, column_names, era_name, unique_row.key_name, match_type, update_action, delete_action,
             fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
 
-    /* Validate the constraint on existing data */
-    PERFORM sql_saga.validate_foreign_key_new_row(key_name, NULL);
+    /* Validate the constraint on existing data, iterating over each row. */
+    EXECUTE format('SELECT sql_saga.validate_foreign_key_new_row(%1$L, to_jsonb(%2$I.*)) FROM %2$I;',
+        key_name, table_name);
 
     RETURN key_name;
 END;
@@ -1669,7 +1721,7 @@ BEGIN
      */
 
     /* Use jsonb to look up values by parameterized names */
-    jnew := row_to_json(NEW);
+    jnew := to_jsonb(NEW);
 
     /* Check the constraint */
     PERFORM sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew);
@@ -1696,7 +1748,7 @@ BEGIN
      */
 
     /* Use jsonb to look up values by parameterized names */
-    jnew := row_to_json(NEW);
+    jnew := to_jsonb(NEW);
 
     /* Check the constraint */
     PERFORM sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew);
@@ -1969,75 +2021,79 @@ BEGIN
         RAISE EXCEPTION 'foreign key "%" not found', foreign_key_name;
     END IF;
 
+    IF row_data IS NULL THEN
+        RAISE EXCEPTION 'row_data is not provided';
+    END IF;
+
     /*
      * Now that we have all of our names, we can see if there are any nulls in
-     * the row we were given (if we were given one).
+     * the row we were given.
      */
-    IF row_data IS NOT NULL THEN
-        DECLARE
-            column_name name;
-            has_nulls boolean;
-            all_nulls boolean;
-            cols text[] DEFAULT '{}';
-            vals text[] DEFAULT '{}';
-        BEGIN
-            FOREACH column_name IN ARRAY foreign_key_info.fk_column_names LOOP
-                has_nulls := has_nulls OR row_data->>column_name IS NULL;
-                all_nulls := all_nulls IS NOT false AND row_data->>column_name IS NULL;
-                cols := cols || ('fk.' || quote_ident(column_name));
-                vals := vals || quote_literal(row_data->>column_name);
-            END LOOP;
+    DECLARE
+        column_name name;
+        has_nulls boolean;
+        all_nulls boolean;
+        cols text[] DEFAULT '{}';
+        vals text[] DEFAULT '{}';
+    BEGIN
+        FOREACH column_name IN ARRAY foreign_key_info.fk_column_names LOOP
+            has_nulls := has_nulls OR row_data->>column_name IS NULL;
+            all_nulls := all_nulls IS NOT false AND row_data->>column_name IS NULL;
+            cols := cols || ('fk.' || quote_ident(column_name));
+            vals := vals || quote_literal(row_data->>column_name);
+        END LOOP;
 
-            IF all_nulls THEN
-                /*
-                 * If there are no values at all, all three types pass.
-                 *
-                 * Period columns are by definition NOT NULL so the FULL MATCH
-                 * type is only concerned with the non-period columns of the
-                 * constraint.  SQL:2016 4.23.3.3
-                 */
-                RETURN true;
-            END IF;
-
-            IF has_nulls THEN
-                CASE foreign_key_info.match_type
-                    WHEN 'SIMPLE' THEN
-                        RETURN true;
-                    WHEN 'PARTIAL' THEN
-                        RAISE EXCEPTION 'partial not implemented';
-                    WHEN 'FULL' THEN
-                        RAISE EXCEPTION 'foreign key violated (nulls in FULL)';
-                END CASE;
-            END IF;
-
-            row_clause := format(' (%s) = (%s)', array_to_string(cols, ', '), array_to_string(vals, ', '));
-        END;
-    END IF;
-
-    EXECUTE format(QSQL, foreign_key_info.uk_schema_name,
-                         foreign_key_info.uk_table_name,
-                         foreign_key_info.uk_start_column_name,
-                         foreign_key_info.uk_end_column_name,
-                         foreign_key_info.fk_schema_name,
-                         foreign_key_info.fk_table_name,
-                         foreign_key_info.fk_start_column_name,
-                         foreign_key_info.fk_end_column_name,
-                         (SELECT string_agg(format('%I = %I', ukc, fkc), ' AND ')
-                          FROM unnest(foreign_key_info.uk_column_names,
-                                      foreign_key_info.fk_column_names) AS u (ukc, fkc)
-                         ),
-                         row_clause)
-    INTO violation;
-
-    IF violation THEN
-        IF row_data IS NULL THEN
-            RAISE EXCEPTION 'foreign key violated by some row';
-        ELSE
-            RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-                foreign_key_info.fk_table_oid::regclass,
-                foreign_key_name;
+        IF all_nulls THEN
+            /*
+             * If there are no values at all, all three types pass.
+             *
+             * Period columns are by definition NOT NULL so the FULL MATCH
+             * type is only concerned with the non-period columns of the
+             * constraint.  SQL:2016 4.23.3.3
+             */
+            RETURN true;
         END IF;
-    END IF;
+
+        IF has_nulls THEN
+            CASE foreign_key_info.match_type
+                WHEN 'SIMPLE' THEN
+                    RETURN true;
+                WHEN 'PARTIAL' THEN
+                    RAISE EXCEPTION 'partial not implemented';
+                WHEN 'FULL' THEN
+                    RAISE EXCEPTION 'foreign key violated (nulls in FULL)';
+            END CASE;
+        END IF;
+
+        row_clause := format(' (%s) = (%s)', array_to_string(cols, ', '), array_to_string(vals, ', '));
+    END;
+
+    BEGIN
+        EXECUTE format(QSQL, foreign_key_info.uk_schema_name,
+                             foreign_key_info.uk_table_name,
+                             foreign_key_info.uk_start_column_name,
+                             foreign_key_info.uk_end_column_name,
+                             foreign_key_info.fk_schema_name,
+                             foreign_key_info.fk_table_name,
+                             foreign_key_info.fk_start_column_name,
+                             foreign_key_info.fk_end_column_name,
+                             (SELECT string_agg(format('%I IS NOT DISTINCT FROM %I', ukc, fkc), ' AND ')
+                              FROM unnest(foreign_key_info.uk_column_names,
+                                          foreign_key_info.fk_column_names) AS u (ukc, fkc)
+                             ),
+                             row_clause)
+        INTO violation;
+
+        IF violation THEN
+            IF row_data IS NULL THEN
+                RAISE EXCEPTION 'foreign key violated by some row';
+            ELSE
+                RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
+                    foreign_key_info.fk_table_oid::regclass,
+                    foreign_key_name;
+            END IF;
+        END IF;
+    END;
 
     RETURN true;
 END;
@@ -2066,7 +2122,7 @@ $function$;
 --     table_owner regrole;
 --     persistence "char";
 --     kind "char";
---     period_row sql_saga.era;
+--     era_row sql_saga.era;
 --     history_table_id oid;
 --     sql text;
 --     grantees text;
@@ -2122,7 +2178,7 @@ $function$;
 -- 
 --     /* We need a SYSTEM_TIME period. SQL:2016 11.29 SR 4 */
 --     SELECT p.*
---     INTO period_row
+--     INTO era_row
 --     FROM sql_saga.era AS p
 --     WHERE (p.table_name, p.era_name) = (table_class, 'system_time');
 -- 
@@ -2244,7 +2300,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1'
---         $$, schema_name, function_as_of_name, view_name, period_row.start_column_name, period_row.end_column_name);
+--         $$, schema_name, function_as_of_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_as_of_name, table_owner);
 -- 
@@ -2255,7 +2311,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2'
---         $$, schema_name, function_between_name, view_name, period_row.start_column_name, period_row.end_column_name);
+--         $$, schema_name, function_between_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_name, table_owner);
 -- 
@@ -2266,7 +2322,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)'
---         $$, schema_name, function_between_symmetric_name, view_name, period_row.start_column_name, period_row.end_column_name);
+--         $$, schema_name, function_between_symmetric_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_symmetric_name, table_owner);
 -- 
@@ -2277,7 +2333,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2'
---         $$, schema_name, function_from_to_name, view_name, period_row.start_column_name, period_row.end_column_name);
+--         $$, schema_name, function_from_to_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_from_to_name, table_owner);
 -- 
@@ -2616,7 +2672,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.conname) = (uk.table_name, uk.unique_constraint))
     LOOP
-        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in period unique key "%"',
+        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
             r.unique_constraint, r.table_name, r.key_name;
     END LOOP;
 
@@ -2627,7 +2683,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.conname) = (uk.table_name, uk.exclude_constraint))
     LOOP
-        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in period unique key "%"',
+        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
             r.exclude_constraint, r.table_name, r.key_name;
     END LOOP;
 
@@ -2643,7 +2699,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_insert_trigger))
     LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in period foreign key "%"',
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.fk_insert_trigger, r.table_name, r.key_name;
     END LOOP;
 
@@ -2654,7 +2710,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_update_trigger))
     LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in period foreign key "%"',
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.fk_update_trigger, r.table_name, r.key_name;
     END LOOP;
 
@@ -2666,7 +2722,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_update_trigger))
     LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in period foreign key "%"',
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.uk_update_trigger, r.table_name, r.key_name;
     END LOOP;
 
@@ -2678,7 +2734,7 @@ BEGIN
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_delete_trigger))
     LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in period foreign key "%"',
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.uk_delete_trigger, r.table_name, r.key_name;
     END LOOP;
 
@@ -2999,7 +3055,7 @@ BEGIN
         JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
         WHERE c.relpersistence <> 'p'
     LOOP
-        RAISE EXCEPTION 'table "%" must remain persistent because it has periods',
+        RAISE EXCEPTION 'table "%" must remain persistent because it has an era',
             r.table_name;
     END LOOP;
 
@@ -3010,7 +3066,7 @@ BEGIN
         JOIN pg_catalog.pg_class AS c ON c.oid = sv.audit_table_name
         WHERE c.relpersistence <> 'p'
     LOOP
-        RAISE EXCEPTION 'history table "%" must remain persistent because it has periods',
+        RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
             r.table_name;
     END LOOP;
 

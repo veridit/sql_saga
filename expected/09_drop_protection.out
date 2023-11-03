@@ -44,8 +44,8 @@ SELECT sql_saga.drop_api('dp', 'p');
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 /* unique_keys */
 ALTER TABLE dp
-    ADD CONSTRAINT u UNIQUE (id, s, e),
-    ADD CONSTRAINT x EXCLUDE USING gist (id WITH =, integerrange(s, e, '[)') WITH &&);
+    ADD CONSTRAINT u UNIQUE (id, s, e) DEFERRABLE,
+    ADD CONSTRAINT x EXCLUDE USING gist (id WITH =, integerrange(s, e, '[)') WITH &&)  DEFERRABLE;
 SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
  add_unique_key 
 ----------------
@@ -53,10 +53,10 @@ SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
 (1 row)
 
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
-ERROR:  cannot drop constraint "u" on table "dp" because it is used in period unique key "k"
+ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 182 at RAISE
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
-ERROR:  cannot drop constraint "x" on table "dp" because it is used in period unique key "k"
+ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 193 at RAISE
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
 /* foreign_keys */
@@ -74,16 +74,16 @@ SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', key_name => 'f'
 (1 row)
 
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
-ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in period foreign key "f"
+ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 209 at RAISE
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
-ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in period foreign key "f"
+ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 220 at RAISE
 DROP TRIGGER f_uk_update ON dp; -- fails
-ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in period foreign key "f"
+ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 232 at RAISE
 DROP TRIGGER f_uk_delete ON dp; -- fails
-ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in period foreign key "f"
+ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 244 at RAISE
 SELECT sql_saga.drop_foreign_key('dp_ref', 'f');
  drop_foreign_key 

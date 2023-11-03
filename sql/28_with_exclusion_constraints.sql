@@ -1,6 +1,6 @@
 -- MOVING THE TIME OF A CHANGE
 
-SELECT create_temporal_foreign_key('room_has_a_house', 'rooms', 'house_id', 'valid_at', 'houses', 'id', 'valid_at');
+SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 
 -- 1. Small shift to a later time
 
@@ -13,20 +13,20 @@ SELECT create_temporal_foreign_key('room_has_a_house', 'rooms', 'house_id', 'val
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1, '2015-01-01', '2017-01-01')
 ;
 
 UPDATE  houses
-SET     valid_at =
+SET     (valid_from, valid_to) =
           CASE
-          WHEN lower(valid_at) = '2015-01-01' THEN tstzrange('2015-01-01', '2016-06-01')
-          WHEN lower(valid_at) = '2016-01-01' THEN tstzrange('2016-06-01', '2017-01-01')
+          WHEN valid_from = '2015-01-01' THEN ('2015-01-01', '2016-06-01')
+          WHEN valid_from = '2016-01-01' THEN ('2016-06-01', '2017-01-01')
           ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
           END
 WHERE   id = 1
@@ -42,61 +42,62 @@ DELETE FROM rooms;
 DELETE FROM houses;
 
 INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1,'2015-01-01', '2017-01-01')
 ;
 
--- 
+--
 -- 1.2.1. You can't move the time in two transactions.
--- 
+--
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
--- 
+--
 -- 1.2.2. When the exclusion constraint is checked immediately,
 --        you can't move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id IMMEDIATE;
+SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
--- 
+--
 -- 1.2.3. When the exclusion constraint is checked deferred,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+\d houses
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
@@ -109,62 +110,62 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1, '2015-01-01', '2017-01-01')
 ;
 
--- 
+--
 -- 1.3.1. You can't move the time in two transactions.
--- 
+--
 
 UPDATE  houses
-SET     valid_at = tstzrange('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
--- 
+--
 -- 1.3.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id IMMEDIATE;
+SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
 UPDATE  houses
-SET     valid_at = tstzrange('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
--- 
+--
 -- 1.3.3. When the exclusion constraint is checked deferred,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
-SET     valid_at = tstzrange('2016-09-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-06-01'
+SET     (valid_from, valid_to) = ('2016-09-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-06-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2016-09-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2016-09-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -173,20 +174,20 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1, '2015-01-01', '2017-01-01')
 ;
 
 UPDATE  houses
-SET     valid_at =
+SET     (valid_from, valid_to) =
           CASE
-          WHEN lower(valid_at) = '2015-01-01' THEN tstzrange('2015-01-01', '2015-06-01')
-          WHEN lower(valid_at) = '2016-01-01' THEN tstzrange('2015-06-01', '2017-01-01')
+          WHEN valid_from = '2015-01-01' THEN ('2015-01-01', '2015-06-01')
+          WHEN valid_from = '2016-01-01' THEN ('2015-06-01', '2017-01-01')
           ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
           END
 WHERE   id = 1
@@ -196,62 +197,62 @@ WHERE   id = 1
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1, '2015-01-01', '2017-01-01')
 ;
 
--- 
+--
 -- 2.2.1. You can't move the time in two transactions.
--- 
+--
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
--- 
+--
 -- 2.2.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id IMMEDIATE;
+SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
--- 
+--
 -- 2.2.3. When the exclusion constraint is checked deferred,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-03-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-03-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-03-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-06-01'
+SET     (valid_from, valid_to) = ('2015-03-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2015-06-01'
 ;
 COMMIT;
 
@@ -259,62 +260,62 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
-  (1, 150000, tstzrange('2015-01-01', '2016-01-01')),
-  (1, 200000, tstzrange('2016-01-01', '2017-01-01'))
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
 INSERT INTO rooms VALUES
-  (1, 1, tstzrange('2015-01-01', '2017-01-01'))
+  (1, 1, '2015-01-01', '2017-01-01')
 ;
 
--- 
+--
 -- 2.3.1. You can't move the time in two transactions.
--- 
+--
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
--- 
+--
 -- 2.3.2. When the exclusion constraint is checked immediately,
 --        you can't move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id IMMEDIATE;
+SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
--- 
+--
 -- 2.3.3. When the exclusion constraint is checked deferred,
 --        you can move the time in one transaction with two statements.
--- 
+--
 
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
-SET     valid_at = tstzrange('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND lower(valid_at) = '2016-01-01'
+SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     valid_at = tstzrange('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND lower(valid_at) = '2015-01-01'
+SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -335,3 +336,5 @@ COMMIT;
 -- TODO
 -- 5.2. Swap the ranges, later first:
 -- TODO
+
+SELECT disable_sql_saga_for_shifts_houses_and_rooms();

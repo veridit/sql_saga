@@ -1,5 +1,8 @@
 sql_saga.o
 sql_saga.so
+completely_covers.o
+periods.o
+sql_saga.dylib
 regression.diffs
 regression.out
 results/
