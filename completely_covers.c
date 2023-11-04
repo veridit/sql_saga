@@ -91,7 +91,7 @@ Datum completely_covers_transfn(PG_FUNCTION_ARGS)
     state->target_end = DatumGetTimestampTz(target_end.val);
     // ereport(NOTICE, (errmsg("STARTING: state is [%ld, %ld)   target is [%ld, %ld)", state->target_start, state->target_end, DatumGetTimestampTz(target_start.val), DatumGetTimestampTz(target_end.val))));
 
-    state->covered_to = 0;
+    state->covered_to = DT_NOBEGIN;
 
   } else {
     // ereport(NOTICE, (errmsg("looking up state....")));
@@ -146,7 +146,7 @@ Datum completely_covers_transfn(PG_FUNCTION_ARGS)
     }
   }
 
-  // This check is why we set covered_to to 0 above on the first pass:
+  // This check is why we set covered_to to DT_NOBEGIN above on the first pass:
   // Note this check will not check unsorted inputs in some cases:
   //   - the inputs cover the target before we hit an out-of-order input.
   if (DatumGetTimestampTz(current_start.val) < state->covered_to) {
