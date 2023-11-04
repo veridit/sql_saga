@@ -70,9 +70,9 @@ PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
-NOTICE:  period valid not found on table rooms
-NOTICE:  period valid not found on table houses
-NOTICE:  period valid not found on table shifts
+NOTICE:  era valid not found for table rooms
+NOTICE:  era valid not found for table houses
+NOTICE:  era valid not found for table shifts
  disable_sql_saga_for_shifts_houses_and_rooms 
 ----------------------------------------------
  
@@ -89,9 +89,9 @@ PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
-NOTICE:  period valid not found on table rooms
-NOTICE:  period valid not found on table houses
-NOTICE:  period valid not found on table shifts
+NOTICE:  era valid not found for table rooms
+NOTICE:  era valid not found for table houses
+NOTICE:  era valid not found for table shifts
  disable_sql_saga_for_shifts_houses_and_rooms 
 ----------------------------------------------
  
@@ -108,9 +108,9 @@ PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
-NOTICE:  period valid not found on table rooms
-NOTICE:  period valid not found on table houses
-NOTICE:  period valid not found on table shifts
+NOTICE:  era valid not found for table rooms
+NOTICE:  era valid not found for table houses
+NOTICE:  era valid not found for table shifts
  disable_sql_saga_for_shifts_houses_and_rooms 
 ----------------------------------------------
  
