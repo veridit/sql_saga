@@ -20,15 +20,19 @@ INSERT INTO houses VALUES
 INSERT INTO rooms VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
-UPDATE  houses
-SET     (valid_from, valid_to) =
-          CASE
-          WHEN valid_from = '2015-01-01' THEN ('2015-01-01', '2016-06-01')
-          WHEN valid_from = '2016-01-01' THEN ('2016-06-01', '2017-01-01')
-          ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
-          END
-WHERE   id = 1
-;
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+UPDATE houses
+SET valid_from = new_valid_from,
+    valid_to = new_valid_to
+FROM (VALUES
+    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ),
+    (1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+) AS change(id, old_valid_from, new_valid_from, new_valid_to)
+WHERE houses.id = change.id
+  AND valid_from = old_valid_from;
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
 --
 --
 -- 1.2. Small shift to a later time, moving the earlier range first:
@@ -83,7 +87,7 @@ COMMIT;
 --        you can move the time in one transaction with two statements.
 --
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -144,7 +148,7 @@ COMMIT;
 --        you can move the time in one transaction with two statements.
 --
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2016-09-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-06-01'
@@ -165,15 +169,19 @@ INSERT INTO houses VALUES
 INSERT INTO rooms VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
-UPDATE  houses
-SET     valid_at =
-          CASE
-          WHEN lower(valid_at) = '2015-01-01' THEN tstzrange('2015-01-01', '2015-06-01')
-          WHEN lower(valid_at) = '2016-01-01' THEN tstzrange('2015-06-01', '2017-01-01')
-          ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
-          END
-WHERE   id = 1
-;
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+UPDATE houses
+SET valid_from = new_valid_from,
+    valid_to = new_valid_to
+FROM (VALUES
+    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ),
+    (1, '2016-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+) AS change(id, old_valid_from, new_valid_from, new_valid_to)
+WHERE houses.id = change.id
+  AND valid_from = old_valid_from;
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
 -- 2.2 Small shift to an earlier time, moving the earlier range first:
 DELETE FROM rooms;
 DELETE FROM houses;
@@ -221,7 +229,7 @@ COMMIT;
 --        you can move the time in one transaction with two statements.
 --
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2015-03-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -281,7 +289,7 @@ COMMIT;
 --        you can move the time in one transaction with two statements.
 --
 BEGIN;
-SET CONSTRAINTS tpk_houses_id DEFERRED;
+SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -306,3 +314,9 @@ COMMIT;
 -- TODO
 -- 5.2. Swap the ranges, later first:
 -- TODO
+SELECT disable_sql_saga_for_shifts_houses_and_rooms();
+ disable_sql_saga_for_shifts_houses_and_rooms 
+----------------------------------------------
+ 
+(1 row)
+

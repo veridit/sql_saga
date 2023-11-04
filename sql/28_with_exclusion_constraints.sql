@@ -13,7 +13,6 @@ SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 DELETE FROM rooms;
 DELETE FROM houses;
 
-BEGIN;
 INSERT INTO houses VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
@@ -21,20 +20,21 @@ INSERT INTO houses VALUES
 INSERT INTO rooms VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
---SET CONSTRAINTS ALL DEFERRED;
-WITH changed AS (
-    SELECT id, '2015-01-01'::TIMESTAMPTZ AS valid_from, '2016-06-01'::TIMESTAMPTZ AS valid_to FROM houses WHERE valid_from = '2015-01-01' AND id = 1
-    UNION ALL
-    SELECT id, '2016-06-01', '2017-01-01' FROM houses WHERE valid_from = '2016-01-01' AND id = 1
-)
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+
 UPDATE houses
-SET valid_from = changed.valid_from
-  , valid_to = changed.valid_to
-FROM changed
-WHERE houses.id = changed.id
-;
---SET CONSTRAINTS ALL IMMEDIATE;
-END;
+SET valid_from = new_valid_from,
+    valid_to = new_valid_to
+FROM (VALUES
+    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ),
+    (1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+) AS change(id, old_valid_from, new_valid_from, new_valid_to)
+WHERE houses.id = change.id
+  AND valid_from = old_valid_from;
+
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
 --
 --
 -- 1.2. Small shift to a later time, moving the earlier range first:
@@ -91,7 +91,6 @@ COMMIT;
 --
 
 BEGIN;
-\d houses
 SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
@@ -185,16 +184,21 @@ INSERT INTO houses VALUES
 INSERT INTO rooms VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
 
-UPDATE  houses
-SET     (valid_from, valid_to) =
-          CASE
-          WHEN valid_from = '2015-01-01' THEN ('2015-01-01', '2015-06-01')
-          WHEN valid_from = '2016-01-01' THEN ('2015-06-01', '2017-01-01')
-          ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
-          END
-WHERE   id = 1
-;
+UPDATE houses
+SET valid_from = new_valid_from,
+    valid_to = new_valid_to
+FROM (VALUES
+    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ),
+    (1, '2016-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+) AS change(id, old_valid_from, new_valid_from, new_valid_to)
+WHERE houses.id = change.id
+  AND valid_from = old_valid_from;
+
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
 
 -- 2.2 Small shift to an earlier time, moving the earlier range first:
 DELETE FROM rooms;
