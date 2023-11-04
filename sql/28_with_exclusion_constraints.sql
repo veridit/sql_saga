@@ -13,25 +13,28 @@ SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 DELETE FROM rooms;
 DELETE FROM houses;
 
+BEGIN;
 INSERT INTO houses VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
-
 INSERT INTO rooms VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
-
-UPDATE  houses
-SET     (valid_from, valid_to) =
-          CASE
-          WHEN valid_from = '2015-01-01' THEN ('2015-01-01', '2016-06-01')
-          WHEN valid_from = '2016-01-01' THEN ('2016-06-01', '2017-01-01')
-          ELSE NULL -- Can't RAISE here but NULL will cause it to fail.
-          END
-WHERE   id = 1
+--SET CONSTRAINTS ALL DEFERRED;
+WITH changed AS (
+    SELECT id, '2015-01-01'::TIMESTAMPTZ AS valid_from, '2016-06-01'::TIMESTAMPTZ AS valid_to FROM houses WHERE valid_from = '2015-01-01' AND id = 1
+    UNION ALL
+    SELECT id, '2016-06-01', '2017-01-01' FROM houses WHERE valid_from = '2016-01-01' AND id = 1
+)
+UPDATE houses
+SET valid_from = changed.valid_from
+  , valid_to = changed.valid_to
+FROM changed
+WHERE houses.id = changed.id
 ;
-
+--SET CONSTRAINTS ALL IMMEDIATE;
+END;
 --
 --
 -- 1.2. Small shift to a later time, moving the earlier range first:

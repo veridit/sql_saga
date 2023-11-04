@@ -4,24 +4,21 @@ CREATE TABLE shifts (
   job_id INTEGER,
   worker_id INTEGER,
   valid_from timestamptz,
-  valid_to timestamptz,
-  PRIMARY KEY (job_id, worker_id, valid_from, valid_to)
+  valid_to timestamptz
 );
 
 CREATE TABLE houses (
   id INTEGER,
   assessment FLOAT,
   valid_from timestamptz,
-  valid_to timestamptz,
-  PRIMARY KEY (id, valid_from, valid_to)
+  valid_to timestamptz
 );
 
 CREATE TABLE rooms (
   id INTEGER,
   house_id INTEGER,
   valid_from timestamptz,
-  valid_to timestamptz,
-  PRIMARY KEY (id, valid_from, valid_to)
+  valid_to timestamptz
 );
 
 -- Before using sql_saga
