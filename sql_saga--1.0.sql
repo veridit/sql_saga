@@ -562,7 +562,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_era(table_name regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_era(table_name regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -603,7 +603,7 @@ BEGIN
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_api(table_name, era_name, drop_behavior, purge);
+    PERFORM sql_saga.drop_api(table_name, era_name, drop_behavior, cleanup);
 
     /* If this is a system_time period, get rid of the triggers */
     --    DELETE FROM sql_saga.system_time_periods AS stp
@@ -643,7 +643,7 @@ BEGIN
 --        END IF;
 
         /* Delete bounds check constraint if purging */
-        IF NOT is_dropped AND purge THEN
+        IF NOT is_dropped AND cleanup THEN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
                 table_name, era_row.bounds_check_constraint);
         END IF;
@@ -661,12 +661,12 @@ BEGIN
     FROM sql_saga.foreign_keys AS fk
     WHERE (fk.table_name, fk.era_name) = (table_name, era_name);
 
-    PERFORM sql_saga.drop_unique_key(table_name, uk.key_name, drop_behavior, purge)
+    PERFORM sql_saga.drop_unique_key(table_name, uk.key_name, drop_behavior, cleanup)
     FROM sql_saga.unique_keys AS uk
     WHERE (uk.table_name, uk.era_name) = (table_name, era_name);
 
     /* Delete bounds check constraint if purging */
-    IF NOT is_dropped AND purge THEN
+    IF NOT is_dropped AND cleanup THEN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
             table_name, era_row.bounds_check_constraint);
     END IF;
@@ -817,7 +817,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_api(table_name regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_api(table_name regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1336,7 +1336,7 @@ CREATE FUNCTION sql_saga.drop_unique_key(
     table_name regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
-    purge boolean DEFAULT false
+    cleanup boolean DEFAULT true
  )
  RETURNS void
  LANGUAGE plpgsql
@@ -1379,7 +1379,7 @@ BEGIN
         WHERE uk.key_name = unique_key_row.key_name;
 
         /* If purging, drop the underlying constraints unless the table has been dropped */
-        IF purge AND EXISTS (
+        IF cleanup AND EXISTS (
             SELECT FROM pg_catalog.pg_class AS c
             WHERE c.oid = unique_key_row.table_name)
         THEN
@@ -2412,7 +2412,7 @@ $function$;
 -- END;
 -- $function$;
 -- 
--- CREATE FUNCTION sql_saga.drop_system_versioning(table_name regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', purge boolean DEFAULT false)
+-- CREATE FUNCTION sql_saga.drop_system_versioning(table_name regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
 --  RETURNS boolean
 --  LANGUAGE plpgsql
 --  SECURITY DEFINER
@@ -2473,11 +2473,11 @@ $function$;
 --      * statement." but we leave the history table intact in case the user
 --      * merely wants to make some DDL changes and hook things back up again.
 --      *
---      * The purge parameter tells us that the user really wants to get rid of it
+--      * The cleanup parameter tells us that the user really wants to get rid of it
 --      * all.
 --      */
---     IF NOT is_dropped AND purge THEN
---         PERFORM sql_saga.drop_era(table_name, 'system_time', drop_behavior, purge);
+--     IF NOT is_dropped AND cleanup THEN
+--         PERFORM sql_saga.drop_era(table_name, 'system_time', drop_behavior, cleanup);
 --         EXECUTE format('DROP TABLE %s %s', system_versioning_row.audit_table_name, drop_behavior);
 --     END IF;
 -- 
