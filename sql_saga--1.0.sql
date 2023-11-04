@@ -1170,7 +1170,7 @@ BEGIN
     END IF;
 
     /* If we were given a unique constraint to use, look it up and make sure it matches */
-    SELECT format('UNIQUE (%s)', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality))
+    SELECT format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality))
     INTO unique_sql
     FROM unnest(column_names || era_row.start_column_name || era_row.end_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
