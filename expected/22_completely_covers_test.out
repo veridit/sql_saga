@@ -64,7 +64,7 @@ WHERE   job_id = 3;
 (1 row)
 
 -- an infinite start will cover an infinite target:
-SELECT  completely_covers(valid_at, tstzrange(NULL, '2017-11-27 17:00:00'))
+SELECT  sql_saga.completely_covers(tstzrange(valid_from,valid_to), tstzrange('-infinity', '2017-11-27 17:00:00'))
 FROM    shifts
 WHERE   job_id = 3;
  completely_covers 
