@@ -42,7 +42,7 @@ TABLE sql_saga.era;
  basic      | bp       | s                 | e               | daterange  | c                       | 
 (1 row)
 
-SELECT sql_saga.drop_era('basic', 'bp', purge => true);
+SELECT sql_saga.drop_era('basic', 'bp', cleanup => true);
  drop_era 
 ----------
  t

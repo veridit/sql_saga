@@ -10,7 +10,7 @@ SELECT sql_saga.drop_era('basic', 'bp');
 TABLE sql_saga.era;
 SELECT sql_saga.add_era('basic', 's', 'e', 'bp', bounds_check_constraint => 'c');
 TABLE sql_saga.era;
-SELECT sql_saga.drop_era('basic', 'bp', purge => true);
+SELECT sql_saga.drop_era('basic', 'bp', cleanup => true);
 TABLE sql_saga.era;
 SELECT sql_saga.add_era('basic', 's', 'e', 'bp');
 TABLE sql_saga.era;
