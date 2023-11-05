@@ -122,25 +122,25 @@ SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
 /*
  * C Helper functions
  */
-CREATE OR REPLACE FUNCTION sql_saga.completely_covers_transfn(internal, tstzrange, tstzrange)
+CREATE OR REPLACE FUNCTION sql_saga.no_gaps_transfn(internal, tstzrange, tstzrange)
 RETURNS internal
-AS 'sql_saga', 'completely_covers_transfn'
+AS 'sql_saga', 'no_gaps_transfn'
 LANGUAGE c;
 
-CREATE OR REPLACE FUNCTION sql_saga.completely_covers_finalfn(internal, tstzrange, tstzrange)
+CREATE OR REPLACE FUNCTION sql_saga.no_gaps_finalfn(internal, tstzrange, tstzrange)
 RETURNS boolean
-AS 'sql_saga', 'completely_covers_finalfn'
+AS 'sql_saga', 'no_gaps_finalfn'
 LANGUAGE c;
 
 /*
- * completely_covers(period tstzrange, target tstzrange) -
+ * no_gaps(period tstzrange, target tstzrange) -
  * Returns true if the fixed arg `target`
  * is completely covered by the sum of the `period` values.
  */
-CREATE AGGREGATE sql_saga.completely_covers(tstzrange, tstzrange) (
-  sfunc = sql_saga.completely_covers_transfn,
+CREATE AGGREGATE sql_saga.no_gaps(tstzrange, tstzrange) (
+  sfunc = sql_saga.no_gaps_transfn,
   stype = internal,
-  finalfunc = sql_saga.completely_covers_finalfn,
+  finalfunc = sql_saga.no_gaps_finalfn,
   finalfunc_extra
 );
 

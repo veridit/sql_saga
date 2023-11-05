@@ -11,7 +11,7 @@ SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
 
 REGRESS = $(patsubst sql/%.sql,%,$(SQL_FILES))
 
-OBJS = sql_saga.o periods.o completely_covers.o $(WIN32RES)
+OBJS = sql_saga.o periods.o no_gaps.o $(WIN32RES)
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

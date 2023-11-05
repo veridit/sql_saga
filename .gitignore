@@ -1,8 +1,10 @@
 sql_saga.o
 sql_saga.so
 completely_covers.o
-periods.o
 completely_covers.bc
+no_gaps.o
+no_gaps.bc
+periods.o
 periods.bc
 sql_saga.bc
 sql_saga.dylib
