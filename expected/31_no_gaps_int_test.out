@@ -1,0 +1,129 @@
+-- First, create the integer shifts table
+CREATE TABLE int_shifts (
+  job_id INTEGER,
+  worker_id INTEGER,
+  valid_from INT,
+  valid_to INT
+);
+-- Add era and unique key via sql_saga
+SELECT sql_saga.add_era('int_shifts', 'valid_from', 'valid_to');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('int_shifts', ARRAY['job_id', 'worker_id']);
+          add_unique_key           
+-----------------------------------
+ int_shifts_job_id_worker_id_valid
+(1 row)
+
+TABLE sql_saga.era;
+ table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------+-----------------+------------+-------------------------+------------------
+ int_shifts | valid    | valid_from        | valid_to        | int4range  | int_shifts_valid_check  | 
+(1 row)
+
+TABLE sql_saga.unique_keys;
+             key_name              | table_name |    column_names    | era_name |                  unique_constraint                  |             exclude_constraint             
+-----------------------------------+------------+--------------------+----------+-----------------------------------------------------+--------------------------------------------
+ int_shifts_job_id_worker_id_valid | int_shifts | {job_id,worker_id} | valid    | int_shifts_job_id_worker_id_valid_from_valid_to_key | int_shifts_job_id_worker_id_int4range_excl
+(1 row)
+
+-- Insert test data into the integer shifts table
+INSERT INTO int_shifts(job_id, worker_id, valid_from, valid_to) VALUES
+  (1, 1, 1, 6),
+  (1, 2, 6, 12);
+-- This test checks for an exact match with one range
+-- Expected: TRUE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(1, 6))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
+
+-- This test checks for an exact match with two consecutive ranges
+-- Expected: TRUE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(1, 12))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
+
+-- Test 3: Range with Extra at the Beginning
+-- Expected: TRUE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(2, 6))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
+
+-- Test 4: Range with Extra at the End
+-- Expected: TRUE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(1, 11))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
+
+-- Test 5: Range with Extra on Both Sides
+-- Expected: TRUE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(2, 11))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
+
+-- Test 6: Range that Misses Completely
+-- Expected: FALSE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(20, 25))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ f
+(1 row)
+
+-- Test 7: Range with Uncovered Time at the Beginning
+-- Expected: FALSE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(0, 6))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ f
+(1 row)
+
+-- Test 8: Range with Uncovered Time at the End
+-- Expected: FALSE
+SELECT sql_saga.no_gaps(int4range(valid_from, valid_to), int4range(1, 15))
+FROM int_shifts
+WHERE job_id = 1;
+ no_gaps 
+---------
+ f
+(1 row)
+
+SELECT sql_saga.drop_unique_key('int_shifts', 'int_shifts_job_id_worker_id_valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('int_shifts');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE int_shifts;
