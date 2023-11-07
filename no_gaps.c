@@ -219,15 +219,11 @@ Datum DatumGet(TypeCacheEntry *typcache, RangeBound bound)
             return DatumGetInt32(bound.val);
         case INT8OID:
             return DatumGetInt64(bound.val);
-        case FLOAT4OID:
-            return DatumGetFloat4(bound.val);
-        case FLOAT8OID:
-            return DatumGetFloat8(bound.val);
-        case DATERANGEOID:
+        case DATEOID:
             return DatumGetDateADT(bound.val);
-        case NUMRANGEOID:
-            return PointerGetDatum(bound.val);
-        case TSRANGEOID:
+        case NUMERICOID:
+            return NumericGetDatum(bound.val);
+        case TIMESTAMPOID:
             return DatumGetTimestamp(bound.val);
         case TIMESTAMPTZOID:
             return DatumGetTimestampTz(bound.val);
@@ -247,15 +243,11 @@ Datum DatumNegativeInfinity(TypeCacheEntry *typcache)
             return Int32GetDatum(INT32_MIN);
         case INT8OID:
             return Int64GetDatum(INT64_MIN);
-        case FLOAT4OID:
-            return Float4GetDatum(FLT_MIN);
-        case FLOAT8OID:
-            return Float8GetDatum(-DBL_MAX);
-        case DATERANGEOID:
+        case DATEOID:
             return DateADTGetDatum(DATEVAL_NOBEGIN);
-        case NUMRANGEOID:
-            return PointerGetDatum(NUMERIC_NINF);
-        case TSRANGEOID:
+        case NUMERICOID:
+            return NumericGetDatum(NUMERIC_NINF);
+        case TIMESTAMPOID:
         case TIMESTAMPTZOID:
             return DatumGetTimestampTz(DT_NOBEGIN);
         default:
