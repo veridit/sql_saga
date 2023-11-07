@@ -20,6 +20,8 @@ INSERT INTO numeric_shifts(job_id, worker_id, valid_from, valid_to) VALUES
 
 TABLE numeric_shifts;
 
+SET client_min_messages TO DEBUG1;
+
 -- This test checks for an exact match with one range
 -- Expected: TRUE
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(1.5, 6.5))
@@ -68,6 +70,7 @@ SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(1.5, 15.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
+SET client_min_messages TO NOTICE;
 
 SELECT sql_saga.drop_unique_key('numeric_shifts', 'numeric_shifts_job_id_worker_id_valid');
 SELECT sql_saga.drop_era('numeric_shifts');

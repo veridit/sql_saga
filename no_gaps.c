@@ -104,7 +104,7 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
     typcache = range_get_typcache(fcinfo, RangeTypeGetOid(state->target));
     range_deserialize(typcache, state->target, &state->target_start, &state->target_end, &state->target_empty);
 
-    //ereport(NOTICE, (errmsg("target is [%ld, %ld)", DatumGet(typcache, state->target_start), DatumGet(typcache, state->target_end))));
+    ereport(DEBUG1, (errmsg("target is [%ld, %ld)", DatumGet(typcache, state->target_start), DatumGet(typcache, state->target_end))));
 
     // Initialize covered_to to negative infinity bound
     state->covered_to.val = DatumNegativeInfinity(typcache);
@@ -112,7 +112,7 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
     state->covered_to.inclusive = true;
     state->covered_to.lower = true;
 
-    //ereport(NOTICE, (errmsg("initial covered_to is %ld", DatumGet(typcache, state->covered_to))));
+    ereport(DEBUG1, (errmsg("initial covered_to is %ld", DatumGet(typcache, state->covered_to))));
   } else {
     // ereport(NOTICE, (errmsg("looking up state....")));
     state = (no_gaps_state *)PG_GETARG_POINTER(0);
@@ -142,8 +142,8 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
 
   range_deserialize(typcache, current_range, &current_start, &current_end, &current_empty);
 
-  //ereport(NOTICE, (errmsg("current is [%ld, %ld)", DatumGet(typcache, current_start), DatumGet(typcache, current_end))));
-  //ereport(NOTICE, (errmsg("pre state->covered_to is %ld", DatumGet(typcache, state->covered_to))));
+  ereport(DEBUG1, (errmsg("current is [%ld, %ld)", DatumGet(typcache, current_start), DatumGet(typcache, current_end))));
+  ereport(DEBUG1, (errmsg("pre state->covered_to is %ld", DatumGet(typcache, state->covered_to))));
 
   if (first_time) {
     // If the target range start is unbounded, but the current range start is not, then we cannot have full coverage
@@ -182,7 +182,16 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
   // Update the covered range if the current range extends beyond it
   if (range_cmp_bounds(typcache, &current_end, &state->covered_to) > 0) {
     state->covered_to = current_end;
-    // Notice that the previous non inclusive end is included in the next start.
+
+    //if (!typcache->typbyval && typcache->typlen == -1) {
+    //    Size datumSize = VARSIZE_ANY(DatumGetPointer(current_end.val));
+    //    MemoryContext oldContext = MemoryContextSwitchTo(aggContext);
+    //    state->covered_to.val = PointerGetDatum(palloc(datumSize));
+    //    memcpy(DatumGetPointer(state->covered_to.val), DatumGetPointer(current_end.val), datumSize);
+    //    MemoryContextSwitchTo(oldContext);
+    //}
+    
+    // Notice that the previous non-inclusive end is included in the next start.
     state->covered_to.inclusive = true;
   }
   
@@ -191,7 +200,7 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
     state->no_gaps = true;
     state->finished = true;
   }
-  //ereport(NOTICE, (errmsg("post state->covered_to is %ld", DatumGet(typcache, state->covered_to))));
+  ereport(DEBUG1, (errmsg("post state->covered_to is %ld", DatumGet(typcache, state->covered_to))));
   PG_RETURN_POINTER(state);
 }
 
