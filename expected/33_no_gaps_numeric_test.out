@@ -56,6 +56,10 @@ WHERE job_id = 1;
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(1.5, 12.5))
 FROM numeric_shifts
 WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
 
 -- Test 3: Range with Extra at the Beginning
 -- Expected: TRUE
@@ -72,18 +76,30 @@ WHERE job_id = 1;
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(1.5, 11.5))
 FROM numeric_shifts
 WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
 
 -- Test 5: Range with Extra on Both Sides
 -- Expected: TRUE
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(2.5, 11.5))
 FROM numeric_shifts
 WHERE job_id = 1;
+ no_gaps 
+---------
+ t
+(1 row)
 
 -- Test 6: Range that Misses Completely
 -- Expected: FALSE
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(20.5, 25.5))
 FROM numeric_shifts
 WHERE job_id = 1;
+ no_gaps 
+---------
+ f
+(1 row)
 
 -- Test 7: Range with Uncovered Time at the Beginning
 -- Expected: FALSE
@@ -100,6 +116,10 @@ WHERE job_id = 1;
 SELECT sql_saga.no_gaps(numrange(valid_from, valid_to), numrange(1.5, 15.5))
 FROM numeric_shifts
 WHERE job_id = 1;
+ no_gaps 
+---------
+ f
+(1 row)
 
 SELECT sql_saga.drop_unique_key('numeric_shifts', 'numeric_shifts_job_id_worker_id_valid');
  drop_unique_key 

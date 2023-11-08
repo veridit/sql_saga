@@ -19,6 +19,7 @@
 #include <pg_config.h>
 #include <miscadmin.h>
 #include <utils/array.h>
+#include <utils/datum.h>
 #include <utils/guc.h>
 #include <utils/acl.h>
 #include <utils/lsyscache.h>
@@ -41,6 +42,7 @@
 
 
 // Declarations/Prototypes
+char *DatumGetString(TypeCacheEntry *typcache, RangeBound bound);
 Datum DatumGet(TypeCacheEntry *typcache, RangeBound bound);
 Datum DatumNegativeInfinity(TypeCacheEntry *typcache);
 
@@ -65,7 +67,7 @@ typedef struct no_gaps_state {
 // Implementations
 Datum no_gaps_transfn(PG_FUNCTION_ARGS)
 {
-  MemoryContext aggContext;
+  MemoryContext aggContext, oldContext;
   no_gaps_state *state;
   RangeType *current_range,
             *target_range;
@@ -107,7 +109,9 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
     ereport(DEBUG1, (errmsg("target is [%ld, %ld)", DatumGet(typcache, state->target_start), DatumGet(typcache, state->target_end))));
 
     // Initialize covered_to to negative infinity bound
+    oldContext = MemoryContextSwitchTo(aggContext);
     state->covered_to.val = DatumNegativeInfinity(typcache);
+    MemoryContextSwitchTo(oldContext);
     state->covered_to.infinite = true;
     state->covered_to.inclusive = true;
     state->covered_to.lower = true;
@@ -181,15 +185,25 @@ Datum no_gaps_transfn(PG_FUNCTION_ARGS)
   
   // Update the covered range if the current range extends beyond it
   if (range_cmp_bounds(typcache, &current_end, &state->covered_to) > 0) {
+    Oid datum_oid = typcache->rngelemtype->type_id;
+    TypeCacheEntry *datumtypcache;
+
     state->covered_to = current_end;
 
-    //if (!typcache->typbyval && typcache->typlen == -1) {
-    //    Size datumSize = VARSIZE_ANY(DatumGetPointer(current_end.val));
-    //    MemoryContext oldContext = MemoryContextSwitchTo(aggContext);
-    //    state->covered_to.val = PointerGetDatum(palloc(datumSize));
-    //    memcpy(DatumGetPointer(state->covered_to.val), DatumGetPointer(current_end.val), datumSize);
-    //    MemoryContextSwitchTo(oldContext);
-    //}
+    datumtypcache = lookup_type_cache(datum_oid, 0);
+    if (!datumtypcache->typbyval && datumtypcache->typlen == -1) {
+        MemoryContext oldContext;
+        ereport(DEBUG1, (errmsg("Performing memory copy.")));
+        //ereport(DEBUG1, (errmsg("Before pfree(state->covered_to.val)")));
+        //pfree(state->covered_to.val);
+        oldContext = MemoryContextSwitchTo(aggContext);
+        ereport(DEBUG1, (errmsg("Before datumCopy.")));
+        state->covered_to.val = datumCopy(current_end.val, /*pass by reference when false*/ false, /*dynamic length when -1*/ -1);
+        ereport(DEBUG1, (errmsg("After datumCopy.")));
+        MemoryContextSwitchTo(oldContext);
+    } else {
+        ereport(DEBUG1, (errmsg("Skipping memory copy.")));
+    }
     
     // Notice that the previous non-inclusive end is included in the next start.
     state->covered_to.inclusive = true;
@@ -263,4 +277,47 @@ Datum DatumNegativeInfinity(TypeCacheEntry *typcache)
             elog(ERROR, "Unsupported range type: %u", elem_type_id);
             return (Datum) 0;  // This line will not be reached due to the elog(ERROR) above
     }
+}
+
+
+char *DatumGetString(TypeCacheEntry *typcache, RangeBound bound) {
+    Oid elem_type_id = typcache->rngelemtype->type_id;
+    char *result;
+
+    switch (elem_type_id) {
+        case INT4OID:
+            result = psprintf("%d", DatumGetInt32(bound.val));
+            break;
+        case INT8OID:
+            result = psprintf("%ld", DatumGetInt64(bound.val));
+            break;
+        case DATEOID: {
+            char *dateStr = DatumGetCString(DirectFunctionCall1(date_out, bound.val));
+            result = psprintf("%s", dateStr);
+            pfree(dateStr);
+            break;
+        }
+        case NUMERICOID: {
+            char *numericStr = DatumGetCString(DirectFunctionCall1(numeric_out, bound.val));
+            result = psprintf("%s", numericStr);
+            pfree(numericStr);
+            break;
+        }
+        case TIMESTAMPOID: {
+            char *timestampStr = DatumGetCString(DirectFunctionCall1(timestamp_out, bound.val));
+            result = psprintf("%s", timestampStr);
+            pfree(timestampStr);
+            break;
+        }
+        case TIMESTAMPTZOID: {
+            char *timestamptzStr = DatumGetCString(DirectFunctionCall1(timestamptz_out, bound.val));
+            result = psprintf("%s", timestamptzStr);
+            pfree(timestamptzStr);
+            break;
+        }
+        default:
+            elog(ERROR, "Unsupported element type id: %u", elem_type_id);
+            return NULL; // This line will not be reached due to the elog(ERROR) above
+    }
+    return result;
 }
