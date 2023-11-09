@@ -6,25 +6,25 @@ SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 (1 row)
 
 INSERT INTO houses VALUES
-  (1, 150000, '2015-01-01'::TIMESTAMPTZ, '2016-01-01'::TIMESTAMPTZ),
-  (1, 200000, '2016-01-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ),
-  (2, 300000, '2015-01-01'::TIMESTAMPTZ, '2016-01-01'::TIMESTAMPTZ),
-  (3, 100000, '2014-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ),
-  (3, 200000, '2015-01-01'::TIMESTAMPTZ, 'infinity')
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01'),
+  (2, 300000, '2015-01-01', '2016-01-01'),
+  (3, 100000, '2014-01-01', '2015-01-01'),
+  (3, 200000, '2015-01-01', 'infinity')
 ;
 -- You can update a finite pk id with no references
 UPDATE houses SET id = 4 WHERE id = 1;
 UPDATE houses SET id = 1 WHERE id = 4;
 -- You can update a finite pk range with no references
-UPDATE houses SET valid_from = '1999-01-01'::TIMESTAMPTZ, valid_to = '2000-01-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2015-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2015-01-01'::TIMESTAMPTZ, valid_to = '2016-01-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '1999-06-01'::timestamptz;
+UPDATE houses SET valid_from = '1999-01-01', valid_to = '2000-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2015-06-01'::timestamptz;
+UPDATE houses SET valid_from = '2015-01-01', valid_to = '2016-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '1999-06-01'::timestamptz;
 -- You can update a finite pk range that is partly covered elsewhere
-INSERT INTO rooms VALUES (1, 1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ);
-UPDATE houses SET valid_from = '2016-01-01'::TIMESTAMPTZ, valid_to = '2016-09-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2016-01-01'::TIMESTAMPTZ, valid_to = '2017-01-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
+INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
+UPDATE houses SET valid_from = '2016-01-01', valid_to = '2016-09-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
+UPDATE houses SET valid_from = '2016-01-01', valid_to = '2017-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update a finite pk id that is partly covered
-INSERT INTO rooms VALUES (1, 1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ);
+INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 UPDATE houses SET id = 4 WHERE id = 1;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 126 at RAISE
@@ -32,27 +32,27 @@ SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, tr
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 DELETE FROM rooms;
 -- You can't update a finite pk range that is partly covered
-INSERT INTO rooms VALUES (1, 1, tstzrange('2016-01-01', '2016-06-01'));
+INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 UPDATE houses SET valid_at = tstzrange('2017-01-01', '2018-01-01') WHERE id = 1 AND valid_at @> '2016-06-01'::timestamptz;
 ERROR:  Tried to update 1 during [Fri Jan 01 00:00:00 2016 PST, Sun Jan 01 00:00:00 2017 PST) from houses but there are overlapping references in rooms.house_id
 CONTEXT:  PL/pgSQL function tri_fkey_restrict_upd() line 41 at RAISE
 DELETE FROM rooms;
 -- You can't update a finite pk id that is exactly covered
-INSERT INTO rooms VALUES (1, 1, tstzrange('2016-01-01', '2017-01-01'));
+INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 UPDATE houses SET id = 4 WHERE id = 1;
 ERROR:  Tried to update 1 during [Fri Jan 01 00:00:00 2016 PST, Sun Jan 01 00:00:00 2017 PST) from houses but there are overlapping references in rooms.house_id
 CONTEXT:  PL/pgSQL function tri_fkey_restrict_upd() line 41 at RAISE
 DELETE FROM rooms;
 -- You can't update a finite pk range that is exactly covered
-INSERT INTO rooms VALUES (1, 1, '2016-01-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ);
+INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
-UPDATE houses SET valid_from = '2017-01-01'::TIMESTAMPTZ, valid_to = '2018-01-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
+UPDATE houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update a finite pk id that is more than covered
-INSERT INTO rooms VALUES (1, 1, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ);
+INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
@@ -62,37 +62,37 @@ ERROR:  Tried to update 1 during [Thu Jan 01 00:00:00 2015 PST, Fri Jan 01 00:00
 CONTEXT:  PL/pgSQL function tri_fkey_restrict_upd() line 41 at RAISE
 DELETE FROM rooms;
 -- You can't update a finite pk range that is more than covered
-INSERT INTO rooms VALUES (1, 1, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ);
+INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
-UPDATE houses SET valid_from = '2017-01-01'::TIMESTAMPTZ, valid_to = '2018-01-01'::TIMESTAMPTZ WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
+UPDATE houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_to) @> '2016-06-01'::timestamptz;
 DELETE FROM rooms;
 -- You can update an infinite pk id with no references
-INSERT INTO rooms VALUES (1, 3, tstzrange('2014-06-01', '2015-01-01'));
-UPDATE houses SET id = 4 WHERE id = 3 and valid_at @> '2016-01-01'::timestamptz;
+INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
+UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 UPDATE houses SET id = 3 WHERE id = 4;
 DELETE FROM rooms;
 -- You can update an infinite pk range with no references
-INSERT INTO rooms VALUES (1, 3, tstzrange('2014-06-01', '2015-01-01'));
-UPDATE houses SET valid_at = tstzrange('2017-01-01', '2018-01-01') WHERE id = 3 and valid_at @> '2016-01-01'::timestamptz;
-UPDATE houses SET valid_at = tstzrange('2015-01-01', null) WHERE id = 3 and valid_at @> '2017-06-01'::timestamptz;
+INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
+UPDATE houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
+UPDATE houses SET valid_from = '2015-01-01', valid_to = 'infinity' WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2017-06-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update an infinite pk id that is partly covered
-INSERT INTO rooms VALUES (1, 3, tstzrange('2016-01-01', '2017-01-01'));
-UPDATE houses SET id = 4 WHERE id = 3 and valid_at @> '2016-01-01'::timestamptz;
-ERROR:  Tried to update 3 during [Thu Jan 01 00:00:00 2015 PST, <NULL>) from houses but there are overlapping references in rooms.house_id
-CONTEXT:  PL/pgSQL function tri_fkey_restrict_upd() line 41 at RAISE
+INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
+UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
+ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(4, ["Thu Jan 01 00:00:00 2015 PST",infinity)) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(4, ["Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST")).
 DELETE FROM rooms;
 -- You can't update an infinite pk range that is partly covered
-INSERT INTO rooms VALUES (1, 3, tstzrange('2016-01-01', '2017-01-01'));
-UPDATE houses SET valid_at = tstzrange('2017-01-01', '2018-01-01') WHERE id = 3 and valid_at @> '2016-01-01'::timestamptz;
+INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
+UPDATE houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 ERROR:  Tried to update 3 during [Thu Jan 01 00:00:00 2015 PST, <NULL>) from houses but there are overlapping references in rooms.house_id
 CONTEXT:  PL/pgSQL function tri_fkey_restrict_upd() line 41 at RAISE
 DELETE FROM rooms;
 -- You can't update an infinite pk id that is exactly covered
-INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, 'infinity');
+INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
@@ -100,15 +100,15 @@ PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
 UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update an infinite pk range that is exactly covered
-INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, 'infinity');
+INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
-UPDATE  houses SET valid_from = '2017-01-01'::TIMESTAMPTZ, valid_to = '2018-01-01'::TIMESTAMPTZ WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
+UPDATE  houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update an infinite pk id that is more than covered
-INSERT INTO rooms VALUES (1, 3, '2014-06-01'::TIMESTAMPTZ, 'infinity');
+INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
@@ -116,12 +116,12 @@ PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
 UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 DELETE FROM rooms;
 -- You can't update an infinite pk range that is more than covered
-INSERT INTO rooms VALUES (1, 3, '2014-06-01'::TIMESTAMPTZ, 'infinity');
+INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
-UPDATE houses SET valid_from = '2017-01-01'::TIMESTAMPTZ, valid_to = '2018-01-01'::TIMESTAMPTZ WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
+UPDATE houses SET valid_from = '2017-01-01', valid_to = '2018-01-01' WHERE id = 3 and tstzrange(valid_from, valid_to) @> '2016-01-01'::timestamptz;
 DELETE FROM rooms;
 -- ON UPDATE NOACTION
 -- TODO
