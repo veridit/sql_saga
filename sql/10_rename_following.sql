@@ -6,7 +6,7 @@ SET ROLE TO sql_saga_unprivileged_user;
  * throw an error.
  */
 
-/* periods */
+/* era */
 CREATE TABLE rename_test(col1 text, col2 bigint, col3 time, s integer, e integer);
 SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
 TABLE sql_saga.era;
@@ -29,6 +29,7 @@ TABLE sql_saga.api_view;
 SELECT sql_saga.drop_api('rename_test', 'p');
 ALTER TABLE rename_test DROP COLUMN id;
 
+
 /* unique_keys */
 SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p');
 TABLE sql_saga.unique_keys;
@@ -40,6 +41,7 @@ TABLE sql_saga.unique_keys;
 /* foreign_keys */
 CREATE TABLE rename_test_ref (LIKE rename_test);
 SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
+TABLE sql_saga.era;
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
@@ -53,5 +55,5 @@ SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1
 SELECT sql_saga.drop_unique_key('rename_test', 'rename_test_col2_col1_col3_p');
 DROP TABLE rename_test;
 
-SELECT sql_saga.drop_era('rename_test_ref','embedded " symbols');
+SELECT sql_saga.drop_era('rename_test_ref','q');
 DROP TABLE rename_test_ref;

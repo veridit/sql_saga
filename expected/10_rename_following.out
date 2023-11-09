@@ -4,7 +4,7 @@ SET ROLE TO sql_saga_unprivileged_user;
  * If anything we store as "name" is renamed, we need to update our catalogs or
  * throw an error.
  */
-/* periods */
+/* era */
 CREATE TABLE rename_test(col1 text, col2 bigint, col3 time, s integer, e integer);
 SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
  add_era 
@@ -92,9 +92,9 @@ ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT "rename_test_col2_col1_col3_s < e_embedded "" symbols_key" TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_int4range_excl TO exconst;
 TABLE sql_saga.unique_keys;
-           key_name           | table_name  |    column_names     | era_name | unique_constraint |            exclude_constraint             
-------------------------------+-------------+---------------------+----------+-------------------+-------------------------------------------
- rename_test_col2_col1_col3_p | rename_test | {col2,COLUMN1,col3} | p        | unconst           | rename_test_col2_col1_col3_int4range_excl
+           key_name           | table_name  |    column_names     | era_name | unique_constraint | exclude_constraint 
+------------------------------+-------------+---------------------+----------+-------------------+--------------------
+ rename_test_col2_col1_col3_p | rename_test | {col2,COLUMN1,col3} | p        | unconst           | exconst
 (1 row)
 
 /* foreign_keys */
@@ -104,6 +104,13 @@ SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 ---------
  t
 (1 row)
+
+TABLE sql_saga.era;
+   table_name    | era_name | start_column_name |  end_column_name   | range_type | bounds_check_constraint | audit_table_name 
+-----------------+----------+-------------------+--------------------+------------+-------------------------+------------------
+ rename_test     | p        | s < e             | embedded " symbols | int4range  | start_before_end        | 
+ rename_test_ref | q        | s < e             | embedded " symbols | int4range  | rename_test_ref_q_check | 
+(2 rows)
 
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
            add_foreign_key           
@@ -119,24 +126,42 @@ TABLE sql_saga.foreign_keys;
 
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
 ERROR:  cannot drop or rename column "COLUMN1" on table "rename_test_ref" because it is used in era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 206 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 209 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 241 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_update" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 241 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_update" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 241 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 241 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
 TABLE sql_saga.foreign_keys;
               key_name               |   table_name    |    column_names     | era_name |          unique_key          | match_type | delete_action | update_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
 -------------------------------------+-----------------+---------------------+----------+------------------------------+------------+---------------+---------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------
  rename_test_ref_col2_COLUMN1_col3_q | rename_test_ref | {col2,COLUMN1,col3} | q        | rename_test_col2_col1_col3_p | SIMPLE     | NO ACTION     | NO ACTION     | rename_test_ref_col2_COLUMN1_col3_q_fk_insert | rename_test_ref_col2_COLUMN1_col3_q_fk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_delete
 (1 row)
 
-DROP TABLE rename_test_ref;
+SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1_col3_q');
+ drop_foreign_key 
+------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('rename_test', 'rename_test_col2_col1_col3_p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
 DROP TABLE rename_test;
+SELECT sql_saga.drop_era('rename_test_ref','q');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE rename_test_ref;

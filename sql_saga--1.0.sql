@@ -2941,6 +2941,7 @@ BEGIN
             ) AS a ON true
         WHERE uk.column_names <> a.column_names
     LOOP
+        --RAISE NOTICE 'unique_keys sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
@@ -2953,8 +2954,9 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
         WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.unique_constraint))
         GROUP BY uk.key_name, c.oid, c.conname
-        HAVING format('UNIQUE (%s)', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)) = pg_catalog.pg_get_constraintdef(c.oid)
+        HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
+        --RAISE NOTICE 'unique_constraint sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
@@ -2967,12 +2969,13 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
         WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.exclude_constraint))
         GROUP BY uk.key_name, c.oid, c.conname, p.range_type, p.start_column_name, p.end_column_name
-        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''[)''::text) WITH &&)',
+        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''[)''::text) WITH &&) DEFERRABLE',
                       string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality),
                       p.range_type,
                       p.start_column_name,
                       p.end_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
+        --RAISE NOTICE 'exclude_constraint sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
