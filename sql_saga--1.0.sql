@@ -1479,6 +1479,10 @@ DECLARE
     era_row sql_saga.era;
     ref_era_row sql_saga.era;
     unique_row sql_saga.unique_keys;
+    schema_name_str text;
+    table_name_str text;
+    unique_row_schema_name_str text;
+    unique_row_table_name_str text;
     column_attnums smallint[];
     idx integer;
     pass integer;
@@ -1493,6 +1497,11 @@ BEGIN
 
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga._serialize(table_name);
+
+    SELECT n.nspname, c.relname INTO schema_name_str, table_name_str
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_name;
 
     /* Get the period involved */
     SELECT p.*
@@ -1550,6 +1559,11 @@ BEGIN
             era_row.era_name, ref_era_row.era_name;
     END IF;
 
+    SELECT n.nspname, c.relname INTO unique_row_schema_name_str, unique_row_table_name_str
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = unique_row.table_name;
+
     /* Check that all the columns match */
     IF EXISTS (
         SELECT FROM unnest(column_names, unique_row.column_names) AS u (fk_attname, uk_attname)
@@ -1584,13 +1598,15 @@ BEGIN
     END LOOP;
     key_name := key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
+    -- TODO: Consider how update_action should be handled, it seems
+    -- clear it should affect the timing of the trigger.
     /* See if we're deferring the constraints or not */
-    IF update_action = 'NO ACTION' THEN
-        upd_action := ' DEFERRABLE INITIALLY DEFERRED';
-    END IF;
-    IF delete_action = 'NO ACTION' THEN
-        del_action := ' DEFERRABLE INITIALLY DEFERRED';
-    END IF;
+    -- IF update_action = 'NO ACTION' THEN
+    --     upd_action := ' DEFERRABLE INITIALLY DEFERRED';
+    -- END IF;
+    -- IF delete_action = 'NO ACTION' THEN
+    --     del_action := ' DEFERRABLE INITIALLY DEFERRED';
+    -- END IF;
 
     /* Get the columns that require checking the constraint */
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
@@ -1603,17 +1619,17 @@ BEGIN
 
     /* Time to make the underlying triggers */
     fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_insert'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON %s FROM %s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_insert_check(%L)',
-        fk_insert_trigger, table_name, unique_row.table_name, key_name);
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_insert_check(%L)',
+        fk_insert_trigger, schema_name_str, table_name_str, unique_row_schema_name_str ,unique_row_table_name_str, key_name);
     fk_update_trigger := coalesce(fk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_update_check(%L)',
-        fk_update_trigger, foreign_columns, table_name, unique_row.table_name, key_name);
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF ' || foreign_columns || ' ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_update_check(%L)',
+        fk_update_trigger, schema_name_str, table_name_str, unique_row_schema_name_str ,unique_row_table_name_str, key_name);
     uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s%s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check(%L)',
-        uk_update_trigger, unique_columns, unique_row.table_name, table_name, upd_action, key_name);
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF ' || unique_columns || ' ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check(%L)',
+        uk_update_trigger, unique_row_schema_name_str ,unique_row_table_name_str, schema_name_str, table_name_str, key_name);
     uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_delete'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %s FROM %s%s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
-        uk_delete_trigger, unique_row.table_name, table_name, del_action, key_name);
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
+        uk_delete_trigger, unique_row_schema_name_str ,unique_row_table_name_str, schema_name_str, table_name_str, key_name);
 
     INSERT INTO sql_saga.foreign_keys (key_name, table_name, column_names, era_name, unique_key, match_type, update_action, delete_action,
                                       fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
@@ -1621,8 +1637,8 @@ BEGIN
             fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
 
     /* Validate the constraint on existing data, iterating over each row. */
-    EXECUTE format('SELECT sql_saga.validate_foreign_key_new_row(%1$L, to_jsonb(%2$I.*)) FROM %2$I;',
-        key_name, table_name);
+    EXECUTE format('SELECT sql_saga.validate_foreign_key_new_row(%1$L, to_jsonb(%3$I.*)) FROM %2$I.%3$I;',
+        key_name, schema_name_str, table_name_str);
 
     RETURN key_name;
 END;

@@ -92,6 +92,8 @@ COMMIT;
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -142,6 +144,8 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -160,6 +164,8 @@ COMMIT;
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2016-09-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-06-01'
@@ -234,6 +240,8 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -252,6 +260,8 @@ COMMIT;
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2015-03-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -315,6 +325,8 @@ COMMIT;
 
 BEGIN;
 SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
