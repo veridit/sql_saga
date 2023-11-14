@@ -152,3 +152,8 @@ WHERE   job_id = 1;
 -- Or maybe since that is a self-contradiction maybe ignore that case?
 
 DELETE FROM date_shifts;
+
+SELECT sql_saga.drop_unique_key('date_shifts', 'date_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_era('date_shifts');
+
+DROP TABLE date_shifts;

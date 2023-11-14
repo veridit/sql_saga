@@ -20,16 +20,14 @@ SELECT sql_saga.add_unique_key('timestamp_shifts', ARRAY['job_id', 'worker_id'])
 TABLE sql_saga.era;
     table_name    | era_name | start_column_name | end_column_name | range_type |   bounds_check_constraint    | audit_table_name 
 ------------------+----------+-------------------+-----------------+------------+------------------------------+------------------
- date_shifts      | valid    | valid_from        | valid_to        | daterange  | date_shifts_valid_check      | 
  timestamp_shifts | valid    | valid_from        | valid_to        | tsrange    | timestamp_shifts_valid_check | 
-(2 rows)
+(1 row)
 
 TABLE sql_saga.unique_keys;
                 key_name                 |    table_name    |    column_names    | era_name |                     unique_constraint                     |               exclude_constraint               
 -----------------------------------------+------------------+--------------------+----------+-----------------------------------------------------------+------------------------------------------------
- date_shifts_job_id_worker_id_valid      | date_shifts      | {job_id,worker_id} | valid    | date_shifts_job_id_worker_id_valid_from_valid_to_key      | date_shifts_job_id_worker_id_daterange_excl
  timestamp_shifts_job_id_worker_id_valid | timestamp_shifts | {job_id,worker_id} | valid    | timestamp_shifts_job_id_worker_id_valid_from_valid_to_key | timestamp_shifts_job_id_worker_id_tsrange_excl
-(2 rows)
+(1 row)
 
 INSERT INTO timestamp_shifts(job_id, worker_id, valid_from, valid_to) VALUES
   (1, 1, '2017-11-27 06:00:00', '2017-11-27 12:00:00'),
@@ -251,3 +249,16 @@ ERROR:  no_gaps first argument should be sorted but got a range ending before th
 -- TODO: handle an empty target range? e.g. [5, 5)
 -- Or maybe since that is a self-contradiction maybe ignore that case?
 DELETE FROM timestamp_shifts;
+SELECT sql_saga.drop_unique_key('timestamp_shifts', 'timestamp_shifts_job_id_worker_id_valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('timestamp_shifts');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE timestamp_shifts;
