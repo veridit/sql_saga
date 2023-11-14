@@ -307,19 +307,125 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 COMMIT;
 -- 3. Large shift to a later time (all the way past the later range)
 -- 3.1. Large shift to a later time (all the way past the later range), earlier first:
--- TODO
+-- Delete existing data and re-insert
+DELETE FROM rooms;
+DELETE FROM houses;
+INSERT INTO houses VALUES
+  (1, 150000, '2015-01-01', '2016-01-01'),
+  (1, 200000, '2016-01-01', '2017-01-01');
+INSERT INTO rooms VALUES
+  (1, 1, '2015-01-01', '2017-01-01');
+-- Perform large shift
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update earlier range first
+UPDATE houses
+SET valid_from = '2018-01-01', valid_to = '2019-01-01'
+WHERE id = 1 AND valid_from = '2015-01-01';
+-- Update later range
+UPDATE houses
+SET valid_from = '2019-01-01', valid_to = '2020-01-01'
+WHERE id = 1 AND valid_from = '2016-01-01';
+COMMIT;
+ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 149 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
+PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 -- 3.2. Large shift to a later time (all the way past the later range), later first:
--- TODO
+-- Similar setup as above but update the later range first
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update later range first
+UPDATE houses
+SET valid_from = '2019-01-01', valid_to = '2020-01-01'
+WHERE id = 1 AND valid_from = '2016-01-01';
+-- Update earlier range
+UPDATE houses
+SET valid_from = '2018-01-01', valid_to = '2019-01-01'
+WHERE id = 1 AND valid_from = '2015-01-01';
+COMMIT;
+ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 149 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
+PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 -- 4. Large shift to an earlier time (all the way past the earlier range)
 -- 4.1. Large shift to an earlier time (all the way past the earlier range), earlier first:
--- TODO
+-- Delete and re-insert
+DELETE FROM rooms;
+DELETE FROM houses;
+INSERT INTO houses VALUES
+  (1, 150000, '2020-01-01', '2021-01-01'),
+  (1, 200000, '2021-01-01', '2022-01-01');
+INSERT INTO rooms VALUES
+  (1, 1, '2020-01-01', '2022-01-01');
+-- Perform shift
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update earlier range first
+UPDATE houses
+SET valid_from = '2018-01-01', valid_to = '2019-01-01'
+WHERE id = 1 AND valid_from = '2020-01-01';
+-- Update later range
+UPDATE houses
+SET valid_from = '2019-01-01', valid_to = '2020-01-01'
+WHERE id = 1 AND valid_to = '2022-01-01';
+-- Adjust rooms
+UPDATE rooms
+SET valid_from = '2018-01-01', valid_to = '2020-01-01'
+WHERE id = 1;
+COMMIT;
 -- 4.2. Large shift to an earlier time (all the way past the earlier range), later first:
--- TODO
+-- Similar setup as above but update the later range first
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update later range first
+UPDATE houses
+SET valid_from = '2019-01-01', valid_to = '2020-01-01'
+WHERE id = 1 AND valid_from = '2021-01-01';
+-- Update earlier range
+UPDATE houses
+SET valid_from = '2018-01-01', valid_to = '2019-01-01'
+WHERE id = 1 AND valid_from = '2020-01-01';
+-- Adjust rooms
+UPDATE rooms
+SET valid_from = '2018-01-01', valid_to = '2020-01-01'
+WHERE id = 1;
+COMMIT;
 -- 5. Swap the ranges
 -- 5.1. Swap the ranges, earlier first:
--- TODO
+-- Setup
+DELETE FROM rooms;
+DELETE FROM houses;
+INSERT INTO houses VALUES
+  (1, 150000, '2020-01-01', '2021-01-01'),
+  (1, 200000, '2021-01-01', '2022-01-01');
+INSERT INTO rooms VALUES
+  (1, 1, '2020-01-01', '2022-01-01');
+-- Swap ranges
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update earlier range to later period
+UPDATE houses
+SET valid_from = '2021-01-01', valid_to = '2022-01-01'
+WHERE id = 1 AND assessment = 150000;
+-- Update later range to earlier period
+UPDATE houses
+SET valid_from = '2020-01-01', valid_to = '2021-01-01'
+WHERE id = 1 AND assessment = 200000;
+COMMIT;
 -- 5.2. Swap the ranges, later first:
--- TODO
+-- Similar setup as above but update the later range to earlier period first
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Update later range to earlier period first
+UPDATE houses
+SET valid_from = '2020-01-01', valid_to = '2021-01-01'
+WHERE id = 1 AND assessment = 200000;
+-- Update earlier range to later period
+UPDATE houses
+SET valid_from = '2021-01-01', valid_to = '2022-01-01'
+WHERE id = 1 AND assessment = 150000;
+COMMIT;
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
  disable_sql_saga_for_shifts_houses_and_rooms 
 ----------------------------------------------
