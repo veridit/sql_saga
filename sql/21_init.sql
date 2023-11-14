@@ -40,13 +40,14 @@ TABLE sql_saga.unique_keys;
 SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
 TABLE sql_saga.foreign_keys;
 
-SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
-TABLE sql_saga.foreign_keys;
-
 -- While sql_saga is active
 \d rooms
 \d houses
 \d shifts
+
+-- Remove sql_saga
+SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
+TABLE sql_saga.foreign_keys;
 
 SELECT sql_saga.drop_unique_key('rooms', 'rooms_id_valid');
 SELECT sql_saga.drop_unique_key('houses','houses_id_valid');

@@ -111,17 +111,6 @@ TABLE sql_saga.foreign_keys;
  rooms_house_id_valid | rooms      | {house_id}   | valid    | houses_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | rooms_house_id_valid_fk_insert | rooms_house_id_valid_fk_update | rooms_house_id_valid_uk_update | rooms_house_id_valid_uk_delete
 (1 row)
 
-SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
- drop_foreign_key 
-------------------
- t
-(1 row)
-
-TABLE sql_saga.foreign_keys;
- key_name | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-----------+------------+--------------+----------+------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
-(0 rows)
-
 -- While sql_saga is active
 \d rooms
                           Table "public.rooms"
@@ -136,6 +125,9 @@ Indexes:
     "rooms_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
 Check constraints:
     "rooms_valid_check" CHECK (valid_from < valid_to)
+Triggers:
+    rooms_house_id_valid_fk_insert AFTER INSERT ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('rooms_house_id_valid')
+    rooms_house_id_valid_fk_update AFTER UPDATE OF house_id, valid_from, valid_to ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('rooms_house_id_valid')
 
 \d houses
                          Table "public.houses"
@@ -150,6 +142,9 @@ Indexes:
     "houses_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
 Check constraints:
     "houses_valid_check" CHECK (valid_from < valid_to)
+Triggers:
+    rooms_house_id_valid_uk_delete AFTER DELETE ON houses FROM rooms DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('rooms_house_id_valid')
+    rooms_house_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_to ON houses FROM rooms DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('rooms_house_id_valid')
 
 \d shifts
                          Table "public.shifts"
@@ -164,6 +159,18 @@ Indexes:
     "shifts_job_id_worker_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (job_id, worker_id, valid_from, valid_to) DEFERRABLE
 Check constraints:
     "shifts_valid_check" CHECK (valid_from < valid_to)
+
+-- Remove sql_saga
+SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
+ drop_foreign_key 
+------------------
+ t
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ key_name | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+----------+------------+--------------+----------+------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+(0 rows)
 
 SELECT sql_saga.drop_unique_key('rooms', 'rooms_id_valid');
  drop_unique_key 

@@ -1603,16 +1603,16 @@ BEGIN
 
     /* Time to make the underlying triggers */
     fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_insert'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON %s FROM %s DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_insert_check(%L)',
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON %s FROM %s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_insert_check(%L)',
         fk_insert_trigger, table_name, unique_row.table_name, key_name);
     fk_update_trigger := coalesce(fk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_update_check(%L)',
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_update_check(%L)',
         fk_update_trigger, foreign_columns, table_name, unique_row.table_name, key_name);
     uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s%s FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check(%L)',
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF %s ON %s FROM %s%s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check(%L)',
         uk_update_trigger, unique_columns, unique_row.table_name, table_name, upd_action, key_name);
     uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_delete'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %s FROM %s%s FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
+    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %s FROM %s%s DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
         uk_delete_trigger, unique_row.table_name, table_name, del_action, key_name);
 
     INSERT INTO sql_saga.foreign_keys (key_name, table_name, column_names, era_name, unique_key, match_type, update_action, delete_action,
