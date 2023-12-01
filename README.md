@@ -18,6 +18,109 @@ An Sql Saga is the history of a table (an era) over multiple periods of time.
 - Built upon the robust and reliable PostgreSQL database system.
 - Supports change tracking and delete in accordance with NSO requirements.
 
+## Temporal Tables with Foreign Keys example
+
+A simplified example to illustrate the concept.
+A table has a `valid_from` and `valid_to` date, such that information
+as it evolves over time can be stored.
+The currently valid row has `infinite` in the `valid_to` column.
+
+### Temporal Table with Valid Time
+
+Example table:
+```
+TABLE establishment (
+    id
+    valid_from date,
+    valid_to date,
+    name,
+)
+```
+Example data
+```
+------+-------------+--------------+------------------------------------
+id    | valid_from  |   valid_to   |  name
+------+-------------+--------------+------------------------------------
+01    | 2023-01-01  |   2023-06-30 |  AutoParts LLC
+01    | 2023-07-01  |   2023-12-31 |  AutoSpareParts INC
+01    | 2024-01-01  |   infinity   |  SpareParts Corporation
+02    | 2022-01-01  |   2022-06-30 |  Gasoline Refinement LLC
+02    | 2022-07-01  |   2022-12-31 |  Gasoline and Diesel Refinement LLC
+02    | 2023-01-01  |   infinity   |  General Refinement LLC
+------+-------------+--------------+------------------------------------
+```
+
+A regular table of statistical values
+```
+TABLE stat_definition(
+  code,
+  stat_type,
+  frequency,
+  name,
+)
+```
+Example values measured for an establishment.
+```
+----------+-----------+--------------+---------------------------
+code      | stat_type |   frequency  |  name
+----------+-----------+--------------+---------------------------
+employees |   int     |   yearly     |  Number of people employed
+turnover  |   int     |   yearly     |  Turnover (Local Currency)
+----------+-----------+--------------+---------------------------
+```
+There is no temporal information for the `stat_definition` table,
+as we don't report on their historic development.
+
+A table for tracking the measured values over time,
+using `valid_from` and `valid_to`, in addition to having
+a regular foreign key to `stat_definition_id`, and a temporal
+foreign key to `establishment.id`.
+
+```
+TABLE stat_for_unit (
+    id
+    stat_definition_id,
+    valid_from,
+    valid_to,
+    establishment_id,
+    value,
+)
+```
+
+Some example data to show how measurements are kept in `stat_for_unit`.
+```
+-----------+------------+------------+--------+-----------
+ stat_def  | valid_from | valid_to   | est_id | value
+-----------+------------+------------+--------+-----------
+ employees | 2020-01-01 | 2023-12-31 |  01    |         90
+ employees | 2024-01-01 | infinty    |  01    |        130
+ turnover  | 2023-01-01 | 2023-12-31 |  01    | 10 000 000
+ turnover  | 2024-01-01 | infinty    |  01    | 30 000 000
+ employees | 2022-01-01 | 2022-12-31 |  02    |         20
+ employees | 2023-01-01 | infinty    |  02    |         80
+ turnover  | 2022-01-01 | 2022-12-31 |  02    | 40 000 000
+ turnover  | 2023-01-01 | infinty    |  02    | 70 000 000
+-----------+------------+------------+--------+-----------
+```
+
+The purpose of this extension is to make sure that for foreign keys
+between temporal tables, the linked table, in this case `establishment`,
+must have the linked foreign key available for the entire period between
+`valid_from` and `valid_to` of the `stat_for_unit` table.
+
+Notice that there can be multiple matching rows, the `valid_from` and `valid_to`
+do not need to align between the tables.
+
+So this line from `stat_for_unit`
+```
+turnover  | 2022-01-01 | 2022-12-31 |  02    | 40 000 000
+```
+matches these lines in `establishment`
+```
+02    | 2022-01-01  |   2022-06-30 |  Gasoline Refinement LLC
+02    | 2022-07-01  |   2022-12-31 |  Gasoline and Diesel Refinement LLC
+```
+
 ## Installation
 
 TODO: Build a docker image with postgres and the sql_saga extension.
@@ -114,7 +217,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 ---
 
 <p align="center">
-  <img src="assets/sql_saga_logo.png" alt="sql_saga logo" width="200"/>
+  <img src="./assets/sql_saga_logo.png" alt="sql_saga logo" width="200"/>
 </p>
 
 ---
