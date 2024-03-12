@@ -187,6 +187,13 @@ sql_saga.drop_unique_key('legal_unit_era', ARRAY['legal_ident']);
 sql_saga.drop_era('person_era','valid_from','valid_to');
 ```
 
+## Development
+Run regression tests with
+```
+make && make install && make installcheck
+```
+
+
 ## Dependencies
 
 - [PostgreSQL](https://www.postgresql.org/)
