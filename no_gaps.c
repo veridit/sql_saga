@@ -36,11 +36,6 @@
 
 #include "no_gaps.h"
 
-// Taken from 'https://github.com/postgres/postgres/raw/master/src/backend/utils/adt/numeric.c',
-// since it is not exposed in a headerfile.
-#define NUMERIC_NINF      0xF000
-
-
 // Declarations/Prototypes
 char *DatumGetString(Oid elem_oid, RangeBound bound);
 Datum DatumNegativeInfinity(Oid elem_oid);
@@ -254,7 +249,12 @@ Datum DatumNegativeInfinity(Oid elem_oid)
         case DATEOID:
             return DateADTGetDatum(DATEVAL_NOBEGIN);
         case NUMERICOID:
-            return NumericGetDatum(NUMERIC_NINF);
+        {
+            text* negativeInfinityText = cstring_to_text("-Infinity");
+            Datum negativeInfinityDatum = DirectFunctionCall1(numeric_in, PointerGetDatum(negativeInfinityText));
+            pfree(negativeInfinityText);
+            return negativeInfinityDatum;
+        }
         case TIMESTAMPOID:
         case TIMESTAMPTZOID:
             return DatumGetTimestampTz(DT_NOBEGIN);
