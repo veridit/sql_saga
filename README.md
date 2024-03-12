@@ -224,7 +224,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 ---
 
 <p align="center">
-  <img src="./assets/pg_saga_logo.png" alt="sql_saga logo" width="200"/>
+  <img src="./assets/sql_saga_logo.png" alt="sql_saga logo" width="200"/>
 </p>
 
 ---
