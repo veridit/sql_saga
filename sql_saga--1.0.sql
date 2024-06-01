@@ -1905,6 +1905,7 @@ BEGIN
         INTO violation;
 
         IF violation THEN
+            RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
             RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
                 foreign_key_info.uk_table_oid::regclass,
                 foreign_key_name,
@@ -1928,6 +1929,7 @@ BEGIN
     INTO violation;
 
     IF violation THEN
+        RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
         RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
             foreign_key_info.uk_table_oid::regclass,
             foreign_key_name,
