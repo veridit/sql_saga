@@ -3537,7 +3537,7 @@ BEGIN
   IF fk_val IS NULL THEN RETURN true; END IF;
 
   EXECUTE format($q$
-    SELECT  completely_covers(%1$s.%3$s, $2 ORDER BY %1$s.%3$s)
+    SELECT  no_gaps(%1$s.%3$s, $2 ORDER BY %1$s.%3$s)
     FROM    %1$s
     WHERE   %1$s.%2$s = $1
     $q$,
@@ -3679,7 +3679,7 @@ BEGIN
       LEFT OUTER JOIN ONLY %4$s
       ON      %4$s.%5$s = %7$s.fk
       GROUP BY %7$s.fk, %7$s.valid_at
-      HAVING NOT COALESCE(completely_covers(%4$s.%6$s, %7$s.valid_at ORDER BY %4$s.%6$s), false)
+      HAVING NOT COALESCE(no_gaps(%4$s.%6$s, %7$s.valid_at ORDER BY %4$s.%6$s), false)
     )
     $q$, from_table, fk_column, from_range_column, to_table, pk_column, to_range_column, tmp_table)
     USING old_pk_val, old_pk_range
