@@ -64,7 +64,7 @@ TABLE fk;
 --expected: fail
 DELETE FROM uk WHERE (id, s, e) = (1, 1, 3);
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 149 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
 TABLE uk;
@@ -84,7 +84,7 @@ TABLE fk;
 --expected: fail
 DELETE FROM uk WHERE (id, s, e) = (1, 3, 5);
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 149 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
 INSERT INTO uk(id, s, e)        VALUES    (2, 1, 5);
@@ -108,7 +108,7 @@ TABLE fk;
 --expected: fail
 UPDATE uk SET e = 3 WHERE (id, s, e) = (2, 1, 5);
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 149 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 TABLE uk;

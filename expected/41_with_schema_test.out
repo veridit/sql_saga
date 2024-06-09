@@ -166,7 +166,7 @@ INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 -- Fail
 DELETE FROM exposed.employees WHERE id = 101;
 ERROR:  update or delete on table "exposed.employees" violates foreign key constraint "staff_employee_id_valid" on table "hidden.staff"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 126 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 127 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
 
