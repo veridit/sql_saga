@@ -2,6 +2,7 @@ CREATE EXTENSION sql_saga CASCADE;
 
 CREATE TABLE legal_unit (
   id INTEGER,
+  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
   valid_to date,
   name varchar NOT NULL
@@ -9,6 +10,7 @@ CREATE TABLE legal_unit (
 
 CREATE TABLE location (
   id INTEGER,
+  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
   valid_to date,
   legal_unit_id INTEGER NOT NULL,
@@ -20,8 +22,8 @@ CREATE TABLE location (
 \d location
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_to');
-SELECT sql_saga.add_era('location', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('location', 'valid_after', 'valid_to');
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');

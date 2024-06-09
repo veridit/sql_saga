@@ -2,12 +2,14 @@ CREATE EXTENSION sql_saga CASCADE;
 NOTICE:  installing required extension "btree_gist"
 CREATE TABLE legal_unit (
   id INTEGER,
+  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
   valid_to date,
   name varchar NOT NULL
 );
 CREATE TABLE location (
   id INTEGER,
+  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
   valid_to date,
   legal_unit_id INTEGER NOT NULL,
@@ -15,32 +17,34 @@ CREATE TABLE location (
 );
 -- Before using sql_saga
 \d legal_unit
-                    Table "public.legal_unit"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           |          | 
- valid_to   | date              |           |          | 
- name       | character varying |           | not null | 
+                                                Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable |                             Default                             
+-------------+-------------------+-----------+----------+-----------------------------------------------------------------
+ id          | integer           |           |          | 
+ valid_after | date              |           |          | generated always as ((valid_from - '@ 1 day'::interval)) stored
+ valid_from  | date              |           |          | 
+ valid_to    | date              |           |          | 
+ name        | character varying |           | not null | 
 
 \d location
-                 Table "public.location"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                                             Table "public.location"
+    Column     |  Type   | Collation | Nullable |                             Default                             
+---------------+---------+-----------+----------+-----------------------------------------------------------------
  id            | integer |           |          | 
+ valid_after   | date    |           |          | generated always as ((valid_from - '@ 1 day'::interval)) stored
  valid_from    | date    |           |          | 
  valid_to      | date    |           |          | 
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('location', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('location', 'valid_after', 'valid_to');
  add_era 
 ---------
  t
@@ -49,8 +53,8 @@ SELECT sql_saga.add_era('location', 'valid_from', 'valid_to');
 TABLE sql_saga.era;
  table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
 ------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- legal_unit | valid    | valid_from        | valid_to        | daterange  | legal_unit_valid_check  | 
- location   | valid    | valid_from        | valid_to        | daterange  | location_valid_check    | 
+ legal_unit | valid    | valid_after       | valid_to        | daterange  | legal_unit_valid_check  | 
+ location   | valid    | valid_after       | valid_to        | daterange  | location_valid_check    | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -66,10 +70,10 @@ SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      key_name       | table_name | column_names | era_name |           unique_constraint           |      exclude_constraint      
----------------------+------------+--------------+----------+---------------------------------------+------------------------------
- legal_unit_id_valid | legal_unit | {id}         | valid    | legal_unit_id_valid_from_valid_to_key | legal_unit_id_daterange_excl
- location_id_valid   | location   | {id}         | valid    | location_id_valid_from_valid_to_key   | location_id_daterange_excl
+      key_name       | table_name | column_names | era_name |           unique_constraint            |      exclude_constraint      
+---------------------+------------+--------------+----------+----------------------------------------+------------------------------
+ legal_unit_id_valid | legal_unit | {id}         | valid    | legal_unit_id_valid_after_valid_to_key | legal_unit_id_daterange_excl
+ location_id_valid   | location   | {id}         | valid    | location_id_valid_after_valid_to_key   | location_id_daterange_excl
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
@@ -86,39 +90,41 @@ TABLE sql_saga.foreign_keys;
 
 -- While sql_saga is active
 \d legal_unit
-                    Table "public.legal_unit"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           | not null | 
- valid_to   | date              |           | not null | 
- name       | character varying |           | not null | 
+                                                Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable |                             Default                             
+-------------+-------------------+-----------+----------+-----------------------------------------------------------------
+ id          | integer           |           |          | 
+ valid_after | date              |           | not null | generated always as ((valid_from - '@ 1 day'::interval)) stored
+ valid_from  | date              |           |          | 
+ valid_to    | date              |           | not null | 
+ name        | character varying |           | not null | 
 Indexes:
-    "legal_unit_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_to, '[)'::text) WITH &&) DEFERRABLE
-    "legal_unit_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
+    "legal_unit_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '[)'::text) WITH &&) DEFERRABLE
+    "legal_unit_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
-    "legal_unit_valid_check" CHECK (valid_from < valid_to)
+    "legal_unit_valid_check" CHECK (valid_after < valid_to)
 Triggers:
     location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('location_legal_unit_id_valid')
-    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('location_legal_unit_id_valid')
+    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('location_legal_unit_id_valid')
 
 \d location
-                 Table "public.location"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                                             Table "public.location"
+    Column     |  Type   | Collation | Nullable |                             Default                             
+---------------+---------+-----------+----------+-----------------------------------------------------------------
  id            | integer |           |          | 
- valid_from    | date    |           | not null | 
+ valid_after   | date    |           | not null | generated always as ((valid_from - '@ 1 day'::interval)) stored
+ valid_from    | date    |           |          | 
  valid_to      | date    |           | not null | 
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 Indexes:
-    "location_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_to, '[)'::text) WITH &&) DEFERRABLE
-    "location_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
+    "location_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '[)'::text) WITH &&) DEFERRABLE
+    "location_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
-    "location_valid_check" CHECK (valid_from < valid_to)
+    "location_valid_check" CHECK (valid_after < valid_to)
 Triggers:
     location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('location_legal_unit_id_valid')
-    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_from, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('location_legal_unit_id_valid')
+    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_after, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('location_legal_unit_id_valid')
 
 -- Initial Import
 INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
@@ -126,15 +132,15 @@ INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
 INSERT INTO location (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
 (201, '2015-01-01', 'infinity',101 , 'DRAMMEN');
 TABLE legal_unit;
- id  | valid_from | valid_to |       name       
------+------------+----------+------------------
- 101 | 01-01-2015 | infinity | NANSETKRYSSET AS
+ id  | valid_after | valid_from | valid_to |       name       
+-----+-------------+------------+----------+------------------
+ 101 | 12-31-2014  | 01-01-2015 | infinity | NANSETKRYSSET AS
 (1 row)
 
 TABLE location;
- id  | valid_from | valid_to | legal_unit_id | postal_place 
------+------------+----------+---------------+--------------
- 201 | 01-01-2015 | infinity |           101 | DRAMMEN
+ id  | valid_after | valid_from | valid_to | legal_unit_id | postal_place 
+-----+-------------+------------+----------+---------------+--------------
+ 201 | 12-31-2014  | 01-01-2015 | infinity |           101 | DRAMMEN
 (1 row)
 
 -- Can't delete referenced legal_Init
@@ -159,34 +165,31 @@ WHERE id = 101
 INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
 (101, '2016-01-01', 'infinity', 'NANSETVEIEN AS');
 TABLE legal_unit;
- id  | valid_from |  valid_to  |       name       
------+------------+------------+------------------
- 101 | 01-01-2015 | 12-31-2015 | NANSETKRYSSET AS
- 101 | 01-01-2016 | infinity   | NANSETVEIEN AS
+ id  | valid_after | valid_from |  valid_to  |       name       
+-----+-------------+------------+------------+------------------
+ 101 | 12-31-2014  | 01-01-2015 | 12-31-2015 | NANSETKRYSSET AS
+ 101 | 12-31-2015  | 01-01-2016 | infinity   | NANSETVEIEN AS
 (2 rows)
 
 TABLE location;
- id  | valid_from | valid_to | legal_unit_id | postal_place 
------+------------+----------+---------------+--------------
- 201 | 01-01-2015 | infinity |           101 | DRAMMEN
+ id  | valid_after | valid_from | valid_to | legal_unit_id | postal_place 
+-----+-------------+------------+----------+---------------+--------------
+ 201 | 12-31-2014  | 01-01-2015 | infinity |           101 | DRAMMEN
 (1 row)
 
 SET CONSTRAINTS ALL IMMEDIATE;
-
-
-
-
 COMMIT;
 TABLE legal_unit;
- id  | valid_from | valid_to |       name       
------+------------+----------+------------------
- 101 | 01-01-2015 | infinity | NANSETKRYSSET AS
-(1 row)
+ id  | valid_after | valid_from |  valid_to  |       name       
+-----+-------------+------------+------------+------------------
+ 101 | 12-31-2014  | 01-01-2015 | 12-31-2015 | NANSETKRYSSET AS
+ 101 | 12-31-2015  | 01-01-2016 | infinity   | NANSETVEIEN AS
+(2 rows)
 
 TABLE location;
- id  | valid_from | valid_to | legal_unit_id | postal_place 
------+------------+----------+---------------+--------------
- 201 | 01-01-2015 | infinity |           101 | DRAMMEN
+ id  | valid_after | valid_from | valid_to | legal_unit_id | postal_place 
+-----+-------------+------------+----------+---------------+--------------
+ 201 | 12-31-2014  | 01-01-2015 | infinity |           101 | DRAMMEN
 (1 row)
 
 BEGIN;
@@ -202,15 +205,16 @@ INSERT INTO location (id, valid_from, valid_to, legal_unit_id, postal_place) VAL
 SET CONSTRAINTS ALL IMMEDIATE;
 COMMIT;
 TABLE legal_unit;
- id  | valid_from | valid_to |       name       
------+------------+----------+------------------
- 101 | 01-01-2015 | infinity | NANSETKRYSSET AS
-(1 row)
+ id  | valid_after | valid_from |  valid_to  |       name       
+-----+-------------+------------+------------+------------------
+ 101 | 12-31-2014  | 01-01-2015 | 12-31-2015 | NANSETKRYSSET AS
+ 101 | 12-31-2015  | 01-01-2016 | infinity   | NANSETVEIEN AS
+(2 rows)
 
 TABLE location;
- id  | valid_from | valid_to | legal_unit_id | postal_place 
------+------------+----------+---------------+--------------
- 201 | 01-01-2015 | infinity |           101 | DRAMMEN
+ id  | valid_after | valid_from | valid_to | legal_unit_id | postal_place 
+-----+-------------+------------+----------+---------------+--------------
+ 201 | 12-31-2014  | 01-01-2015 | infinity |           101 | DRAMMEN
 (1 row)
 
 -- Teardown
@@ -261,20 +265,22 @@ TABLE sql_saga.era;
 
 -- After removing sql_saga, it should be as before.
 \d legal_unit
-                    Table "public.legal_unit"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           | not null | 
- valid_to   | date              |           | not null | 
- name       | character varying |           | not null | 
+                                                Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable |                             Default                             
+-------------+-------------------+-----------+----------+-----------------------------------------------------------------
+ id          | integer           |           |          | 
+ valid_after | date              |           | not null | generated always as ((valid_from - '@ 1 day'::interval)) stored
+ valid_from  | date              |           |          | 
+ valid_to    | date              |           | not null | 
+ name        | character varying |           | not null | 
 
 \d location
-                 Table "public.location"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                                             Table "public.location"
+    Column     |  Type   | Collation | Nullable |                             Default                             
+---------------+---------+-----------+----------+-----------------------------------------------------------------
  id            | integer |           |          | 
- valid_from    | date    |           | not null | 
+ valid_after   | date    |           | not null | generated always as ((valid_from - '@ 1 day'::interval)) stored
+ valid_from    | date    |           |          | 
  valid_to      | date    |           | not null | 
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
