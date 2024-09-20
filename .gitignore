@@ -11,3 +11,4 @@ sql_saga.dylib
 regression.diffs
 regression.out
 results/
+.aider*
