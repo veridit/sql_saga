@@ -9,7 +9,7 @@ DOCS = README.md
 
 SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
 
-REGRESS = $(patsubst sql/%.sql,%,$(SQL_FILES))
+REGRESS = $(if $(TESTS),$(TESTS),$(patsubst sql/%.sql,%,$(SQL_FILES)))
 
 OBJS = sql_saga.o periods.o no_gaps.o $(WIN32RES)
 
