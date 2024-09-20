@@ -19,7 +19,7 @@ include $(PGXS)
 
 # New target to run diff for the failing test
 diff-fail:
-	@grep 'not ok' regression.out | awk '{print $$5}' | while read test; do \
+	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running diff for test: $$test"; \
 		diff results/$$test.out expected/$$test.out || true; \
 	done
