@@ -17,6 +17,13 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+# New target to run diff for the failing test
+diff-fail:
+	@grep 'not ok' regression.out | awk '{print $$3}' | while read test; do \
+		echo "Running diff for test: $$test"; \
+		diff results/$$test.out expected/$$test.out || true; \
+	done
+
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
 #
