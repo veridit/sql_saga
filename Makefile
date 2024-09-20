@@ -17,7 +17,15 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
-# New target to run diff for the failing test
+# New target to run vimdiff for the first failing test
+vimdiff-fail:
+	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
+	if [ -n "$$first_fail" ]; then \
+		echo "Running vimdiff for test: $$first_fail"; \
+		vimdiff results/$$first_fail.out expected/$$first_fail.out; \
+	else \
+		echo "No failing tests found."; \
+	fi
 diff-fail:
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running diff for test: $$test"; \
