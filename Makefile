@@ -18,7 +18,7 @@ PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
 # New target to run vimdiff for the first failing test
-vimdiff-fail:
+vimdiff-fail-first:
 	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
 	if [ -n "$$first_fail" ]; then \
 		echo "Running vimdiff for test: $$first_fail"; \
@@ -26,7 +26,12 @@ vimdiff-fail:
 	else \
 		echo "No failing tests found."; \
 	fi
-diff-fail:
+# New target to run vimdiff for all failing tests
+vimdiff-fail-all:
+	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
+		echo "Running vimdiff for test: $$test"; \
+		vimdiff results/$$test.out expected/$$test.out; \
+	done
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running diff for test: $$test"; \
 		diff results/$$test.out expected/$$test.out || true; \
