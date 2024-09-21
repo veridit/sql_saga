@@ -24,6 +24,8 @@ vimdiff-fail-first:
 		echo "Running vimdiff for test: $$first_fail"; \
 		if command -v nvim >/dev/null 2>&1; then \
 			nvim -d results/$$first_fail.out expected/$$first_fail.out; \
+			echo "Press any key to continue..."; \
+			read -n 1 -s; \
 		else \
 			vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
 		fi; \
