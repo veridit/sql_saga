@@ -22,39 +22,16 @@ vimdiff-fail-first:
 	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
 	if [ -n "$$first_fail" ]; then \
 		echo "Running vimdiff for test: $$first_fail"; \
-		if command -v nvim >/dev/null 2>&1; then \
-			nvim -d results/$$first_fail.out expected/$$first_fail.out; \
-			echo "Press any key to continue..."; \
-			read -n 1 -s; \
-			echo "Press C to continue or s to stop..."; \
-			read -n 1 -s input; \
-			if [ "$$input" = "s" ]; then \
-				break; \
-			fi; \
-			echo "Press C to continue or s to stop..."; \
-			read -n 1 -s input; \
-			if [ "$$input" = "s" ]; then \
-				break; \
-			fi; \
-		else \
-			vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
-		fi; \
+		vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
 	else \
 		echo "No failing tests found."; \
 	fi
+
 # New target to run vimdiff for all failing tests
 vimdiff-fail-all:
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running vimdiff for test: $$test"; \
-		if command -v nvim >/dev/null 2>&1; then \
-			nvim -d results/$$test.out expected/$$test.out; \
-		else \
-			vim -d results/$$test.out expected/$$test.out < /dev/tty; \
-		fi; \
-	done
-	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
-		echo "Running diff for test: $$test"; \
-		diff results/$$test.out expected/$$test.out || true; \
+		vim -d results/$$test.out expected/$$test.out < /dev/tty; \
 	done
 
 #release:
