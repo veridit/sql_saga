@@ -32,7 +32,7 @@ vimdiff-fail-all:
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Next test: $$test"; \
 		echo "Press C to continue, s to skip, or b to break (default: C)"; \
-		read -n 1 -s input; \
+		read -n 1 -s input < /dev/tty; \
 		if [ "$$input" = "b" ]; then \
 			break; \
 		elif [ "$$input" = "s" ]; then \
