@@ -26,6 +26,16 @@ vimdiff-fail-first:
 			nvim -d results/$$first_fail.out expected/$$first_fail.out; \
 			echo "Press any key to continue..."; \
 			read -n 1 -s; \
+			echo "Press C to continue or s to stop..."; \
+			read -n 1 -s input; \
+			if [ "$$input" = "s" ]; then \
+				break; \
+			fi; \
+			echo "Press C to continue or s to stop..."; \
+			read -n 1 -s input; \
+			if [ "$$input" = "s" ]; then \
+				break; \
+			fi; \
 		else \
 			vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
 		fi; \
