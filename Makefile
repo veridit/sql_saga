@@ -11,6 +11,17 @@ SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
 
 REGRESS = $(if $(TESTS),$(TESTS),$(patsubst sql/%.sql,%,$(SQL_FILES)))
 
+# New REGRESS_FAST variable excluding the benchmark test
+REGRESS_FAST = $(filter-out 43_benchmark,$(REGRESS))
+
+# New target for fast regression tests
+fast-tests:
+	$(MAKE) installcheck REGRESS="$(REGRESS_FAST)"
+
+# New target for benchmark regression test
+benchmark:
+	$(MAKE) installcheck REGRESS="43_benchmark"
+
 OBJS = sql_saga.o periods.o no_gaps.o $(WIN32RES)
 
 PG_CONFIG = pg_config
