@@ -30,27 +30,27 @@ DELETE FROM rooms;
 -- You can't insert a finite fk id not covered by any row
 INSERT INTO rooms VALUES (1, 7, '2015-01-01'::TIMESTAMPTZ, '2016-01-01'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert a finite fk range not covered by any row
 INSERT INTO rooms VALUES (1, 1, '1999-01-01'::TIMESTAMPTZ, '2000-01-01'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert a finite fk partially covered by one row
 INSERT INTO rooms VALUES (1, 1, '2014-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert a finite fk partially covered by two rows
 INSERT INTO rooms VALUES (1, 1, '2014-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can insert an infinite fk exactly covered by one row
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, 'infinity'::TIMESTAMPTZ);
 DELETE FROM rooms;
@@ -66,27 +66,27 @@ DELETE FROM rooms;
 -- You can't insert an infinite fk id not covered by any row
 INSERT INTO rooms VALUES (1, 7, '2015-01-01'::TIMESTAMPTZ, 'infinity'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert an infinite fk range not covered by any row
 INSERT INTO rooms VALUES (1, 1, '2020-01-01'::TIMESTAMPTZ, 'infinity'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert an infinite fk partially covered by one row
 INSERT INTO rooms VALUES (1, 4, '-infinity'::TIMESTAMPTZ, '2020-01-01'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 -- You can't insert an infinite fk partially covered by two rows
 INSERT INTO rooms VALUES (1, 3, '1990-01-01'::TIMESTAMPTZ, 'infinity'::TIMESTAMPTZ);
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 DELETE FROM rooms;
 DELETE FROM houses;
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();

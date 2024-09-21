@@ -36,7 +36,7 @@ ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
-SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', key_name => 'f');
+SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 DROP TRIGGER f_uk_update ON dp; -- fails

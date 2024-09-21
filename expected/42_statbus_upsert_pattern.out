@@ -51,8 +51,8 @@ SELECT sql_saga.add_era('location', 'valid_after', 'valid_to');
 (1 row)
 
 TABLE sql_saga.era;
- table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  legal_unit | valid    | valid_after             | valid_to            | daterange  | legal_unit_valid_check  | 
  location   | valid    | valid_after             | valid_to            | daterange  | location_valid_check    | 
 (2 rows)
@@ -70,7 +70,7 @@ SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      key_name       | table_name | column_names | era_name |           unique_constraint            |      exclude_constraint      
+   unique_key_name   | table_oid  | column_names | era_name |           unique_constraint            |      exclude_constraint      
 ---------------------+------------+--------------+----------+----------------------------------------+------------------------------
  legal_unit_id_valid | legal_unit | {id}         | valid    | legal_unit_id_valid_after_valid_to_key | legal_unit_id_daterange_excl
  location_id_valid   | location   | {id}         | valid    | location_id_valid_after_valid_to_key   | location_id_daterange_excl
@@ -83,9 +83,9 @@ SELECT sql_saga.add_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'le
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-           key_name           | table_name |  column_names   | era_name |     unique_key      | match_type | delete_action | update_action |           fk_insert_trigger            |           fk_update_trigger            |           uk_update_trigger            |           uk_delete_trigger            
-------------------------------+------------+-----------------+----------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
- location_legal_unit_id_valid | location   | {legal_unit_id} | valid    | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete
+       foreign_key_name       | table_oid |  column_names   | era_name |   unique_key_name   | match_type | update_action | delete_action |           fk_insert_trigger            |           fk_update_trigger            |           uk_update_trigger            |           uk_delete_trigger            
+------------------------------+-----------+-----------------+----------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
+ location_legal_unit_id_valid | location  | {legal_unit_id} | valid    | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete
 (1 row)
 
 -- While sql_saga is active
@@ -104,8 +104,8 @@ Indexes:
 Check constraints:
     "legal_unit_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('location_legal_unit_id_valid')
-    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('location_legal_unit_id_valid')
+    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 \d location
                                              Table "public.location"
@@ -123,8 +123,8 @@ Indexes:
 Check constraints:
     "location_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('location_legal_unit_id_valid')
-    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_after, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('location_legal_unit_id_valid')
+    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_after, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 -- Initial Import
 INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
@@ -146,15 +146,15 @@ TABLE location;
 -- Can't delete referenced legal_Init
 DELETE FROM legal_unit WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 136 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
-PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 134 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, false /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.uk_delete_check() line 39 at PERFORM
 -- Can't shorten referenced legal_unit more than the referencing location
 UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
-PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 161 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.uk_update_check() line 40 at PERFORM
 -- With deferred constraints, adjust the data
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
@@ -225,8 +225,8 @@ SELECT sql_saga.drop_foreign_key('location', 'location_legal_unit_id_valid');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- key_name | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-----------+------------+--------------+----------+------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
@@ -242,8 +242,8 @@ SELECT sql_saga.drop_unique_key('location','location_id_valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- key_name | table_name | column_names | era_name | unique_constraint | exclude_constraint 
-----------+------------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+-----------+--------------+----------+-------------------+--------------------
 (0 rows)
 
 SELECT sql_saga.drop_era('legal_unit');
@@ -259,8 +259,8 @@ SELECT sql_saga.drop_era('location');
 (1 row)
 
 TABLE sql_saga.era;
- table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ table_oid | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-----------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
