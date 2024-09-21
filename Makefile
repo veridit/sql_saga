@@ -22,7 +22,11 @@ vimdiff-fail-first:
 	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
 	if [ -n "$$first_fail" ]; then \
 		echo "Running vimdiff for test: $$first_fail"; \
-		vimdiff results/$$first_fail.out expected/$$first_fail.out; \
+		if command -v nvim >/dev/null 2>&1; then \
+			nvim -d results/$$first_fail.out expected/$$first_fail.out; \
+		else \
+			vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
+		fi; \
 	else \
 		echo "No failing tests found."; \
 	fi
@@ -30,7 +34,11 @@ vimdiff-fail-first:
 vimdiff-fail-all:
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running vimdiff for test: $$test"; \
-		vimdiff results/$$test.out expected/$$test.out; \
+		if command -v nvim >/dev/null 2>&1; then \
+			nvim -d results/$$test.out expected/$$test.out; \
+		else \
+			vim -d results/$$test.out expected/$$test.out < /dev/tty; \
+		fi; \
 	done
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Running diff for test: $$test"; \
