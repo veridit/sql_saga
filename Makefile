@@ -30,6 +30,14 @@ vimdiff-fail-first:
 # New target to run vimdiff for all failing tests
 vimdiff-fail-all:
 	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
+		echo "Next test: $$test"; \
+		echo "Press C to continue, s to skip, or b to break (default: C)"; \
+		read -n 1 -s input; \
+		if [ "$$input" = "b" ]; then \
+			break; \
+		elif [ "$$input" = "s" ]; then \
+			continue; \
+		fi; \
 		echo "Running vimdiff for test: $$test"; \
 		vim -d results/$$test.out expected/$$test.out < /dev/tty; \
 	done
