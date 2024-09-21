@@ -68,6 +68,7 @@ TABLE sql_saga.foreign_keys;
  fk_uk_id_q | fk         | {uk_id}      | q        | uk_id_p    | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
 (1 row)
 
+SET client_min_messages TO DEBUG;
 -- INSERT
 INSERT INTO fk VALUES (0, 100, 0, 1); -- fail
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
@@ -94,17 +95,27 @@ SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_update_check() line 19 at PERFORM
 UPDATE fk SET e = 6 WHERE id = 1; -- success
 UPDATE uk SET s = 2 WHERE (id, s, e) = (100, 1, 3); -- fail
+DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
+DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('2', '10', s, e) )
+DEBUG:  Violation detected for FK: fk_uk_id_q, Row Data: {"e": 3, "s": 1, "id": 100}
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 UPDATE uk SET s = 0 WHERE (id, s, e) = (100, 1, 3); -- success
+DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
+DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('0', '10', s, e) )
+DEBUG:  SQL_FK_CONTAINS_UK_HOLES=SELECT EXISTS(     WITH holes AS (         SELECT e AS "s", next_s AS "e"           FROM (SELECT e, LEAD(s, 1) OVER (ORDER BY s) "next_s"                   FROM public.uk                  WHERE ROW(id) = ROW('100')) t          WHERE (t.next_s IS NOT NULL AND t.next_s <> e)     )     SELECT FROM public.fk t     WHERE ROW(t.uk_id) = ROW('100')       AND EXISTS(SELECT                     FROM holes h                    WHERE sql_saga.contains(s, e, h.s, h.e)) )
 -- DELETE
 DELETE FROM uk WHERE (id, s, e) = (100, 3, 4); -- fail
+DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
+DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('0', '10', s, e) )
+DEBUG:  SQL_FK_CONTAINS_UK_HOLES=SELECT EXISTS(     WITH holes AS (         SELECT e AS "s", next_s AS "e"           FROM (SELECT e, LEAD(s, 1) OVER (ORDER BY s) "next_s"                   FROM public.uk                  WHERE ROW(id) = ROW('100')) t          WHERE (t.next_s IS NOT NULL AND t.next_s <> e)     )     SELECT FROM public.fk t     WHERE ROW(t.uk_id) = ROW('100')       AND EXISTS(SELECT                     FROM holes h                    WHERE sql_saga.contains(s, e, h.s, h.e)) )
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 178 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
 DELETE FROM uk WHERE (id, s, e) = (200, 3, 5); -- success
+RESET client_min_messages;
 DROP TABLE fk;
 DROP TABLE uk;

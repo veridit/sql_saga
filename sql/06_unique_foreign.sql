@@ -24,6 +24,8 @@ SELECT sql_saga.drop_foreign_key('fk', 'fk_uk_id_q');
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', key_name => 'fk_uk_id_q');
 TABLE sql_saga.foreign_keys;
 
+SET client_min_messages TO DEBUG;
+
 -- INSERT
 INSERT INTO fk VALUES (0, 100, 0, 1); -- fail
 INSERT INTO fk VALUES (0, 100, 0, 10); -- fail
@@ -38,6 +40,8 @@ UPDATE uk SET s = 0 WHERE (id, s, e) = (100, 1, 3); -- success
 -- DELETE
 DELETE FROM uk WHERE (id, s, e) = (100, 3, 4); -- fail
 DELETE FROM uk WHERE (id, s, e) = (200, 3, 5); -- success
+
+RESET client_min_messages;
 
 DROP TABLE fk;
 DROP TABLE uk;

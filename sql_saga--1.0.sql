@@ -598,7 +598,7 @@ BEGIN
     WHERE (p.table_name, p.era_name) = (table_name, era_name);
 
     IF NOT FOUND THEN
-        RAISE NOTICE 'era % not found for table %', era_name, table_name;
+        RAISE DEBUG 'era % not found for table %', era_name, table_name;
         RETURN false;
     END IF;
 
@@ -1794,17 +1794,20 @@ DECLARE
     max_uk_end_value text;
     violation boolean;
 
+    SQL_UK_MINMAX text;
     QSQL_UK_MINMAX CONSTANT text :=
         'SELECT MIN(%5$I), MAX(%6$I) '
         '  FROM %1$I.%2$I as t '
         ' WHERE ROW(%3$s) = ROW(%4$s)';
 
+    SQL_FK_EXISTS text;
     QSQL_FK_EXISTS CONSTANT text :=
         'SELECT EXISTS( '
         '  SELECT FROM %1$I.%2$I as t '
         '  WHERE ROW(%3$s) = ROW(%4$s)'
         ')';
 
+    SQL_FK_OUT_OF_UK_MINMAX_RANGE text;
     QSQL_FK_OUT_OF_UK_MINMAX_RANGE CONSTANT text :=
         'SELECT EXISTS( '
         '   SELECT '
@@ -1813,6 +1816,7 @@ DECLARE
         '      AND NOT sql_saga.contains(%5$L, %6$L, %7$I, %8$I) '
         ')';
 
+    SQL_FK_CONTAINS_UK_HOLES text;
     QSQL_FK_CONTAINS_UK_HOLES CONSTANT text :=
         'SELECT EXISTS( '
         '    WITH holes AS ( '
@@ -1882,13 +1886,15 @@ BEGIN
     -- time: 1 2 3 4 5 6 | in ranges
     --   uk: *** ******* | [1,2), [3,6)
     -- in this case would return [1,6).
-    EXECUTE format(QSQL_UK_MINMAX,
+    SQL_UK_MINMAX := format(QSQL_UK_MINMAX,
         foreign_key_info.uk_schema_name,
         foreign_key_info.uk_table_name,
         uk_column_names,
         uk_column_values,
         foreign_key_info.uk_start_column_name,
-        foreign_key_info.uk_end_column_name)
+        foreign_key_info.uk_end_column_name);
+    RAISE DEBUG 'SQL_UK_MINMAX=%', SQL_UK_MINMAX;
+    EXECUTE SQL_UK_MINMAX
     INTO min_uk_start_value, max_uk_end_value;
 
     SELECT string_agg('t.' || quote_ident(u.c), ', ' ORDER BY u.ordinality)
@@ -1898,10 +1904,13 @@ BEGIN
     -- min|max can be null if `uk` has no record for the specified filter,
     -- which means that should not exists any `fk` record for the same filter.
     IF min_uk_start_value IS NULL OR max_uk_end_value IS NULL THEN
-        EXECUTE format(QSQL_FK_EXISTS, foreign_key_info.fk_schema_name,
+        SQL_FK_EXISTS := format(QSQL_FK_EXISTS,
+                                       foreign_key_info.fk_schema_name,
                                        foreign_key_info.fk_table_name,
                                        fk_column_names,
-                                       uk_column_values)
+                                       uk_column_values);
+        RAISE DEBUG 'SQL_FK_EXISTS=%', SQL_FK_EXISTS;
+        EXECUTE SQL_FK_EXISTS
         INTO violation;
 
         IF violation THEN
@@ -1918,14 +1927,17 @@ BEGIN
     --   uk:   *******
     --   fk:   ^-----^
     -- any fk record with start or end outside the ^ markers are considered a violation.
-    EXECUTE format(QSQL_FK_OUT_OF_UK_MINMAX_RANGE, foreign_key_info.fk_schema_name,
+    SQL_FK_OUT_OF_UK_MINMAX_RANGE := format(QSQL_FK_OUT_OF_UK_MINMAX_RANGE,
+                                                   foreign_key_info.fk_schema_name,
                                                    foreign_key_info.fk_table_name,
                                                    fk_column_names,
                                                    uk_column_values,
                                                    min_uk_start_value,
                                                    max_uk_end_value,
                                                    foreign_key_info.uk_start_column_name,
-                                                   foreign_key_info.uk_end_column_name)
+                                                   foreign_key_info.uk_end_column_name);
+    RAISE DEBUG 'SQL_FK_OUT_OF_UK_MINMAX_RANGE=%', SQL_FK_OUT_OF_UK_MINMAX_RANGE;
+    EXECUTE SQL_FK_OUT_OF_UK_MINMAX_RANGE
     INTO violation;
 
     IF violation THEN
@@ -1943,7 +1955,8 @@ BEGIN
     -- in this case, we have the following holes in `uk`: [2,3), [4,5)
     -- if we have any `fk` record that contains such holes (such as [1,4)),
     -- this mean that this record is referencing the `uk` for a period that it not existed.
-    EXECUTE format(QSQL_FK_CONTAINS_UK_HOLES, foreign_key_info.uk_schema_name,
+    SQL_FK_CONTAINS_UK_HOLES := format(QSQL_FK_CONTAINS_UK_HOLES,
+                                              foreign_key_info.uk_schema_name,
                                               foreign_key_info.uk_table_name,
                                               replace(uk_column_names, 't.', ''),
                                               uk_column_values,
@@ -1953,7 +1966,9 @@ BEGIN
                                               foreign_key_info.fk_table_name,
                                               fk_column_names,
                                               foreign_key_info.fk_start_column_name,
-                                              foreign_key_info.fk_end_column_name)
+                                              foreign_key_info.fk_end_column_name);
+    RAISE DEBUG 'SQL_FK_CONTAINS_UK_HOLES=%', SQL_FK_CONTAINS_UK_HOLES;
+    EXECUTE SQL_FK_CONTAINS_UK_HOLES
     INTO violation;
 
     IF violation THEN
@@ -2280,7 +2295,7 @@ $function$;
 -- 
 --         EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', schema_name, audit_table_name, table_owner);
 -- 
---         RAISE NOTICE 'history table "%" created for "%", be sure to index it properly',
+--         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly',
 --             history_table_id::regclass, table_class;
 --     END IF;
 -- 
@@ -2464,7 +2479,7 @@ $function$;
 --     RETURNING * INTO system_versioning_row;
 -- 
 --     IF NOT FOUND THEN
---         RAISE NOTICE 'table % does not have SYSTEM VERSIONING', table_name;
+--         RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_name;
 --         RETURN false;
 --     END IF;
 -- 
@@ -2959,7 +2974,7 @@ BEGIN
             ) AS a ON true
         WHERE uk.column_names <> a.column_names
     LOOP
-        --RAISE NOTICE 'unique_keys sql:%', sql;
+        --RAISE DEBUG 'unique_keys sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
@@ -2974,7 +2989,7 @@ BEGIN
         GROUP BY uk.key_name, c.oid, c.conname
         HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
-        --RAISE NOTICE 'unique_constraint sql:%', sql;
+        --RAISE DEBUG 'unique_constraint sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
@@ -2993,7 +3008,7 @@ BEGIN
                       p.start_column_name,
                       p.end_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
-        --RAISE NOTICE 'exclude_constraint sql:%', sql;
+        --RAISE DEBUG 'exclude_constraint sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
