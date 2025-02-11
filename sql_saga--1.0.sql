@@ -1225,7 +1225,7 @@ BEGIN
         INTO withs
         FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
 
-        withs := withs || format('%I(%I, %I, ''[)''::text) WITH &&',
+        withs := withs || format('%I(%I, %I, ''(]''::text) WITH &&',
             era_row.range_type, era_row.start_column_name, era_row.end_column_name);
 
         exclude_sql := format('EXCLUDE USING gist (%s) DEFERRABLE', array_to_string(withs, ', '));
@@ -2163,10 +2163,10 @@ $function$;
 --     IF table_class IS NULL THEN
 --         RAISE EXCEPTION 'no table name specified';
 --     END IF;
--- 
+--
 --     /* Always serialize operations on our catalogs */
 --     PERFORM sql_saga._serialize(table_class);
--- 
+--
 --     /*
 --      * REFERENCES:
 --      *     SQL:2016 4.15.2.2
@@ -2174,20 +2174,20 @@ $function$;
 --      *     SQL:2016 11.3 GR 1.c
 --      *     SQL:2016 11.29
 --      */
--- 
+--
 --     /* Already registered? SQL:2016 11.29 SR 5 */
 --     IF EXISTS (SELECT FROM sql_saga.system_versioning AS r WHERE r.table_name = table_class) THEN
 --         RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
 --     END IF;
--- 
+--
 --     /* Must be a regular persistent base table. SQL:2016 11.29 SR 2 */
--- 
+--
 --     SELECT n.nspname, c.relname, c.relowner, c.relpersistence, c.relkind
 --     INTO schema_name, table_name, table_owner, persistence, kind
 --     FROM pg_catalog.pg_class AS c
 --     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
 --     WHERE c.oid = table_class;
--- 
+--
 --     IF kind <> 'r' THEN
 --         /*
 --          * The main reason partitioned tables aren't supported yet is simply
@@ -2197,10 +2197,10 @@ $function$;
 --         IF kind = 'p' THEN
 --             RAISE EXCEPTION 'partitioned tables are not supported yet';
 --         END IF;
--- 
+--
 --         RAISE EXCEPTION 'relation % is not a table', $1;
 --     END IF;
--- 
+--
 --     IF persistence <> 'p' THEN
 --         /*
 --          * We could probably accept unlogged tables if the history table is
@@ -2208,17 +2208,17 @@ $function$;
 --          */
 --         RAISE EXCEPTION 'table "%" must be persistent', table_class;
 --     END IF;
--- 
+--
 --     /* We need a SYSTEM_TIME period. SQL:2016 11.29 SR 4 */
 --     SELECT p.*
 --     INTO era_row
 --     FROM sql_saga.era AS p
 --     WHERE (p.table_name, p.era_name) = (table_class, 'system_time');
--- 
+--
 --     IF NOT FOUND THEN
 --         RAISE EXCEPTION 'no period for SYSTEM_TIME found for table %', table_class;
 --     END IF;
--- 
+--
 --     /* Get all of our "fake" infrastructure ready */
 --     audit_table_name := coalesce(audit_table_name, sql_saga._make_name(ARRAY[table_name], 'history'));
 --     view_name := coalesce(view_name, sql_saga._make_name(ARRAY[table_name], 'with_history'));
@@ -2226,7 +2226,7 @@ $function$;
 --     function_between_name := coalesce(function_between_name, sql_saga._make_name(ARRAY[table_name], '_between'));
 --     function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga._make_name(ARRAY[table_name], '_between_symmetric'));
 --     function_from_to_name := coalesce(function_from_to_name, sql_saga._make_name(ARRAY[table_name], '_from_to'));
--- 
+--
 --     /*
 --      * Create the history table.  If it already exists we check that all the
 --      * columns match but otherwise we trust the user.  Perhaps the history
@@ -2242,13 +2242,13 @@ $function$;
 --     FROM pg_catalog.pg_class AS c
 --     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
 --     WHERE (n.nspname, c.relname) = (schema_name, audit_table_name);
--- 
+--
 --     IF FOUND THEN
 --         /* Don't allow any periods on the history table (this might be relaxed later) */
 --         IF EXISTS (SELECT FROM sql_saga.era AS p WHERE p.table_name = history_table_id) THEN
 --             RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have periods';
 --         END IF;
--- 
+--
 --         /*
 --          * The query to the attributes is harder than one would think because
 --          * we need to account for dropped columns.  Basically what we're
@@ -2275,10 +2275,10 @@ $function$;
 --             RAISE EXCEPTION 'base table "%" and history table "%" are not compatible',
 --                 table_class, history_table_id::regclass;
 --         END IF;
--- 
+--
 --         /* Make sure the owner is correct */
 --         EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass, table_owner);
--- 
+--
 --         /*
 --          * Remove all privileges other than SELECT from everyone on the history
 --          * table.  We do this without error because some privileges may have
@@ -2292,13 +2292,13 @@ $function$;
 --     ELSE
 --         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', schema_name, audit_table_name, table_name);
 --         history_table_id := format('%I.%I', schema_name, audit_table_name)::regclass;
--- 
+--
 --         EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', schema_name, audit_table_name, table_owner);
--- 
+--
 --         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly',
 --             history_table_id::regclass, table_class;
 --     END IF;
--- 
+--
 --     /* Create the "with history" view.  This one we do want to error out on if it exists. */
 --     EXECUTE format(
 --         /*
@@ -2321,7 +2321,7 @@ $function$;
 --            AND NOT a.attisdropped
 --         ));
 --     EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', schema_name, view_name, table_owner);
--- 
+--
 --     /*
 --      * Create functions to simulate the system versioned grammar.  These must
 --      * be inlinable for any kind of performance.
@@ -2336,7 +2336,7 @@ $function$;
 --         $$, schema_name, function_as_of_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_as_of_name, table_owner);
--- 
+--
 --     EXECUTE format(
 --         $$
 --         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
@@ -2347,7 +2347,7 @@ $function$;
 --         $$, schema_name, function_between_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_name, table_owner);
--- 
+--
 --     EXECUTE format(
 --         $$
 --         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
@@ -2358,7 +2358,7 @@ $function$;
 --         $$, schema_name, function_between_symmetric_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_symmetric_name, table_owner);
--- 
+--
 --     EXECUTE format(
 --         $$
 --         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
@@ -2369,7 +2369,7 @@ $function$;
 --         $$, schema_name, function_from_to_name, view_name, era_row.start_column_name, era_row.end_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_from_to_name, table_owner);
--- 
+--
 --     /* Set privileges on history objects */
 --     FOR sql IN
 --         SELECT format('REVOKE ALL ON %s %s FROM %s',
@@ -2391,9 +2391,9 @@ $function$;
 --             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 --             WHERE n.nspname = schema_name
 --               AND c.relname IN (audit_table_name, view_name)
--- 
+--
 --             UNION ALL
--- 
+--
 --             SELECT 'f',
 --                    p.oid::regprocedure::text,
 --                    acl.grantee
@@ -2411,7 +2411,7 @@ $function$;
 --     LOOP
 --         EXECUTE sql;
 --     END LOOP;
--- 
+--
 --     FOR grantees IN
 --         SELECT string_agg(acl.grantee::regrole::text, ', ')
 --         FROM pg_class AS c
@@ -2428,7 +2428,7 @@ $function$;
 --                        format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_from_to_name)::regprocedure,
 --                        grantees);
 --     END LOOP;
--- 
+--
 --     /* Register it */
 --     INSERT INTO sql_saga.system_versioning (table_name, era_name, audit_table_name, view_name,
 --                                            func_as_of, func_between, func_between_symmetric, func_from_to)
@@ -2444,7 +2444,7 @@ $function$;
 --     );
 -- END;
 -- $function$;
--- 
+--
 -- CREATE FUNCTION sql_saga.drop_system_versioning(table_name regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
 --  RETURNS boolean
 --  LANGUAGE plpgsql
@@ -2458,10 +2458,10 @@ $function$;
 --     IF table_name IS NULL THEN
 --         RAISE EXCEPTION 'no table name specified';
 --     END IF;
--- 
+--
 --     /* Always serialize operations on our catalogs */
 --     PERFORM sql_saga._serialize(table_name);
--- 
+--
 --     /*
 --      * REFERENCES:
 --      *     SQL:2016 4.15.2.2
@@ -2469,7 +2469,7 @@ $function$;
 --      *     SQL:2016 11.3 GR 1.c
 --      *     SQL:2016 11.30
 --      */
--- 
+--
 --     /*
 --      * We need to delete our row first so that the DROP protection doesn't
 --      * block us.
@@ -2477,29 +2477,29 @@ $function$;
 --     DELETE FROM sql_saga.system_versioning AS sv
 --     WHERE sv.table_name = table_name
 --     RETURNING * INTO system_versioning_row;
--- 
+--
 --     IF NOT FOUND THEN
 --         RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_name;
 --         RETURN false;
 --     END IF;
--- 
+--
 --     /*
 --      * Has the table been dropped?  If so, everything else is also dropped
 --      * except for the history table.
 --      */
 --     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_name);
--- 
+--
 --     IF NOT is_dropped THEN
 --         /* Drop the functions. */
 --         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure, drop_behavior);
 --         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure, drop_behavior);
 --         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure, drop_behavior);
 --         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure, drop_behavior);
--- 
+--
 --         /* Drop the "with_history" view. */
 --         EXECUTE format('DROP VIEW %s %s', system_versioning_row.view_name, drop_behavior);
 --     END IF;
--- 
+--
 --     /*
 --      * SQL:2016 11.30 GR 2 says "Every row of T that corresponds to a
 --      * historical system row is effectively deleted at the end of the SQL-
@@ -2513,7 +2513,7 @@ $function$;
 --         PERFORM sql_saga.drop_era(table_name, 'system_time', drop_behavior, cleanup);
 --         EXECUTE format('DROP TABLE %s %s', system_versioning_row.audit_table_name, drop_behavior);
 --     END IF;
--- 
+--
 --     RETURN true;
 -- END;
 -- $function$;
@@ -3002,7 +3002,7 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
         WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.exclude_constraint))
         GROUP BY uk.key_name, c.oid, c.conname, p.range_type, p.start_column_name, p.end_column_name
-        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''[)''::text) WITH &&) DEFERRABLE',
+        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''(]''::text) WITH &&) DEFERRABLE',
                       string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality),
                       p.range_type,
                       p.start_column_name,
@@ -3507,7 +3507,7 @@ BEGIN
     USING OLD INTO old_pk_val, old_pk_range;
 
   -- TODO: This belongs in check_upd instead:
-  -- EXECUTE format('SELECT ($1:%1$s)::text, $1.%2$s, ($2:%1$s)::text, $2.%2$s', 
+  -- EXECUTE format('SELECT ($1:%1$s)::text, $1.%2$s, ($2:%1$s)::text, $2.%2$s',
                  -- fk_column, from_range_column)
   -- USING OLD, NEW INTO old_fk_val, old_from_range, new_fk_val, new_from_range;
 
