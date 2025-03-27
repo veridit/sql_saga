@@ -110,5 +110,8 @@ TABLE sql_saga.era;
 \d legal_unit
 \d location
 
+DROP TABLE legal_unit;
+DROP TABLE location;
+
 DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;
