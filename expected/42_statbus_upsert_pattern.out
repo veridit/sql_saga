@@ -285,5 +285,7 @@ TABLE sql_saga.era;
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 
+DROP TABLE legal_unit;
+DROP TABLE location;
 DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;

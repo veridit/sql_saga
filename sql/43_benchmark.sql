@@ -154,7 +154,3 @@ FROM
   benchmark_calculated
 ORDER BY
   timestamp;
-
-
-DROP TABLE legal_unit;
-DROP TABLE establishment;
