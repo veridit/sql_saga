@@ -6,13 +6,10 @@ SELECT pg_catalog.set_config('search_path', '', false);
  
 (1 row)
 
-
 CREATE EXTENSION sql_saga CASCADE;
 ERROR:  extension "sql_saga" already exists
-
 CREATE SCHEMA exposed;
 CREATE SCHEMA hidden;
-
 CREATE TABLE exposed.employees (
   id INTEGER,
   valid_from date,
@@ -20,7 +17,6 @@ CREATE TABLE exposed.employees (
   name varchar NOT NULL,
   role varchar NOT NULL
 );
-
 CREATE TABLE hidden.staff (
   id INTEGER,
   valid_from date,
@@ -28,7 +24,6 @@ CREATE TABLE hidden.staff (
   salary FLOAT,
   employee_id INTEGER
 );
-
 -- Before using sql_saga
 \d exposed.employees
                     Table "exposed.employees"
@@ -50,7 +45,6 @@ CREATE TABLE hidden.staff (
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 
-
 -- Verify that enable and disable each work correctly.
 SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_to');
  add_era 
@@ -71,7 +65,6 @@ TABLE sql_saga.era;
  hidden.staff      | valid    | valid_from        | valid_to        | daterange  | staff_valid_check       | 
 (2 rows)
 
-
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
    add_unique_key   
 --------------------
@@ -91,7 +84,6 @@ TABLE sql_saga.unique_keys;
  staff_id_valid     | hidden.staff      | {id}         | valid    | staff_id_valid_from_valid_to_key     | staff_id_daterange_excl
 (2 rows)
 
-
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
      add_foreign_key     
 -------------------------
@@ -103,7 +95,6 @@ TABLE sql_saga.foreign_keys;
 -------------------------+--------------+---------------+----------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+-----------------------------------+-----------------------------------
  staff_employee_id_valid | hidden.staff | {employee_id} | valid    | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete
 (1 row)
-
 
 -- While sql_saga is active
 \d exposed.employees
@@ -142,7 +133,6 @@ Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('staff_employee_id_valid')
     staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('staff_employee_id_valid')
 
-
 -- Test data.
 INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
 (101, '2022-01-01', '2022-06-30', 'Alice Johnson', 'Junior Manager'),
@@ -152,7 +142,6 @@ INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
 (103, '2022-01-01', '2022-12-31', 'Charlie Brown', 'Designer'),
 (104, '2022-01-01', '2022-05-31', 'Diana Prince', 'Junior Analyst'),
 (104, '2022-06-01', '2023-12-31', 'Diana Prince', 'Senior Analyst');
-
 INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 (201, '2022-01-01', '2022-06-30',101 , 50000.00),
 (201, '2022-08-01', '2023-12-31',101 , 60000.00), -- Salary increase in August, a month after role change in July
@@ -161,32 +150,25 @@ INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 (203, '2022-01-01', '2022-12-31',103 , 48000.00),
 (204, '2022-01-01', '2022-05-31',104 , 45000.00),
 (204, '2022-07-01', '2023-12-31',104 , 55000.00); -- Salary increase in July, a month after role change in June
-
-
 -- Fail
 DELETE FROM exposed.employees WHERE id = 101;
 ERROR:  update or delete on table "exposed.employees" violates foreign key constraint "staff_employee_id_valid" on table "hidden.staff"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 127 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 136 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
-
 -- Success
 DELETE FROM hidden.staff WHERE employee_id = 101;
 DELETE FROM exposed.employees WHERE id = 101;
-
 -- Fail
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
 ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
 PL/pgSQL function sql_saga.fk_update_check() line 19 at PERFORM
-
 -- Success
 UPDATE exposed.employees SET valid_to = 'infinity' WHERE id = 103;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
-
 -- Teardown
-
 SELECT sql_saga.drop_foreign_key('hidden.staff', 'staff_employee_id_valid');
  drop_foreign_key 
 ------------------
@@ -197,7 +179,6 @@ TABLE sql_saga.foreign_keys;
  key_name | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
 ----------+------------+--------------+----------+------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
-
 
 SELECT sql_saga.drop_unique_key('exposed.employees', 'employees_id_valid');
  drop_unique_key 
@@ -216,7 +197,6 @@ TABLE sql_saga.unique_keys;
 ----------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
-
 SELECT sql_saga.drop_era('exposed.employees');
  drop_era 
 ----------
@@ -233,7 +213,6 @@ TABLE sql_saga.era;
  table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
 ------------+----------+-------------------+-----------------+------------+-------------------------+------------------
 (0 rows)
-
 
 -- After removing sql_saga, it should be as before.
 \d exposed.employees
@@ -256,6 +235,7 @@ TABLE sql_saga.era;
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 
-
+DROP TABLE exposed.employees;
+DROP TABLE hidden.staff;
 DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;

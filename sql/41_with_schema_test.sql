@@ -94,5 +94,8 @@ TABLE sql_saga.era;
 \d exposed.employees
 \d hidden.staff
 
+DROP TABLE exposed.employees;
+DROP TABLE hidden.staff;
+
 DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;
