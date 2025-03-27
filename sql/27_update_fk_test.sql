@@ -17,27 +17,27 @@ DELETE FROM rooms;
 
 -- You can update the range when the fk is NULL
 INSERT INTO rooms VALUES (1, NULL, '2015-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('1999-01-01'::TIMESTAMPTZ, '2000-01-01');
+UPDATE rooms SET (valid_after, valid_to) = ('1999-01-01'::TIMESTAMPTZ, '2000-01-01');
 DELETE FROM rooms;
 
 -- You can update a finite fk exactly covered by one row
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2016-01-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2016-01-01');
 DELETE FROM rooms;
 
 -- You can update a finite fk more than covered by one row
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2015-06-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2015-06-01');
 DELETE FROM rooms;
 
 -- You can update a finite fk exactly covered by two rows
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2017-01-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2017-01-01');
 DELETE FROM rooms;
 
 -- You can update a finite fk more than covered by two rows
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2016-06-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2015-01-01'::TIMESTAMPTZ, '2016-06-01');
 DELETE FROM rooms;
 
 -- You can't update a finite fk id not covered by any row
@@ -47,37 +47,37 @@ DELETE FROM rooms;
 
 -- You can't update a finite fk range not covered by any row
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('1999-01-01'::TIMESTAMPTZ, '2000-01-01');
+UPDATE rooms SET (valid_after, valid_to) = ('1999-01-01'::TIMESTAMPTZ, '2000-01-01');
 DELETE FROM rooms;
 
 -- You can't update a finite fk partially covered by one row
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2014-01-01'::TIMESTAMPTZ, '2015-06-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2014-01-01'::TIMESTAMPTZ, '2015-06-01');
 DELETE FROM rooms;
 
 -- You can't update a finite fk partially covered by two rows
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2014-01-01'::TIMESTAMPTZ, '2016-06-01');
+UPDATE rooms SET (valid_after, valid_to) = ('2014-01-01'::TIMESTAMPTZ, '2016-06-01');
 DELETE FROM rooms;
 
 -- You can update an infinite fk exactly covered by one row
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2015-01-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('2015-01-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 -- You can update an infinite fk more than covered by one row
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2016-01-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('2016-01-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 -- You can update an infinite fk exactly covered by two rows
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2014-01-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('2014-01-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 -- You can update an infinite fk more than covered by two rows
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2014-06-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('2014-06-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 -- You can't update an infinite fk id not covered by any row
@@ -87,17 +87,17 @@ DELETE FROM rooms;
 
 -- You can't update an infinite fk range not covered by any row
 INSERT INTO rooms VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('2020-01-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('2020-01-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 -- You can't update an infinite fk partially covered by one row
 INSERT INTO rooms VALUES (1, 4, '-infinity', '2012-01-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('-infinity', '2020-01-01');
+UPDATE rooms SET (valid_after, valid_to) = ('-infinity', '2020-01-01');
 DELETE FROM rooms;
 
 -- You can't update an infinite fk partially covered by two rows
 INSERT INTO rooms VALUES (1, 3, '2015-01-01'::TIMESTAMPTZ, '2015-02-01'::TIMESTAMPTZ);
-UPDATE rooms SET (valid_from, valid_to) = ('1990-01-01'::TIMESTAMPTZ, 'infinity');
+UPDATE rooms SET (valid_after, valid_to) = ('1990-01-01'::TIMESTAMPTZ, 'infinity');
 DELETE FROM rooms;
 
 DELETE FROM rooms;

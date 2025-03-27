@@ -3,21 +3,21 @@ CREATE EXTENSION sql_saga CASCADE;
 CREATE TABLE shifts (
   job_id INTEGER,
   worker_id INTEGER,
-  valid_from timestamptz,
+  valid_after timestamptz,
   valid_to timestamptz
 );
 
 CREATE TABLE houses (
   id INTEGER,
   assessment FLOAT,
-  valid_from timestamptz,
+  valid_after timestamptz,
   valid_to timestamptz
 );
 
 CREATE TABLE rooms (
   id INTEGER,
   house_id INTEGER,
-  valid_from timestamptz,
+  valid_after timestamptz,
   valid_to timestamptz
 );
 
@@ -27,9 +27,9 @@ CREATE TABLE rooms (
 \d shifts
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('shifts', 'valid_from', 'valid_to');
-SELECT sql_saga.add_era('houses', 'valid_from', 'valid_to', 'valid');
-SELECT sql_saga.add_era('rooms', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('shifts', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('houses', 'valid_after', 'valid_to', 'valid');
+SELECT sql_saga.add_era('rooms', 'valid_after', 'valid_to');
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
@@ -69,13 +69,13 @@ TABLE sql_saga.era;
 -- Make convenience functions for later tests.
 CREATE FUNCTION enable_sql_saga_for_shifts_houses_and_rooms() RETURNS void LANGUAGE plpgsql AS $EOF$
 BEGIN
-  PERFORM sql_saga.add_era('shifts', 'valid_from', 'valid_to');
+  PERFORM sql_saga.add_era('shifts', 'valid_after', 'valid_to');
   PERFORM sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
 
-  PERFORM sql_saga.add_era('houses', 'valid_from', 'valid_to', 'valid');
+  PERFORM sql_saga.add_era('houses', 'valid_after', 'valid_to', 'valid');
   PERFORM sql_saga.add_unique_key('houses', ARRAY['id'], 'valid');
 
-  PERFORM sql_saga.add_era('rooms', 'valid_from', 'valid_to');
+  PERFORM sql_saga.add_era('rooms', 'valid_after', 'valid_to');
   PERFORM sql_saga.add_unique_key('rooms', ARRAY['id'], 'valid');
   PERFORM sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
 END;

@@ -9,7 +9,7 @@ CREATE SCHEMA hidden;
 
 CREATE TABLE exposed.employees (
   id INTEGER,
-  valid_from date,
+  valid_after date,
   valid_to date,
   name varchar NOT NULL,
   role varchar NOT NULL
@@ -17,7 +17,7 @@ CREATE TABLE exposed.employees (
 
 CREATE TABLE hidden.staff (
   id INTEGER,
-  valid_from date,
+  valid_after date,
   valid_to date,
   salary FLOAT,
   employee_id INTEGER
@@ -28,8 +28,8 @@ CREATE TABLE hidden.staff (
 \d hidden.staff
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_to');
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('exposed.employees', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('hidden.staff', 'valid_after', 'valid_to');
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
@@ -44,7 +44,7 @@ TABLE sql_saga.foreign_keys;
 \d hidden.staff
 
 -- Test data.
-INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
+INSERT INTO exposed.employees (id, valid_after, valid_to, name, role) VALUES
 (101, '2022-01-01', '2022-06-30', 'Alice Johnson', 'Junior Manager'),
 (101, '2022-07-01', '2023-12-31', 'Alice Johnson', 'Senior Manager'),
 (102, '2022-01-01', '2022-08-31', 'Bob Smith', 'Junior Engineer'),
@@ -53,7 +53,7 @@ INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
 (104, '2022-01-01', '2022-05-31', 'Diana Prince', 'Junior Analyst'),
 (104, '2022-06-01', '2023-12-31', 'Diana Prince', 'Senior Analyst');
 
-INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
+INSERT INTO hidden.staff (id, valid_after, valid_to, employee_id, salary) VALUES
 (201, '2022-01-01', '2022-06-30',101 , 50000.00),
 (201, '2022-08-01', '2023-12-31',101 , 60000.00), -- Salary increase in August, a month after role change in July
 (202, '2022-01-01', '2022-08-31',102 , 55000.00),

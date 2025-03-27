@@ -12,14 +12,14 @@ CREATE SCHEMA exposed;
 CREATE SCHEMA hidden;
 CREATE TABLE exposed.employees (
   id INTEGER,
-  valid_from date,
+  valid_after date,
   valid_to date,
   name varchar NOT NULL,
   role varchar NOT NULL
 );
 CREATE TABLE hidden.staff (
   id INTEGER,
-  valid_from date,
+  valid_after date,
   valid_to date,
   salary FLOAT,
   employee_id INTEGER
@@ -27,32 +27,32 @@ CREATE TABLE hidden.staff (
 -- Before using sql_saga
 \d exposed.employees
                     Table "exposed.employees"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           |          | 
- valid_to   | date              |           |          | 
- name       | character varying |           | not null | 
- role       | character varying |           | not null | 
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ valid_after | date              |           |          | 
+ valid_to    | date              |           |          | 
+ name        | character varying |           | not null | 
+ role        | character varying |           | not null | 
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_from  | date             |           |          | 
+ valid_after | date             |           |          | 
  valid_to    | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('exposed.employees', 'valid_after', 'valid_to');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_to');
+SELECT sql_saga.add_era('hidden.staff', 'valid_after', 'valid_to');
  add_era 
 ---------
  t
@@ -61,8 +61,8 @@ SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_to');
 TABLE sql_saga.era;
     table_name     | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
 -------------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
- exposed.employees | valid    | valid_from              | valid_to            | daterange  | employees_valid_check   | 
- hidden.staff      | valid    | valid_from              | valid_to            | daterange  | staff_valid_check       | 
+ exposed.employees | valid    | valid_after             | valid_to            | daterange  | employees_valid_check   | 
+ hidden.staff      | valid    | valid_after             | valid_to            | daterange  | staff_valid_check       | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
@@ -78,10 +78,10 @@ SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      key_name      |    table_name     | column_names | era_name |          unique_constraint           |     exclude_constraint      
---------------------+-------------------+--------------+----------+--------------------------------------+-----------------------------
- employees_id_valid | exposed.employees | {id}         | valid    | employees_id_valid_from_valid_to_key | employees_id_daterange_excl
- staff_id_valid     | hidden.staff      | {id}         | valid    | staff_id_valid_from_valid_to_key     | staff_id_daterange_excl
+      key_name      |    table_name     | column_names | era_name |           unique_constraint           |     exclude_constraint      
+--------------------+-------------------+--------------+----------+---------------------------------------+-----------------------------
+ employees_id_valid | exposed.employees | {id}         | valid    | employees_id_valid_after_valid_to_key | employees_id_daterange_excl
+ staff_id_valid     | hidden.staff      | {id}         | valid    | staff_id_valid_after_valid_to_key     | staff_id_daterange_excl
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
@@ -99,42 +99,42 @@ TABLE sql_saga.foreign_keys;
 -- While sql_saga is active
 \d exposed.employees
                     Table "exposed.employees"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           | not null | 
- valid_to   | date              |           | not null | 
- name       | character varying |           | not null | 
- role       | character varying |           | not null | 
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ valid_after | date              |           | not null | 
+ valid_to    | date              |           | not null | 
+ name        | character varying |           | not null | 
+ role        | character varying |           | not null | 
 Indexes:
-    "employees_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_to, '(]'::text) WITH &&) DEFERRABLE
-    "employees_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
+    "employees_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
+    "employees_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_to)
+    "employees_valid_check" CHECK (valid_after < valid_to)
 Triggers:
     staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('staff_employee_id_valid')
-    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('staff_employee_id_valid')
+    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('staff_employee_id_valid')
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_from  | date             |           | not null | 
+ valid_after | date             |           | not null | 
  valid_to    | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
-    "staff_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_to, '(]'::text) WITH &&) DEFERRABLE
-    "staff_id_valid_from_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_to) DEFERRABLE
+    "staff_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
+    "staff_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
-    "staff_valid_check" CHECK (valid_from < valid_to)
+    "staff_valid_check" CHECK (valid_after < valid_to)
 Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('staff_employee_id_valid')
-    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('staff_employee_id_valid')
+    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_after, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('staff_employee_id_valid')
 
 -- Test data.
-INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
+INSERT INTO exposed.employees (id, valid_after, valid_to, name, role) VALUES
 (101, '2022-01-01', '2022-06-30', 'Alice Johnson', 'Junior Manager'),
 (101, '2022-07-01', '2023-12-31', 'Alice Johnson', 'Senior Manager'),
 (102, '2022-01-01', '2022-08-31', 'Bob Smith', 'Junior Engineer'),
@@ -142,7 +142,7 @@ INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
 (103, '2022-01-01', '2022-12-31', 'Charlie Brown', 'Designer'),
 (104, '2022-01-01', '2022-05-31', 'Diana Prince', 'Junior Analyst'),
 (104, '2022-06-01', '2023-12-31', 'Diana Prince', 'Senior Analyst');
-INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
+INSERT INTO hidden.staff (id, valid_after, valid_to, employee_id, salary) VALUES
 (201, '2022-01-01', '2022-06-30',101 , 50000.00),
 (201, '2022-08-01', '2023-12-31',101 , 60000.00), -- Salary increase in August, a month after role change in July
 (202, '2022-01-01', '2022-08-31',102 , 55000.00),
@@ -217,20 +217,20 @@ TABLE sql_saga.era;
 -- After removing sql_saga, it should be as before.
 \d exposed.employees
                     Table "exposed.employees"
-   Column   |       Type        | Collation | Nullable | Default 
-------------+-------------------+-----------+----------+---------
- id         | integer           |           |          | 
- valid_from | date              |           | not null | 
- valid_to   | date              |           | not null | 
- name       | character varying |           | not null | 
- role       | character varying |           | not null | 
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ valid_after | date              |           | not null | 
+ valid_to    | date              |           | not null | 
+ name        | character varying |           | not null | 
+ role        | character varying |           | not null | 
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_from  | date             |           | not null | 
+ valid_after | date             |           | not null | 
  valid_to    | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
