@@ -146,13 +146,13 @@ TABLE location;
 -- Can't delete referenced legal_Init
 DELETE FROM legal_unit WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 127 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 136 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
 PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
 -- Can't shorten referenced legal_unit more than the referencing location
 UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 -- With deferred constraints, adjust the data

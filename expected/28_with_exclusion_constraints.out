@@ -61,7 +61,7 @@ SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 178 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 --
@@ -120,7 +120,7 @@ SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 178 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 UPDATE  houses
@@ -203,7 +203,7 @@ SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 178 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 UPDATE  houses
@@ -268,7 +268,7 @@ SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 178 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 --
@@ -328,7 +328,7 @@ SET valid_from = '2019-01-01', valid_to = '2020-01-01'
 WHERE id = 1 AND valid_from = '2016-01-01';
 COMMIT;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 -- 3.2. Large shift to a later time (all the way past the later range), later first:
@@ -345,7 +345,7 @@ SET valid_from = '2018-01-01', valid_to = '2019-01-01'
 WHERE id = 1 AND valid_from = '2015-01-01';
 COMMIT;
 ERROR:  update or delete on table "houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 151 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
 PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
 -- 4. Large shift to an earlier time (all the way past the earlier range)
