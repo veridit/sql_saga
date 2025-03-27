@@ -140,6 +140,6 @@ PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
 INSERT INTO uk(id, s, e)        VALUES    (4, 1, 4),
                                           (4, 3, 5);
 ERROR:  conflicting key value violates exclusion constraint "uk_id_int4range_excl"
-DETAIL:  Key (id, int4range(s, e, '[)'::text))=(4, [3,5)) conflicts with existing key (id, int4range(s, e, '[)'::text))=(4, [1,4)).
+DETAIL:  Key (id, int4range(s, e, '(]'::text))=(4, [4,6)) conflicts with existing key (id, int4range(s, e, '(]'::text))=(4, [2,5)).
 DROP TABLE uk;
 DROP TABLE fk;

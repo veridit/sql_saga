@@ -13,38 +13,38 @@ SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
 (1 row)
 
 TABLE sql_saga.era;
- table_name  | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- rename_test | p        | s                 | e               | int4range  | rename_test_p_check     | 
+ table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test | p        | s                       | e                   | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME s TO start;
 ALTER TABLE rename_test RENAME e TO "end";
 TABLE sql_saga.era;
- table_name  | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- rename_test | p        | start             | end             | int4range  | rename_test_p_check     | 
+ table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test | p        | start                   | end                 | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME start TO "s < e";
 TABLE sql_saga.era;
- table_name  | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- rename_test | p        | s < e             | end             | int4range  | rename_test_p_check     | 
+ table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test | p        | s < e                   | end                 | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME "end" TO "embedded "" symbols";
 TABLE sql_saga.era;
- table_name  | era_name | start_column_name |  end_column_name   | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------+--------------------+------------+-------------------------+------------------
- rename_test | p        | s < e             | embedded " symbols | int4range  | rename_test_p_check     | 
+ table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test | p        | s < e                   | embedded " symbols  | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_p_check TO start_before_end;
 TABLE sql_saga.era;
- table_name  | era_name | start_column_name |  end_column_name   | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------+--------------------+------------+-------------------------+------------------
- rename_test | p        | s < e             | embedded " symbols | int4range  | start_before_end        | 
+ table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test | p        | s < e                   | embedded " symbols  | int4range  | start_before_end        | 
 (1 row)
 
 /* api */
@@ -106,10 +106,10 @@ SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 (1 row)
 
 TABLE sql_saga.era;
-   table_name    | era_name | start_column_name |  end_column_name   | range_type | bounds_check_constraint | audit_table_name 
------------------+----------+-------------------+--------------------+------------+-------------------------+------------------
- rename_test     | p        | s < e             | embedded " symbols | int4range  | start_before_end        | 
- rename_test_ref | q        | s < e             | embedded " symbols | int4range  | rename_test_ref_q_check | 
+   table_name    | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+-----------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ rename_test     | p        | s < e                   | embedded " symbols  | int4range  | start_before_end        | 
+ rename_test_ref | q        | s < e                   | embedded " symbols  | int4range  | rename_test_ref_q_check | 
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');

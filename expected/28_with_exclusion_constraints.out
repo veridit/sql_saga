@@ -55,7 +55,7 @@ SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST"]).
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -75,7 +75,7 @@ SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST"]).
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -128,7 +128,7 @@ SET     (valid_from, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Wed Jun 01 00:00:00 2016 PDT"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Fri Jan 01 00:00:00 2016 PST","Sun Jan 01 00:00:00 2017 PST"]).
 --
 -- 1.3.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
@@ -211,7 +211,7 @@ SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST"]).
 --
 -- 2.2.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
@@ -262,7 +262,7 @@ SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST"]).
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -282,7 +282,7 @@ SET     (valid_from, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_tstzrange_excl"
-DETAIL:  Key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST")) conflicts with existing key (id, tstzrange(valid_from, valid_to, '[)'::text))=(1, ["Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST")).
+DETAIL:  Key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Mon Jun 01 00:00:00 2015 PDT","Sun Jan 01 00:00:00 2017 PST"]) conflicts with existing key (id, tstzrange(valid_from, valid_to, '(]'::text))=(1, ("Thu Jan 01 00:00:00 2015 PST","Fri Jan 01 00:00:00 2016 PST"]).
 UPDATE  houses
 SET     (valid_from, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'

@@ -51,10 +51,10 @@ SELECT sql_saga.add_era('location', 'valid_after', 'valid_to');
 (1 row)
 
 TABLE sql_saga.era;
- table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
-------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- legal_unit | valid    | valid_after       | valid_to        | daterange  | legal_unit_valid_check  | 
- location   | valid    | valid_after       | valid_to        | daterange  | location_valid_check    | 
+ table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ legal_unit | valid    | valid_after             | valid_to            | daterange  | legal_unit_valid_check  | 
+ location   | valid    | valid_after             | valid_to            | daterange  | location_valid_check    | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -99,7 +99,7 @@ TABLE sql_saga.foreign_keys;
  valid_to    | date              |           | not null | 
  name        | character varying |           | not null | 
 Indexes:
-    "legal_unit_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '[)'::text) WITH &&) DEFERRABLE
+    "legal_unit_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
     "legal_unit_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
     "legal_unit_valid_check" CHECK (valid_after < valid_to)
@@ -118,7 +118,7 @@ Triggers:
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 Indexes:
-    "location_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '[)'::text) WITH &&) DEFERRABLE
+    "location_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
     "location_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
 Check constraints:
     "location_valid_check" CHECK (valid_after < valid_to)
@@ -259,8 +259,8 @@ SELECT sql_saga.drop_era('location');
 (1 row)
 
 TABLE sql_saga.era;
- table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
-------------+----------+-------------------+-----------------+------------+-------------------------+------------------
+ table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.

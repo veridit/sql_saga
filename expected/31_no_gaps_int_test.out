@@ -19,9 +19,9 @@ SELECT sql_saga.add_unique_key('int_shifts', ARRAY['job_id', 'worker_id']);
 (1 row)
 
 TABLE sql_saga.era;
- table_name | era_name | start_column_name | end_column_name | range_type | bounds_check_constraint | audit_table_name 
-------------+----------+-------------------+-----------------+------------+-------------------------+------------------
- int_shifts | valid    | valid_from        | valid_to        | int4range  | int_shifts_valid_check  | 
+ table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
+------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+ int_shifts | valid    | valid_from              | valid_to            | int4range  | int_shifts_valid_check  | 
 (1 row)
 
 TABLE sql_saga.unique_keys;
