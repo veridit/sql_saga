@@ -71,6 +71,10 @@ TABLE sql_saga.foreign_keys;
 SET client_min_messages TO DEBUG;
 -- INSERT
 INSERT INTO fk VALUES (0, 100, 0, 1); -- fail
+DEBUG:  rehashing catalog cache id 44 for pg_proc; 33 lists, 16 buckets
+LINE 1: ...ING min(uk.uk_start_value) <= fk.s            AND max(uk.uk_...
+                                                             ^
+QUERY:  SELECT EXISTS (     SELECT FROM public.fk AS fk     WHERE NOT EXISTS (         SELECT FROM (SELECT uk.uk_start_value,                             uk.uk_end_value,                             nullif(lag(uk.uk_end_value) OVER (ORDER BY uk.uk_start_value), uk.uk_start_value) AS x                      FROM (SELECT uk.s AS uk_start_value,                                   uk.e AS uk_end_value                            FROM public.uk AS uk                            WHERE id IS NOT DISTINCT FROM uk_id                              AND uk.s <= fk.e                              AND uk.e >= fk.s                            FOR KEY SHARE                           ) AS uk                     ) AS uk         WHERE uk.uk_start_value < fk.e           AND uk.uk_end_value >= fk.s         HAVING min(uk.uk_start_value) <= fk.s            AND max(uk.uk_end_value) >= fk.e            AND array_agg(uk.x) FILTER (WHERE uk.x IS NOT NULL) IS NULL     ) AND  (fk.uk_id) = ('100') )
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
 CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"

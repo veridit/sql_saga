@@ -95,19 +95,21 @@ TABLE show_acls ORDER BY sort_order;
 ------------+-------------+-------------------------+-------------+---------------+----------------
           1 | public      | fpacl                   | table       | periods_acl_1 | DELETE
           2 | public      | fpacl                   | table       | periods_acl_1 | INSERT
-          3 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
-          4 | public      | fpacl                   | table       | periods_acl_1 | SELECT
-          5 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
-          6 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
-          7 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
-          8 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-          9 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-(14 rows)
+          3 | public      | fpacl                   | table       | periods_acl_1 | MAINTAIN
+          4 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
+          5 | public      | fpacl                   | table       | periods_acl_1 | SELECT
+          6 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
+          7 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
+          8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
+          9 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+(16 rows)
 
 GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2; -- fail
 ERROR:  cannot grant SELECT directly to "fpacl__for_portion_of_p"; grant SELECT to "fpacl" instead
@@ -118,23 +120,25 @@ TABLE show_acls ORDER BY sort_order;
 ------------+-------------+-------------------------+-------------+---------------+----------------
           1 | public      | fpacl                   | table       | periods_acl_1 | DELETE
           2 | public      | fpacl                   | table       | periods_acl_1 | INSERT
-          3 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
-          4 | public      | fpacl                   | table       | periods_acl_1 | SELECT
-          5 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
-          6 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
-          7 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
-          8 | public      | fpacl                   | table       | periods_acl_2 | SELECT
-          9 | public      | fpacl                   | table       | periods_acl_2 | UPDATE
-         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
-         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | UPDATE
-(18 rows)
+          3 | public      | fpacl                   | table       | periods_acl_1 | MAINTAIN
+          4 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
+          5 | public      | fpacl                   | table       | periods_acl_1 | SELECT
+          6 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
+          7 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
+          8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
+          9 | public      | fpacl                   | table       | periods_acl_2 | SELECT
+         10 | public      | fpacl                   | table       | periods_acl_2 | UPDATE
+         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+         19 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
+         20 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | UPDATE
+(20 rows)
 
 REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2; -- fail
 ERROR:  cannot revoke UPDATE directly from "fpacl__for_portion_of_p", revoke UPDATE from "fpacl" instead
@@ -145,21 +149,23 @@ TABLE show_acls ORDER BY sort_order;
 ------------+-------------+-------------------------+-------------+---------------+----------------
           1 | public      | fpacl                   | table       | periods_acl_1 | DELETE
           2 | public      | fpacl                   | table       | periods_acl_1 | INSERT
-          3 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
-          4 | public      | fpacl                   | table       | periods_acl_1 | SELECT
-          5 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
-          6 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
-          7 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
-          8 | public      | fpacl                   | table       | periods_acl_2 | SELECT
-          9 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
-(16 rows)
+          3 | public      | fpacl                   | table       | periods_acl_1 | MAINTAIN
+          4 | public      | fpacl                   | table       | periods_acl_1 | REFERENCES
+          5 | public      | fpacl                   | table       | periods_acl_1 | SELECT
+          6 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
+          7 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
+          8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
+          9 | public      | fpacl                   | table       | periods_acl_2 | SELECT
+         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
+(18 rows)
 
 SELECT sql_saga.drop_api('fpacl', 'p');
  drop_api 
