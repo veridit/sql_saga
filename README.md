@@ -190,9 +190,13 @@ sql_saga.drop_era('person_era','valid_from','valid_to');
 ## Development
 Run regression tests with
 ```
-make && make install && make installcheck
+make install && make installcheck
 ```
 
+To quickly review and fix any diffs you can use
+```
+make vimdiff-fail-all
+```
 
 ## Dependencies
 
