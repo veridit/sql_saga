@@ -198,7 +198,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga._make_api_view_name(table_oid name, era_name name)
+CREATE FUNCTION sql_saga._make_api_view_name(table_name name, era_name name)
  RETURNS name
  IMMUTABLE
  LANGUAGE plpgsql
@@ -217,16 +217,16 @@ BEGIN
      * don't care.
      */
 
-    max_length := greatest(length(table_oid), length(era_name));
+    max_length := greatest(length(table_name), length(era_name));
 
     LOOP
-        result := format('%s__for_portion_of_%s', table_oid, era_name);
+        result := format('%s__for_portion_of_%s', table_name, era_name);
         IF octet_length(result) <= NAMEDATALEN-1 THEN
             RETURN result;
         END IF;
 
         max_length := max_length - 1;
-        table_oid := left(table_oid, max_length);
+        table_name := left(table_name, max_length);
         era_name := left(era_name, max_length);
     END LOOP;
 END;
@@ -298,19 +298,6 @@ BEGIN
     END IF;
 END;
 $function$;
-
-
-CREATE OR REPLACE FUNCTION to_text_array(arr ANYARRAY)
-RETURNS TEXT
-LANGUAGE sql
-IMMUTABLE
-STRICT
-PARALLEL SAFE
-AS $$
-  SELECT 'ARRAY[' || string_agg(quote_literal(elem), ',') || ']'
-  FROM unnest(arr) AS elem;
-$$;
-
 
 
 CREATE FUNCTION sql_saga.add_era(
@@ -677,8 +664,7 @@ BEGIN
     WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
     IF NOT FOUND THEN
-        RAISE DEBUG 'era % not found for table %', era_name, table_oid;
-        RETURN false;
+        RAISE EXCEPTION 'era "%" on table "%" does not exist', era_name, table_oid;
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
@@ -871,7 +857,7 @@ BEGIN
     END IF;
 
     FOR r IN
-        SELECT n.nspname AS schema_name, c.relname AS table_oid, c.relowner AS table_owner, p.era_name
+        SELECT n.nspname AS schema_name, c.relname AS table_name, c.relowner AS table_owner, p.era_name
         FROM sql_saga.era AS p
         JOIN pg_catalog.pg_class AS c ON c.oid = p.table_oid
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
@@ -882,14 +868,14 @@ BEGIN
                 SELECT FROM sql_saga.api_view AS _fpv
                 WHERE (_fpv.table_oid, _fpv.era_name) = (p.table_oid, p.era_name))
     LOOP
-        view_name := sql_saga._make_api_view_name(r.table_oid, r.era_name);
+        view_name := sql_saga._make_api_view_name(r.table_name, r.era_name);
         trigger_name := 'for_portion_of_' || r.era_name;
-        EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_oid);
+        EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
         EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
         EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
             trigger_name, r.schema_name, view_name);
         INSERT INTO sql_saga.api_view (table_oid, era_name, view_oid, trigger_name)
-            VALUES (format('%I.%I', r.schema_name, r.table_oid), r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
+            VALUES (format('%I.%I', r.schema_name, r.table_name), r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
     END LOOP;
 
     RETURN true;
@@ -1669,7 +1655,7 @@ BEGIN
 
     IF fk_era_row.range_type <> uk_era_row.range_type THEN
         RAISE EXCEPTION 'era types "%" and "%" are incompatible',
-            fk_era_row.fk_era_name, uk_era_row.fk_era_name;
+            fk_era_row.era_name, uk_era_row.era_name;
     END IF;
 
     SELECT n.nspname, c.relname INTO uk_schema_name, uk_table_name
