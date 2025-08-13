@@ -33,7 +33,7 @@ vimdiff-fail-first:
 	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
 	if [ -n "$$first_fail" ]; then \
 		echo "Running vimdiff for test: $$first_fail"; \
-		vim -d results/$$first_fail.out expected/$$first_fail.out < /dev/tty; \
+		vim -d expected/$$first_fail.out results/$$first_fail.out < /dev/tty; \
 	else \
 		echo "No failing tests found."; \
 	fi
@@ -50,7 +50,7 @@ vimdiff-fail-all:
 			continue; \
 		fi; \
 		echo "Running vimdiff for test: $$test"; \
-		vim -d results/$$test.out expected/$$test.out < /dev/tty; \
+		vim -d expected/$$test.out results/$$test.out < /dev/tty; \
 	done
 
 #release:
