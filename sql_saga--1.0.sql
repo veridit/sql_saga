@@ -1457,6 +1457,36 @@ BEGIN
 END;
 $function$;
 
+CREATE FUNCTION sql_saga.drop_unique_key(
+        table_oid regclass,
+        column_names name[],
+        era_name name,
+        drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
+        cleanup boolean DEFAULT true
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    key_name_found name;
+BEGIN
+    SELECT uk.unique_key_name INTO key_name_found
+    FROM sql_saga.unique_keys AS uk
+    WHERE uk.table_oid = table_oid
+      AND uk.column_names = column_names
+      AND uk.era_name = era_name;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'unique key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
+    END IF;
+
+    PERFORM sql_saga.drop_unique_key(table_oid, key_name_found, drop_behavior, cleanup);
+END;
+$function$;
+
 CREATE FUNCTION sql_saga.uk_update_check()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1502,6 +1532,35 @@ BEGIN
     PERFORM sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
 
     RETURN NULL;
+END;
+$function$;
+
+CREATE FUNCTION sql_saga.drop_foreign_key(
+    table_oid regclass,
+    column_names name[],
+    era_name name,
+    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    key_name_found name;
+BEGIN
+    SELECT fk.foreign_key_name INTO key_name_found
+    FROM sql_saga.foreign_keys AS fk
+    WHERE fk.table_oid = table_oid
+      AND fk.column_names = column_names
+      AND fk.era_name = era_name;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'foreign key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
+    END IF;
+
+    PERFORM sql_saga.drop_foreign_key(table_oid, key_name_found);
 END;
 $function$;
 
@@ -1908,10 +1967,6 @@ $function$;
 
 CREATE FUNCTION sql_saga.drop_foreign_key(
     table_oid regclass,
-    -- TODO: Simplify API with the following
-    -- column_names name[],
-    -- foreign_table_oid regclass,
-    -- foregin_column_names name[],
     key_name name)
  RETURNS boolean
  LANGUAGE plpgsql

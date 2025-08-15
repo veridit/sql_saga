@@ -5,9 +5,9 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 ## High Priority - Bugs & Core Features
 
 
-- [ ] **Make `drop_*` commands fail for incorrect parameters:**
-  - **Issue:** The `drop_*` functions should raise errors for invalid parameters (e.g., non-existent keys or tables) instead of silently doing nothing. This makes the API more robust. However, making them strict by default breaks test cleanup helpers.
-  - **Action:** Re-evaluate the `drop_*` functions. They should be strict by default but offer an `if_exists` option to allow for safe cleanup operations where the existence of an object is not guaranteed.
+- [x] **Make `drop_*` commands fail for incorrect parameters:**
+  - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
+  - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
 
 ## Medium Priority - Refactoring & API Improvements
 
