@@ -9,16 +9,16 @@ SELECT sql_saga.add_era('uk', 's', 'e', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('uk', ARRAY['id'], 'p', key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
+SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
  add_unique_key 
 ----------------
  uk_id_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
- key_name | table_name | column_names | era_name | unique_constraint |  exclude_constraint  
-----------+------------+--------------+----------+-------------------+----------------------
- uk_id_p  | uk         | {id}         | p        | uk_pkey           | uk_id_int4range_excl
+ unique_key_name | table_oid | column_names | era_name | unique_constraint |  exclude_constraint  
+-----------------+-----------+--------------+----------+-------------------+----------------------
+ uk_id_p         | uk        | {id}         | p        | uk_pkey           | uk_id_int4range_excl
 (1 row)
 
 INSERT INTO uk (id, s, e) VALUES (100, 1, 3), (100, 3, 4), (100, 4, 10); -- success
@@ -34,7 +34,7 @@ SELECT sql_saga.add_era('fk', 's', 'e', 'q');
 (1 row)
 
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
-    key_name => 'fk_uk_id_q',
+    foreign_key_name => 'fk_uk_id_q',
     fk_insert_trigger => 'fki',
     fk_update_trigger => 'fku',
     uk_update_trigger => 'uku',
@@ -45,9 +45,9 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-  key_name  | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------+------------+--------------+----------+------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
- fk_uk_id_q | fk         | {uk_id}      | q        | uk_id_p    | SIMPLE     | NO ACTION     | NO ACTION     | fki               | fku               | uku               | ukd
+ foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ fk_uk_id_q       | fk        | {uk_id}      | q        | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fki               | fku               | uku               | ukd
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('fk', 'fk_uk_id_q');
@@ -56,70 +56,55 @@ SELECT sql_saga.drop_foreign_key('fk', 'fk_uk_id_q');
  t
 (1 row)
 
-SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', key_name => 'fk_uk_id_q');
+SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
  add_foreign_key 
 -----------------
  fk_uk_id_q
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-  key_name  | table_name | column_names | era_name | unique_key | match_type | delete_action | update_action |  fk_insert_trigger   |  fk_update_trigger   |  uk_update_trigger   |  uk_delete_trigger   
-------------+------------+--------------+----------+------------+------------+---------------+---------------+----------------------+----------------------+----------------------+----------------------
- fk_uk_id_q | fk         | {uk_id}      | q        | uk_id_p    | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
+ foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   |  uk_update_trigger   |  uk_delete_trigger   
+------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+----------------------+----------------------+----------------------+----------------------
+ fk_uk_id_q       | fk        | {uk_id}      | q        | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
 (1 row)
 
-SET client_min_messages TO DEBUG;
 -- INSERT
 INSERT INTO fk VALUES (0, 100, 0, 1); -- fail
-DEBUG:  rehashing catalog cache id 44 for pg_proc; 33 lists, 16 buckets
-LINE 1: ...ING min(uk.uk_start_value) <= fk.s            AND max(uk.uk_...
-                                                             ^
-QUERY:  SELECT EXISTS (     SELECT FROM public.fk AS fk     WHERE NOT EXISTS (         SELECT FROM (SELECT uk.uk_start_value,                             uk.uk_end_value,                             nullif(lag(uk.uk_end_value) OVER (ORDER BY uk.uk_start_value), uk.uk_start_value) AS x                      FROM (SELECT uk.s AS uk_start_value,                                   uk.e AS uk_end_value                            FROM public.uk AS uk                            WHERE id IS NOT DISTINCT FROM uk_id                              AND uk.s <= fk.e                              AND uk.e >= fk.s                            FOR KEY SHARE                           ) AS uk                     ) AS uk         WHERE uk.uk_start_value < fk.e           AND uk.uk_end_value >= fk.s         HAVING min(uk.uk_start_value) <= fk.s            AND max(uk.uk_end_value) >= fk.e            AND array_agg(uk.x) FILTER (WHERE uk.x IS NOT NULL) IS NULL     ) AND  (fk.uk_id) = ('100') )
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 INSERT INTO fk VALUES (0, 100, 0, 10); -- fail
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 INSERT INTO fk VALUES (0, 100, 1, 11); -- fail
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_insert_check() line 20 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_insert_check() line 36 at PERFORM
 INSERT INTO fk VALUES (1, 100, 1, 3); -- success
 INSERT INTO fk VALUES (2, 100, 1, 10); -- success
 -- UPDATE
 UPDATE fk SET e = 20 WHERE id = 1; -- fail
 ERROR:  insert or update on table "fk" violates foreign key constraint "fk_uk_id_q"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(name,jsonb) line 133 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew)"
-PL/pgSQL function sql_saga.fk_update_check() line 19 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.fk_update_check() line 37 at PERFORM
 UPDATE fk SET e = 6 WHERE id = 1; -- success
 UPDATE uk SET s = 2 WHERE (id, s, e) = (100, 1, 3); -- fail
-DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
-DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('2', '10', s, e) )
-DEBUG:  Violation detected for FK: fk_uk_id_q, Row Data: {"e": 3, "s": 1, "id": 100}
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 163 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true)"
-PL/pgSQL function sql_saga.uk_update_check() line 23 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 65 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.uk_update_check() line 40 at PERFORM
 UPDATE uk SET s = 0 WHERE (id, s, e) = (100, 1, 3); -- success
-DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
-DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('0', '10', s, e) )
-DEBUG:  SQL_FK_CONTAINS_UK_HOLES=SELECT EXISTS(     WITH holes AS (         SELECT e AS "s", next_s AS "e"           FROM (SELECT e, LEAD(s, 1) OVER (ORDER BY s) "next_s"                   FROM public.uk                  WHERE ROW(id) = ROW('100')) t          WHERE (t.next_s IS NOT NULL AND t.next_s <> e)     )     SELECT FROM public.fk t     WHERE ROW(t.uk_id) = ROW('100')       AND EXISTS(SELECT                     FROM holes h                    WHERE sql_saga.contains(s, e, h.s, h.e)) )
 -- DELETE
 DELETE FROM uk WHERE (id, s, e) = (100, 3, 4); -- fail
-DEBUG:  SQL_UK_MINMAX=SELECT MIN(s), MAX(e)   FROM public.uk as t  WHERE ROW(t.id) = ROW('100')
-DEBUG:  SQL_FK_OUT_OF_UK_MINMAX_RANGE=SELECT EXISTS(    SELECT      FROM public.fk as t     WHERE ROW(t.uk_id) = ROW('100')       AND NOT sql_saga.contains('0', '10', s, e) )
-DEBUG:  SQL_FK_CONTAINS_UK_HOLES=SELECT EXISTS(     WITH holes AS (         SELECT e AS "s", next_s AS "e"           FROM (SELECT e, LEAD(s, 1) OVER (ORDER BY s) "next_s"                   FROM public.uk                  WHERE ROW(id) = ROW('100')) t          WHERE (t.next_s IS NOT NULL AND t.next_s <> e)     )     SELECT FROM public.fk t     WHERE ROW(t.uk_id) = ROW('100')       AND EXISTS(SELECT                     FROM holes h                    WHERE sql_saga.contains(s, e, h.s, h.e)) )
 ERROR:  update or delete on table "uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(name,jsonb,boolean) line 193 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false)"
-PL/pgSQL function sql_saga.uk_delete_check() line 22 at PERFORM
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 65 at RAISE
+SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, false /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
+PL/pgSQL function sql_saga.uk_delete_check() line 39 at PERFORM
 DELETE FROM uk WHERE (id, s, e) = (200, 3, 5); -- success
-RESET client_min_messages;
 DROP TABLE fk;
 DROP TABLE uk;

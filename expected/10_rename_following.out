@@ -13,37 +13,37 @@ SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
 (1 row)
 
 TABLE sql_saga.era;
- table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+  table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test | p        | s                       | e                   | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME s TO start;
 ALTER TABLE rename_test RENAME e TO "end";
 TABLE sql_saga.era;
- table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+  table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test | p        | start                   | end                 | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME start TO "s < e";
 TABLE sql_saga.era;
- table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+  table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test | p        | s < e                   | end                 | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME "end" TO "embedded "" symbols";
 TABLE sql_saga.era;
- table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+  table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test | p        | s < e                   | embedded " symbols  | int4range  | rename_test_p_check     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_p_check TO start_before_end;
 TABLE sql_saga.era;
- table_name  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
--------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+  table_oid  | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test | p        | s < e                   | embedded " symbols  | int4range  | start_before_end        | 
 (1 row)
 
@@ -56,14 +56,14 @@ SELECT sql_saga.add_api('rename_test', 'p');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_name  | era_name |           view_name           |   trigger_name   
+  table_oid  | era_name |           view_oid            |   trigger_name   
 -------------+----------+-------------------------------+------------------
  rename_test | p        | rename_test__for_portion_of_p | for_portion_of_p
 (1 row)
 
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
 TABLE sql_saga.api_view;
- table_name  | era_name |           view_name           |  trigger_name   
+  table_oid  | era_name |           view_oid            |  trigger_name   
 -------------+----------+-------------------------------+-----------------
  rename_test | p        | rename_test__for_portion_of_p | portion_trigger
 (1 row)
@@ -83,7 +83,7 @@ SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p'
 (1 row)
 
 TABLE sql_saga.unique_keys;
-           key_name           | table_name  |   column_names   | era_name |                    unique_constraint                    |            exclude_constraint             
+       unique_key_name        |  table_oid  |   column_names   | era_name |                    unique_constraint                    |            exclude_constraint             
 ------------------------------+-------------+------------------+----------+---------------------------------------------------------+-------------------------------------------
  rename_test_col2_col1_col3_p | rename_test | {col2,col1,col3} | p        | rename_test_col2_col1_col3_s < e_embedded " symbols_key | rename_test_col2_col1_col3_int4range_excl
 (1 row)
@@ -92,7 +92,7 @@ ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT "rename_test_col2_col1_col3_s < e_embedded "" symbols_key" TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_int4range_excl TO exconst;
 TABLE sql_saga.unique_keys;
-           key_name           | table_name  |    column_names     | era_name | unique_constraint | exclude_constraint 
+       unique_key_name        |  table_oid  |    column_names     | era_name | unique_constraint | exclude_constraint 
 ------------------------------+-------------+---------------------+----------+-------------------+--------------------
  rename_test_col2_col1_col3_p | rename_test | {col2,COLUMN1,col3} | p        | unconst           | exconst
 (1 row)
@@ -106,8 +106,8 @@ SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 (1 row)
 
 TABLE sql_saga.era;
-   table_name    | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_name 
------------------+----------+-------------------------+---------------------+------------+-------------------------+------------------
+    table_oid    | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+-----------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
  rename_test     | p        | s < e                   | embedded " symbols  | int4range  | start_before_end        | 
  rename_test_ref | q        | s < e                   | embedded " symbols  | int4range  | rename_test_ref_q_check | 
 (2 rows)
@@ -119,7 +119,7 @@ SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-              key_name               |   table_name    |    column_names     | era_name |          unique_key          | match_type | delete_action | update_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
+          foreign_key_name           |    table_oid    |    column_names     | era_name |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
 -------------------------------------+-----------------+---------------------+----------+------------------------------+------------+---------------+---------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------
  rename_test_ref_col2_COLUMN1_col3_q | rename_test_ref | {col2,COLUMN1,col3} | q        | rename_test_col2_col1_col3_p | SIMPLE     | NO ACTION     | NO ACTION     | rename_test_ref_col2_COLUMN1_col3_q_fk_insert | rename_test_ref_col2_COLUMN1_col3_q_fk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_delete
 (1 row)
@@ -140,7 +140,7 @@ ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test REN
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
 TABLE sql_saga.foreign_keys;
-              key_name               |   table_name    |    column_names     | era_name |          unique_key          | match_type | delete_action | update_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
+          foreign_key_name           |    table_oid    |    column_names     | era_name |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
 -------------------------------------+-----------------+---------------------+----------+------------------------------+------------+---------------+---------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------
  rename_test_ref_col2_COLUMN1_col3_q | rename_test_ref | {col2,COLUMN1,col3} | q        | rename_test_col2_col1_col3_p | SIMPLE     | NO ACTION     | NO ACTION     | rename_test_ref_col2_COLUMN1_col3_q_fk_insert | rename_test_ref_col2_COLUMN1_col3_q_fk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_delete
 (1 row)

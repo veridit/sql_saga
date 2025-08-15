@@ -21,7 +21,7 @@ CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
  */
 
 CREATE TABLE sql_saga.era (
-    table_name regclass NOT NULL,
+    table_oid regclass NOT NULL,
     era_name name NOT NULL DEFAULT 'valid',
     start_after_column_name name NOT NULL,
     stop_on_column_name name NOT NULL,
@@ -30,13 +30,13 @@ CREATE TABLE sql_saga.era (
     bounds_check_constraint name NOT NULL,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
-    audit_table_name regclass, -- NOT NULL
+    audit_table_oid regclass, -- NOT NULL
     -- audit_trigger name NOT NULL,
     -- delete_trigger name NOT NULL,
     --excluded_column_names name[] NOT NULL DEFAULT '{}',
     -- UNIQUE(...) for each trigger/function name.
 
-    PRIMARY KEY (table_name, era_name),
+    PRIMARY KEY (table_oid, era_name),
 
     CHECK (start_after_column_name <> stop_on_column_name),
     CHECK (era_name <> 'system_time')
@@ -46,16 +46,16 @@ GRANT SELECT ON TABLE sql_saga.era TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.era', '');
 
 CREATE TABLE sql_saga.unique_keys (
-    key_name name NOT NULL,
-    table_name regclass NOT NULL,
+    unique_key_name name NOT NULL,
+    table_oid regclass NOT NULL,
     column_names name[] NOT NULL,
     era_name name NOT NULL,
     unique_constraint name NOT NULL,
     exclude_constraint name NOT NULL,
 
-    PRIMARY KEY (key_name),
+    PRIMARY KEY (unique_key_name),
 
-    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era
+    FOREIGN KEY (table_oid, era_name) REFERENCES sql_saga.era
 );
 GRANT SELECT ON TABLE sql_saga.unique_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
@@ -63,23 +63,23 @@ SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
 COMMENT ON TABLE sql_saga.unique_keys IS 'A registry of UNIQUE/PRIMARY keys using era WITHOUT OVERLAPS';
 
 CREATE TABLE sql_saga.foreign_keys (
-    key_name name NOT NULL,
-    table_name regclass NOT NULL,
+    foreign_key_name name NOT NULL,
+    table_oid regclass NOT NULL,
     column_names name[] NOT NULL,
     era_name name NOT NULL,
-    unique_key name NOT NULL,
+    unique_key_name name NOT NULL,
     match_type sql_saga.fk_match_types NOT NULL DEFAULT 'SIMPLE',
-    delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
+    delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     fk_insert_trigger name NOT NULL,
     fk_update_trigger name NOT NULL,
     uk_update_trigger name NOT NULL,
     uk_delete_trigger name NOT NULL,
 
-    PRIMARY KEY (key_name),
+    PRIMARY KEY (foreign_key_name),
 
-    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
-    FOREIGN KEY (unique_key) REFERENCES sql_saga.unique_keys,
+    FOREIGN KEY (table_oid, era_name) REFERENCES sql_saga.era,
+    FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys,
 
     CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
     CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))
@@ -98,23 +98,22 @@ CREATE VIEW sql_saga.information_schema__era AS
            e.start_after_column_name,
            e.stop_on_column_name
     FROM sql_saga.era AS e
-    JOIN pg_catalog.pg_class AS c ON c.oid = e.table_name
+    JOIN pg_catalog.pg_class AS c ON c.oid = e.table_oid
     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace;
 
 
 CREATE TABLE sql_saga.api_view (
-    table_name regclass NOT NULL,
+    table_oid regclass NOT NULL,
     era_name name NOT NULL,
-    view_name regclass NOT NULL,
+    view_oid regclass NOT NULL,
     trigger_name name NOT NULL,
     -- truncate_trigger name NOT NULL,
 
+    PRIMARY KEY (table_oid, era_name),
 
-    PRIMARY KEY (table_name, era_name),
+    FOREIGN KEY (table_oid, era_name) REFERENCES sql_saga.era,
 
-    FOREIGN KEY (table_name, era_name) REFERENCES sql_saga.era,
-
-    UNIQUE (view_name)
+    UNIQUE (view_oid)
 );
 GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
@@ -234,8 +233,75 @@ END;
 $function$;
 
 
+CREATE TYPE sql_saga.foreign_key_metadata AS (
+    fk_table_oid regclass,
+    fk_schema_name name,
+    fk_table_name name,
+    fk_column_names name[],
+    fk_era_name name,
+    fk_start_after_column_name name,
+    fk_stop_on_column_name name,
+
+    uk_table_oid regclass,
+    uk_schema_name name,
+    uk_table_name name,
+    uk_column_names name[],
+    uk_era_name name,
+    uk_start_after_column_name name,
+    uk_stop_on_column_name name,
+
+    match_type sql_saga.fk_match_types,
+    update_action sql_saga.fk_actions,
+    delete_action sql_saga.fk_actions
+);
+
+
+CREATE FUNCTION sql_saga._get_foreign_key_metadata(foreign_key_name_param name)
+RETURNS SETOF sql_saga.foreign_key_metadata
+STABLE
+LANGUAGE plpgsql
+AS
+$function$
+BEGIN
+    RETURN QUERY
+    SELECT fc.oid::regclass     AS fk_table_oid,
+           fn.nspname           AS fk_schema_name,
+           fc.relname           AS fk_table_name,
+           fk.column_names      AS fk_column_names,
+           fe.era_name          AS fk_era_name,
+           fe.start_after_column_name AS fk_start_after_column_name,
+           fe.stop_on_column_name   AS fk_stop_on_column_name,
+
+           uc.oid::regclass     AS uk_table_oid,
+           un.nspname           AS uk_schema_name,
+           uc.relname           AS uk_table_name,
+           uk.column_names      AS uk_column_names,
+           ue.era_name          AS uk_era_name,
+           ue.start_after_column_name AS uk_start_after_column_name,
+           ue.stop_on_column_name   AS uk_stop_on_column_name,
+
+           fk.match_type        AS match_type,
+           fk.update_action     AS update_action,
+           fk.delete_action     AS delete_action
+    FROM sql_saga.foreign_keys AS fk
+    JOIN sql_saga.era AS fe ON (fe.table_oid, fe.era_name) = (fk.table_oid, fk.era_name)
+    JOIN pg_catalog.pg_class AS fc ON fc.oid = fk.table_oid
+    JOIN pg_catalog.pg_namespace AS fn ON fn.oid = fc.relnamespace
+    JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+    JOIN sql_saga.era AS ue ON (ue.table_oid, ue.era_name) = (uk.table_oid, uk.era_name)
+    JOIN pg_catalog.pg_class AS uc ON uc.oid = uk.table_oid
+    JOIN pg_catalog.pg_namespace AS un ON un.oid = uc.relnamespace
+    WHERE fk.foreign_key_name = foreign_key_name_param;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'foreign key "%" not found', foreign_key_name_param;
+    END IF;
+END;
+$function$;
+
+
 CREATE FUNCTION sql_saga.add_era(
-    table_name regclass,
+    table_oid regclass,
     start_after_column_name name,
     stop_on_column_name name,
     era_name name DEFAULT 'valid',
@@ -248,7 +314,7 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    table_name_only name;
+    table_name name;
     kind "char";
     persistence "char";
     alter_commands text[] DEFAULT '{}';
@@ -263,7 +329,7 @@ DECLARE
     end_collation oid;
     end_notnull boolean;
 BEGIN
-    IF table_name IS NULL THEN
+    IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
@@ -272,7 +338,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     /* Period names are limited to lowercase alphanumeric characters for now */
     era_name := lower(era_name);
@@ -285,7 +351,7 @@ BEGIN
     SELECT c.relpersistence, c.relkind
     INTO persistence, kind
     FROM pg_catalog.pg_class AS c
-    WHERE c.oid = table_name;
+    WHERE c.oid = table_oid;
 
     IF kind <> 'r' THEN
         /*
@@ -302,7 +368,7 @@ BEGIN
 
     IF persistence <> 'p' THEN
         /* We could probably accept unlogged tables but what's the point? */
-        RAISE EXCEPTION 'table "%" must be persistent', table_name;
+        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
     END IF;
 
     /*
@@ -312,8 +378,8 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.b
      */
-    IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_name, p.era_name) = (table_name, era_name)) THEN
-        RAISE EXCEPTION 'era for "%" already exists on table "%"', era_name, table_name;
+    IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_oid, p.era_name) = (table_oid, era_name)) THEN
+        RAISE EXCEPTION 'era for "%" already exists on table "%"', era_name, table_oid;
     END IF;
 
     /*
@@ -324,9 +390,9 @@ BEGIN
      */
     IF EXISTS (
         SELECT FROM pg_catalog.pg_attribute AS a
-        WHERE (a.attrelid, a.attname) = (table_name, era_name))
+        WHERE (a.attrelid, a.attname) = (table_oid, era_name))
     THEN
-        RAISE EXCEPTION 'a column named "%" already exists for table "%"', era_name, table_name;
+        RAISE EXCEPTION 'a column named "%" already exists for table "%"', era_name, table_oid;
     END IF;
 
     /*
@@ -340,10 +406,10 @@ BEGIN
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
     INTO start_attnum, start_type, start_collation, start_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_name, start_after_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, start_after_column_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'column "%" not found in table "%"', start_after_column_name, table_name;
+        RAISE EXCEPTION 'column "%" not found in table "%"', start_after_column_name, table_oid;
     END IF;
 
     IF start_attnum < 0 THEN
@@ -354,10 +420,10 @@ BEGIN
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
     INTO end_attnum, end_type, end_collation, end_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_name, stop_on_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, stop_on_column_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'column "%" not found in table "%"', stop_on_column_name, table_name;
+        RAISE EXCEPTION 'column "%" not found in table "%"', stop_on_column_name, table_oid;
     END IF;
 
     IF end_attnum < 0 THEN
@@ -427,13 +493,13 @@ BEGIN
             SELECT pg_catalog.pg_get_constraintdef(c.oid)
             INTO context
             FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (table_name, bounds_check_constraint)
+            WHERE (c.conrelid, c.conname) = (table_oid, bounds_check_constraint)
               AND c.contype = 'c';
 
             IF FOUND THEN
                 /* Does it match? */
                 IF context <> condef THEN
-                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', bounds_check_constraint, table_name;
+                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', bounds_check_constraint, table_oid;
                 END IF;
             ELSE
                 /* If it doesn't exist, we'll use the name for the one we create. */
@@ -444,18 +510,18 @@ BEGIN
             SELECT c.conname
             INTO bounds_check_constraint
             FROM pg_catalog.pg_constraint AS c
-            WHERE c.conrelid = table_name
+            WHERE c.conrelid = table_oid
               AND c.contype = 'c'
               AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
 
             /* Make our own then */
             IF NOT FOUND THEN
                 SELECT c.relname
-                INTO table_name_only
+                INTO table_name
                 FROM pg_catalog.pg_class AS c
-                WHERE c.oid = table_name;
+                WHERE c.oid = table_oid;
 
-                bounds_check_constraint := sql_saga._make_name(ARRAY[table_name_only, era_name], 'check');
+                bounds_check_constraint := sql_saga._make_name(ARRAY[table_name, era_name], 'check');
                 alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
             END IF;
         END IF;
@@ -514,11 +580,11 @@ BEGIN
 
     /* If we've created any work for ourselves, do it now */
     IF alter_commands <> '{}' THEN
-        EXECUTE format('ALTER TABLE %s %s', table_name, array_to_string(alter_commands, ', '));
+        EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(alter_commands, ', '));
     END IF;
 
-    INSERT INTO sql_saga.era (table_name, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint)
-    VALUES (table_name, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint);
+    INSERT INTO sql_saga.era (table_oid, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint)
+    VALUES (table_oid, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint);
 
     -- Code for creation of triggers, when extending the era api
     --        /* Make sure all the excluded columns exist */
@@ -562,7 +628,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_era(table_name regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -574,7 +640,7 @@ DECLARE
     portion_view regclass;
     is_dropped boolean;
 BEGIN
-    IF table_name IS NULL THEN
+    IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
@@ -583,45 +649,45 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     /*
      * Has the table been dropped already?  This could happen if the period is
      * being dropped by the drop_protection event trigger or through a DROP
      * CASCADE.
      */
-    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_name);
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
 
     SELECT p.*
     INTO era_row
     FROM sql_saga.era AS p
-    WHERE (p.table_name, p.era_name) = (table_name, era_name);
+    WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
     IF NOT FOUND THEN
-        RAISE DEBUG 'era % not found for table %', era_name, table_name;
+        RAISE DEBUG 'era % not found for table %', era_name, table_oid;
         RETURN false;
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_api(table_name, era_name, drop_behavior, cleanup);
+    PERFORM sql_saga.drop_api(table_oid, era_name, drop_behavior, cleanup);
 
     /* If this is a system_time period, get rid of the triggers */
     --    DELETE FROM sql_saga.system_time_periods AS stp
-    --    WHERE stp.table_name = table_name
+    --    WHERE stp.table_oid = table_oid
     --    RETURNING stp.* INTO system_time_era_row;
     --
     --    IF FOUND AND NOT is_dropped THEN
-    --        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_name, system_time_era_row.infinity_check_constraint);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_name);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_name);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_name);
+    --        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid);
+    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid);
     --    END IF;
 
     IF drop_behavior = 'RESTRICT' THEN
         /* Check for UNIQUE or PRIMARY KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.unique_keys AS uk
-            WHERE (uk.table_name, uk.era_name) = (table_name, era_name))
+            WHERE (uk.table_oid, uk.era_name) = (table_oid, era_name))
         THEN
             RAISE EXCEPTION 'era % is part of a UNIQUE or PRIMARY KEY', era_name;
         END IF;
@@ -629,7 +695,7 @@ BEGIN
         /* Check for FOREIGN KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.foreign_keys AS fk
-            WHERE (fk.table_name, fk.era_name) = (table_name, era_name))
+            WHERE (fk.table_oid, fk.era_name) = (table_oid, era_name))
         THEN
             RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
         END IF;
@@ -637,43 +703,43 @@ BEGIN
 --        /* Check for SYSTEM VERSIONING */
 --        IF EXISTS (
 --            SELECT FROM sql_saga.system_versioning AS sv
---            WHERE (sv.table_name, sv.era_name) = (table_name, era_name))
+--            WHERE (sv.table_oid, sv.era_name) = (table_oid, era_name))
 --        THEN
---            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_name;
+--            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_oid;
 --        END IF;
 
         /* Delete bounds check constraint if purging */
         IF NOT is_dropped AND cleanup THEN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-                table_name, era_row.bounds_check_constraint);
+                table_oid, era_row.bounds_check_constraint);
         END IF;
 
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p
-        WHERE (p.table_name, p.era_name) = (table_name, era_name);
+        WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
         RETURN true;
     END IF;
 
     /* We must be in CASCADE mode now */
 
-    PERFORM sql_saga.drop_foreign_key(table_name, fk.key_name)
+    PERFORM sql_saga.drop_foreign_key(table_oid, fk.foreign_key_name)
     FROM sql_saga.foreign_keys AS fk
-    WHERE (fk.table_name, fk.era_name) = (table_name, era_name);
+    WHERE (fk.table_oid, fk.era_name) = (table_oid, era_name);
 
-    PERFORM sql_saga.drop_unique_key(table_name, uk.key_name, drop_behavior, cleanup)
+    PERFORM sql_saga.drop_unique_key(table_oid, uk.unique_key_name, drop_behavior, cleanup)
     FROM sql_saga.unique_keys AS uk
-    WHERE (uk.table_name, uk.era_name) = (table_name, era_name);
+    WHERE (uk.table_oid, uk.era_name) = (table_oid, era_name);
 
     /* Delete bounds check constraint if purging */
     IF NOT is_dropped AND cleanup THEN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-            table_name, era_row.bounds_check_constraint);
+            table_oid, era_row.bounds_check_constraint);
     END IF;
 
     /* Remove from catalog */
     DELETE FROM sql_saga.era AS p
-    WHERE (p.table_name, p.era_name) = (table_name, era_name);
+    WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
     RETURN true;
 END;
@@ -748,7 +814,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.add_api(table_name regclass DEFAULT NULL, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -761,7 +827,7 @@ DECLARE
     trigger_name name;
 BEGIN
     /*
-     * If table_name and era_name are specified, then just add the views for that.
+     * If table_oid and era_name are specified, then just add the views for that.
      *
      * If no period is specified, add the views for all periods of the table.
      *
@@ -769,39 +835,39 @@ BEGIN
      *
      * If no table is specified but a period is, that doesn't make any sense.
      */
-    IF table_name IS NULL AND era_name IS NOT NULL THEN
+    IF table_oid IS NULL AND era_name IS NOT NULL THEN
         RAISE EXCEPTION 'cannot specify era name without table name';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     /*
      * We require the table to have a primary key, so check to see if there is
      * one.  This requires a lock on the table so no one removes it after we
      * check and before we commit.
      */
-    EXECUTE format('LOCK TABLE %s IN ACCESS SHARE MODE', table_name);
+    EXECUTE format('LOCK TABLE %s IN ACCESS SHARE MODE', table_oid);
 
     /* Now check for the primary key */
     IF NOT EXISTS (
         SELECT FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_name, 'p'))
+        WHERE (c.conrelid, c.contype) = (table_oid, 'p'))
     THEN
-        RAISE EXCEPTION 'table "%" must have a primary key', table_name;
+        RAISE EXCEPTION 'table "%" must have a primary key', table_oid;
     END IF;
 
     FOR r IN
         SELECT n.nspname AS schema_name, c.relname AS table_name, c.relowner AS table_owner, p.era_name
         FROM sql_saga.era AS p
-        JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
+        JOIN pg_catalog.pg_class AS c ON c.oid = p.table_oid
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-        WHERE (table_name IS NULL OR p.table_name = table_name)
+        WHERE (table_oid IS NULL OR p.table_oid = table_oid)
           AND (era_name IS NULL OR p.era_name = era_name)
           AND p.era_name <> 'system_time'
           AND NOT EXISTS (
                 SELECT FROM sql_saga.api_view AS _fpv
-                WHERE (_fpv.table_name, _fpv.era_name) = (p.table_name, p.era_name))
+                WHERE (_fpv.table_oid, _fpv.era_name) = (p.table_oid, p.era_name))
     LOOP
         view_name := sql_saga._make_api_view_name(r.table_name, r.era_name);
         trigger_name := 'for_portion_of_' || r.era_name;
@@ -809,7 +875,7 @@ BEGIN
         EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
         EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
             trigger_name, r.schema_name, view_name);
-        INSERT INTO sql_saga.api_view (table_name, era_name, view_name, trigger_name)
+        INSERT INTO sql_saga.api_view (table_oid, era_name, view_oid, trigger_name)
             VALUES (format('%I.%I', r.schema_name, r.table_name), r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
     END LOOP;
 
@@ -817,7 +883,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_api(table_name regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -825,11 +891,11 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    view_name regclass;
+    view_oid regclass;
     trigger_name name;
 BEGIN
     /*
-     * If table_name and era_name are specified, then just drop the views for that.
+     * If table_oid and era_name are specified, then just drop the views for that.
      *
      * If no period is specified, drop the views for all periods of the table.
      *
@@ -837,21 +903,21 @@ BEGIN
      *
      * If no table is specified but a period is, that doesn't make any sense.
      */
-    IF table_name IS NULL AND era_name IS NOT NULL THEN
+    IF table_oid IS NULL AND era_name IS NOT NULL THEN
         RAISE EXCEPTION 'cannot specify era name without table name';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
-    FOR view_name, trigger_name IN
+    FOR view_oid, trigger_name IN
         DELETE FROM sql_saga.api_view AS fp
-        WHERE (table_name IS NULL OR fp.table_name = table_name)
+        WHERE (table_oid IS NULL OR fp.table_oid = table_oid)
           AND (era_name IS NULL OR fp.era_name = era_name)
-        RETURNING fp.view_name, fp.trigger_name
+        RETURNING fp.view_oid, fp.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %s', trigger_name, view_name);
-        EXECUTE format('DROP VIEW %s %s', view_name, drop_behavior);
+        EXECUTE format('DROP TRIGGER %I on %s', trigger_name, view_oid);
+        EXECUTE format('DROP VIEW %s %s', view_oid, drop_behavior);
     END LOOP;
 
     RETURN true;
@@ -902,7 +968,7 @@ DECLARE
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
-        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
+        '               WHERE (_p.table_oid, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
 
     GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text :=
@@ -918,7 +984,7 @@ DECLARE
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
-        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
+        '               WHERE (_p.table_oid, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
 
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text :=
@@ -935,7 +1001,7 @@ DECLARE
         '                 AND _c.contype = ''p'' '
         '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT FROM sql_saga.era AS _p '
-        '               WHERE (_p.table_name, _p.era_name) = (a.attrelid, ''system_time'') '
+        '               WHERE (_p.table_oid, _p.era_name) = (a.attrelid, ''system_time'') '
         '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
 
 BEGIN
@@ -945,14 +1011,14 @@ BEGIN
      */
 
     /* Get the table information from this view */
-    SELECT p.table_name, p.era_name,
-           p.start_after_column_name, p.stop_on_column_name,
+    SELECT e.table_oid, e.era_name,
+           e.start_after_column_name, e.stop_on_column_name,
            format_type(a.atttypid, a.atttypmod) AS datatype
     INTO info
     FROM sql_saga.api_view AS fpv
-    JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (fpv.table_name, fpv.era_name)
-    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (p.table_name, p.start_after_column_name)
-    WHERE fpv.view_name = TG_RELID;
+    JOIN sql_saga.era AS e ON (e.table_oid, e.era_name) = (fpv.table_oid, fpv.era_name)
+    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (e.table_oid, e.start_after_column_name)
+    WHERE fpv.view_oid = TG_RELID;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'table and era information not found for view "%"', TG_RELID::regclass;
@@ -1022,7 +1088,7 @@ BEGIN
 
         EXECUTE generated_columns_sql
         INTO generated_columns
-        USING info.table_name;
+        USING info.table_oid;
 
         /* There may not be any generated columns. */
         IF generated_columns IS NOT NULL THEN
@@ -1045,13 +1111,13 @@ BEGIN
 
     IF pre_assigned THEN
         EXECUTE format('INSERT INTO %s (%s) VALUES (%s)',
-            info.table_name,
+            info.table_oid,
             (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)),
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)));
     END IF;
 
     EXECUTE format('UPDATE %s SET %s WHERE %s AND %I > %L AND %I < %L',
-                   info.table_name,
+                   info.table_oid,
                    (SELECT string_agg(format('%I = %L', j.key, j.value), ', ')
                     FROM (SELECT key, value FROM jsonb_each_text(new_row)
                           EXCEPT ALL
@@ -1062,8 +1128,8 @@ BEGIN
                     FROM pg_catalog.jsonb_each_text(jold) AS j
                     JOIN pg_catalog.pg_attribute AS a ON a.attname = j.key
                     JOIN pg_catalog.pg_constraint AS c ON c.conkey @> ARRAY[a.attnum]
-                    WHERE a.attrelid = info.table_name
-                      AND c.conrelid = info.table_name
+                    WHERE a.attrelid = info.table_oid
+                      AND c.conrelid = info.table_oid
                    ),
                    info.stop_on_column_name,
                    fromval,
@@ -1073,7 +1139,7 @@ BEGIN
 
     IF post_assigned THEN
         EXECUTE format('INSERT INTO %s (%s) VALUES (%s)',
-            info.table_name,
+            info.table_oid,
             (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)),
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row)));
     END IF;
@@ -1084,10 +1150,10 @@ $function$;
 
 
 CREATE FUNCTION sql_saga.add_unique_key(
-        table_name regclass,
+        table_oid regclass,
         column_names name[],
         era_name name DEFAULT 'valid',
-        key_name name DEFAULT NULL,
+        unique_key_name name DEFAULT NULL,
         unique_constraint name DEFAULT NULL,
         exclude_constraint name DEFAULT NULL)
  RETURNS name
@@ -1110,17 +1176,17 @@ DECLARE
     unique_sql text;
     exclude_sql text;
 BEGIN
-    IF table_name IS NULL THEN
+    IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     SELECT p.*
     INTO era_row
     FROM sql_saga.era AS p
-    WHERE (p.table_name, p.era_name) = (table_name, era_name);
+    WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'era "%" does not exist', era_name;
@@ -1128,15 +1194,15 @@ BEGIN
 
     /* For convenience, put the period's attnums in an array */
     era_attnums := ARRAY[
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_name, era_row.start_after_column_name)),
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_name, era_row.stop_on_column_name))
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_oid, era_row.start_after_column_name)),
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (era_row.table_oid, era_row.stop_on_column_name))
     ];
 
     /* Get attnums from column names */
     SELECT array_agg(a.attnum ORDER BY n.ordinality)
     INTO column_attnums
     FROM unnest(column_names) WITH ORDINALITY AS n (name, ordinality)
-    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_name, n.name);
+    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_oid, n.name);
 
     /* System columns are not allowed */
     IF 0 > ANY (column_attnums) THEN
@@ -1162,9 +1228,9 @@ BEGIN
      * key. SQL:2016 11.7 SR 5)b)
      */
     IF EXISTS (
-        SELECT FROM sql_saga.era AS p
-        WHERE (p.table_name, p.era_name) = (era_row.table_name, 'system_time')
-          AND ARRAY[p.start_after_column_name, p.stop_on_column_name] && column_names)
+        SELECT FROM sql_saga.era AS e
+        WHERE (e.table_oid, e.era_name) = (era_row.table_oid, 'system_time')
+          AND ARRAY[e.start_after_column_name, e.stop_on_column_name] && column_names)
     THEN
         RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
@@ -1178,7 +1244,7 @@ BEGIN
         SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
         INTO constraint_record
         FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.conname) = (table_name, unique_constraint);
+        WHERE (c.conrelid, c.conname) = (table_oid, unique_constraint);
 
         IF NOT FOUND THEN
             RAISE EXCEPTION 'constraint "%" does not exist', unique_constraint;
@@ -1235,7 +1301,7 @@ BEGIN
         SELECT c.oid, c.contype, c.condeferrable, c.condeferred, pg_catalog.pg_get_constraintdef(c.oid) AS definition
         INTO constraint_record
         FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.conname) = (table_name, exclude_constraint);
+        WHERE (c.conrelid, c.conname) = (table_oid, exclude_constraint);
 
         IF NOT FOUND THEN
             RAISE EXCEPTION 'constraint "%" does not exist', exclude_constraint;
@@ -1270,20 +1336,20 @@ BEGIN
      * Generate a name for the unique constraint.  We don't have to worry about
      * concurrency here because all period ddl commands lock the periods table.
      */
-    IF key_name IS NULL THEN
-        key_name := sql_saga._make_name(
-            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_name)]
+    IF unique_key_name IS NULL THEN
+        unique_key_name := sql_saga._make_name(
+            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid)]
                 || column_names
                 || ARRAY[era_name]);
     END IF;
     pass := 0;
     WHILE EXISTS (
        SELECT FROM sql_saga.unique_keys AS uk
-       WHERE uk.key_name = key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+       WHERE uk.unique_key_name = unique_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
     LOOP
        pass := pass + 1;
     END LOOP;
-    key_name := key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
+    unique_key_name := unique_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
     /* Time to make the underlying constraints */
     alter_cmds := '{}';
@@ -1300,7 +1366,7 @@ BEGIN
         INTO sql
         FROM pg_catalog.pg_class AS c
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-        WHERE c.oid = table_name;
+        WHERE c.oid = table_oid;
 
         EXECUTE sql;
     END IF;
@@ -1310,7 +1376,7 @@ BEGIN
         SELECT c.conname, c.conindid
         INTO unique_constraint, unique_index
         FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_name, 'u')
+        WHERE (c.conrelid, c.contype) = (table_oid, 'u')
         ORDER BY oid DESC
         LIMIT 1;
     END IF;
@@ -1320,20 +1386,20 @@ BEGIN
         SELECT c.conname, c.conindid
         INTO exclude_constraint, exclude_index
         FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_name, 'x')
+        WHERE (c.conrelid, c.contype) = (table_oid, 'x')
         ORDER BY oid DESC
         LIMIT 1;
     END IF;
 
-    INSERT INTO sql_saga.unique_keys (key_name, table_name, column_names, era_name, unique_constraint, exclude_constraint)
-    VALUES (key_name, table_name, column_names, era_name, unique_constraint, exclude_constraint);
+    INSERT INTO sql_saga.unique_keys (unique_key_name, table_oid, column_names, era_name, unique_constraint, exclude_constraint)
+    VALUES (unique_key_name, table_oid, column_names, era_name, unique_constraint, exclude_constraint);
 
-    RETURN key_name;
+    RETURN unique_key_name;
 END;
 $function$;
 
 CREATE FUNCTION sql_saga.drop_unique_key(
-    table_name regclass,
+    table_oid regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
     cleanup boolean DEFAULT true
@@ -1348,43 +1414,43 @@ DECLARE
     foreign_key_row sql_saga.foreign_keys;
     unique_key_row sql_saga.unique_keys;
 BEGIN
-    IF table_name IS NULL THEN
+    IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     FOR unique_key_row IN
         SELECT uk.*
         FROM sql_saga.unique_keys AS uk
-        WHERE uk.table_name = table_name
-          AND (uk.key_name = key_name OR key_name IS NULL)
+        WHERE uk.table_oid = table_oid
+          AND (uk.unique_key_name = key_name OR key_name IS NULL)
     LOOP
         /* Cascade to foreign keys, if desired */
         FOR foreign_key_row IN
-            SELECT fk.key_name
+            SELECT fk.foreign_key_name
             FROM sql_saga.foreign_keys AS fk
-            WHERE fk.unique_key = unique_key_row.key_name
+            WHERE fk.unique_key_name = unique_key_row.unique_key_name
         LOOP
             IF drop_behavior = 'RESTRICT' THEN
                 RAISE EXCEPTION 'cannot drop unique key "%" because foreign key "%" on table "%" depends on it',
-                    unique_key_row.key_name, foreign_key_row.key_name, foreign_key_row.table_name;
+                    unique_key_row.unique_key_name, foreign_key_row.foreign_key_name, foreign_key_row.table_oid;
             END IF;
 
-            PERFORM sql_saga.drop_foreign_key(NULL, foreign_key_row.key_name);
+            PERFORM sql_saga.drop_foreign_key(NULL, foreign_key_row.foreign_key_name);
         END LOOP;
 
         DELETE FROM sql_saga.unique_keys AS uk
-        WHERE uk.key_name = unique_key_row.key_name;
+        WHERE uk.unique_key_name = unique_key_row.unique_key_name;
 
         /* If purging, drop the underlying constraints unless the table has been dropped */
         IF cleanup AND EXISTS (
             SELECT FROM pg_catalog.pg_class AS c
-            WHERE c.oid = unique_key_row.table_name)
+            WHERE c.oid = unique_key_row.table_oid)
         THEN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP CONSTRAINT %I',
-                unique_key_row.table_name, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
+                unique_key_row.table_oid, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
         END IF;
     END LOOP;
 
@@ -1397,7 +1463,27 @@ CREATE FUNCTION sql_saga.uk_update_check()
 AS $function$
 #variable_conflict use_variable
 DECLARE
-    jold jsonb;
+    /* Use jsonb to look up values by parameterized names */
+    jold jsonb := to_jsonb(OLD);
+
+    foreign_key_name name              := TG_ARGV[0];
+    fk_table_oid regclass              := TG_ARGV[1];
+    fk_schema_name text                := TG_ARGV[2];
+    fk_table_name text                 := TG_ARGV[3];
+    fk_column_names text[]             := TG_ARGV[4];
+    fk_era_name text                   := TG_ARGV[5];
+    fk_start_after_column_name text          := TG_ARGV[6];
+    fk_stop_on_column_name text            := TG_ARGV[7];
+    uk_table_oid regclass              := TG_ARGV[8];
+    uk_schema_name text                := TG_ARGV[9];
+    uk_table_name text                 := TG_ARGV[10];
+    uk_column_names text[]             := TG_ARGV[11];
+    uk_era_name text                   := TG_ARGV[12];
+    uk_start_after_column_name text          := TG_ARGV[13];
+    uk_stop_on_column_name text            := TG_ARGV[14];
+    match_type sql_saga.fk_match_types := TG_ARGV[15];
+    update_action sql_saga.fk_actions  := TG_ARGV[16];
+    delete_action sql_saga.fk_actions  := TG_ARGV[17];
 BEGIN
     /*
      * This function is called when a table referenced by foreign keys with
@@ -1412,11 +1498,8 @@ BEGIN
      * error.
      */
 
-    /* Use jsonb to look up values by parameterized names */
-    jold := to_jsonb(OLD);
-
     /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, true);
+    PERFORM sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
 
     RETURN NULL;
 END;
@@ -1428,7 +1511,27 @@ CREATE FUNCTION sql_saga.uk_delete_check()
 AS $function$
 #variable_conflict use_variable
 DECLARE
-    jold jsonb;
+    /* Use jsonb to look up values by parameterized names */
+    jold jsonb := to_jsonb(OLD);
+
+    foreign_key_name name              := TG_ARGV[0];
+    fk_table_oid regclass              := TG_ARGV[1];
+    fk_schema_name text                := TG_ARGV[2];
+    fk_table_name text                 := TG_ARGV[3];
+    fk_column_names text[]             := TG_ARGV[4];
+    fk_era_name text                   := TG_ARGV[5];
+    fk_start_after_column_name text          := TG_ARGV[6];
+    fk_stop_on_column_name text            := TG_ARGV[7];
+    uk_table_oid regclass              := TG_ARGV[8];
+    uk_schema_name text                := TG_ARGV[9];
+    uk_table_name text                 := TG_ARGV[10];
+    uk_column_names text[]             := TG_ARGV[11];
+    uk_era_name text                   := TG_ARGV[12];
+    uk_start_after_column_name text          := TG_ARGV[13];
+    uk_stop_on_column_name text            := TG_ARGV[14];
+    match_type sql_saga.fk_match_types := TG_ARGV[15];
+    update_action sql_saga.fk_actions  := TG_ARGV[16];
+    delete_action sql_saga.fk_actions  := TG_ARGV[17];
 BEGIN
     /*
      * This function is called when a table referenced by foreign keys with
@@ -1442,11 +1545,8 @@ BEGIN
      * done, so this function is used for both.
      */
 
-    /* Use jsonb to look up values by parameterized names */
-    jold := to_jsonb(OLD);
-
     /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_old_row(TG_ARGV[0], jold, false);
+    PERFORM sql_saga.validate_foreign_key_old_row(jold, false /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
 
     RETURN NULL;
 END;
@@ -1454,17 +1554,17 @@ $function$;
 
 
 CREATE FUNCTION sql_saga.add_foreign_key(
-        table_name regclass,
-        column_names name[],
+        fk_table_oid regclass,
+        fk_column_names name[],
         -- TODO: Simplify API with the following
         -- foreign_table_name regclass,
-        -- foregin_column_names name[],
-        era_name name,
-        ref_unique_name name,
+        -- foreign_fk_column_names name[],
+        fk_era_name name,
+        unique_key_name name,
         match_type sql_saga.fk_match_types DEFAULT 'SIMPLE',
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
-        key_name name DEFAULT NULL,
+        foreign_key_name name DEFAULT NULL,
         fk_insert_trigger name DEFAULT NULL,
         fk_update_trigger name DEFAULT NULL,
         uk_update_trigger name DEFAULT NULL,
@@ -1476,48 +1576,48 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    era_row sql_saga.era;
-    ref_era_row sql_saga.era;
-    unique_row sql_saga.unique_keys;
-    schema_name_str text;
-    table_name_str text;
-    unique_row_schema_name_str text;
-    unique_row_table_name_str text;
+    fk_era_row sql_saga.era;
+    uk_era_row sql_saga.era;
+    uk_row sql_saga.unique_keys;
+    fk_schema_name text;
+    fk_table_name text;
+    uk_schema_name text;
+    uk_table_name text;
     column_attnums smallint[];
     idx integer;
     pass integer;
     upd_action text DEFAULT '';
     del_action text DEFAULT '';
-    foreign_columns text;
-    unique_columns text;
+    foreign_columns_with_era_columns text;
+    unique_columns_with_era_columns text;
 BEGIN
-    IF table_name IS NULL THEN
+    IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(fk_table_oid);
 
-    SELECT n.nspname, c.relname INTO schema_name_str, table_name_str
+    SELECT n.nspname, c.relname INTO fk_schema_name, fk_table_name
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
-    WHERE c.oid = table_name;
+    WHERE c.oid = fk_table_oid;
 
     /* Get the period involved */
-    SELECT p.*
-    INTO era_row
-    FROM sql_saga.era AS p
-    WHERE (p.table_name, p.era_name) = (table_name, era_name);
+    SELECT e.*
+    INTO fk_era_row
+    FROM sql_saga.era AS e
+    WHERE (e.table_oid, e.era_name) = (fk_table_oid, fk_era_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'era "%" does not exist', era_name;
+        RAISE EXCEPTION 'era "%" does not exist', fk_era_name;
     END IF;
 
     /* Get column attnums from column names */
     SELECT array_agg(a.attnum ORDER BY n.ordinality)
     INTO column_attnums
-    FROM unnest(column_names) WITH ORDINALITY AS n (name, ordinality)
-    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_name, n.name);
+    FROM unnest(fk_column_names) WITH ORDINALITY AS n (name, ordinality)
+    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (fk_table_oid, n.name);
 
     /* System columns are not allowed */
     IF 0 > ANY (column_attnums) THEN
@@ -1527,55 +1627,55 @@ BEGIN
     /* Report if any columns weren't found */
     idx := array_position(column_attnums, NULL);
     IF idx IS NOT NULL THEN
-        RAISE EXCEPTION 'column "%" does not exist', column_names[idx];
+        RAISE EXCEPTION 'column "%" does not exist', fk_column_names[idx];
     END IF;
 
     /* Make sure the period columns aren't also in the normal columns */
-    IF era_row.start_after_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.start_after_column_name;
+    IF fk_era_row.start_after_column_name = ANY (fk_column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.start_after_column_name;
     END IF;
-    IF era_row.stop_on_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.stop_on_column_name;
+    IF fk_era_row.stop_on_column_name = ANY (fk_column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.stop_on_column_name;
     END IF;
 
     /* Get the unique key we're linking to */
     SELECT uk.*
-    INTO unique_row
+    INTO uk_row
     FROM sql_saga.unique_keys AS uk
-    WHERE uk.key_name = ref_unique_name;
+    WHERE uk.unique_key_name = unique_key_name;
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'unique key "%" does not exist', ref_unique_name;
+        RAISE EXCEPTION 'unique key "%" does not exist', unique_key_name;
     END IF;
 
-    /* Get the unique key's period */
-    SELECT p.*
-    INTO ref_era_row
-    FROM sql_saga.era AS p
-    WHERE (p.table_name, p.era_name) = (unique_row.table_name, unique_row.era_name);
+    /* Get the unique key's eroa */
+    SELECT e.*
+    INTO uk_era_row
+    FROM sql_saga.era AS e
+    WHERE (e.table_oid, e.era_name) = (uk_row.table_oid, uk_row.era_name);
 
-    IF era_row.range_type <> ref_era_row.range_type THEN
-        RAISE EXCEPTION 'period types "%" and "%" are incompatible',
-            era_row.era_name, ref_era_row.era_name;
+    IF fk_era_row.range_type <> uk_era_row.range_type THEN
+        RAISE EXCEPTION 'era types "%" and "%" are incompatible',
+            fk_era_row.era_name, uk_era_row.era_name;
     END IF;
 
-    SELECT n.nspname, c.relname INTO unique_row_schema_name_str, unique_row_table_name_str
+    SELECT n.nspname, c.relname INTO uk_schema_name, uk_table_name
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
-    WHERE c.oid = unique_row.table_name;
+    WHERE c.oid = uk_row.table_oid;
 
     /* Check that all the columns match */
     IF EXISTS (
-        SELECT FROM unnest(column_names, unique_row.column_names) AS u (fk_attname, uk_attname)
-        JOIN pg_catalog.pg_attribute AS fa ON (fa.attrelid, fa.attname) = (table_name, u.fk_attname)
-        JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (unique_row.table_name, u.uk_attname)
+        SELECT FROM unnest(fk_column_names, uk_row.column_names) AS u (fk_attname, uk_attname)
+        JOIN pg_catalog.pg_attribute AS fa ON (fa.attrelid, fa.attname) = (fk_table_oid, u.fk_attname)
+        JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_row.table_oid, u.uk_attname)
         WHERE (fa.atttypid, fa.atttypmod, fa.attcollation) <> (ua.atttypid, ua.atttypmod, ua.attcollation))
     THEN
         RAISE EXCEPTION 'column types do not match';
     END IF;
 
     /* The range types must match, too */
-    IF era_row.range_type <> ref_era_row.range_type THEN
+    IF fk_era_row.range_type <> uk_era_row.range_type THEN
         RAISE EXCEPTION 'period types do not match';
     END IF;
 
@@ -1583,20 +1683,20 @@ BEGIN
      * Generate a name for the foreign constraint.  We don't have to worry about
      * concurrency here because all period ddl commands lock the periods table.
      */
-    IF key_name IS NULL THEN
-        key_name := sql_saga._make_name(
-            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_name)]
-               || column_names
-               || ARRAY[era_name]);
+    IF foreign_key_name IS NULL THEN
+        foreign_key_name := sql_saga._make_name(
+            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = fk_table_oid)]
+               || fk_column_names
+               || ARRAY[fk_era_name]);
     END IF;
     pass := 0;
     WHILE EXISTS (
        SELECT FROM sql_saga.foreign_keys AS fk
-       WHERE fk.key_name = key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+       WHERE fk.foreign_key_name = foreign_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
     LOOP
        pass := pass + 1;
     END LOOP;
-    key_name := key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
+    foreign_key_name := foreign_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
     -- TODO: Consider how update_action should be handled, it seems
     -- clear it should affect the timing of the trigger.
@@ -1610,45 +1710,207 @@ BEGIN
 
     /* Get the columns that require checking the constraint */
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
-    INTO foreign_columns
-    FROM unnest(column_names || era_row.start_after_column_name || era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    INTO foreign_columns_with_era_columns
+    FROM unnest(fk_column_names || fk_era_row.start_after_column_name || fk_era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
-    INTO unique_columns
-    FROM unnest(unique_row.column_names || ref_era_row.start_after_column_name || ref_era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    INTO unique_columns_with_era_columns
+    FROM unnest(uk_row.column_names || uk_era_row.start_after_column_name || uk_era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
-    /* Time to make the underlying triggers */
-    fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_insert'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER INSERT ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_insert_check(%L)',
-        fk_insert_trigger, schema_name_str, table_name_str, unique_row_schema_name_str ,unique_row_table_name_str, key_name);
-    fk_update_trigger := coalesce(fk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'fk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF ' || foreign_columns || ' ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.fk_update_check(%L)',
-        fk_update_trigger, schema_name_str, table_name_str, unique_row_schema_name_str ,unique_row_table_name_str, key_name);
-    uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_update'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER UPDATE OF ' || unique_columns || ' ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_update_check(%L)',
-        uk_update_trigger, unique_row_schema_name_str ,unique_row_table_name_str, schema_name_str, table_name_str, key_name);
-    uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga._make_name(ARRAY[key_name], 'uk_delete'));
-    EXECUTE format('CREATE CONSTRAINT TRIGGER %I AFTER DELETE ON %I.%I FROM %I.%I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE sql_saga.uk_delete_check(%L)',
-        uk_delete_trigger, unique_row_schema_name_str ,unique_row_table_name_str, schema_name_str, table_name_str, key_name);
+    /* Add all the known variables for the triggers to avoid lookups when executing the triggers. */
+    DECLARE
+        fk_start_after_column_name text := fk_era_row.start_after_column_name;
+        fk_stop_on_column_name text := fk_era_row.stop_on_column_name;
 
-    INSERT INTO sql_saga.foreign_keys (key_name, table_name, column_names, era_name, unique_key, match_type, update_action, delete_action,
-                                      fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
-    VALUES (key_name, table_name, column_names, era_name, unique_row.key_name, match_type, update_action, delete_action,
-            fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
+        fk_column_names_arr_str text := format('{%s}',fk_column_names);
+        uk_column_names_arr_str text := format('{%s}',uk_row.column_names);
 
-    /* Validate the constraint on existing data, iterating over each row. */
-    EXECUTE format('SELECT sql_saga.validate_foreign_key_new_row(%1$L, to_jsonb(%3$I.*)) FROM %2$I.%3$I;',
-        key_name, schema_name_str, table_name_str);
+        uk_era_name text := uk_era_row.era_name;
+        uk_table_oid regclass := uk_row.table_oid;
 
-    RETURN key_name;
+        uk_start_after_column_name text := uk_era_row.start_after_column_name;
+        uk_stop_on_column_name text := uk_era_row.stop_on_column_name;
+    BEGIN
+        /* Time to make the underlying triggers */
+        fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'fk_insert'));
+        EXECUTE format($$
+            CREATE CONSTRAINT TRIGGER %19$I AFTER INSERT ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.fk_insert_check(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            $$
+            -- Parameters for the function call in the template
+            , /* %1$  */ foreign_key_name
+            , /* %2$  */ fk_table_oid
+            , /* %3$  */ fk_schema_name
+            , /* %4$  */ fk_table_name
+            , /* %5$  */ fk_column_names_arr_str
+            , /* %6$  */ fk_era_name
+            , /* %7$  */ fk_start_after_column_name
+            , /* %8$  */ fk_stop_on_column_name
+            , /* %9$  */ uk_table_oid
+            , /* %10$ */ uk_schema_name
+            , /* %11$ */ uk_table_name
+            , /* %12$ */ uk_column_names_arr_str
+            , /* %13$ */ uk_era_name
+            , /* %14$ */ uk_start_after_column_name
+            , /* %15$ */ uk_stop_on_column_name
+            , /* %16$ */ match_type
+            , /* %17$ */ update_action
+            , /* %18$ */ delete_action
+            -- Other parameters
+            , /* %19$  */ fk_insert_trigger
+        );
+
+        fk_update_trigger := coalesce(fk_update_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'fk_update'));
+        EXECUTE format($$
+            CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.fk_update_check(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            $$
+            -- Parameters for the function call in the template
+            , /* %1$  */ foreign_key_name
+            , /* %2$  */ fk_table_oid
+            , /* %3$  */ fk_schema_name
+            , /* %4$  */ fk_table_name
+            , /* %5$  */ fk_column_names_arr_str
+            , /* %6$  */ fk_era_name
+            , /* %7$  */ fk_start_after_column_name
+            , /* %8$  */ fk_stop_on_column_name
+            , /* %9$  */ uk_table_oid
+            , /* %10$ */ uk_schema_name
+            , /* %11$ */ uk_table_name
+            , /* %12$ */ uk_column_names_arr_str
+            , /* %13$ */ uk_era_name
+            , /* %14$ */ uk_start_after_column_name
+            , /* %15$ */ uk_stop_on_column_name
+            , /* %16$ */ match_type
+            , /* %17$ */ update_action
+            , /* %18$ */ delete_action
+            -- Other parameters
+            , /* %19$   */ fk_update_trigger
+            , /* %20$   */ foreign_columns_with_era_columns
+        );
+
+        uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'uk_update'));
+        EXECUTE format($$
+            CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.uk_update_check(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            $$
+            -- Parameters for the function call in the template
+            , /* %1$  */ foreign_key_name
+            , /* %2$  */ fk_table_oid
+            , /* %3$  */ fk_schema_name
+            , /* %4$  */ fk_table_name
+            , /* %5$  */ fk_column_names_arr_str
+            , /* %6$  */ fk_era_name
+            , /* %7$  */ fk_start_after_column_name
+            , /* %8$  */ fk_stop_on_column_name
+            , /* %9$  */ uk_table_oid
+            , /* %10$ */ uk_schema_name
+            , /* %11$ */ uk_table_name
+            , /* %12$ */ uk_column_names_arr_str
+            , /* %13$ */ uk_era_name
+            , /* %14$ */ uk_start_after_column_name
+            , /* %15$ */ uk_stop_on_column_name
+            , /* %16$ */ match_type
+            , /* %17$ */ update_action
+            , /* %18$ */ delete_action
+            -- Other parameters
+            , /* %19$ */ uk_update_trigger
+            , /* %20$ */ unique_columns_with_era_columns
+        );
+
+        uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'uk_delete'));
+        EXECUTE format($$
+            CREATE CONSTRAINT TRIGGER %19$I AFTER DELETE ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.uk_delete_check(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            $$
+            -- Parameters for the function call in the template
+            , /* %1$  */ foreign_key_name
+            , /* %2$  */ fk_table_oid
+            , /* %3$  */ fk_schema_name
+            , /* %4$  */ fk_table_name
+            , /* %5$  */ fk_column_names_arr_str
+            , /* %6$  */ fk_era_name
+            , /* %7$  */ fk_start_after_column_name
+            , /* %8$  */ fk_stop_on_column_name
+            , /* %9$  */ uk_table_oid
+            , /* %10$ */ uk_schema_name
+            , /* %11$ */ uk_table_name
+            , /* %12$ */ uk_column_names_arr_str
+            , /* %13$ */ uk_era_name
+            , /* %14$ */ uk_start_after_column_name
+            , /* %15$ */ uk_stop_on_column_name
+            , /* %16$ */ match_type
+            , /* %17$ */ update_action
+            , /* %18$ */ delete_action
+            -- Other parameters
+            , /* %19$  */ uk_delete_trigger
+        );
+
+        INSERT INTO sql_saga.foreign_keys
+            ( foreign_key_name
+            , table_oid
+            , column_names
+            , era_name
+            , unique_key_name
+            , match_type
+            , update_action
+            , delete_action
+            , fk_insert_trigger
+            , fk_update_trigger
+            , uk_update_trigger
+            , uk_delete_trigger
+            ) VALUES
+            ( foreign_key_name
+            , fk_table_oid
+            , fk_column_names
+            , fk_era_name
+            , uk_row.unique_key_name
+            , match_type
+            , update_action
+            , delete_action
+            , fk_insert_trigger
+            , fk_update_trigger
+            , uk_update_trigger
+            , uk_delete_trigger
+            );
+
+        /* Validate the constraint on existing data, iterating over each row. */
+        EXECUTE format(
+            'SELECT sql_saga.validate_foreign_key_new_row('||
+            'to_jsonb(%4$I.*)'||
+            ',%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L'||
+            ') FROM %3$I.%4$I;'
+            , /* %1$  */ foreign_key_name
+            , /* %2$  */ fk_table_oid
+            , /* %3$  */ fk_schema_name
+            , /* %4$  */ fk_table_name
+            , /* %5$  */ fk_column_names_arr_str
+            , /* %6$  */ fk_era_name
+            , /* %7$  */ fk_start_after_column_name
+            , /* %8$  */ fk_stop_on_column_name
+            , /* %9$  */ uk_table_oid
+            , /* %10$ */ uk_schema_name
+            , /* %11$ */ uk_table_name
+            , /* %12$ */ uk_column_names_arr_str
+            , /* %13$ */ uk_era_name
+            , /* %14$ */ uk_start_after_column_name
+            , /* %15$ */ uk_stop_on_column_name
+            , /* %16$ */ match_type
+            , /* %17$ */ update_action
+            , /* %18$ */ delete_action
+            );
+    END;
+
+    RETURN foreign_key_name;
 END;
 $function$;
 
+
 CREATE FUNCTION sql_saga.drop_foreign_key(
-    table_name regclass,
+    table_oid regclass,
     -- TODO: Simplify API with the following
     -- column_names name[],
-    -- foreign_table_name regclass,
+    -- foreign_table_oid regclass,
     -- foregin_column_names name[],
     key_name name)
  RETURNS boolean
@@ -1659,23 +1921,23 @@ $function$
 #variable_conflict use_variable
 DECLARE
     foreign_key_row sql_saga.foreign_keys;
-    unique_table_name regclass;
+    unique_table_oid regclass;
 BEGIN
-    IF table_name IS NULL AND key_name IS NULL THEN
+    IF table_oid IS NULL AND key_name IS NULL THEN
         RAISE EXCEPTION 'no table or key name specified';
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_name);
+    PERFORM sql_saga._serialize(table_oid);
 
     FOR foreign_key_row IN
         SELECT fk.*
         FROM sql_saga.foreign_keys AS fk
-        WHERE (fk.table_name = table_name OR table_name IS NULL)
-          AND (fk.key_name = key_name OR key_name IS NULL)
+        WHERE (fk.table_oid = table_oid OR table_oid IS NULL)
+          AND (fk.foreign_key_name = key_name OR key_name IS NULL)
     LOOP
         DELETE FROM sql_saga.foreign_keys AS fk
-        WHERE fk.key_name = foreign_key_row.key_name;
+        WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
 
         /*
          * Make sure the table hasn't been dropped and that the triggers exist
@@ -1684,33 +1946,33 @@ BEGIN
          */
         IF EXISTS (
                 SELECT FROM pg_catalog.pg_class AS c
-                WHERE c.oid = foreign_key_row.table_name)
+                WHERE c.oid = foreign_key_row.table_oid)
             AND EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE t.tgrelid = foreign_key_row.table_name
+                WHERE t.tgrelid = foreign_key_row.table_oid
                   AND t.tgname IN (foreign_key_row.fk_insert_trigger, foreign_key_row.fk_update_trigger))
         THEN
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger, foreign_key_row.table_name);
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, foreign_key_row.table_name);
+            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger, foreign_key_row.table_oid);
+            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, foreign_key_row.table_oid);
         END IF;
 
-        SELECT uk.table_name
-        INTO unique_table_name
+        SELECT uk.table_oid
+        INTO unique_table_oid
         FROM sql_saga.unique_keys AS uk
-        WHERE uk.key_name = foreign_key_row.unique_key;
+        WHERE uk.unique_key_name = foreign_key_row.unique_key_name;
 
         /* Ditto for the UNIQUE side. */
         IF FOUND
             AND EXISTS (
                 SELECT FROM pg_catalog.pg_class AS c
-                WHERE c.oid = unique_table_name)
+                WHERE c.oid = unique_table_oid)
             AND EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE t.tgrelid = unique_table_name
+                WHERE t.tgrelid = unique_table_oid
                   AND t.tgname IN (foreign_key_row.uk_update_trigger, foreign_key_row.uk_delete_trigger))
         THEN
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger, unique_table_name);
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger, unique_table_name);
+            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger, unique_table_oid);
+            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger, unique_table_oid);
         END IF;
     END LOOP;
 
@@ -1724,7 +1986,26 @@ CREATE FUNCTION sql_saga.fk_insert_check()
 AS $function$
 #variable_conflict use_variable
 DECLARE
-    jnew jsonb;
+    /* Use jsonb to look up values by parameterized names */
+    jnew jsonb := to_jsonb(NEW);
+    foreign_key_name name              := TG_ARGV[0];
+    fk_table_oid regclass              := TG_ARGV[1];
+    fk_schema_name text                := TG_ARGV[2];
+    fk_table_name text                 := TG_ARGV[3];
+    fk_column_names text[]             := TG_ARGV[4];
+    fk_era_name text                   := TG_ARGV[5];
+    fk_start_after_column_name text          := TG_ARGV[6];
+    fk_stop_on_column_name text            := TG_ARGV[7];
+    uk_table_oid regclass              := TG_ARGV[8];
+    uk_schema_name text                := TG_ARGV[9];
+    uk_table_name text                 := TG_ARGV[10];
+    uk_column_names text[]             := TG_ARGV[11];
+    uk_era_name text                   := TG_ARGV[12];
+    uk_start_after_column_name text          := TG_ARGV[13];
+    uk_stop_on_column_name text            := TG_ARGV[14];
+    match_type sql_saga.fk_match_types := TG_ARGV[15];
+    update_action sql_saga.fk_actions  := TG_ARGV[16];
+    delete_action sql_saga.fk_actions  := TG_ARGV[17];
 BEGIN
     /*
      * This function is called when a new row is inserted into a table
@@ -1736,12 +2017,8 @@ BEGIN
      * catalogs.
      */
 
-    /* Use jsonb to look up values by parameterized names */
     jnew := to_jsonb(NEW);
-
-    /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew);
-
+    PERFORM sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
     RETURN NULL;
 END;
 $function$;
@@ -1752,7 +2029,27 @@ CREATE FUNCTION sql_saga.fk_update_check()
 AS $function$
 #variable_conflict use_variable
 DECLARE
-    jnew jsonb;
+    /* Use jsonb to look up values by parameterized names */
+    jnew jsonb := to_jsonb(NEW);
+
+    foreign_key_name name              := TG_ARGV[0];
+    fk_table_oid regclass              := TG_ARGV[1];
+    fk_schema_name text                := TG_ARGV[2];
+    fk_table_name text                 := TG_ARGV[3];
+    fk_column_names text[]             := TG_ARGV[4];
+    fk_era_name text                   := TG_ARGV[5];
+    fk_start_after_column_name text          := TG_ARGV[6];
+    fk_stop_on_column_name text            := TG_ARGV[7];
+    uk_table_oid regclass              := TG_ARGV[8];
+    uk_schema_name text                := TG_ARGV[9];
+    uk_table_name text                 := TG_ARGV[10];
+    uk_column_names text[]             := TG_ARGV[11];
+    uk_era_name text                   := TG_ARGV[12];
+    uk_start_after_column_name text          := TG_ARGV[13];
+    uk_stop_on_column_name text            := TG_ARGV[14];
+    match_type sql_saga.fk_match_types := TG_ARGV[15];
+    update_action sql_saga.fk_actions  := TG_ARGV[16];
+    delete_action sql_saga.fk_actions  := TG_ARGV[17];
 BEGIN
     /*
      * This function is called when a table containing foreign keys with
@@ -1763,12 +2060,9 @@ BEGIN
      * catalogs.
      */
 
-    /* Use jsonb to look up values by parameterized names */
-    jnew := to_jsonb(NEW);
-
     /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_new_row(TG_ARGV[0], jnew);
 
+    PERFORM sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
     RETURN NULL;
 END;
 $function$;
@@ -1776,206 +2070,100 @@ $function$;
 /*
  * This function either returns true or raises an exception.
  */
-CREATE FUNCTION sql_saga.validate_foreign_key_old_row(foreign_key_name name, row_data jsonb, is_update boolean)
+CREATE FUNCTION sql_saga.validate_foreign_key_old_row(
+    row_data jsonb,
+    is_update boolean,
+
+    foreign_key_name name,
+    fk_table_oid regclass,
+    fk_schema_name text,
+    fk_table_name text,
+    fk_column_names text[],
+    fk_era_name text,
+    fk_start_after_column_name text,
+    fk_stop_on_column_name text,
+    uk_table_oid regclass,
+    uk_schema_name text,
+    uk_table_name text,
+    uk_column_names text[],
+    uk_era_name text,
+    uk_start_after_column_name text,
+    uk_stop_on_column_name text,
+    match_type sql_saga.fk_match_types,
+    delete_action sql_saga.fk_actions,
+    update_action sql_saga.fk_actions
+    )
  RETURNS boolean
  LANGUAGE plpgsql
 AS
 $function$
-#variable_conflict use_variable
 DECLARE
-    foreign_key_info record;
     column_name name;
-    uk_column_names_arr text[];
-    uk_column_values_arr text[];
-    uk_column_names text;
-    uk_column_values text;
-    fk_column_names text;
-    min_uk_start_value text;
-    max_uk_end_value text;
+    uk_join_on_fk text;
+    fk_where_clause text;
+    uk_range_constructor regtype;
+    fk_range_constructor regtype;
     violation boolean;
 
-    SQL_UK_MINMAX text;
-    QSQL_UK_MINMAX CONSTANT text :=
-        'SELECT MIN(%5$I), MAX(%6$I) '
-        '  FROM %1$I.%2$I as t '
-        ' WHERE ROW(%3$s) = ROW(%4$s)';
+    -- This query checks for violations by finding any referencing row (`fk`)
+    -- for which the referenced rows (`uk`) no longer completely cover its
+    -- validity period. It uses a correlated subquery to re-check coverage
+    -- for each potentially affected foreign key row.
+    QSQL_VALIDATE_FKS CONSTANT text :=
+    'SELECT EXISTS ('
+    '  SELECT 1'
+    '  FROM %1$s AS fk'
+    '  WHERE %4$s AND NOT COALESCE(('
+    '    SELECT sql_saga.no_gaps('
+    '      %7$I(uk.%8$I, uk.%9$I),'
+    '      %10$I(fk.%5$I, fk.%6$I)'
+    '      ORDER BY uk.%8$I'
+    '    )'
+    '    FROM %2$s AS uk'
+    '    WHERE %3$s'
+    '  ), false)'
+    ')';
 
-    SQL_FK_EXISTS text;
-    QSQL_FK_EXISTS CONSTANT text :=
-        'SELECT EXISTS( '
-        '  SELECT FROM %1$I.%2$I as t '
-        '  WHERE ROW(%3$s) = ROW(%4$s)'
-        ')';
-
-    SQL_FK_OUT_OF_UK_MINMAX_RANGE text;
-    QSQL_FK_OUT_OF_UK_MINMAX_RANGE CONSTANT text :=
-        'SELECT EXISTS( '
-        '   SELECT '
-        '     FROM %1$I.%2$I as t '
-        '    WHERE ROW(%3$s) = ROW(%4$s) '
-        '      AND NOT sql_saga.contains(%5$L, %6$L, %7$I, %8$I) '
-        ')';
-
-    SQL_FK_CONTAINS_UK_HOLES text;
-    QSQL_FK_CONTAINS_UK_HOLES CONSTANT text :=
-        'SELECT EXISTS( '
-        '    WITH holes AS ( '
-        '        SELECT %6$I AS "s", next_s AS "e" '
-        '          FROM (SELECT %6$I, LEAD(%5$I, 1) OVER (ORDER BY %5$I) "next_s" '
-        '                  FROM %1$I.%2$I '
-        '                 WHERE ROW(%3$s) = ROW(%4$s)) t '
-        '         WHERE (t.next_s IS NOT NULL AND t.next_s <> %6$I) '
-        '    ) '
-        '    SELECT FROM %7$I.%8$I t'
-        '     WHERE ROW(%9$s) = ROW(%4$s)'
-        '       AND EXISTS(SELECT '
-        '                    FROM holes h '
-        '                   WHERE sql_saga.contains(%10$I, %11$I, h.s, h.e)) '
-        ')';
 BEGIN
-    -- gets metadata about the periods, foreign-keys and unique-keys
-    SELECT fc.oid AS fk_table_oid,
-           fn.nspname AS fk_schema_name,
-           fc.relname AS fk_table_name,
-           fk.column_names AS fk_column_names,
-           fp.era_name AS fk_era_name,
-           fp.start_after_column_name AS fk_start_after_column_name,
-           fp.stop_on_column_name AS fk_stop_on_column_name,
-           uc.oid AS uk_table_oid,
-           un.nspname AS uk_schema_name,
-           uc.relname AS uk_table_name,
-           uk.column_names AS uk_column_names,
-           up.era_name AS uk_era_name,
-           up.start_after_column_name AS uk_start_after_column_name,
-           up.stop_on_column_name AS uk_stop_on_column_name,
-           fk.match_type,
-           fk.update_action,
-           fk.delete_action
-    INTO foreign_key_info
-    FROM sql_saga.foreign_keys AS fk
-    JOIN sql_saga.era AS fp ON (fp.table_name, fp.era_name) = (fk.table_name, fk.era_name)
-    JOIN pg_catalog.pg_class AS fc ON fc.oid = fk.table_name
-    JOIN pg_catalog.pg_namespace AS fn ON fn.oid = fc.relnamespace
-    JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
-    JOIN sql_saga.era AS up ON (up.table_name, up.era_name) = (uk.table_name, uk.era_name)
-    JOIN pg_catalog.pg_class AS uc ON uc.oid = uk.table_name
-    JOIN pg_catalog.pg_namespace AS un ON un.oid = uc.relnamespace
-    WHERE fk.key_name = foreign_key_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'foreign key "%" not found', foreign_key_name;
-    END IF;
-
-    FOREACH column_name IN ARRAY foreign_key_info.uk_column_names LOOP
+    -- If any part of the key in the OLD row is NULL, it cannot be referenced
+    -- by a valid foreign key row (unless MATCH PARTIAL is supported,
+    -- which it is not). So we can safely return.
+    FOREACH column_name IN ARRAY uk_column_names LOOP
         IF row_data->>column_name IS NULL THEN
-            /*
-             * If the deleted row had nulls in the referenced columns then
-             * there was no possible referencing row (until we implement
-             * PARTIAL) so we can just stop here.
-             */
             RETURN true;
         END IF;
-        uk_column_names_arr := uk_column_names_arr || ('t.' || quote_ident(column_name));
-        uk_column_values_arr := uk_column_values_arr || quote_literal(row_data->>column_name);
     END LOOP;
 
-    uk_column_names := array_to_string(uk_column_names_arr, ', ');
-    uk_column_values := array_to_string(uk_column_values_arr, ', ');
+    SELECT string_agg(format('fk.%I = uk.%I', u.fkc, u.ukc), ' AND ')
+    INTO uk_join_on_fk
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    -- query the range that the uk currently spans:
-    -- time: 1 2 3 4 5 6 | in ranges
-    --   uk: *** ******* | [1,2), [3,6)
-    -- in this case would return [1,6).
-    SQL_UK_MINMAX := format(QSQL_UK_MINMAX,
-        foreign_key_info.uk_schema_name,
-        foreign_key_info.uk_table_name,
-        uk_column_names,
-        uk_column_values,
-        foreign_key_info.uk_start_after_column_name,
-        foreign_key_info.uk_stop_on_column_name);
-    RAISE DEBUG 'SQL_UK_MINMAX=%', SQL_UK_MINMAX;
-    EXECUTE SQL_UK_MINMAX
-    INTO min_uk_start_value, max_uk_end_value;
+    SELECT string_agg(format('fk.%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
+    INTO fk_where_clause
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    SELECT string_agg('t.' || quote_ident(u.c), ', ' ORDER BY u.ordinality)
-    INTO fk_column_names
-    FROM unnest(foreign_key_info.fk_column_names) WITH ORDINALITY AS u (c, ordinality);
+    SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
+    SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
 
-    -- min|max can be null if `uk` has no record for the specified filter,
-    -- which means that should not exists any `fk` record for the same filter.
-    IF min_uk_start_value IS NULL OR max_uk_end_value IS NULL THEN
-        SQL_FK_EXISTS := format(QSQL_FK_EXISTS,
-                                       foreign_key_info.fk_schema_name,
-                                       foreign_key_info.fk_table_name,
-                                       fk_column_names,
-                                       uk_column_values);
-        RAISE DEBUG 'SQL_FK_EXISTS=%', SQL_FK_EXISTS;
-        EXECUTE SQL_FK_EXISTS
-        INTO violation;
-
-        IF violation THEN
-            RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
-            RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-                foreign_key_info.uk_table_oid::regclass,
-                foreign_key_name,
-                foreign_key_info.fk_table_oid::regclass;
-        END IF;
-    END IF;
-
-    -- check if any fk record is not contained in the range `[min(uk.start), max(uk.end)).`
-    -- time: 1 2 3 4 5 6
-    --   uk:   *******
-    --   fk:   ^-----^
-    -- any fk record with start or end outside the ^ markers are considered a violation.
-    SQL_FK_OUT_OF_UK_MINMAX_RANGE := format(QSQL_FK_OUT_OF_UK_MINMAX_RANGE,
-                                                   foreign_key_info.fk_schema_name,
-                                                   foreign_key_info.fk_table_name,
-                                                   fk_column_names,
-                                                   uk_column_values,
-                                                   min_uk_start_value,
-                                                   max_uk_end_value,
-                                                   foreign_key_info.uk_start_after_column_name,
-                                                   foreign_key_info.uk_stop_on_column_name);
-    RAISE DEBUG 'SQL_FK_OUT_OF_UK_MINMAX_RANGE=%', SQL_FK_OUT_OF_UK_MINMAX_RANGE;
-    EXECUTE SQL_FK_OUT_OF_UK_MINMAX_RANGE
-    INTO violation;
-
-    IF violation THEN
-        RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
-        RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-            foreign_key_info.uk_table_oid::regclass,
-            foreign_key_name,
-            foreign_key_info.fk_table_oid::regclass;
-    END IF;
-
-    -- check if any fk record contains any hole periods from uk
-    -- time: 1 2 3 4 5 6    | in ranges
-    --   uk: *** *** ***    | [1,2), [3,4), [5,6)
-    --   fk: ^-----^        | [1,4)
-    -- in this case, we have the following holes in `uk`: [2,3), [4,5)
-    -- if we have any `fk` record that contains such holes (such as [1,4)),
-    -- this mean that this record is referencing the `uk` for a period that it not existed.
-    SQL_FK_CONTAINS_UK_HOLES := format(QSQL_FK_CONTAINS_UK_HOLES,
-                                              foreign_key_info.uk_schema_name,
-                                              foreign_key_info.uk_table_name,
-                                              replace(uk_column_names, 't.', ''),
-                                              uk_column_values,
-                                              foreign_key_info.uk_start_after_column_name,
-                                              foreign_key_info.uk_stop_on_column_name,
-                                              foreign_key_info.fk_schema_name,
-                                              foreign_key_info.fk_table_name,
-                                              fk_column_names,
-                                              foreign_key_info.fk_start_after_column_name,
-                                              foreign_key_info.fk_stop_on_column_name);
-    RAISE DEBUG 'SQL_FK_CONTAINS_UK_HOLES=%', SQL_FK_CONTAINS_UK_HOLES;
-    EXECUTE SQL_FK_CONTAINS_UK_HOLES
+    EXECUTE format(QSQL_VALIDATE_FKS,
+        fk_table_oid,                                -- %1$s: fk table
+        uk_table_oid,                                -- %2$s: uk table
+        uk_join_on_fk,                               -- %3$s: join condition for subquery
+        fk_where_clause,                             -- %4$s: where condition for outer query
+        fk_start_after_column_name,                  -- %5$I: fk start col
+        fk_stop_on_column_name,                      -- %6$I: fk end col
+        uk_range_constructor,                        -- %7$I: uk range type constructor
+        uk_start_after_column_name,                  -- %8$I: uk start col
+        uk_stop_on_column_name,                      -- %9$I: uk end col
+        fk_range_constructor                         -- %10$I: fk range type constructor
+    )
     INTO violation;
 
     IF violation THEN
         RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-            foreign_key_info.uk_table_oid::regclass,
+            uk_table_oid,
             foreign_key_name,
-            foreign_key_info.fk_table_oid::regclass;
+            fk_table_oid;
     END IF;
 
     RETURN true;
@@ -1985,18 +2173,36 @@ $function$;
 /*
  * This function either returns true or raises an exception.
  */
-CREATE FUNCTION sql_saga.validate_foreign_key_new_row(foreign_key_name name, row_data jsonb)
+CREATE FUNCTION sql_saga.validate_foreign_key_new_row(row_data jsonb
+    , foreign_key_name name
+    , fk_table_oid regclass
+    , fk_schema_name text
+    , fk_table_name text
+    , fk_column_names text[]
+    , fk_era_name text
+    , fk_start_after_column_name text
+    , fk_stop_on_column_name text
+    , uk_table_oid regclass
+    , uk_schema_name text
+    , uk_table_name text
+    , uk_column_names text[]
+    , uk_era_name text
+    , uk_start_after_column_name text
+    , uk_stop_on_column_name text
+    , match_type sql_saga.fk_match_types
+    , update_action sql_saga.fk_actions
+    , delete_action sql_saga.fk_actions
+    )
  RETURNS boolean
  LANGUAGE plpgsql
 AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    foreign_key_info record;
     row_clause text DEFAULT 'true';
     violation boolean;
 
-	QSQL CONSTANT text :=
+    QSQL CONSTANT text :=
         'SELECT EXISTS ( '
         '    SELECT FROM %5$I.%6$I AS fk '
         '    WHERE NOT EXISTS ( '
@@ -2021,39 +2227,6 @@ DECLARE
         ')';
 
 BEGIN
-    SELECT fc.oid AS fk_table_oid,
-           fn.nspname AS fk_schema_name,
-           fc.relname AS fk_table_name,
-           fk.column_names AS fk_column_names,
-           fp.era_name AS fk_era_name,
-           fp.start_after_column_name AS fk_start_after_column_name,
-           fp.stop_on_column_name AS fk_stop_on_column_name,
-
-           un.nspname AS uk_schema_name,
-           uc.relname AS uk_table_name,
-           uk.column_names AS uk_column_names,
-           up.era_name AS uk_era_name,
-           up.start_after_column_name AS uk_start_after_column_name,
-           up.stop_on_column_name AS uk_stop_on_column_name,
-
-           fk.match_type,
-           fk.update_action,
-           fk.delete_action
-    INTO foreign_key_info
-    FROM sql_saga.foreign_keys AS fk
-    JOIN sql_saga.era AS fp ON (fp.table_name, fp.era_name) = (fk.table_name, fk.era_name)
-    JOIN pg_catalog.pg_class AS fc ON fc.oid = fk.table_name
-    JOIN pg_catalog.pg_namespace AS fn ON fn.oid = fc.relnamespace
-    JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
-    JOIN sql_saga.era AS up ON (up.table_name, up.era_name) = (uk.table_name, uk.era_name)
-    JOIN pg_catalog.pg_class AS uc ON uc.oid = uk.table_name
-    JOIN pg_catalog.pg_namespace AS un ON un.oid = uc.relnamespace
-    WHERE fk.key_name = foreign_key_name;
-
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'foreign key "%" not found', foreign_key_name;
-    END IF;
-
     IF row_data IS NULL THEN
         RAISE EXCEPTION 'row_data is not provided';
     END IF;
@@ -2069,7 +2242,7 @@ BEGIN
         cols text[] DEFAULT '{}';
         vals text[] DEFAULT '{}';
     BEGIN
-        FOREACH column_name IN ARRAY foreign_key_info.fk_column_names LOOP
+        FOREACH column_name IN ARRAY fk_column_names LOOP
             has_nulls := has_nulls OR row_data->>column_name IS NULL;
             all_nulls := all_nulls IS NOT false AND row_data->>column_name IS NULL;
             cols := cols || ('fk.' || quote_ident(column_name));
@@ -2088,7 +2261,7 @@ BEGIN
         END IF;
 
         IF has_nulls THEN
-            CASE foreign_key_info.match_type
+            CASE match_type
                 WHEN 'SIMPLE' THEN
                     RETURN true;
                 WHEN 'PARTIAL' THEN
@@ -2102,17 +2275,17 @@ BEGIN
     END;
 
     BEGIN
-        EXECUTE format(QSQL, foreign_key_info.uk_schema_name,
-                             foreign_key_info.uk_table_name,
-                             foreign_key_info.uk_start_after_column_name,
-                             foreign_key_info.uk_stop_on_column_name,
-                             foreign_key_info.fk_schema_name,
-                             foreign_key_info.fk_table_name,
-                             foreign_key_info.fk_start_after_column_name,
-                             foreign_key_info.fk_stop_on_column_name,
+        EXECUTE format(QSQL, uk_schema_name,
+                             uk_table_name,
+                             uk_start_after_column_name,
+                             uk_stop_on_column_name,
+                             fk_schema_name,
+                             fk_table_name,
+                             fk_start_after_column_name,
+                             fk_stop_on_column_name,
                              (SELECT string_agg(format('%I IS NOT DISTINCT FROM %I', ukc, fkc), ' AND ')
-                              FROM unnest(foreign_key_info.uk_column_names,
-                                          foreign_key_info.fk_column_names) AS u (ukc, fkc)
+                              FROM unnest(uk_column_names,
+                                          fk_column_names) AS u (ukc, fkc)
                              ),
                              row_clause)
         INTO violation;
@@ -2122,7 +2295,7 @@ BEGIN
                 RAISE EXCEPTION 'foreign key violated by some row';
             ELSE
                 RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-                    foreign_key_info.fk_table_oid::regclass,
+                    fk_table_oid,
                     foreign_key_name;
             END IF;
         END IF;
@@ -2138,7 +2311,7 @@ $function$;
 -- CREATE FUNCTION sql_saga.add_system_versioning(
 --     table_class regclass,
 --     audit_table_name name DEFAULT NULL,
---     view_name name DEFAULT NULL,
+--     view_oid name DEFAULT NULL,
 --     function_as_of_name name DEFAULT NULL,
 --     function_between_name name DEFAULT NULL,
 --     function_between_symmetric_name name DEFAULT NULL,
@@ -2176,7 +2349,7 @@ $function$;
 --      */
 --
 --     /* Already registered? SQL:2016 11.29 SR 5 */
---     IF EXISTS (SELECT FROM sql_saga.system_versioning AS r WHERE r.table_name = table_class) THEN
+--     IF EXISTS (SELECT FROM sql_saga.system_versioning AS r WHERE r.table_oid = table_class) THEN
 --         RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
 --     END IF;
 --
@@ -2221,7 +2394,7 @@ $function$;
 --
 --     /* Get all of our "fake" infrastructure ready */
 --     audit_table_name := coalesce(audit_table_name, sql_saga._make_name(ARRAY[table_name], 'history'));
---     view_name := coalesce(view_name, sql_saga._make_name(ARRAY[table_name], 'with_history'));
+--     view_oid := coalesce(view_oid, sql_saga._make_name(ARRAY[table_name], 'with_history'));
 --     function_as_of_name := coalesce(function_as_of_name, sql_saga._make_name(ARRAY[table_name], '_as_of'));
 --     function_between_name := coalesce(function_between_name, sql_saga._make_name(ARRAY[table_name], '_between'));
 --     function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga._make_name(ARRAY[table_name], '_between_symmetric'));
@@ -2304,7 +2477,7 @@ $function$;
 --         /*
 --          * The query we really want here is
 --          *
---          *     CREATE VIEW view_name AS
+--          *     CREATE VIEW view_oid AS
 --          *         TABLE table_name
 --          *         UNION ALL CORRESPONDING
 --          *         TABLE audit_table_name
@@ -2313,14 +2486,14 @@ $function$;
 --          * it manually.
 --          */
 --         'CREATE VIEW %1$I.%2$I AS SELECT %5$s FROM %1$I.%3$I UNION ALL SELECT %5$s FROM %1$I.%4$I',
---         schema_name, view_name, table_name, audit_table_name,
+--         schema_name, view_oid, table_name, audit_table_name,
 --         (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum)
 --          FROM pg_attribute AS a
 --          WHERE a.attrelid = table_class
 --            AND a.attnum > 0
 --            AND NOT a.attisdropped
 --         ));
---     EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', schema_name, view_name, table_owner);
+--     EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', schema_name, view_oid, table_owner);
 --
 --     /*
 --      * Create functions to simulate the system versioned grammar.  These must
@@ -2333,7 +2506,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1'
---         $$, schema_name, function_as_of_name, view_name, era_row.start_after_column_name, era_row.stop_on_column_name);
+--         $$, schema_name, function_as_of_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_as_of_name, table_owner);
 --
@@ -2344,7 +2517,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2'
---         $$, schema_name, function_between_name, view_name, era_row.start_after_column_name, era_row.stop_on_column_name);
+--         $$, schema_name, function_between_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_name, table_owner);
 --
@@ -2355,7 +2528,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)'
---         $$, schema_name, function_between_symmetric_name, view_name, era_row.start_after_column_name, era_row.stop_on_column_name);
+--         $$, schema_name, function_between_symmetric_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_between_symmetric_name, table_owner);
 --
@@ -2366,7 +2539,7 @@ $function$;
 --          LANGUAGE sql
 --          STABLE
 --         AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2'
---         $$, schema_name, function_from_to_name, view_name, era_row.start_after_column_name, era_row.stop_on_column_name);
+--         $$, schema_name, function_from_to_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
 --     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
 --         schema_name, function_from_to_name, table_owner);
 --
@@ -2390,7 +2563,7 @@ $function$;
 --             JOIN pg_namespace AS n ON n.oid = c.relnamespace
 --             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 --             WHERE n.nspname = schema_name
---               AND c.relname IN (audit_table_name, view_name)
+--               AND c.relname IN (audit_table_name, view_oid)
 --
 --             UNION ALL
 --
@@ -2420,7 +2593,7 @@ $function$;
 --           AND acl.privilege_type = 'SELECT'
 --     LOOP
 --         EXECUTE format('GRANT SELECT ON TABLE %1$I.%2$I, %1$I.%3$I TO %4$s',
---                        schema_name, audit_table_name, view_name, grantees);
+--                        schema_name, audit_table_name, view_oid, grantees);
 --         EXECUTE format('GRANT EXECUTE ON FUNCTION %s, %s, %s, %s TO %s',
 --                        format('%I.%I(timestamp with time zone)', schema_name, function_as_of_name)::regprocedure,
 --                        format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_name)::regprocedure,
@@ -2430,13 +2603,13 @@ $function$;
 --     END LOOP;
 --
 --     /* Register it */
---     INSERT INTO sql_saga.system_versioning (table_name, era_name, audit_table_name, view_name,
+--     INSERT INTO sql_saga.system_versioning (table_name, era_name, audit_table_name, view_oid,
 --                                            func_as_of, func_between, func_between_symmetric, func_from_to)
 --     VALUES (
 --         table_class,
 --         'system_time',
 --         format('%I.%I', schema_name, audit_table_name),
---         format('%I.%I', schema_name, view_name),
+--         format('%I.%I', schema_name, view_oid),
 --         format('%I.%I(timestamp with time zone)', schema_name, function_as_of_name),
 --         format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_name),
 --         format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_symmetric_name),
@@ -2497,7 +2670,7 @@ $function$;
 --         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure, drop_behavior);
 --
 --         /* Drop the "with_history" view. */
---         EXECUTE format('DROP VIEW %s %s', system_versioning_row.view_name, drop_behavior);
+--         EXECUTE format('DROP VIEW %s %s', system_versioning_row.view_oid, drop_behavior);
 --     END IF;
 --
 --     /*
@@ -2528,7 +2701,7 @@ $function$
 #variable_conflict use_variable
 DECLARE
     r record;
-    table_name regclass;
+    table_oid regclass;
     era_name name;
 BEGIN
     /*
@@ -2542,15 +2715,15 @@ BEGIN
     ---
 
     /* If one of our tables is being dropped, remove references to it */
-    FOR table_name, era_name IN
-        SELECT p.table_name, p.era_name
+    FOR table_oid, era_name IN
+        SELECT p.table_oid, p.era_name
         FROM sql_saga.era AS p
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = p.table_name
+                ON dobj.objid = p.table_oid
         WHERE dobj.object_type = 'table'
         ORDER BY dobj.ordinality
     LOOP
-        PERFORM sql_saga.drop_era(table_name, era_name, 'CASCADE', true);
+        PERFORM sql_saga.drop_era(table_oid, era_name, 'CASCADE', true);
     END LOOP;
 
     /*
@@ -2558,12 +2731,12 @@ BEGIN
      * SQL:2016 11.23 SR 6
      */
     FOR r IN
-        SELECT dobj.object_identity, p.era_name
-        FROM sql_saga.era AS p
-        JOIN pg_catalog.pg_attribute AS sa ON (sa.attrelid, sa.attname) = (p.table_name, p.start_after_column_name)
-        JOIN pg_catalog.pg_attribute AS ea ON (ea.attrelid, ea.attname) = (p.table_name, p.stop_on_column_name)
+        SELECT dobj.object_identity, e.era_name
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_attribute AS sa ON (sa.attrelid, sa.attname) = (e.table_oid, e.start_after_column_name)
+        JOIN pg_catalog.pg_attribute AS ea ON (ea.attrelid, ea.attname) = (e.table_oid, e.stop_on_column_name)
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = p.table_name AND dobj.objsubid IN (sa.attnum, ea.attnum)
+                ON dobj.objid = e.table_oid AND dobj.objsubid IN (sa.attnum, ea.attnum)
         WHERE dobj.object_type = 'table column'
         ORDER BY dobj.ordinality
     LOOP
@@ -2573,14 +2746,14 @@ BEGIN
 
     /* Also reject dropping the rangetype */
     FOR r IN
-        SELECT dobj.object_identity, p.table_name, p.era_name
-        FROM sql_saga.era AS p
+        SELECT dobj.object_identity, e.table_oid, e.era_name
+        FROM sql_saga.era AS e
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = p.range_type
+                ON dobj.objid = e.range_type
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop rangetype "%" because it is used in period "%" on table "%"',
-            r.object_identity, r.era_name, r.table_name;
+            r.object_identity, r.era_name, r.table_oid;
     END LOOP;
 
     --/* Complain if the infinity CHECK constraint is missing. */
@@ -2592,7 +2765,7 @@ BEGIN
     --        WHERE (c.conrelid, c.conname) = (p.table_name, p.infinity_check_constraint))
     --LOOP
     --    RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.infinity_check_constraint, r.table_name;
+    --        r.infinity_check_constraint, r.table_oid;
     --END LOOP;
 
     /* Complain if the GENERATED ALWAYS AS ROW START/END trigger is missing. */
@@ -2604,7 +2777,7 @@ BEGIN
     --        WHERE (t.tgrelid, t.tgname) = (p.table_name, p.generated_always_trigger))
     --LOOP
     --    RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.generated_always_trigger, r.table_name;
+    --        r.generated_always_trigger, r.table_oid;
     --END LOOP;
 
     /* Complain if the write_history trigger is missing. */
@@ -2616,7 +2789,7 @@ BEGIN
     --         WHERE (t.tgrelid, t.tgname) = (p.table_name, p.write_history_trigger))
     -- LOOP
     --     RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --         r.write_history_trigger, r.table_name;
+    --         r.write_history_trigger, r.table_oid;
     -- END LOOP;
 
     /* Complain if the TRUNCATE trigger is missing. */
@@ -2628,7 +2801,7 @@ BEGIN
     --        WHERE (t.tgrelid, t.tgname) = (p.table_name, p.truncate_trigger))
     --LOOP
     --    RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.truncate_trigger, r.table_name;
+    --        r.truncate_trigger, r.table_oid;
     --END LOOP;
 
     /*
@@ -2644,7 +2817,7 @@ BEGIN
 --            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
 --    LOOP
 --        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from an era',
---            r.column_name, r.table_name;
+--            r.column_name, r.table_oid;
 --    END LOOP;
 
     ---
@@ -2656,7 +2829,7 @@ BEGIN
         SELECT dobj.object_identity
         FROM sql_saga.api_view AS fpv
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = fpv.view_name
+                ON dobj.objid = fpv.view_oid
         WHERE dobj.object_type = 'view'
         ORDER BY dobj.ordinality
     LOOP
@@ -2666,26 +2839,26 @@ BEGIN
 
     /* Complain if the FOR PORTION OF trigger is missing. */
     FOR r IN
-        SELECT fpv.table_name, fpv.era_name, fpv.view_name, fpv.trigger_name
+        SELECT fpv.table_oid, fpv.era_name, fpv.view_oid, fpv.trigger_name
         FROM sql_saga.api_view AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fpv.view_name, fpv.trigger_name))
+            WHERE (t.tgrelid, t.tgname) = (fpv.view_oid, fpv.trigger_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is used in FOR PORTION OF view for period "%" on table "%"',
-            r.trigger_name, r.view_name, r.era_name, r.table_name;
+            r.trigger_name, r.view_oid, r.era_name, r.table_oid;
     END LOOP;
 
     /* Complain if the table's primary key has been dropped. */
     FOR r IN
-        SELECT fpv.table_name, fpv.era_name
+        SELECT fpv.table_oid, fpv.era_name
         FROM sql_saga.api_view AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.contype) = (fpv.table_name, 'p'))
+            WHERE (c.conrelid, c.contype) = (fpv.table_oid, 'p'))
     LOOP
         RAISE EXCEPTION 'cannot drop primary key on table "%" because it has a FOR PORTION OF view for period "%"',
-            r.table_name, r.era_name;
+            r.table_oid, r.era_name;
     END LOOP;
 
     ---
@@ -2699,25 +2872,25 @@ BEGIN
 
     /* Complain if the indexes implementing our unique indexes are missing. */
     FOR r IN
-        SELECT uk.key_name, uk.table_name, uk.unique_constraint
+        SELECT uk.unique_key_name, uk.table_oid, uk.unique_constraint
         FROM sql_saga.unique_keys AS uk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (uk.table_name, uk.unique_constraint))
+            WHERE (c.conrelid, c.conname) = (uk.table_oid, uk.unique_constraint))
     LOOP
         RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-            r.unique_constraint, r.table_name, r.key_name;
+            r.unique_constraint, r.table_oid, r.unique_key_name;
     END LOOP;
 
     FOR r IN
-        SELECT uk.key_name, uk.table_name, uk.exclude_constraint
+        SELECT uk.unique_key_name, uk.table_oid, uk.exclude_constraint
         FROM sql_saga.unique_keys AS uk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (uk.table_name, uk.exclude_constraint))
+            WHERE (c.conrelid, c.conname) = (uk.table_oid, uk.exclude_constraint))
     LOOP
         RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-            r.exclude_constraint, r.table_name, r.key_name;
+            r.exclude_constraint, r.table_oid, r.unique_key_name;
     END LOOP;
 
     ---
@@ -2726,49 +2899,49 @@ BEGIN
 
     /* Complain if any of the triggers are missing */
     FOR r IN
-        SELECT fk.key_name, fk.table_name, fk.fk_insert_trigger
+        SELECT fk.foreign_key_name, fk.table_oid, fk.fk_insert_trigger
         FROM sql_saga.foreign_keys AS fk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_insert_trigger))
+            WHERE (t.tgrelid, t.tgname) = (fk.table_oid, fk.fk_insert_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_insert_trigger, r.table_name, r.key_name;
+            r.fk_insert_trigger, r.table_oid, r.foreign_key_name;
     END LOOP;
 
     FOR r IN
-        SELECT fk.key_name, fk.table_name, fk.fk_update_trigger
+        SELECT fk.foreign_key_name, fk.table_oid, fk.fk_update_trigger
         FROM sql_saga.foreign_keys AS fk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_update_trigger))
+            WHERE (t.tgrelid, t.tgname) = (fk.table_oid, fk.fk_update_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_update_trigger, r.table_name, r.key_name;
+            r.fk_update_trigger, r.table_oid, r.foreign_key_name;
     END LOOP;
 
     FOR r IN
-        SELECT fk.key_name, uk.table_name, fk.uk_update_trigger
+        SELECT fk.foreign_key_name, uk.table_oid, fk.uk_update_trigger
         FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_update_trigger))
+            WHERE (t.tgrelid, t.tgname) = (uk.table_oid, fk.uk_update_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.uk_update_trigger, r.table_name, r.key_name;
+            r.uk_update_trigger, r.table_oid, r.foreign_key_name;
     END LOOP;
 
     FOR r IN
-        SELECT fk.key_name, uk.table_name, fk.uk_delete_trigger
+        SELECT fk.foreign_key_name, uk.table_oid, fk.uk_delete_trigger
         FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_delete_trigger))
+            WHERE (t.tgrelid, t.tgname) = (uk.table_oid, fk.uk_delete_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.uk_delete_trigger, r.table_name, r.key_name;
+            r.uk_delete_trigger, r.table_oid, r.foreign_key_name;
     END LOOP;
 
     ---
@@ -2784,19 +2957,19 @@ BEGIN
 --        ORDER BY dobj.ordinality
 --    LOOP
 --        RAISE EXCEPTION 'cannot drop table "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_name;
+--            r.object_identity, r.table_oid;
 --    END LOOP;
 --
 --    FOR r IN
 --        SELECT dobj.object_identity, sv.table_name
 --        FROM sql_saga.system_versioning AS sv
 --        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
---                ON dobj.objid = sv.view_name
+--                ON dobj.objid = sv.view_oid
 --        WHERE dobj.object_type = 'view'
 --        ORDER BY dobj.ordinality
 --    LOOP
 --        RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_name;
+--            r.object_identity, r.table_oid;
 --    END LOOP;
 --
 --    FOR r IN
@@ -2808,7 +2981,7 @@ BEGIN
 --        ORDER BY dobj.ordinality
 --    LOOP
 --        RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_name;
+--            r.object_identity, r.table_oid;
 --    END LOOP;
 END;
 $function$;
@@ -2842,13 +3015,13 @@ BEGIN
      * constraint.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.era SET start_after_column_name = %L, stop_on_column_name = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
-            sa.attname, ea.attname, p.table_name, p.era_name)
-        FROM sql_saga.era AS p
-        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (p.table_name, p.bounds_check_constraint)
-        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = p.table_name
-        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
-        WHERE (p.start_after_column_name, p.stop_on_column_name) <> (sa.attname, ea.attname)
+        SELECT pg_catalog.format('UPDATE sql_saga.era SET start_after_column_name = %L, stop_on_column_name = %L WHERE (table_oid, era_name) = (%L::regclass, %L)',
+            sa.attname, ea.attname, e.table_oid, e.era_name)
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (e.table_oid, e.bounds_check_constraint)
+        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = e.table_oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = e.table_oid
+        WHERE (e.start_after_column_name, e.stop_on_column_name) <> (sa.attname, ea.attname)
           AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
     LOOP
         EXECUTE sql;
@@ -2859,16 +3032,16 @@ BEGIN
      * and end columns.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
-            c.conname, p.table_name, p.era_name)
-        FROM sql_saga.era AS p
-        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = p.table_name
-        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = p.table_name
-        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
-        WHERE p.bounds_check_constraint <> c.conname
+        SELECT pg_catalog.format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_oid, era_name) = (%L::regclass, %L)',
+            c.conname, e.table_oid, e.era_name)
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = e.table_oid
+        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = e.table_oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = e.table_oid
+        WHERE e.bounds_check_constraint <> c.conname
           AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
-          AND (p.start_after_column_name, p.stop_on_column_name) = (sa.attname, ea.attname)
-          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (p.table_name, p.bounds_check_constraint))
+          AND (e.start_after_column_name, e.stop_on_column_name) = (sa.attname, ea.attname)
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (e.table_oid, e.bounds_check_constraint))
     LOOP
         EXECUTE sql;
     END LOOP;
@@ -2937,7 +3110,7 @@ BEGIN
 --            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
 --    LOOP
 --        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from era',
---            r.column_name, r.table_name;
+--            r.column_name, r.table_oid;
 --    END LOOP;
 
     ---
@@ -2945,13 +3118,13 @@ BEGIN
     ---
 
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.api_view SET trigger_name = %L WHERE (table_name, era_name) = (%L::regclass, %L)',
-            t.tgname, fpv.table_name, fpv.era_name)
+        SELECT pg_catalog.format('UPDATE sql_saga.api_view SET trigger_name = %L WHERE (table_oid, era_name) = (%L::regclass, %L)',
+            t.tgname, fpv.table_oid, fpv.era_name)
         FROM sql_saga.api_view AS fpv
-        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = fpv.view_name
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = fpv.view_oid
         WHERE t.tgname <> fpv.trigger_name
           AND t.tgfoid = 'sql_saga.update_portion_of()'::regprocedure
-          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (fpv.table_name, fpv.trigger_name))
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (fpv.table_oid, fpv.trigger_name))
     LOOP
         EXECUTE sql;
     END LOOP;
@@ -2961,16 +3134,16 @@ BEGIN
     ---
 
     FOR sql IN
-        SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE key_name = %L',
-            a.column_names, uk.key_name)
+        SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
+            a.column_names, uk.unique_key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
-        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (uk.table_name, uk.unique_constraint)
+        JOIN sql_saga.era AS e ON (e.table_oid, e.era_name) = (uk.table_oid, uk.era_name)
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (uk.table_oid, uk.unique_constraint)
         JOIN LATERAL (
             SELECT array_agg(a.attname ORDER BY u.ordinality) AS column_names
             FROM unnest(c.conkey) WITH ORDINALITY AS u (attnum, ordinality)
-            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (uk.table_name, u.attnum)
-            WHERE a.attname NOT IN (p.start_after_column_name, p.stop_on_column_name)
+            JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (uk.table_oid, u.attnum)
+            WHERE a.attname NOT IN (e.start_after_column_name, e.stop_on_column_name)
             ) AS a ON true
         WHERE uk.column_names <> a.column_names
     LOOP
@@ -2979,14 +3152,14 @@ BEGIN
     END LOOP;
 
     FOR sql IN
-        SELECT format('UPDATE sql_saga.unique_keys SET unique_constraint = %L WHERE key_name = %L',
-            c.conname, uk.key_name)
+        SELECT format('UPDATE sql_saga.unique_keys SET unique_constraint = %L WHERE unique_key_name = %L',
+            c.conname, uk.unique_key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
-        CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[p.start_after_column_name, p.stop_on_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
-        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
-        WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.unique_constraint))
-        GROUP BY uk.key_name, c.oid, c.conname
+        JOIN sql_saga.era AS e ON (e.table_oid, e.era_name) = (uk.table_oid, uk.era_name)
+        CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[e.start_after_column_name, e.stop_on_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
+        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_oid
+        WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_oid, uk.unique_constraint))
+        GROUP BY uk.unique_key_name, c.oid, c.conname
         HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
         --RAISE DEBUG 'unique_constraint sql:%', sql;
@@ -2994,19 +3167,19 @@ BEGIN
     END LOOP;
 
     FOR sql IN
-        SELECT format('UPDATE sql_saga.unique_keys SET exclude_constraint = %L WHERE key_name = %L',
-            c.conname, uk.key_name)
+        SELECT format('UPDATE sql_saga.unique_keys SET exclude_constraint = %L WHERE unique_key_name = %L',
+            c.conname, uk.unique_key_name)
         FROM sql_saga.unique_keys AS uk
-        JOIN sql_saga.era AS p ON (p.table_name, p.era_name) = (uk.table_name, uk.era_name)
+        JOIN sql_saga.era AS e ON (e.table_oid, e.era_name) = (uk.table_oid, uk.era_name)
         CROSS JOIN LATERAL unnest(uk.column_names) WITH ORDINALITY AS u (column_name, ordinality)
-        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_name
-        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_name, uk.exclude_constraint))
-        GROUP BY uk.key_name, c.oid, c.conname, p.range_type, p.start_after_column_name, p.stop_on_column_name
+        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = uk.table_oid
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (uk.table_oid, uk.exclude_constraint))
+        GROUP BY uk.unique_key_name, c.oid, c.conname, e.range_type, e.start_after_column_name, e.stop_on_column_name
         HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''(]''::text) WITH &&) DEFERRABLE',
                       string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality),
-                      p.range_type,
-                      p.start_after_column_name,
-                      p.stop_on_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
+                      e.range_type,
+                      e.start_after_column_name,
+                      e.stop_on_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
         --RAISE DEBUG 'exclude_constraint sql:%', sql;
         EXECUTE sql;
@@ -3021,15 +3194,15 @@ BEGIN
      * out in this case.
      */
     FOR r IN
-        SELECT fk.key_name, fk.table_name, u.column_name
+        SELECT fk.foreign_key_name, fk.table_oid, u.column_name
         FROM sql_saga.foreign_keys AS fk
         CROSS JOIN LATERAL unnest(fk.column_names) AS u (column_name)
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_attribute AS a
-            WHERE (a.attrelid, a.attname) = (fk.table_name, u.column_name))
+            WHERE (a.attrelid, a.attname) = (fk.table_oid, u.column_name))
     LOOP
         RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is used in era foreign key "%"',
-            r.column_name, r.table_name, r.key_name;
+            r.column_name, r.table_oid, r.foreign_key_name;
     END LOOP;
 
     /*
@@ -3037,34 +3210,34 @@ BEGIN
      * know which trigger might belong to what, so just error out.
      */
     FOR r IN
-        SELECT fk.key_name, fk.table_name, fk.fk_insert_trigger AS trigger_name
+        SELECT fk.foreign_key_name, fk.table_oid, fk.fk_insert_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_insert_trigger))
+            WHERE (t.tgrelid, t.tgname) = (fk.table_oid, fk.fk_insert_trigger))
         UNION ALL
-        SELECT fk.key_name, fk.table_name, fk.fk_update_trigger AS trigger_name
+        SELECT fk.foreign_key_name, fk.table_oid, fk.fk_update_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fk.table_name, fk.fk_update_trigger))
+            WHERE (t.tgrelid, t.tgname) = (fk.table_oid, fk.fk_update_trigger))
         UNION ALL
-        SELECT fk.key_name, uk.table_name, fk.uk_update_trigger AS trigger_name
+        SELECT fk.foreign_key_name, uk.table_oid, fk.uk_update_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_update_trigger))
+            WHERE (t.tgrelid, t.tgname) = (uk.table_oid, fk.uk_update_trigger))
         UNION ALL
-        SELECT fk.key_name, uk.table_name, fk.uk_delete_trigger AS trigger_name
+        SELECT fk.foreign_key_name, uk.table_oid, fk.uk_delete_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.key_name = fk.unique_key
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (uk.table_name, fk.uk_delete_trigger))
+            WHERE (t.tgrelid, t.tgname) = (uk.table_oid, fk.uk_delete_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
-            r.trigger_name, r.table_name, r.key_name;
+            r.trigger_name, r.table_oid, r.foreign_key_name;
     END LOOP;
 
 END;
@@ -3086,24 +3259,24 @@ DECLARE
 BEGIN
     /* Make sure that all of our tables are still persistent */
     FOR r IN
-        SELECT p.table_name
-        FROM sql_saga.era AS p
-        JOIN pg_catalog.pg_class AS c ON c.oid = p.table_name
+        SELECT e.table_oid
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_class AS c ON c.oid = e.table_oid
         WHERE c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'table "%" must remain persistent because it has an era',
-            r.table_name;
+            r.table_oid;
     END LOOP;
 
     /* And the history tables, too */
     FOR r IN
-        SELECT sv.table_name
-        FROM sql_saga.era AS sv
-        JOIN pg_catalog.pg_class AS c ON c.oid = sv.audit_table_name
+        SELECT e.table_oid
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_class AS c ON c.oid = e.audit_table_oid
         WHERE c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
-            r.table_name;
+            r.table_oid;
     END LOOP;
 
     /* Check that our system versioning functions are still here */
@@ -3119,7 +3292,7 @@ BEGIN
     --        )
     --    LOOP
     --        RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
-    --            r.fn, r.table_name;
+    --            r.fn, r.table_oid;
     --    END LOOP;
     --    PERFORM pg_catalog.set_config('search_path', save_search_path, true);
 
@@ -3134,15 +3307,15 @@ BEGIN
         --            ht.oid::regclass, t.relowner::regrole)
         --        FROM sql_saga.system_versioning AS sv
         --        JOIN pg_class AS t ON t.oid = sv.table_name
-        --        JOIN pg_class AS ht ON ht.oid IN (sv.audit_table_name, sv.view_name)
+        --        JOIN pg_class AS ht ON ht.oid IN (sv.audit_table_name, sv.view_oid)
         --        WHERE t.relowner <> ht.relowner
         --
         --        UNION ALL
 
         SELECT format('ALTER VIEW %s OWNER TO %I', fpt.oid::regclass, t.relowner::regrole)
         FROM sql_saga.api_view AS fpv
-        JOIN pg_class AS t ON t.oid = fpv.table_name
-        JOIN pg_class AS fpt ON fpt.oid = fpv.view_name
+        JOIN pg_class AS t ON t.oid = fpv.table_oid
+        JOIN pg_class AS fpt ON fpt.oid = fpv.view_oid
         WHERE t.relowner <> fpt.relowner
 
         --        UNION ALL
@@ -3167,12 +3340,12 @@ BEGIN
                        SELECT
                        FROM pg_class AS _c
                        CROSS JOIN LATERAL aclexplode(COALESCE(_c.relacl, acldefault('r', _c.relowner))) AS _acl
-                       WHERE _c.oid = objects.table_name
+                       WHERE _c.oid = objects.table_oid
                          AND _acl.grantee = objects.grantee
                          AND _acl.privilege_type = 'SELECT'
                    ) AS on_base_table
             FROM (
---                SELECT sv.table_name,
+--                SELECT sv.table_oid,
 --                       c.oid::regclass::text AS object_name,
 --                       c.relkind AS object_type,
 --                       acl.privilege_type,
@@ -3180,12 +3353,12 @@ BEGIN
 --                       acl.grantee,
 --                       'h' AS history_or_portion
 --                FROM sql_saga.system_versioning AS sv
---                JOIN pg_class AS c ON c.oid IN (sv.audit_table_name, sv.view_name)
+--                JOIN pg_class AS c ON c.oid IN (sv.audit_table_name, sv.view_oid)
 --                CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 --
 --                UNION ALL
 --
-                SELECT fpv.table_name,
+                SELECT fpv.table_oid,
                        c.oid::regclass::text AS object_name,
                        c.relkind AS object_type,
                        acl.privilege_type,
@@ -3193,12 +3366,12 @@ BEGIN
                        acl.grantee,
                        'p' AS history_or_portion
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS c ON c.oid = fpv.view_name
+                JOIN pg_class AS c ON c.oid = fpv.view_oid
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 
 --                UNION ALL
 --
---                SELECT sv.table_name,
+--                SELECT sv.table_oid,
 --                       p.oid::regprocedure::text,
 --                       'f',
 --                       acl.privilege_type,
@@ -3221,7 +3394,7 @@ BEGIN
 
             IF NOT r.on_base_table THEN
                 RAISE EXCEPTION 'cannot grant % directly to "%"; grant % to "%" instead',
-                    r.privilege_type, r.object_name, r.base_privilege_type, r.table_name;
+                    r.privilege_type, r.object_name, r.base_privilege_type, r.table_oid;
             END IF;
         END LOOP;
 
@@ -3240,7 +3413,7 @@ BEGIN
 --                FROM sql_saga.system_versioning AS sv
 --                JOIN pg_class AS c ON c.oid = sv.table_name
 --                CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
---                JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_name)
+--                JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_oid)
 --                WHERE acl.privilege_type = 'SELECT'
 --                  AND NOT has_table_privilege(acl.grantee, hc.oid, 'SELECT')
 --
@@ -3251,9 +3424,9 @@ BEGIN
                        acl.privilege_type AS privilege_type,
                        acl.grantee
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS c ON c.oid = fpv.table_name
+                JOIN pg_class AS c ON c.oid = fpv.table_oid
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_class AS fpc ON fpc.oid = fpv.view_name
+                JOIN pg_class AS fpc ON fpc.oid = fpv.view_oid
                 WHERE NOT has_table_privilege(acl.grantee, fpc.oid, acl.privilege_type)
 
 --                UNION ALL
@@ -3289,7 +3462,7 @@ BEGIN
 --            FROM sql_saga.system_versioning AS sv
 --            JOIN pg_class AS c ON c.oid = sv.table_name
 --            CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
---            JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_name)
+--            JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_oid)
 --            WHERE acl.privilege_type = 'SELECT'
 --              AND NOT EXISTS (
 --                SELECT
@@ -3299,14 +3472,14 @@ BEGIN
 --
 --            UNION ALL
 
-            SELECT fpv.table_name,
+            SELECT fpv.table_oid,
                    hc.oid::regclass::text AS object_name,
                    acl.privilege_type,
                    acl.privilege_type AS base_privilege_type
             FROM sql_saga.api_view AS fpv
-            JOIN pg_class AS c ON c.oid = fpv.table_name
+            JOIN pg_class AS c ON c.oid = fpv.table_oid
             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_class AS hc ON hc.oid = fpv.view_name
+            JOIN pg_class AS hc ON hc.oid = fpv.view_oid
             WHERE NOT EXISTS (
                 SELECT
                 FROM aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS _acl
@@ -3330,10 +3503,10 @@ BEGIN
 --                WHERE _acl.privilege_type = 'EXECUTE'
 --                  AND _acl.grantee = acl.grantee)
 --
-            ORDER BY table_name, object_name
+            ORDER BY table_oid, object_name
         LOOP
             RAISE EXCEPTION 'cannot revoke % directly from "%", revoke % from "%" instead',
-                r.privilege_type, r.object_name, r.base_privilege_type, r.table_name;
+                r.privilege_type, r.object_name, r.base_privilege_type, r.table_oid;
         END LOOP;
 
         /* Propagate REVOKEs */
@@ -3349,7 +3522,7 @@ BEGIN
 --                       'SELECT' AS privilege_type,
 --                       hacl.grantee
 --                FROM sql_saga.system_versioning AS sv
---                JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_name)
+--                JOIN pg_class AS hc ON hc.oid IN (sv.audit_table_name, sv.view_oid)
 --                CROSS JOIN LATERAL aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS hacl
 --                WHERE hacl.privilege_type = 'SELECT'
 --                  AND NOT has_table_privilege(hacl.grantee, sv.table_name, 'SELECT')
@@ -3361,9 +3534,9 @@ BEGIN
                        hacl.privilege_type,
                        hacl.grantee
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS hc ON hc.oid = fpv.view_name
+                JOIN pg_class AS hc ON hc.oid = fpv.view_oid
                 CROSS JOIN LATERAL aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS hacl
-                WHERE NOT has_table_privilege(hacl.grantee, fpv.table_name, hacl.privilege_type)
+                WHERE NOT has_table_privilege(hacl.grantee, fpv.table_oid, hacl.privilege_type)
 
 --                UNION ALL
 --
