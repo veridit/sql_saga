@@ -53,6 +53,13 @@ vimdiff-fail-all:
 		vim -d expected/$$test.out results/$$test.out < /dev/tty; \
 	done
 
+# New target to show diff for all failing tests
+diff-fail-all:
+	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
+		echo "Showing diff for test: $$test"; \
+		diff -u "expected/$$test.out" "results/$$test.out" || true; \
+	done
+
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
 #
