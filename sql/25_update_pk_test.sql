@@ -27,6 +27,7 @@ DELETE FROM rooms;
 -- You can't update a finite pk id that is partly covered
 SAVEPOINT test;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
+-- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
 ROLLBACK TO SAVEPOINT test;
 

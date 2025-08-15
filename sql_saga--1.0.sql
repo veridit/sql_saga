@@ -664,7 +664,8 @@ BEGIN
     WHERE (p.table_oid, p.era_name) = (table_oid, era_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'era "%" on table "%" does not exist', era_name, table_oid;
+        RAISE DEBUG 'era % not found for table %', era_name, table_oid;
+        RETURN false;
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
@@ -1420,15 +1421,6 @@ BEGIN
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga._serialize(table_oid);
 
-    IF key_name IS NOT NULL THEN
-        PERFORM 1 FROM sql_saga.unique_keys AS uk
-        WHERE uk.table_oid = table_oid AND uk.unique_key_name = key_name;
-
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'unique key "%" on table "%" does not exist', key_name, table_oid;
-        END IF;
-    END IF;
-
     FOR unique_key_row IN
         SELECT uk.*
         FROM sql_saga.unique_keys AS uk
@@ -2107,191 +2099,64 @@ AS
 $function$
 DECLARE
     column_name name;
-    uk_column_names_arr text[];
-    uk_column_values_arr text[];
-    uk_column_names_str text;
-    uk_column_values_str text;
-    fk_column_names_str text;
-    min_uk_start_value text;
-    max_uk_end_value text;
+    uk_join_on_fk text;
+    fk_where_clause text;
+    uk_range_constructor regtype;
+    fk_range_constructor regtype;
     violation boolean;
 
-    SQL_UK_MINMAX text;
-    QSQL_UK_MINMAX CONSTANT text :=
-        'SELECT MIN(%5$I), MAX(%6$I) '
-        '  FROM %1$I.%2$I as t '
-        ' WHERE ROW(%3$s) = ROW(%4$s)';
+    -- This query checks for violations by finding any referencing row (`fk`)
+    -- for which the referenced rows (`uk`) no longer completely cover its
+    -- validity period. It uses a correlated subquery to re-check coverage
+    -- for each potentially affected foreign key row.
+    QSQL_VALIDATE_FKS CONSTANT text :=
+    'SELECT EXISTS ('
+    '  SELECT 1'
+    '  FROM %1$s AS fk'
+    '  WHERE %4$s AND NOT COALESCE(('
+    '    SELECT sql_saga.no_gaps('
+    '      %7$I(uk.%8$I, uk.%9$I),'
+    '      %10$I(fk.%5$I, fk.%6$I)'
+    '      ORDER BY uk.%8$I'
+    '    )'
+    '    FROM %2$s AS uk'
+    '    WHERE %3$s'
+    '  ), false)'
+    ')';
 
-    SQL_FK_EXISTS text;
-    QSQL_FK_EXISTS CONSTANT text :=
-        'SELECT EXISTS( '
-        '  SELECT FROM %1$I.%2$I as t '
-        '  WHERE ROW(%3$s) = ROW(%4$s)'
-        ')';
-
-    SQL_FK_OUT_OF_UK_MINMAX_RANGE text;
-    QSQL_FK_OUT_OF_UK_MINMAX_RANGE CONSTANT text :=
-        'SELECT EXISTS( '
-        '   SELECT '
-        '     FROM %1$I.%2$I as t '
-        '    WHERE ROW(%3$s) = ROW(%4$s) '
-        '      AND NOT sql_saga.contains(%5$L, %6$L, %7$I, %8$I) '
-        ')';
-
-    SQL_FK_CONTAINS_UK_HOLES text;
-    QSQL_FK_CONTAINS_UK_HOLES CONSTANT text :=
-        'SELECT EXISTS( '
-        '    WITH holes AS ( '
-        '        SELECT %6$I AS "s", next_s AS "e" '
-        '          FROM (SELECT %6$I, LEAD(%5$I, 1) OVER (ORDER BY %5$I) "next_s" '
-        '                  FROM %1$I.%2$I '
-        '                 WHERE ROW(%3$s) = ROW(%4$s)) t '
-        '         WHERE (t.next_s IS NOT NULL AND t.next_s <> %6$I) '
-        '    ) '
-        '    SELECT FROM %7$I.%8$I t'
-        '     WHERE ROW(%9$s) = ROW(%4$s)'
-        '       AND EXISTS(SELECT '
-        '                    FROM holes h '
-        '                   WHERE sql_saga.contains(%10$I, %11$I, h.s, h.e)) '
-        ')';
 BEGIN
-    /*
-    -- For manual verification of the data passed from the trigger.
-    RAISE DEBUG 'row_data=%', row_data;
-    RAISE DEBUG 'foreign_key_name=%',foreign_key_name;
-    RAISE DEBUG 'fk_table_oid=%',fk_table_oid;
-    RAISE DEBUG 'fk_schema_name=%',fk_schema_name;
-    RAISE DEBUG 'fk_table_name=%',fk_table_name;
-    RAISE DEBUG 'fk_column_names=%',fk_column_names;
-    RAISE DEBUG 'fk_era_name=%',fk_era_name;
-    RAISE DEBUG 'fk_start_after_column_name=%',fk_start_after_column_name;
-    RAISE DEBUG 'fk_stop_on_column_name=%',fk_stop_on_column_name;
-    RAISE DEBUG 'uk_table_oid=%',uk_table_oid;
-    RAISE DEBUG 'uk_schema_name=%',uk_schema_name;
-    RAISE DEBUG 'uk_table_name=%',uk_table_name;
-    RAISE DEBUG 'uk_column_names=%',uk_column_names;
-    RAISE DEBUG 'uk_era_name=%',uk_era_name;
-    RAISE DEBUG 'uk_start_after_column_name=%',uk_start_after_column_name;
-    RAISE DEBUG 'uk_stop_on_column_name=%',uk_stop_on_column_name;
-    RAISE DEBUG 'match_type=%',match_type;
-    RAISE DEBUG 'delete_action=%',delete_action;
-    RAISE DEBUG 'update_action=%',update_action;
-    RAISE DEBUG 'sql_saga._get_foreign_key_metadata=%',jsonb_pretty(to_jsonb(sql_saga._get_foreign_key_metadata(foreign_key_name)));
-    */
-
+    -- If any part of the key in the OLD row is NULL, it cannot be referenced
+    -- by a valid foreign key row (unless MATCH PARTIAL is supported,
+    -- which it is not). So we can safely return.
     FOREACH column_name IN ARRAY uk_column_names LOOP
         IF row_data->>column_name IS NULL THEN
-            /*
-             * If the deleted row had nulls in the referenced columns then
-             * there was no possible referencing row (until we implement
-             * PARTIAL) so we can just stop here.
-             */
             RETURN true;
         END IF;
-        uk_column_names_arr := uk_column_names_arr || ('t.' || quote_ident(column_name));
-        uk_column_values_arr := uk_column_values_arr || quote_literal(row_data->>column_name);
     END LOOP;
 
-    uk_column_names_str := array_to_string(uk_column_names_arr, ', ');
-    uk_column_values_str := array_to_string(uk_column_values_arr, ', ');
+    SELECT string_agg(format('fk.%I = uk.%I', u.fkc, u.ukc), ' AND ')
+    INTO uk_join_on_fk
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    RAISE DEBUG 'uk_column_names_str=%', uk_column_names_str;
-    RAISE DEBUG 'uk_column_values_str=%', uk_column_values_str;
+    SELECT string_agg(format('fk.%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
+    INTO fk_where_clause
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    --SELECT sql_saga.no_gaps(/* range creator for this type */(valid_after, valid_to), /* range creator for this type */(valid_after, valid_to));
-    -- query the range that the uk currently spans:
-    -- time: 1 2 3 4 5 6 | in ranges
-    --   uk: *** ******* | [1,2), [3,6)
-    -- in this case would return [1,6).
-    SQL_UK_MINMAX := format(QSQL_UK_MINMAX,
-        uk_schema_name,
-        uk_table_name,
-        uk_column_names_str,
-        uk_column_values_str,
-        uk_start_after_column_name,
-        uk_stop_on_column_name);
-    RAISE DEBUG 'SQL_UK_MINMAX=%', SQL_UK_MINMAX;
-    EXECUTE SQL_UK_MINMAX
-    INTO min_uk_start_value, max_uk_end_value;
+    SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
+    SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
 
-    RAISE DEBUG 'min_uk_start_value=%', min_uk_start_value;
-    RAISE DEBUG 'max_uk_end_value=%', max_uk_end_value;
-
-    SELECT string_agg('t.' || quote_ident(u.c), ', ' ORDER BY u.ordinality)
-    INTO fk_column_names_str
-    FROM unnest(fk_column_names) WITH ORDINALITY AS u (c, ordinality);
-
-    RAISE DEBUG 'fk_column_names_str=%', fk_column_names_str;
-
-    -- min|max can be null if `uk` has no record for the specified filter,
-    -- which means that should not exists any `fk` record for the same filter.
-    IF min_uk_start_value IS NULL OR max_uk_end_value IS NULL THEN
-        SQL_FK_EXISTS := format(QSQL_FK_EXISTS,
-                                       fk_schema_name,
-                                       fk_table_name,
-                                       fk_column_names_str,
-                                       uk_column_values_str);
-        RAISE DEBUG 'SQL_FK_EXISTS=%', SQL_FK_EXISTS;
-        EXECUTE SQL_FK_EXISTS
-        INTO violation;
-
-        IF violation THEN
-            RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
-            RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-                uk_table_oid,
-                foreign_key_name,
-                fk_table_oid;
-        END IF;
-    END IF;
-
-    -- check if any fk record is not contained in the range `[min(uk.start), max(uk.end)).`
-    -- time: 1 2 3 4 5 6
-    --   uk:   *******
-    --   fk:   ^-----^
-    -- any fk record with start or end outside the ^ markers are considered a violation.
-    SQL_FK_OUT_OF_UK_MINMAX_RANGE := format(QSQL_FK_OUT_OF_UK_MINMAX_RANGE,
-                                                   fk_schema_name,
-                                                   fk_table_name,
-                                                   fk_column_names_str,
-                                                   uk_column_values_str,
-                                                   min_uk_start_value,
-                                                   max_uk_end_value,
-                                                   uk_start_after_column_name,
-                                                   uk_stop_on_column_name);
-    RAISE DEBUG 'SQL_FK_OUT_OF_UK_MINMAX_RANGE=%', SQL_FK_OUT_OF_UK_MINMAX_RANGE;
-    EXECUTE SQL_FK_OUT_OF_UK_MINMAX_RANGE
-    INTO violation;
-
-    IF violation THEN
-        RAISE DEBUG 'Violation detected for FK: %, Row Data: %', foreign_key_name, row_data;
-        RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-            uk_table_oid,
-            foreign_key_name,
-            fk_table_oid;
-    -- check if any fk record contains any hole periods from uk
-    END IF;
-
-    -- check if any fk record contains any hole periods from uk
-    -- time: 1 2 3 4 5 6    | in ranges
-    --   uk: *** *** ***    | [1,2), [3,4), [5,6)
-    --   fk: ^-----^        | [1,4)
-    -- in this case, we have the following holes in `uk`: [2,3), [4,5)
-    -- if we have any `fk` record that contains such holes (such as [1,4)),
-    -- this mean that this record is referencing the `uk` for a period that it not existed.
-    SQL_FK_CONTAINS_UK_HOLES := format(QSQL_FK_CONTAINS_UK_HOLES,
-                                              uk_schema_name,
-                                              uk_table_name,
-                                              replace(uk_column_names_str, 't.', ''),
-                                              uk_column_values_str,
-                                              uk_start_after_column_name,
-                                              uk_stop_on_column_name,
-                                              fk_schema_name,
-                                              fk_table_name,
-                                              fk_column_names_str,
-                                              fk_start_after_column_name,
-                                              fk_stop_on_column_name);
-    RAISE DEBUG 'SQL_FK_CONTAINS_UK_HOLES=%', SQL_FK_CONTAINS_UK_HOLES;
-    EXECUTE SQL_FK_CONTAINS_UK_HOLES
+    EXECUTE format(QSQL_VALIDATE_FKS,
+        fk_table_oid,                                -- %1$s: fk table
+        uk_table_oid,                                -- %2$s: uk table
+        uk_join_on_fk,                               -- %3$s: join condition for subquery
+        fk_where_clause,                             -- %4$s: where condition for outer query
+        fk_start_after_column_name,                  -- %5$I: fk start col
+        fk_stop_on_column_name,                      -- %6$I: fk end col
+        uk_range_constructor,                        -- %7$I: uk range type constructor
+        uk_start_after_column_name,                  -- %8$I: uk start col
+        uk_stop_on_column_name,                      -- %9$I: uk end col
+        fk_range_constructor                         -- %10$I: fk range type constructor
+    )
     INTO violation;
 
     IF violation THEN

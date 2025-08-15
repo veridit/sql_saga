@@ -4,22 +4,10 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
-- [x] **Fix `add_foreign_key` exception for incompatible eras:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The `RAISE EXCEPTION` for incompatible era types in `sql_saga.add_foreign_key` will fail at runtime because it references a non-existent field and uses the same variable for both era names in the message.
-  - **Fix:** Correct the field access and ensure the two different era names are displayed in the error message.
-
-- [ ] **Fix bug in temporal foreign key validation for `UPDATE`:**
-  - **Files:** `sql_saga--1.0.sql`, `completely_covers.c`
-  - **Issue:** When updating the temporal range of a primary key, the system fails to block the update even if it leaves referencing foreign keys "dangling". This was identified in `25_update_pk_test.sql` where `UPDATE`s on the `houses` table should have failed due to existing records in the `rooms` table.
-  - **Action:** Investigate the validation logic, likely within the `completely_covers` or `no_gaps` aggregate functions, to correctly handle boundary conditions and prevent invalid updates.
 
 - [ ] **Make `drop_*` commands fail for incorrect parameters:**
-  - [x] `drop_era`
-  - [x] `drop_unique_key`
-  - [ ] `drop_foreign_key`
-  - [ ] `drop_api`
-  - **Issue:** The `drop_*` functions should raise errors for invalid parameters (e.g., non-existent keys or tables) instead of silently doing nothing. This will make the API more robust and predictable.
+  - **Issue:** The `drop_*` functions should raise errors for invalid parameters (e.g., non-existent keys or tables) instead of silently doing nothing. This makes the API more robust. However, making them strict by default breaks test cleanup helpers.
+  - **Action:** Re-evaluate the `drop_*` functions. They should be strict by default but offer an `if_exists` option to allow for safe cleanup operations where the existence of an object is not guaranteed.
 
 ## Medium Priority - Refactoring & API Improvements
 
@@ -104,3 +92,8 @@ This section summarizes potential improvements and features that can be adapted 
 
 - [ ] **Review Referential Action Logic:** The `TRI_FKey_restrict` function contains a specific SQL pattern (`WITH` clause and a `LEFT OUTER JOIN`) for checking for referencing rows.
   - **Action:** Analyze this query pattern. It might be a more optimized way to check for violations than the current logic in `sql_saga.validate_foreign_key_old_row`.
+
+## Done
+
+- **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.
+- **Fix bug in temporal foreign key validation for `UPDATE` and `DELETE`:** Rewrote the validation logic in `validate_foreign_key_old_row` using a correlated subquery to correctly handle `UPDATE` and `DELETE` on referenced keys.
