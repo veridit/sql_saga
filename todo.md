@@ -16,7 +16,7 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 - [ ] **Make `drop_*` commands fail for incorrect parameters:**
   - [x] `drop_era`
-  - [ ] `drop_unique_key`
+  - [x] `drop_unique_key`
   - [ ] `drop_foreign_key`
   - [ ] `drop_api`
   - **Issue:** The `drop_*` functions should raise errors for invalid parameters (e.g., non-existent keys or tables) instead of silently doing nothing. This will make the API more robust and predictable.

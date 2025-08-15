@@ -1420,6 +1420,15 @@ BEGIN
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga._serialize(table_oid);
 
+    IF key_name IS NOT NULL THEN
+        PERFORM 1 FROM sql_saga.unique_keys AS uk
+        WHERE uk.table_oid = table_oid AND uk.unique_key_name = key_name;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'unique key "%" on table "%" does not exist', key_name, table_oid;
+        END IF;
+    END IF;
+
     FOR unique_key_row IN
         SELECT uk.*
         FROM sql_saga.unique_keys AS uk
