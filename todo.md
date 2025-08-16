@@ -21,20 +21,10 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
   - **Issue:** The extension does not currently handle `DROP` or `RENAME` operations on tables or columns that are part of a temporal setup, which can leave the metadata in an inconsistent state.
   - **Action:** Implement an event trigger or hook to detect these DDL changes and either update the `sql_saga` catalog or prevent the operation.
 
-- [ ] **Clarify variable naming in `add_api` function:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** Inside the loop in `sql_saga.add_api`, a variable named `table_oid` is used to store a table *name* (`relname`), which is misleading.
-  - **Fix:** Rename the variable to `table_name` to improve readability.
-
-- [ ] **Clarify parameter naming in `_make_api_view_name` function:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The function `_make_api_view_name` takes a `table_oid` parameter which is actually a table name.
-  - **Fix:** Rename the parameter to `table_name` for clarity.
-
 - [ ] **Make `add_*`/`drop_*` API symmetric:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The parameters for `add_*` and `drop_*` functions are not always symmetric, making the API less intuitive. For example, `add_foreign_key` has many parameters while `drop_foreign_key` uses just `key_name`.
-  - **Action:** Refactor the API to make `add` and `drop` operations take similar identifying parameters.
+  - **Status:** Done.
+  - **Issue:** The parameters for `add_*` and `drop_*` functions were not always symmetric, making the API less intuitive.
+  - **Action:** Overloaded `drop_unique_key` and `drop_foreign_key` functions have been added. They now accept the same logical parameters as their `add_*` counterparts, providing a more intuitive API.
 
 - [ ] **Use a private prefix for internal helper functions:**
   - **File:** `sql_saga--1.0.sql`

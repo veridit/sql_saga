@@ -1,0 +1,113 @@
+-- Test that the overloaded drop_* functions work as expected.
+CREATE TABLE parent(id int, s int, e int);
+SELECT sql_saga.add_era('parent', 's', 'e', 'p');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+ add_unique_key 
+----------------
+ parent_id_p
+(1 row)
+
+CREATE TABLE child(id int, parent_id int, s int, e int);
+SELECT sql_saga.add_era('child', 's', 'e', 'q');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+  add_foreign_key  
+-------------------
+ child_parent_id_q
+(1 row)
+
+-- Test overloaded drop_foreign_key
+TABLE sql_saga.foreign_keys;
+ foreign_key_name  | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
+ child_parent_id_q | child     | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+(1 row)
+
+SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+(0 rows)
+
+-- Test original drop_foreign_key
+SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+  add_foreign_key  
+-------------------
+ child_parent_id_q
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name  | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
+ child_parent_id_q | child     | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+(1 row)
+
+SELECT sql_saga.drop_foreign_key('child', 'child_parent_id_q');
+ drop_foreign_key 
+------------------
+ t
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+(0 rows)
+
+-- Test overloaded drop_unique_key
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_oid | column_names | era_name | unique_constraint |    exclude_constraint    
+-----------------+-----------+--------------+----------+-------------------+--------------------------
+ parent_id_p     | parent    | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+(1 row)
+
+SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+-----------+--------------+----------+-------------------+--------------------
+(0 rows)
+
+-- Test original drop_unique_key
+SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+ add_unique_key 
+----------------
+ parent_id_p
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_oid | column_names | era_name | unique_constraint |    exclude_constraint    
+-----------------+-----------+--------------+----------+-------------------+--------------------------
+ parent_id_p     | parent    | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+(1 row)
+
+SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+-----------+--------------+----------+-------------------+--------------------
+(0 rows)
+
+DROP TABLE child;
+DROP TABLE parent;

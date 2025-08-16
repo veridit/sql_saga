@@ -13,6 +13,7 @@ CREATE SCHEMA hidden;
 CREATE TABLE exposed.employees (
   id INTEGER,
   valid_after date,
+  valid_from date,
   valid_to date,
   name varchar NOT NULL,
   role varchar NOT NULL
@@ -20,6 +21,7 @@ CREATE TABLE exposed.employees (
 CREATE TABLE hidden.staff (
   id INTEGER,
   valid_after date,
+  valid_from date,
   valid_to date,
   salary FLOAT,
   employee_id INTEGER
@@ -31,6 +33,7 @@ CREATE TABLE hidden.staff (
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
  valid_after | date              |           |          | 
+ valid_from  | date              |           |          | 
  valid_to    | date              |           |          | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
@@ -41,10 +44,15 @@ CREATE TABLE hidden.staff (
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
  valid_after | date             |           |          | 
+ valid_from  | date             |           |          | 
  valid_to    | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 
+CREATE TRIGGER synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees
+    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
+CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff
+    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
 -- Verify that enable and disable each work correctly.
 SELECT sql_saga.add_era('exposed.employees', 'valid_after', 'valid_to');
  add_era 
@@ -103,6 +111,7 @@ TABLE sql_saga.foreign_keys;
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
  valid_after | date              |           | not null | 
+ valid_from  | date              |           |          | 
  valid_to    | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
@@ -114,6 +123,7 @@ Check constraints:
 Triggers:
     staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed.employees', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed.employees', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -121,6 +131,7 @@ Triggers:
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
  valid_after | date             |           | not null | 
+ valid_from  | date             |           |          | 
  valid_to    | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
@@ -132,9 +143,11 @@ Check constraints:
 Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed.employees', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_after, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed.employees', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 -- Test data.
-INSERT INTO exposed.employees (id, valid_after, valid_to, name, role) VALUES
+-- We only insert valid_from and valid_to, the trigger will set valid_after.
+INSERT INTO exposed.employees (id, valid_from, valid_to, name, role) VALUES
 (101, '2022-01-01', '2022-06-30', 'Alice Johnson', 'Junior Manager'),
 (101, '2022-07-01', '2023-12-31', 'Alice Johnson', 'Senior Manager'),
 (102, '2022-01-01', '2022-08-31', 'Bob Smith', 'Junior Engineer'),
@@ -142,13 +155,13 @@ INSERT INTO exposed.employees (id, valid_after, valid_to, name, role) VALUES
 (103, '2022-01-01', '2022-12-31', 'Charlie Brown', 'Designer'),
 (104, '2022-01-01', '2022-05-31', 'Diana Prince', 'Junior Analyst'),
 (104, '2022-06-01', '2023-12-31', 'Diana Prince', 'Senior Analyst');
-INSERT INTO hidden.staff (id, valid_after, valid_to, employee_id, salary) VALUES
-(201, '2022-01-01', '2022-06-30',101 , 50000.00),
+INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
+(201, '2022-01-01', '2022-07-31',101 , 50000.00),
 (201, '2022-08-01', '2023-12-31',101 , 60000.00), -- Salary increase in August, a month after role change in July
-(202, '2022-01-01', '2022-08-31',102 , 55000.00),
+(202, '2022-01-01', '2022-09-30',102 , 55000.00),
 (202, '2022-10-01', '2023-12-31',102 , 70000.00), -- Salary increase in October, a month after role change in September
 (203, '2022-01-01', '2022-12-31',103 , 48000.00),
-(204, '2022-01-01', '2022-05-31',104 , 45000.00),
+(204, '2022-01-01', '2022-06-30',104 , 45000.00),
 (204, '2022-07-01', '2023-12-31',104 , 55000.00); -- Salary increase in July, a month after role change in June
 -- Fail
 DELETE FROM exposed.employees WHERE id = 101;
@@ -162,7 +175,7 @@ DELETE FROM exposed.employees WHERE id = 101;
 -- Fail
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
 ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 99 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 96 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
 PL/pgSQL function sql_saga.fk_update_check() line 37 at PERFORM
 -- Success
@@ -221,9 +234,12 @@ TABLE sql_saga.era;
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
  valid_after | date              |           | not null | 
+ valid_from  | date              |           |          | 
  valid_to    | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
+Triggers:
+    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -231,9 +247,12 @@ TABLE sql_saga.era;
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
  valid_after | date             |           | not null | 
+ valid_from  | date             |           |          | 
  valid_to    | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
+Triggers:
+    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 DROP TABLE exposed.employees;
 DROP TABLE hidden.staff;
