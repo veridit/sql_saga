@@ -66,6 +66,7 @@ diff-fail-all:
 		echo "Showing diff for test: $$test"; \
 		diff -u "expected/$$test.out" "results/$$test.out" || true; \
 	done
+	@if grep -q 'not ok' regression.out; then exit 1; fi
 
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
