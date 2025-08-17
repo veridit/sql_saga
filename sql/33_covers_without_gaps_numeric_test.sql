@@ -22,49 +22,49 @@ TABLE numeric_shifts;
 
 -- This test checks for an exact match with one range
 -- Expected: TRUE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(1.5, 6.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(1.5, 6.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- This test checks for an exact match with two consecutive ranges
 -- Expected: TRUE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(1.5, 12.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(1.5, 12.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 3: Range with Extra at the Beginning
 -- Expected: TRUE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(2.5, 6.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(2.5, 6.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 4: Range with Extra at the End
 -- Expected: TRUE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(1.5, 11.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(1.5, 11.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 5: Range with Extra on Both Sides
 -- Expected: TRUE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(2.5, 11.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(2.5, 11.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 6: Range that Misses Completely
 -- Expected: FALSE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(20.5, 25.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(20.5, 25.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 7: Range with Uncovered Time at the Beginning
 -- Expected: FALSE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(0.0, 12.0))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(0.0, 12.0))
 FROM numeric_shifts
 WHERE job_id = 1;
 
 -- Test 8: Range with Uncovered Time at the End
 -- Expected: FALSE
-SELECT sql_saga.no_gaps(numrange(valid_after, valid_to), numrange(1.5, 15.5))
+SELECT sql_saga.covers_without_gaps(numrange(valid_after, valid_to), numrange(1.5, 15.5))
 FROM numeric_shifts
 WHERE job_id = 1;
 

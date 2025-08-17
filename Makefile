@@ -22,11 +22,18 @@ fast-tests:
 benchmark:
 	$(MAKE) installcheck REGRESS="43_benchmark"
 
-OBJS = sql_saga.o periods.o no_gaps.o $(WIN32RES)
+OBJS = sql_saga.o periods.o covers_without_gaps.o $(WIN32RES)
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# test is a convenient alias for installcheck.
+# To run all tests: `make test`
+# To run a single test: `make test TESTS=21_init`
+# To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
+.PHONY: test
+test: installcheck
 
 # New target to run vimdiff for the first failing test
 vimdiff-fail-first:

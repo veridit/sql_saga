@@ -121,25 +121,25 @@ SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
 /*
  * C Helper functions
  */
-CREATE OR REPLACE FUNCTION sql_saga.no_gaps_transfn(internal, anyrange, anyrange)
+CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_transfn(internal, anyrange, anyrange)
 RETURNS internal
-AS 'sql_saga', 'no_gaps_transfn'
+AS 'sql_saga', 'covers_without_gaps_transfn'
 LANGUAGE c;
 
-CREATE OR REPLACE FUNCTION sql_saga.no_gaps_finalfn(internal, anyrange, anyrange)
+CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_finalfn(internal, anyrange, anyrange)
 RETURNS boolean
-AS 'sql_saga', 'no_gaps_finalfn'
+AS 'sql_saga', 'covers_without_gaps_finalfn'
 LANGUAGE c;
 
 /*
- * no_gaps(period anyrange, target anyrange) -
- * Returns true if the fixed arg `target`
- * is completely covered by the sum of the `period` values.
+ * covers_without_gaps(period anyrange, target anyrange) -
+ * Returns true if the collected `period` ranges are contiguous (have no gaps)
+ * and completely cover the fixed `target` range.
  */
-CREATE AGGREGATE sql_saga.no_gaps(anyrange, anyrange) (
-  sfunc = sql_saga.no_gaps_transfn,
+CREATE AGGREGATE sql_saga.covers_without_gaps(anyrange, anyrange) (
+  sfunc = sql_saga.covers_without_gaps_transfn,
   stype = internal,
-  finalfunc = sql_saga.no_gaps_finalfn,
+  finalfunc = sql_saga.covers_without_gaps_finalfn,
   finalfunc_extra
 );
 
@@ -3849,7 +3849,7 @@ BEGIN
   IF fk_val IS NULL THEN RETURN true; END IF;
 
   EXECUTE format($q$
-    SELECT  no_gaps(%1$s.%3$s, $2 ORDER BY %1$s.%3$s)
+    SELECT  covers_without_gaps(%1$s.%3$s, $2 ORDER BY %1$s.%3$s)
     FROM    %1$s
     WHERE   %1$s.%2$s = $1
     $q$,
@@ -3991,7 +3991,7 @@ BEGIN
       LEFT OUTER JOIN ONLY %4$s
       ON      %4$s.%5$s = %7$s.fk
       GROUP BY %7$s.fk, %7$s.valid_at
-      HAVING NOT COALESCE(no_gaps(%4$s.%6$s, %7$s.valid_at ORDER BY %4$s.%6$s), false)
+      HAVING NOT COALESCE(covers_without_gaps(%4$s.%6$s, %7$s.valid_at ORDER BY %4$s.%6$s), false)
     )
     $q$, from_table, fk_column, from_range_column, to_table, pk_column, to_range_column, tmp_table)
     USING old_pk_val, old_pk_range

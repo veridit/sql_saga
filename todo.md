@@ -4,6 +4,9 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
+- [x] **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:**
+  - **Issue:** The `covers_without_gaps` function had multiple bugs, including incorrect logic for detecting gaps between contiguous ranges and severe memory management errors that caused server crashes. Pass-by-reference datums were not being correctly copied and freed within the aggregate's state, leading to use-after-free errors, especially in multi-group aggregations or repeated calls within triggers.
+  - **Action:** Rewrote the state update and memory management logic in `covers_without_gaps_transfn` to correctly handle all cases, including transitions between finite and infinite bounds. This resolved the memory corruption and fixed all related test failures across the suite. The gap detection logic was also corrected.
 
 - [x] **Make `drop_*` commands fail for incorrect parameters:**
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
@@ -59,7 +62,7 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## Learnings from Inspired Projects (`periods` and `time_for_keys`)
 
-This section summarizes potential improvements and features that can be adapted from the `periods` and `time_for_keys` extensions, which served as inspiration for `sql_saga`. Once these ideas are evaluated and either integrated or discarded, the corresponding source files should be removed from the repository.
+This section summarizes potential improvements and features adapted from the `periods` and `time_for_keys` extensions, which served as inspiration for `sql_saga`.
 
 ### From `periods` extension:
 
@@ -77,13 +80,15 @@ This section summarizes potential improvements and features that can be adapted 
 - [ ] **Analyze Alternative Foreign Key Implementation (`TRI_FKey_*`):** This represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint.
   - **Action:** Analyze the performance of this approach vs. `sql_saga`'s metadata-driven approach. The recent refactoring in `sql_saga` to pass metadata as arguments to triggers might have closed the performance gap.
 
-- [ ] **Evaluate `completely_covers` Aggregate Function:** The C function in `completely_covers.c` is specialized for `tstzrange` and is used to validate temporal foreign keys. `sql_saga` has a generic `no_gaps` aggregate for `anyrange`.
-  - **Action:** Compare the performance and correctness of `completely_covers` against `no_gaps`. A specialized function might be faster. Determine if `sql_saga` would benefit from specialized aggregates for common range types.
+- [ ] **Evaluate `completely_covers` Aggregate Function:** The C function in `completely_covers.c` is specialized for `tstzrange` and is used to validate temporal foreign keys. `sql_saga` has a generic `covers_without_gaps` aggregate for `anyrange`.
+  - **Action:** Compare the performance and correctness of `completely_covers` against `covers_without_gaps`. A specialized function might be faster. Determine if `sql_saga` would benefit from specialized aggregates for common range types.
 
-- [ ] **Review Referential Action Logic:** The `TRI_FKey_restrict` function contains a specific SQL pattern (`WITH` clause and a `LEFT OUTER JOIN`) for checking for referencing rows.
-  - **Action:** Analyze this query pattern. It might be a more optimized way to check for violations than the current logic in `sql_saga.validate_foreign_key_old_row`.
 
 ## Done
 
+- **Add reference documentation for C-language extensions**: Created `REFERENCES.md` with summaries of key concepts from PostgreSQL documentation on C-language functions and user-defined aggregates, including specific details on the ordering requirements for `sql_saga.covers_without_gaps`.
+- **Clarify variable naming in `add_api`:** A misleading variable name inside the `add_api` function loop was corrected for clarity.
+- **Clarify parameter naming in `_make_api_view_name`:** A misleading parameter name in the `_make_api_view_name` function was corrected for clarity.
 - **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.
-- **Fix bug in temporal foreign key validation for `UPDATE` and `DELETE`:** Rewrote the validation logic in `validate_foreign_key_old_row` using a correlated subquery to correctly handle `UPDATE` and `DELETE` on referenced keys.
+- **Fix bug in temporal foreign key validation for `UPDATE` and `DELETE`:** Rewrote the validation logic in `validate_foreign_key_old_row` to correctly handle `UPDATE` and `DELETE` on referenced keys.
+- **Simplify foreign key validation using `covers_without_gaps`:** Refactored `validate_foreign_key_new_row` to use the `covers_without_gaps` aggregate, simplifying the code and making it consistent with `validate_foreign_key_old_row`.
