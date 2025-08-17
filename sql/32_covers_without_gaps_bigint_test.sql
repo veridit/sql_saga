@@ -20,49 +20,49 @@ INSERT INTO bigint_shifts(job_id, worker_id, valid_after, valid_to) VALUES
 
 -- This test checks for an exact match with one range
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(1000000000, 6000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(1000000000, 6000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- This test checks for an exact match with two consecutive ranges
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(1000000000, 12000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(1000000000, 12000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 3: Range with Extra at the Beginning
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(2000000000, 6000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(2000000000, 6000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 4: Range with Extra at the End
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(1000000000, 11000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(1000000000, 11000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 5: Range with Extra on Both Sides
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(2000000000, 11000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(2000000000, 11000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 6: Range that Misses Completely
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(20000000000, 25000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(20000000000, 25000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 7: Range with Uncovered Time at the Beginning
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(0, 12000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(0, 12000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 
 -- Test 8: Range with Uncovered Time at the End
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to), int8range(1000000000, 15000000000))
+SELECT sql_saga.covers_without_gaps(int8range(valid_after, valid_to, '(]'), int8range(1000000000, 15000000000, '(]') ORDER BY valid_after)
 FROM bigint_shifts
 WHERE job_id = 1;
 

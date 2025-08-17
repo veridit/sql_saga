@@ -21,49 +21,49 @@ INSERT INTO int_shifts(job_id, worker_id, valid_after, valid_to) VALUES
 
 -- This test checks for an exact match with one range
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(1, 6))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(1, 6, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- This test checks for an exact match with two consecutive ranges
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(1, 12))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(1, 12, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 3: Range with Extra at the Beginning
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(2, 6))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(2, 6, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 4: Range with Extra at the End
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(1, 11))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(1, 11, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 5: Range with Extra on Both Sides
 -- Expected: TRUE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(2, 11))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(2, 11, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 6: Range that Misses Completely
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(20, 25))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(20, 25, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 7: Range with Uncovered Time at the Beginning
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(0, 6))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(0, 6, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 
 -- Test 8: Range with Uncovered Time at the End
 -- Expected: FALSE
-SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to), int4range(1, 15))
+SELECT sql_saga.covers_without_gaps(int4range(valid_after, valid_to, '(]'), int4range(1, 15, '(]') ORDER BY valid_after)
 FROM int_shifts
 WHERE job_id = 1;
 

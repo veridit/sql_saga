@@ -48,97 +48,46 @@ PG_FUNCTION_INFO_V1(covers_without_gaps_finalfn);
 
 // Types
 typedef struct covers_without_gaps_state {
+  /*
+   * The upper bound of the contiguous range covered so far. This is updated
+   * with the upper bound of each new range that extends the coverage.
+   */
   RangeBound covered_to;
-  RangeType *target;  // Assuming that the target range does not need to be modified and is not large
-  RangeBound target_start, target_end; // Cache computed values
-  bool target_empty; // Cache computed value
+
+  /*
+   * A copy of the target range, held in the aggregate's memory context to
+   * persist across transition function calls.
+   */
+  RangeType *target;
+
+  /* Deserialized and cached bounds of the target range for efficiency. */
+  RangeBound target_start, target_end;
+  /* Cached emptiness of the target range. */
+  bool target_empty;
+
+  /*
+   * Flag to indicate if the aggregate should return NULL. This is set if the
+   * target range is NULL or empty on the first call.
+   */
   bool answer_is_null;
-  bool finished;    // Used to avoid further processing if we have already succeeded/failed.
+  /*
+   * Optimization flag to stop processing further rows once a definitive answer
+   * (either full coverage or a gap) has been found.
+   */
+  bool finished;
+  /* The current answer. Becomes true only when full coverage is confirmed. */
   bool is_covered;
-  RangeBound prev_start; // To check if input is sorted
-  bool first_row_processed; // To check if input is sorted
+  /*
+   * Memory management flag. True if `covered_to.val` points to memory
+   * allocated with `datumCopy` in the aggregate's context, which must be
+   * `pfree`d before reallocation. This is only relevant for pass-by-reference
+   * range-element types (e.g., numeric, text, timestamp).
+   */
+  bool covered_to_is_palloced;
 } covers_without_gaps_state;
 
 
 // Implementations
-
-/*
- * State transition logic for covers_without_gaps aggregate:
- *
- * The goal is to determine if a sorted series of input ranges fully covers a
- * target range without any gaps.
- *
- * State variables and their purpose:
- *
- *  - target_start, target_end: These hold the boundaries of the target range
- *    we are trying to cover. They are cached in the state to avoid repeated
- *    deserialization and are constant throughout the aggregation for a group.
- *
- *  - covered_to: This is the core of the state machine. It tracks the "high-water
- *    mark" of continuous coverage, starting from `target_start`. As each new
- *    input range is processed, if it is contiguous with the existing coverage,
- *    `covered_to` is advanced to the end of that new range. It always
- *    represents the exclusive upper bound of the covered area.
- *
- *  - first_row_processed: A boolean flag to distinguish the first relevant
- *    input range from subsequent ranges. The first range has a special role:
- *    it must cover `target_start` without a gap. Subsequent ranges are checked
- *    for contiguity against the `covered_to` mark.
- *
- *  - finished: A boolean flag used to short-circuit the aggregation. Once a
- *    definitive answer is found (either a gap is detected, making coverage
- *    impossible, or the `target_end` is reached), this is set to `true`, and
- *    all subsequent input rows for the group are ignored.
- *
- *  - is_covered: The boolean result of the aggregation. It is initialized to
- *    `false` and is only set to `true` if `covered_to` is confirmed to be
- *    greater than or equal to `target_end`.
- *
- * Initialization (first call):
- *  - `covered_to` is initialized to `target_start`. This represents the point
- *    from which coverage must begin.
- *  - `first_row_processed` is `false`.
- *
- * Processing each input range (current_start, current_end):
- *
- * 1. Ignore irrelevant ranges:
- *    - If `current_end` <= `target_start`, the range is entirely before the
- *      target and cannot contribute. It is skipped.
- *
- * 2. First relevant range (`first_row_processed` is false):
- *    - This is the first range that extends into or beyond the target's start.
- *    - Check for a gap at the beginning using range_cmp_bounds, which correctly
- *      compares two lower bounds:
- *      - If `current_start` > `target_start`, a gap exists. Coverage is
- *        impossible. Set `finished=true`, `is_covered=false`.
- *    - Otherwise (no gap):
- *      - The first part of the target is covered.
- *      - Update `covered_to` with `current_end`.
- *      - Set `first_row_processed = true`.
- *
- * 3. Subsequent ranges (`first_row_processed` is true):
- *    - Check for a gap between the previous coverage and the current range.
- *      This requires careful comparison of `covered_to` (an upper bound) and
- *      `current_start` (a lower bound). A gap exists if:
- *        a) The value of `current_start` is greater than `covered_to`.
- *        b) The values are equal, but both bounds are exclusive.
- *      - If a gap exists, set `finished=true`, `is_covered=false`.
- *    - Otherwise (no gap):
- *      - Extend coverage: update `covered_to` if `current_end` is greater.
- *
- * 4. Check for completion:
- *    - After any update to `covered_to`, check if `covered_to` >= `target_end`.
- *    - If it is, the target is fully covered. Set `finished=true`, `is_covered=true`.
- *
- * Example: target = [10, 20), input = [8,12), [12,18)
- *
- * - Init: `covered_to` = [10, `first_row_processed` = false.
- * - Row [8,12): First relevant row. `current_start`([8) <= `target_start`([10). No gap.
- *   `covered_to` becomes 12). `first_row_processed` = true.
- * - Row [12,18): Subsequent row. `current_start`([12) vs `covered_to`(12)). No gap.
- *   `covered_to` becomes 18).
- * - Final check: `covered_to`(18)) < `target_end`(20)). is_covered remains false.
- */
 Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
 {
   MemoryContext aggContext, oldContext;
@@ -149,7 +98,8 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
   TypeCacheEntry *typcache, *elem_typcache;
   Oid elem_oid;
   bool current_empty;
-  bool is_first_row;
+  bool first_time;
+  Datum neg_inf;
 
   if (!AggCheckCallContext(fcinfo, &aggContext)) {
     elog(ERROR, "covers_without_gaps called in non-aggregate context");
@@ -161,15 +111,14 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     // Need to use MemoryContextAlloc with aggContext, not just palloc0,
     // or the state will get cleared in between invocations:
     state = (covers_without_gaps_state *)MemoryContextAlloc(aggContext, sizeof(covers_without_gaps_state));
+    state->covered_to_is_palloced = false;
     state->finished = false;
     state->is_covered = false;
-    state->first_row_processed = false;
-    is_first_row = true;
+    first_time = true;
 
     // Technically this will fail to detect an inconsistent target
     // if only the first row is NULL or has an empty range, however,
     // any target problem will be detected when the data is present.
-    // e.g. SELECT sql_saga.covers_without_gaps(tstzrange('2024-01-01', '2024-01-02'), NULL)
     if (PG_ARGISNULL(2) || RangeIsEmpty(target_range = PG_GETARG_RANGE_P(2))) {
       // return NULL from the whole thing
       state->answer_is_null = true;
@@ -185,21 +134,36 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     elem_oid = typcache->rngelemtype->type_id;
     elem_typcache = lookup_type_cache(elem_oid, 0);
 
-    // Deep copy the initial covered_to bound
-    state->covered_to = state->target_start;
-    if (!elem_typcache->typbyval && !state->target_start.infinite) {
+    //ereport(DEBUG1, (errmsg("target is [%s, %s)", DatumGetString(elem_oid, state->target_start), DatumGetString(elem_oid, state->target_end))));
+
+    // Initialize covered_to to negative infinity bound, and make sure it is allocated for regular free.
+    neg_inf = DatumNegativeInfinity(elem_oid);
+    if (!elem_typcache->typbyval && elem_typcache->typlen == -1)
+    {
         oldContext = MemoryContextSwitchTo(aggContext);
-        state->covered_to.val = datumCopy(state->target_start.val, elem_typcache->typbyval, elem_typcache->typlen);
+        state->covered_to.val = datumCopy(neg_inf, false, -1);
         MemoryContextSwitchTo(oldContext);
+        pfree(DatumGetPointer(neg_inf));
+        state->covered_to_is_palloced = true;
     }
+    else
+    {
+        state->covered_to.val = neg_inf;
+        state->covered_to_is_palloced = false;
+    }
+    state->covered_to.infinite = true;
+    state->covered_to.inclusive = true;
+    state->covered_to.lower = true;
+    //ereport(DEBUG1, (errmsg("initial covered_to is %s", DatumGetString(elem_oid, state->covered_to))));
   } else {
     // ereport(NOTICE, (errmsg("looking up state....")));
     state = (covers_without_gaps_state *)PG_GETARG_POINTER(0);
-    is_first_row = !state->first_row_processed;
 
     // TODO: Is there any better way to exit an aggregation early?
     // Even https://pgxn.org/dist/first_last_agg/ hits all the input rows:
     if (state->finished) PG_RETURN_POINTER(state);
+
+    first_time = false;
 
     // Make sure the second arg is always the same:
     typcache = range_get_typcache(fcinfo, RangeTypeGetOid(state->target));
@@ -211,106 +175,132 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     }
   }
 
-  // e.g. SELECT sql_saga.covers_without_gaps(NULL, tstzrange('2024-01-01', '2024-01-10'))
   if (PG_ARGISNULL(1)) PG_RETURN_POINTER(state);
 
   current_range = PG_GETARG_RANGE_P(1);
-  if (RangeTypeGetOid(current_range) != RangeTypeGetOid(state->target)) {
-    elog(ERROR, "range types do not match");
+  if (first_time) {
+    if (RangeTypeGetOid(current_range) != RangeTypeGetOid(state->target)
+        ) {
+      elog(ERROR, "range types do not match");
+    }
   }
 
   range_deserialize(typcache, current_range, &current_start, &current_end, &current_empty);
 
-  /*
-   * If the current range ends before our target starts, it cannot contribute
-   * to coverage, so we can ignore it. This is the key to handling ranges
-   * that start before the target.
-   */
-  if (range_cmp_bounds(typcache, &current_end, &state->target_start) <= 0) {
+  oldContext = MemoryContextSwitchTo(aggContext);
+  //ereport(DEBUG1, (errmsg("current is [%s, %s)", DatumGetString(elem_oid, current_start), DatumGetString(elem_oid, current_end))));
+  //ereport(DEBUG1, (errmsg("pre state->covered_to is %s", DatumGetString(elem_oid, state->covered_to))));
+  MemoryContextSwitchTo(oldContext);
+
+  if (first_time) {
+    // If the target range start is unbounded, but the current range start is not, then we cannot have full coverage
+    if (state->target_start.infinite && !current_start.infinite) {
+      state->finished = true;
+      state->is_covered = false;
       PG_RETURN_POINTER(state);
-  }
-
-  if (state->first_row_processed) {
-      // Subsequent row logic: Check for sortedness and for gaps between ranges.
-      bool gap;
-      int32 cmp;
-
-      if (range_cmp_bounds(typcache, &current_start, &state->prev_start) < 0) {
-          ereport(ERROR, (errmsg("covers_without_gaps first argument must be sorted by range start")));
-      }
-      // Check for a gap. A gap exists if the current range starts after the
-      // previously covered range ends. This check is complex because it compares
-      // a lower bound (current_start) with an upper bound (covered_to).
-      // A gap exists if:
-      //  1. The value of current_start is strictly greater than covered_to.
-      //  2. The values are equal, and both bounds are exclusive (e.g., ...12) and (12...).
-      cmp = DatumGetInt32(FunctionCall2Coll(&elem_typcache->cmp_proc_finfo,
-                                            typcache->rng_collation,
-                                            current_start.val,
-                                            state->covered_to.val));
-      gap = (cmp > 0) || (cmp == 0 && !current_start.inclusive && !state->covered_to.inclusive);
-
-      if (gap) {
-          state->finished = true;
-          state->is_covered = false;
-          PG_RETURN_POINTER(state);
-      }
-
+    }
+    // If the current range starts after the target range starts, then we have a gap
+    if (range_cmp_bounds(typcache, &current_start, &state->target_start) > 0) {
+      state->finished = true;
+      state->is_covered = false;
+      PG_RETURN_POINTER(state);
+    }
   } else {
-      // First row logic: Check for a gap at the very start of the target range.
-      if (range_cmp_bounds(typcache, &current_start, &state->target_start) > 0) {
-          state->finished = true;
-          state->is_covered = false;
-          PG_RETURN_POINTER(state);
-      }
-      state->first_row_processed = true;
-  }
-
-  // Update prev_start for the next iteration. We must copy pass-by-reference
-  // values into the aggregate context to ensure they are not lost. This logic
-  // mirrors the update for `covered_to` to be robust.
-  // The old `prev_start.val` is freed only on subsequent rows. `is_first_row`
-  // captures the state at the beginning of the function, preventing a bug where
-  // we would pfree uninitialized memory on the first row.
-  if (!is_first_row && !elem_typcache->typbyval && !state->prev_start.infinite) {
-    pfree(DatumGetPointer(state->prev_start.val));
-  }
-  state->prev_start.inclusive = current_start.inclusive;
-  state->prev_start.infinite = current_start.infinite;
-  state->prev_start.lower = current_start.lower;
-
-  if (!elem_typcache->typbyval && !current_start.infinite) {
-      oldContext = MemoryContextSwitchTo(aggContext);
-      state->prev_start.val = datumCopy(current_start.val, elem_typcache->typbyval, elem_typcache->typlen);
-      MemoryContextSwitchTo(oldContext);
-  } else {
-      state->prev_start.val = current_start.val;
+    /*
+     * For subsequent ranges, check if there is a gap between the end of the
+     * covered range and the start of the current range. The range_cmp_bounds
+     * function is for sorting, not contiguity checking, because it considers
+     * any upper bound to be greater than any lower bound of the same value
+     * (e.g., `(b < b]`), which would incorrectly be seen as a non-gap. A manual
+     * check is required to correctly handle all boundary conditions.
+     */
+    int cmp = DatumGetInt32(FunctionCall2Coll(&typcache->rng_cmp_proc_finfo,
+                                          typcache->rng_collation,
+                                          state->covered_to.val, current_start.val));
+    if (cmp < 0)
+    {
+        // A clear gap, e.g., [..., 5] and [7, ...]
+        state->finished = true;
+        state->is_covered = false;
+        PG_RETURN_POINTER(state);
+    }
+    else if (cmp == 0 && !state->covered_to.inclusive && !current_start.inclusive)
+    {
+        /*
+         * An adjacent gap, e.g., `(..., 5)` and `(5, ...)` where the boundary
+         * value itself is not included by either range. This is only a true
+         * gap for continuous range types (e.g., numeric, timestamp). For
+         * discrete types (e.g., integer, date), `(..., 5)` is equivalent to
+         * `(..., 4]` and is contiguous with `[5, ...)`. We identify discrete
+         * types by checking for the existence of a `range_canonical` function.
+         */
+        if (!OidIsValid(typcache->rng_canonical_finfo.fn_oid))
+        {
+            state->finished = true;
+            state->is_covered = false;
+            PG_RETURN_POINTER(state);
+        }
+    }
   }
   
+  /*
+   * The logic requires that input ranges are sorted by their start bound. The
+   * `range_cmp_bounds` function is suitable for this check. It handles cases
+   * where ranges overlap, which is valid input. A negative result indicates
+   * that a new range starts before the previous one ended, meaning the input
+   * is not sorted correctly.
+   */
+  if (range_cmp_bounds(typcache, &current_start, &state->covered_to) < 0) {
+    //ereport(ERROR, (errmsg(
+    //    "covers_without_gaps first argument should be sorted but got %s after covering up to %s",
+    //    DatumGetString(elem_oid, current_start),
+    //    DatumGetString(elem_oid, state->covered_to)
+    //)));
+    ereport(ERROR, (errmsg(
+      "input to covers_without_gaps must be sorted by range start"
+    )));
+  }
   
   // Update the covered range if the current range extends beyond it
   if (range_cmp_bounds(typcache, &current_end, &state->covered_to) > 0) {
-      // Free the old value if it was pass-by-ref and not infinite
-      if (!elem_typcache->typbyval && !state->covered_to.infinite) {
-          pfree(DatumGetPointer(state->covered_to.val));
-      }
+    if (!elem_typcache->typbyval && elem_typcache->typlen == -1) {
+        oldContext = MemoryContextSwitchTo(aggContext);
+        if (state->covered_to_is_palloced)
+            pfree(DatumGetPointer(state->covered_to.val));
+        
+        state->covered_to.val = datumCopy(current_end.val, false, -1);
+        state->covered_to_is_palloced = true;
+        MemoryContextSwitchTo(oldContext);
+    } else {
+        state->covered_to.val = current_end.val;
+    }
+    
+    // Copy other bound properties
+    state->covered_to.infinite = current_end.infinite;
+    state->covered_to.lower = current_end.lower;
 
-      // Copy the new end bound into the state
-      state->covered_to.inclusive = current_end.inclusive;
-      state->covered_to.infinite = current_end.infinite;
-      state->covered_to.lower = current_end.lower;
-
-      if (!elem_typcache->typbyval && !current_end.infinite) {
-          oldContext = MemoryContextSwitchTo(aggContext);
-          state->covered_to.val = datumCopy(current_end.val, elem_typcache->typbyval, elem_typcache->typlen);
-          MemoryContextSwitchTo(oldContext);
-      } else {
-          state->covered_to.val = current_end.val;
-      }
+    if (OidIsValid(typcache->rng_canonical_finfo.fn_oid))
+    {
+        /*
+         * For discrete types, an exclusive end like in `[1,6)` is conceptually
+         * contiguous with an inclusive start `[6,12)`. To make range_cmp_bounds
+         * see this as non-gapped, we treat the covered_to as inclusive. This
+         * also works for `(valid_after, valid_to]` style ranges.
+         */
+        state->covered_to.inclusive = true;
+    }
+    else
+    {
+        /*
+         * For continuous types, we must respect the bound's own inclusivity
+         * to correctly detect gaps between ranges like (10,12) and (12,14).
+         */
+        state->covered_to.inclusive = current_end.inclusive;
+    }
   }
   
   // If the covered range now extends to or beyond the target end, we have full coverage
-  if (range_cmp_bounds(typcache, &state->covered_to, &state->target_end) >= 0) {
+  if (!state->target_end.infinite && range_cmp_bounds(typcache, &state->covered_to, &state->target_end) >= 0) {
     state->is_covered = true;
     state->finished = true;
   }
@@ -323,39 +313,47 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
 
 Datum covers_without_gaps_finalfn(PG_FUNCTION_ARGS)
 {
-  covers_without_gaps_state *state;
-  TypeCacheEntry *typcache;
+    covers_without_gaps_state *state;
+    TypeCacheEntry *typcache;
 
-  if (PG_ARGISNULL(0)) {
     /*
-     * transfn was never called (no input rows).
-     * e.g. SELECT sql_saga.covers_without_gaps(range_col, '[1,10)') FROM my_table WHERE false;
-     * The result depends only on the target range (arg 2).
-     * The period range (arg 1) is a dummy value.
+     * The final function is called after all rows have been processed.
+     * `PG_ARGISNULL(0)` is true if the aggregate received zero input rows.
+     * In this case, we can only determine coverage if the target is also empty.
+     * The target is passed as an extra argument, so we check PG_ARGISNULL(2).
      */
-    if (PG_ARGISNULL(2) || RangeIsEmpty(PG_GETARG_RANGE_P(2)))
-      PG_RETURN_NULL(); /* NULL target -> NULL result */
+    if (PG_ARGISNULL(0))
+    {
+        if (PG_ARGISNULL(2) || RangeIsEmpty(PG_GETARG_RANGE_P(2)))
+            PG_RETURN_NULL();
+        else
+            PG_RETURN_BOOL(false);
+    }
+
+    state = (covers_without_gaps_state *)PG_GETARG_POINTER(0);
+    if (state->answer_is_null)
+    {
+        PG_RETURN_NULL();
+    }
     else
-      PG_RETURN_BOOL(false); /* No ranges can't cover a valid target */
-  }
-
-  state = (covers_without_gaps_state *)PG_GETARG_POINTER(0);
-  if (state->answer_is_null) {
-    PG_RETURN_NULL();
-  }
-
-  /* If we've already determined the answer, just return it. */
-  if (state->finished) {
-    PG_RETURN_BOOL(state->is_covered);
-  }
-
-  /* Otherwise, perform the final check. */
-  typcache = range_get_typcache(fcinfo, RangeTypeGetOid(state->target));
-  if (range_cmp_bounds(typcache, &state->covered_to, &state->target_end) >= 0) {
-    state->is_covered = true;
-  }
-  
-  PG_RETURN_BOOL(state->is_covered);
+    {
+        /*
+         * If the transition function did not set `finished` to true (which happens
+         * when it finds a gap or confirms full coverage early), we must perform a
+         * final check to see if the total covered range extends to the target's
+         * end. This handles cases where the input rows are exhausted before the
+         * target is fully covered.
+         */
+        if (!state->finished)
+        {
+            typcache = range_get_typcache(fcinfo, RangeTypeGetOid(state->target));
+            if (range_cmp_bounds(typcache, &state->covered_to, &state->target_end) >= 0)
+            {
+                state->is_covered = true;
+            }
+        }
+        PG_RETURN_BOOL(state->is_covered);
+    }
 }
 
 

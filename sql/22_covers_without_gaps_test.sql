@@ -31,22 +31,22 @@ INSERT INTO covers_test_shifts(job_id, worker_id, valid_after, valid_to) VALUES
 -- -----------------------------------------------------------------------------
 
 -- it covers when the target range is identical to the input ranges
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 1;
 
 -- it covers when the target is a subset of the input ranges (extra coverage on both sides)
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 08:00:00', '2017-11-27 14:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 08:00:00', '2017-11-27 14:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 1;
 
 -- it covers when the target is a subset (extra coverage at the start)
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 08:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 08:00:00', '2017-11-27 17:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 1;
 
 -- it covers when the target is a subset (extra coverage at the end)
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 14:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 14:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 1;
 
@@ -55,24 +55,40 @@ WHERE   job_id = 1;
 -- -----------------------------------------------------------------------------
 
 -- it covers when a lower-unbounded input covers a finite target
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 3;
 
 -- it covers when a lower-unbounded input covers a lower-unbounded target
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('-infinity', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('-infinity', '2017-11-27 17:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 3;
 
 -- it covers when an upper-unbounded input covers a finite target
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 4;
 
 -- it covers when an upper-unbounded input covers an upper-unbounded target
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', 'infinity'))
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', 'infinity') ORDER BY valid_after)
 FROM    covers_test_shifts
 WHERE   job_id = 4;
+
+-- it does NOT cover when ranges meet at an exclusive boundary for continuous types
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '()'))
+FROM (
+  SELECT v FROM (VALUES
+    (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '()')), -- (10, 12)
+    (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '()'))  -- (12, 14)
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
+
+-- it covers with [) boundaries (the default)
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '[)'))
+FROM (VALUES
+  (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '[)')), -- [10, 12)
+  (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '[)'))  -- [12, 14)
+) AS t(v);
 
 
 -- =============================================================================

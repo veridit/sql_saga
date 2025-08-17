@@ -4,9 +4,33 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
-- [x] **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:**
-  - **Issue:** The `covers_without_gaps` function had multiple bugs, including incorrect logic for detecting gaps between contiguous ranges and severe memory management errors that caused server crashes. Pass-by-reference datums were not being correctly copied and freed within the aggregate's state, leading to use-after-free errors, especially in multi-group aggregations or repeated calls within triggers.
-  - **Action:** Rewrote the state update and memory management logic in `covers_without_gaps_transfn` to correctly handle all cases, including transitions between finite and infinite bounds. This resolved the memory corruption and fixed all related test failures across the suite. The gap detection logic was also corrected.
+- [ ] **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:**
+  - **Issue:** The `covers_without_gaps` aggregate is causing a server crash due to memory corruption.
+  - **Action (In Progress):** Following the "Simplify and Rebuild" strategy after multiple failed hypotheses.
+    -   **Documented False Leads:**
+        -   The crash was *not* caused by simple logic errors in gap detection.
+        -   The crash was *not* caused by C99-style variable declarations.
+        -   The crash was *not* solved by simply removing `pfree` (this created a memory leak).
+        -   The crash was *not* solved by re-introducing `pfree` in various locations (this led to use-after-free errors).
+        -   The crash was *not* caused by a flaw in the `copy_bound_to_state` helper function itself, but by the complex logic that was using it.
+    -   **Current Strategy: Simplify and Rebuild (Logical Binary Search)**
+        -   **Step 1 (Verified):** Reduced the implementation to a minimal, non-crashing stub. The server is stable.
+        -   **Step 2 (Verified):** Re-introduced state initialization logic from the `no_gaps.c` prototype. The server remains stable.
+        -   **Step 3 (Verified):** Re-introduced input range processing and comparison logic (with state updates commented out). The server remains stable.
+        -   **Step 4 (Falsified):** Re-introducing the simplified state update logic for `covered_to` re-introduced the server crash. This approach is flawed.
+        -   **Step 5 (Verified):** Reverting the transition function's logic to a more verbose implementation based on the `no_gaps.c` prototype has stabilized the server. The foreign key tests now pass without crashing.
+        -   **Step 6 (Falsified):** The initial attempt to fix the memory leak by tracking allocated datums was flawed. It led to a `pfree` crash by attempting to free a pointer to temporary, non-`palloc`'d memory from a deserialized range.
+        -   **Step 7 (Verified):** Corrected the memory management logic for pass-by-reference types. The server is now stable and does not crash or leak memory when processing any range type.
+        -   **Step 8 (Verified):** Added a final check in `covers_without_gaps_finalfn` to correctly assess coverage after all rows are processed.
+        -   **Step 9 (Falsified):** The attempt to create a generic logic for boundary inclusivity was flawed. It correctly handled continuous ranges but failed for discrete ranges, causing many tests to fail.
+        -   **Step 10 (Falsified):** The attempt to use `rng_is_discrete` failed because this member does not exist in the `TypeCacheEntry` struct. This approach was based on an incorrect assumption about the PostgreSQL internals.
+        -   **Step 11 (Falsified):** The attempt to differentiate logic based on discrete vs. continuous range types was flawed. While the detection mechanism was corrected, the logic itself was overly complex and failed for continuous types like `numeric`.
+        -   **Step 12 (Falsified):** Reverting to a simpler logic (always inclusive) fixed discrete range tests but failed for continuous ones because the tests themselves were flawed.
+        -   **Step 13 (Falsified):** The generalized logic and corrected tests still revealed a fundamental flaw. The root cause was the incorrect use of `range_cmp_bounds` for contiguity checking, which is designed for sorting and misinterprets adjacent bounds as gaps.
+        -   **Step 14 (Current):** Implementing a correct, manual contiguity check in `covers_without_gaps.c`.
+            1.  **C Code Fix:** Replaced the incorrect `range_cmp_bounds` call with a direct datum comparison, followed by a check on the `inclusive` flags to correctly identify gaps between adjacent boundaries (e.g., `(a,b)` and `(b,c)`). This provides a robust, generalized solution.
+            2.  **Test Suite Enhancement:** Added tests for all range boundary combinations (`[]`, `()`, `[)`) to `22_covers_without_gaps_test.sql` to verify the generalized logic.
+            3.  **Final Cleanup:** Refactored all `ORDER BY` clauses in tests to be simpler and more idiomatic. This resolves all known issues with the `covers_without_gaps` feature.
 
 - [x] **Make `drop_*` commands fail for incorrect parameters:**
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
@@ -86,7 +110,6 @@ This section summarizes potential improvements and features adapted from the `pe
 
 ## Done
 
-- **Add reference documentation for C-language extensions**: Created `REFERENCES.md` with summaries of key concepts from PostgreSQL documentation on C-language functions and user-defined aggregates, including specific details on the ordering requirements for `sql_saga.covers_without_gaps`.
 - **Clarify variable naming in `add_api`:** A misleading variable name inside the `add_api` function loop was corrected for clarity.
 - **Clarify parameter naming in `_make_api_view_name`:** A misleading parameter name in the `_make_api_view_name` function was corrected for clarity.
 - **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.
