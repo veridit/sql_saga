@@ -208,9 +208,19 @@ SELECT sql_saga.drop_era('legal_unit');
 ```
 
 ## Development
-Run regression tests with
+Run all regression tests with
 ```
-make install && make installcheck
+make install && make test
+```
+
+To run a single test file:
+```
+make test TESTS=22_covers_without_gaps_test
+```
+
+To run a subset of tests:
+```
+make test TESTS="22_covers_without_gaps_test 23_create_temporal_foreign_key_test"
 ```
 
 To quickly review and fix any diffs you can use
