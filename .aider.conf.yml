@@ -1,0 +1,13 @@
+read: [README.md,CONVENTIONS.md]
+#read: [CONVENTIONS.md, anotherfile.txt]
+
+# The code quality for large SQL file edits is not great,
+# review is required for before any commits.
+auto-commits: false
+
+# The SQL files fail the default linter.
+auto-lint: false
+#lint-cmd: ["sql: true"]
+
+# Enable/disable watching files for ai coding comments (default: False)
+watch-files: true
