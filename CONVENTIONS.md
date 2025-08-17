@@ -15,7 +15,7 @@ All development work is an iterative process of forming hypotheses and verifying
 All development work, especially bug fixing, must follow this iterative cycle. Do not mark tasks as complete or "done" until the final step of the cycle has been successfully executed.
 
 ### 1. Formulate and State a Hypothesis
-- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem.
+- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem. You must also explicitly document the outcome of every hypothesis in the project's `todo.md` file, whether it is verified or falsified. This creates a permanent record of the debugging process and prevents repeating failed strategies. This is not optional; it is the most critical part of the process for complex bugs.
 - **Example:** "Hypothesis: The server crash is caused by a memory leak in `covers_without_gaps.c`, where pass-by-reference datums are not being freed before new ones are allocated in the aggregate's state."
 
 ### 2. Create a Minimal Reproducing Test
@@ -44,3 +44,16 @@ All development work, especially bug fixing, must follow this iterative cycle. D
   - **For other documentation:** Update any other relevant documents, such as `README.md` or design documents.
 
 By strictly following this process, we ensure that progress is real, verifiable, and that the project's state remains consistently stable.
+
+## When the Cycle Fails: Changing Strategy
+When repeated iterations of the hypothesis-driven cycle fail to resolve a persistent and complex bug (such as a memory corruption crash), it is a sign that the underlying assumptions are wrong and a change in strategy is required.
+
+### The "Simplify and Rebuild" Approach
+1.  **Formulate a new meta-hypothesis:** State that the complexity of the current implementation is the source of the problem.
+2.  **Strip to a non-crashing stub:** Drastically simplify the faulty code to a minimal, stable state that is guaranteed not to crash, even if it returns an incorrect result. This changes the failure mode from a crash to a predictable test failure.
+3.  **Verify stability:** Run the tests to confirm that the server is now stable and the crash is gone. This establishes a new, reliable baseline.
+4.  **Incrementally re-introduce logic (Logical Binary Search):** Re-introduce functionality piece by piece, running tests at each step.
+    *   Start by restoring the first half of the original logic. If the system remains stable, the bug is in the second half. If it crashes, the bug is in the first half.
+    *   Continue this process, dividing the suspicious code block in half with each iteration, until the single line or small section of code causing the instability is isolated.
+    *   This process is a logical "binary search" on the code's functionality.
+5.  **Resume the normal cycle:** Once the root cause is identified, resume the standard hypothesis-driven cycle to fix the specific issue.
