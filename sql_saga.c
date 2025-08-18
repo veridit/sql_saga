@@ -48,7 +48,6 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	char *fk_column_names_str;
 	char *fk_start_after_column_name;
 	char *fk_stop_on_column_name;
-	char *uk_table_oid_str;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
@@ -74,8 +73,8 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	new_row = trigdata->tg_trigtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 18)
-		elog(ERROR, "fk_insert_check_c: expected 18 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "fk_insert_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -83,14 +82,13 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	fk_column_names_str = tgargs[4];
 	fk_start_after_column_name = tgargs[6];
 	fk_stop_on_column_name = tgargs[7];
-	uk_table_oid_str = tgargs[8];
-	uk_schema_name = tgargs[9];
-	uk_table_name = tgargs[10];
-	uk_column_names_str = tgargs[11];
-	uk_era_name = tgargs[12];
-	uk_start_after_column_name = tgargs[13];
-	uk_stop_on_column_name = tgargs[14];
-	match_type = tgargs[15];
+	uk_schema_name = tgargs[8];
+	uk_table_name = tgargs[9];
+	uk_column_names_str = tgargs[10];
+	uk_era_name = tgargs[11];
+	uk_start_after_column_name = tgargs[12];
+	uk_stop_on_column_name = tgargs[13];
+	match_type = tgargs[14];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -188,6 +186,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		char *fk_end_val_str;
 		char *quoted_start;
 		char *quoted_end;
+		char *qualified_uk_table_name;
 
 		/* Get range constructor types from sql_saga.era */
 		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
@@ -200,7 +199,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		char *qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
+		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
 		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
@@ -330,7 +329,6 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	char *fk_column_names_str;
 	char *fk_start_after_column_name;
 	char *fk_stop_on_column_name;
-	char *uk_table_oid_str;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
@@ -356,8 +354,8 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	new_row = trigdata->tg_newtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 18)
-		elog(ERROR, "fk_update_check_c: expected 18 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "fk_update_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -365,14 +363,13 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	fk_column_names_str = tgargs[4];
 	fk_start_after_column_name = tgargs[6];
 	fk_stop_on_column_name = tgargs[7];
-	uk_table_oid_str = tgargs[8];
-	uk_schema_name = tgargs[9];
-	uk_table_name = tgargs[10];
-	uk_column_names_str = tgargs[11];
-	uk_era_name = tgargs[12];
-	uk_start_after_column_name = tgargs[13];
-	uk_stop_on_column_name = tgargs[14];
-	match_type = tgargs[15];
+	uk_schema_name = tgargs[8];
+	uk_table_name = tgargs[9];
+	uk_column_names_str = tgargs[10];
+	uk_era_name = tgargs[11];
+	uk_start_after_column_name = tgargs[12];
+	uk_stop_on_column_name = tgargs[13];
+	match_type = tgargs[14];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -470,6 +467,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		char *fk_end_val_str;
 		char *quoted_start;
 		char *quoted_end;
+		char *qualified_uk_table_name;
 
 		/* Get range constructor types from sql_saga.era */
 		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
@@ -482,7 +480,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		char *qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
+		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
 		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
@@ -640,8 +638,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	old_row = trigdata->tg_trigtuple;
 	uk_table_oid = RelationGetRelid(rel);
 
-	if (trigdata->tg_trigger->tgnargs != 18)
-		elog(ERROR, "uk_delete_check_c: expected 18 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "uk_delete_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -653,12 +651,12 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	fk_era_name = tgargs[5];
 	fk_start_after_column_name = tgargs[6];
 	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[9];
-	uk_table_name = tgargs[10];
-	uk_column_names_str = tgargs[11];
-	uk_era_name = tgargs[12];
-	uk_start_after_column_name = tgargs[13];
-	uk_stop_on_column_name = tgargs[14];
+	uk_schema_name = tgargs[8];
+	uk_table_name = tgargs[9];
+	uk_column_names_str = tgargs[10];
+	uk_era_name = tgargs[11];
+	uk_start_after_column_name = tgargs[12];
+	uk_stop_on_column_name = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -911,7 +909,6 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	char *uk_era_name;
 	char *uk_start_after_column_name;
 	char *uk_stop_on_column_name;
-	bool keys_changed = false;
 
 	/* For get_type_io_data */
 	Oid			typinput_func_oid;
@@ -932,8 +929,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	new_row = trigdata->tg_newtuple;
 	uk_table_oid = RelationGetRelid(rel);
 
-	if (trigdata->tg_trigger->tgnargs != 18)
-		elog(ERROR, "uk_update_check_c: expected 18 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "uk_update_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -944,17 +941,17 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	fk_era_name = tgargs[5];
 	fk_start_after_column_name = tgargs[6];
 	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[9];
-	uk_table_name = tgargs[10];
-	uk_column_names_str = tgargs[11];
-	uk_era_name = tgargs[12];
-	uk_start_after_column_name = tgargs[13];
-	uk_stop_on_column_name = tgargs[14];
+	uk_schema_name = tgargs[8];
+	uk_table_name = tgargs[9];
+	uk_column_names_str = tgargs[10];
+	uk_era_name = tgargs[11];
+	uk_start_after_column_name = tgargs[12];
+	uk_stop_on_column_name = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	/* Check for NULLs in UK columns of old_row and if key columns changed */
+	/* Check for NULLs in UK columns of old_row */
 	{
 		Datum		uk_column_names_datum;
 		ArrayType  *uk_column_names_array;
@@ -971,37 +968,18 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		{
 			char *col_name = NameStr(*DatumGetName(uk_col_datums[i]));
 			int attnum = SPI_fnumber(tupdesc, col_name);
-			bool isnull_old, isnull_new;
-			Datum old_val, new_val;
-			Oid typid;
-			int16 typlen_val;
-			bool typbyval_val;
+			bool isnull;
 
 			if (attnum <= 0)
 				elog(ERROR, "column \"%s\" does not exist in table \"%s\"", col_name, RelationGetRelationName(rel));
 
-			old_val = heap_getattr(old_row, attnum, tupdesc, &isnull_old);
-			if (isnull_old)
+			(void) heap_getattr(old_row, attnum, tupdesc, &isnull);
+			if (isnull)
 			{
 				pfree(DatumGetPointer(uk_column_names_datum));
 				if (num_uk_cols > 0) pfree(uk_col_datums);
 				SPI_finish();
 				return PointerGetDatum(rettuple);
-			}
-
-			new_val = heap_getattr(new_row, attnum, tupdesc, &isnull_new);
-			if (isnull_new) /* Should be prevented by NOT NULL constraint */
-			{
-				keys_changed = true;
-				break;
-			}
-			
-			typid = SPI_gettypeid(tupdesc, attnum);
-			get_typlenbyval(typid, &typlen_val, &typbyval_val);
-			if (!datumIsEqual(old_val, new_val, typbyval_val, typlen_val))
-			{
-				keys_changed = true;
-				break;
 			}
 		}
 
@@ -1019,10 +997,10 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		char *join_on_clause;
 		char *where_clause;
 		char *exclude_old_row_clause;
-		char *union_new_row_clause = "";
-		char *sub_query_select_list = "*";
-		char *sub_query_alias = "";
-		char *inner_alias;
+		char *union_new_row_clause;
+		char *sub_query_select_list;
+		char *sub_query_alias;
+		char *inner_alias = "sub_uk";
 		Oid argtypes[] = { REGCLASSOID, NAMEOID };
 		Datum values[2];
 		StringInfoData join_buf;
@@ -1061,10 +1039,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
 		/* Build clauses */
-		initStringInfo(&join_buf);
 		initStringInfo(&where_buf);
 		initStringInfo(&exclude_buf);
-		initStringInfo(&alias_buf);
 		
 		uk_column_names_datum = OidInputFunctionCall(typinput_func_oid, uk_column_names_str, typioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
@@ -1084,8 +1060,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 			if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
 			val_str = SPI_getvalue(old_row, tupdesc, attnum);
 			quoted_val = quote_literal_cstr(val_str);
-			if (i > 0) { appendStringInfoString(&join_buf, " AND "); appendStringInfoString(&where_buf, " AND "); appendStringInfoString(&exclude_buf, " AND "); }
-			appendStringInfo(&join_buf, "fk.%s = uk.%s", quote_identifier(fkc), quote_identifier(ukc));
+			if (i > 0) { appendStringInfoString(&where_buf, " AND "); appendStringInfoString(&exclude_buf, " AND "); }
 			appendStringInfo(&where_buf, "fk.%s = %s", quote_identifier(fkc), quoted_val);
 			appendStringInfo(&exclude_buf, "uk.%s = %s", quote_identifier(ukc), quoted_val);
 			pfree(quoted_val); if (val_str) pfree(val_str);
@@ -1106,54 +1081,48 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		where_clause = where_buf.data;
 		exclude_old_row_clause = exclude_buf.data;
 
-		if (!keys_changed)
-		{
-			inner_alias = "sub_uk";
-			initStringInfo(&union_buf);
-			initStringInfo(&select_list_buf);
-			appendStringInfoString(&union_buf, " UNION ALL SELECT ");
-			appendStringInfo(&alias_buf, " AS %s(", inner_alias);
-			for (i = 0; i < num_uk_cols; i++) {
-				char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
-				int attnum = SPI_fnumber(tupdesc, ukc);
-				char *val_str = SPI_getvalue(new_row, tupdesc, attnum);
-				char *quoted_val = quote_literal_cstr(val_str);
-				if (i > 0) { appendStringInfoString(&union_buf, ", "); appendStringInfoString(&select_list_buf, ", "); appendStringInfoString(&alias_buf, ", "); }
-				appendStringInfo(&select_list_buf, "%s", quote_identifier(ukc));
-				appendStringInfo(&alias_buf, "%s", quote_identifier(ukc));
-				appendStringInfo(&union_buf, "%s", quoted_val);
-				pfree(quoted_val); if (val_str) pfree(val_str);
-			}
-			appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
-			appendStringInfo(&alias_buf, ", %s, %s", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
-			{
-				char *val_str, *quoted_val;
-				appendStringInfoString(&union_buf, ", ");
-				val_str = SPI_getvalue(new_row, tupdesc, SPI_fnumber(tupdesc, uk_start_after_column_name)); quoted_val = quote_literal_cstr(val_str);
-				appendStringInfo(&union_buf, "%s", quoted_val); pfree(quoted_val); if(val_str) pfree(val_str);
-				appendStringInfoString(&union_buf, ", ");
-				val_str = SPI_getvalue(new_row, tupdesc, SPI_fnumber(tupdesc, uk_stop_on_column_name)); quoted_val = quote_literal_cstr(val_str);
-				appendStringInfo(&union_buf, "%s", quoted_val); pfree(quoted_val); if(val_str) pfree(val_str);
-			}
-			appendStringInfoChar(&alias_buf, ')');
-			union_new_row_clause = union_buf.data;
-			sub_query_select_list = select_list_buf.data;
-			sub_query_alias = alias_buf.data;
-			resetStringInfo(&join_buf);
-			for (i = 0; i < num_uk_cols; i++) {
-				char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
-				if (i > 0) appendStringInfoString(&join_buf, " AND ");
-				appendStringInfo(&join_buf, "fk.%s = %s.%s", quote_identifier(fkc), inner_alias, quote_identifier(ukc));
-			}
-			join_on_clause = join_buf.data;
+		/* The covering set for an UPDATE is (all matching UK rows - OLD row + NEW row) */
+		initStringInfo(&union_buf);
+		initStringInfo(&select_list_buf);
+		initStringInfo(&alias_buf);
+
+		appendStringInfoString(&union_buf, " UNION ALL SELECT ");
+		appendStringInfo(&alias_buf, " AS %s(", inner_alias);
+
+		for (i = 0; i < num_uk_cols; i++) {
+			char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
+			int attnum = SPI_fnumber(tupdesc, ukc);
+			char *val_str = SPI_getvalue(new_row, tupdesc, attnum);
+			char *quoted_val = quote_literal_cstr(val_str);
+			if (i > 0) { appendStringInfoString(&union_buf, ", "); appendStringInfoString(&select_list_buf, ", "); appendStringInfoString(&alias_buf, ", "); }
+			appendStringInfo(&select_list_buf, "%s", quote_identifier(ukc));
+			appendStringInfo(&alias_buf, "%s", quote_identifier(ukc));
+			appendStringInfo(&union_buf, "%s", quoted_val);
+			pfree(quoted_val); if (val_str) pfree(val_str);
 		}
-		else
+		appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
+		appendStringInfo(&alias_buf, ", %s, %s", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
 		{
-			inner_alias = "uk";
-			appendStringInfo(&alias_buf, " AS %s", inner_alias);
-			sub_query_alias = alias_buf.data;
-			join_on_clause = join_buf.data;
+			char *val_str, *quoted_val;
+			appendStringInfoString(&union_buf, ", ");
+			val_str = SPI_getvalue(new_row, tupdesc, SPI_fnumber(tupdesc, uk_start_after_column_name)); quoted_val = quote_literal_cstr(val_str);
+			appendStringInfo(&union_buf, "%s", quoted_val); pfree(quoted_val); if(val_str) pfree(val_str);
+			appendStringInfoString(&union_buf, ", ");
+			val_str = SPI_getvalue(new_row, tupdesc, SPI_fnumber(tupdesc, uk_stop_on_column_name)); quoted_val = quote_literal_cstr(val_str);
+			appendStringInfo(&union_buf, "%s", quoted_val); pfree(quoted_val); if(val_str) pfree(val_str);
 		}
+		appendStringInfoChar(&alias_buf, ')');
+		union_new_row_clause = union_buf.data;
+		sub_query_select_list = select_list_buf.data;
+		sub_query_alias = alias_buf.data;
+
+		initStringInfo(&join_buf);
+		for (i = 0; i < num_uk_cols; i++) {
+			char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+			if (i > 0) appendStringInfoString(&join_buf, " AND ");
+			appendStringInfo(&join_buf, "fk.%s = %s.%s", quote_identifier(fkc), inner_alias, quote_identifier(ukc));
+		}
+		join_on_clause = join_buf.data;
 
 		query = psprintf(
 			"SELECT EXISTS ("
@@ -1191,10 +1160,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		pfree(query);
 		pfree(where_clause);
 		pfree(exclude_old_row_clause);
-		if (!keys_changed) { 
-			pfree(union_new_row_clause);
-			pfree(sub_query_select_list);
-		}
+		pfree(union_new_row_clause);
+		pfree(sub_query_select_list);
 		pfree(sub_query_alias);
 		pfree(join_on_clause);
 		if(fk_range_constructor) pfree(fk_range_constructor); if(uk_range_constructor) pfree(uk_range_constructor);

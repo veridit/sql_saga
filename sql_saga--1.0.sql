@@ -1722,8 +1722,8 @@ BEGIN
         /* Time to make the underlying triggers */
         fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_insert'));
         EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %19$I AFTER INSERT ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.fk_insert_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            CREATE CONSTRAINT TRIGGER %18$I AFTER INSERT ON %3$I.%4$I FROM %9$I.%10$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.fk_insert_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L);
             $$
             -- Parameters for the function call in the template
             , /* %1$  */ foreign_key_name
@@ -1734,24 +1734,23 @@ BEGIN
             , /* %6$  */ fk_era_name
             , /* %7$  */ fk_start_after_column_name
             , /* %8$  */ fk_stop_on_column_name
-            , /* %9$  */ uk_table_oid
-            , /* %10$ */ uk_schema_name
-            , /* %11$ */ uk_table_name
-            , /* %12$ */ uk_column_names_arr_str
-            , /* %13$ */ uk_era_name
-            , /* %14$ */ uk_start_after_column_name
-            , /* %15$ */ uk_stop_on_column_name
-            , /* %16$ */ match_type
-            , /* %17$ */ update_action
-            , /* %18$ */ delete_action
+            , /* %9$ */ uk_schema_name
+            , /* %10$ */ uk_table_name
+            , /* %11$ */ uk_column_names_arr_str
+            , /* %12$ */ uk_era_name
+            , /* %13$ */ uk_start_after_column_name
+            , /* %14$ */ uk_stop_on_column_name
+            , /* %15$ */ match_type
+            , /* %16$ */ update_action
+            , /* %17$ */ delete_action
             -- Other parameters
-            , /* %19$  */ fk_insert_trigger
+            , /* %18$  */ fk_insert_trigger
         );
 
         fk_update_trigger := coalesce(fk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_update'));
         EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.fk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            CREATE CONSTRAINT TRIGGER %18$I AFTER UPDATE OF %19$s ON %3$I.%4$I FROM %9$I.%10$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.fk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L);
             $$
             -- Parameters for the function call in the template
             , /* %1$  */ foreign_key_name
@@ -1762,25 +1761,24 @@ BEGIN
             , /* %6$  */ fk_era_name
             , /* %7$  */ fk_start_after_column_name
             , /* %8$  */ fk_stop_on_column_name
-            , /* %9$  */ uk_table_oid
-            , /* %10$ */ uk_schema_name
-            , /* %11$ */ uk_table_name
-            , /* %12$ */ uk_column_names_arr_str
-            , /* %13$ */ uk_era_name
-            , /* %14$ */ uk_start_after_column_name
-            , /* %15$ */ uk_stop_on_column_name
-            , /* %16$ */ match_type
-            , /* %17$ */ update_action
-            , /* %18$ */ delete_action
+            , /* %9$ */ uk_schema_name
+            , /* %10$ */ uk_table_name
+            , /* %11$ */ uk_column_names_arr_str
+            , /* %12$ */ uk_era_name
+            , /* %13$ */ uk_start_after_column_name
+            , /* %14$ */ uk_stop_on_column_name
+            , /* %15$ */ match_type
+            , /* %16$ */ update_action
+            , /* %17$ */ delete_action
             -- Other parameters
-            , /* %19$   */ fk_update_trigger
-            , /* %20$   */ foreign_columns_with_era_columns
+            , /* %18$   */ fk_update_trigger
+            , /* %19$   */ foreign_columns_with_era_columns
         );
 
         uk_update_trigger := coalesce(uk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_update'));
         EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            CREATE CONSTRAINT TRIGGER %18$I AFTER UPDATE OF %19$s ON %9$I.%10$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.uk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L);
             $$
             -- Parameters for the function call in the template
             , /* %1$  */ foreign_key_name
@@ -1791,25 +1789,24 @@ BEGIN
             , /* %6$  */ fk_era_name
             , /* %7$  */ fk_start_after_column_name
             , /* %8$  */ fk_stop_on_column_name
-            , /* %9$  */ uk_table_oid
-            , /* %10$ */ uk_schema_name
-            , /* %11$ */ uk_table_name
-            , /* %12$ */ uk_column_names_arr_str
-            , /* %13$ */ uk_era_name
-            , /* %14$ */ uk_start_after_column_name
-            , /* %15$ */ uk_stop_on_column_name
-            , /* %16$ */ match_type
-            , /* %17$ */ update_action
-            , /* %18$ */ delete_action
+            , /* %9$ */ uk_schema_name
+            , /* %10$ */ uk_table_name
+            , /* %11$ */ uk_column_names_arr_str
+            , /* %12$ */ uk_era_name
+            , /* %13$ */ uk_start_after_column_name
+            , /* %14$ */ uk_stop_on_column_name
+            , /* %15$ */ match_type
+            , /* %16$ */ update_action
+            , /* %17$ */ delete_action
             -- Other parameters
-            , /* %19$ */ uk_update_trigger
-            , /* %20$ */ unique_columns_with_era_columns
+            , /* %18$ */ uk_update_trigger
+            , /* %19$ */ unique_columns_with_era_columns
         );
 
         uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_delete'));
         EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %19$I AFTER DELETE ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_delete_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            CREATE CONSTRAINT TRIGGER %18$I AFTER DELETE ON %9$I.%10$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+            sql_saga.uk_delete_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L);
             $$
             -- Parameters for the function call in the template
             , /* %1$  */ foreign_key_name
@@ -1820,18 +1817,17 @@ BEGIN
             , /* %6$  */ fk_era_name
             , /* %7$  */ fk_start_after_column_name
             , /* %8$  */ fk_stop_on_column_name
-            , /* %9$  */ uk_table_oid
-            , /* %10$ */ uk_schema_name
-            , /* %11$ */ uk_table_name
-            , /* %12$ */ uk_column_names_arr_str
-            , /* %13$ */ uk_era_name
-            , /* %14$ */ uk_start_after_column_name
-            , /* %15$ */ uk_stop_on_column_name
-            , /* %16$ */ match_type
-            , /* %17$ */ update_action
-            , /* %18$ */ delete_action
+            , /* %9$ */ uk_schema_name
+            , /* %10$ */ uk_table_name
+            , /* %11$ */ uk_column_names_arr_str
+            , /* %12$ */ uk_era_name
+            , /* %13$ */ uk_start_after_column_name
+            , /* %14$ */ uk_stop_on_column_name
+            , /* %15$ */ match_type
+            , /* %16$ */ update_action
+            , /* %17$ */ delete_action
             -- Other parameters
-            , /* %19$  */ uk_delete_trigger
+            , /* %18$  */ uk_delete_trigger
         );
 
         INSERT INTO sql_saga.foreign_keys

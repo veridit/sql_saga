@@ -104,8 +104,8 @@ Indexes:
 Check constraints:
     "legal_unit_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 \d location
                                              Table "public.location"
@@ -123,8 +123,8 @@ Indexes:
 Check constraints:
     "location_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_after, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'legal_unit', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_after, valid_to ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('location_legal_unit_id_valid', 'location', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 -- Initial Import
 INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
