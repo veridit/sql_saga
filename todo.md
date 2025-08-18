@@ -4,38 +4,9 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
-- [ ] **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:**
-  - **Issue:** The `covers_without_gaps` aggregate is causing a server crash due to memory corruption.
-  - **Action (In Progress):** Following the "Simplify and Rebuild" strategy after multiple failed hypotheses.
-    -   **Documented False Leads:**
-        -   The crash was *not* caused by simple logic errors in gap detection.
-        -   The crash was *not* caused by C99-style variable declarations.
-        -   The crash was *not* solved by simply removing `pfree` (this created a memory leak).
-        -   The crash was *not* solved by re-introducing `pfree` in various locations (this led to use-after-free errors).
-        -   The crash was *not* caused by a flaw in the `copy_bound_to_state` helper function itself, but by the complex logic that was using it.
-    -   **Current Strategy: Simplify and Rebuild (Logical Binary Search)**
-        -   **Step 1 (Verified):** Reduced the implementation to a minimal, non-crashing stub. The server is stable.
-        -   **Step 2 (Verified):** Re-introduced state initialization logic from the `no_gaps.c` prototype. The server remains stable.
-        -   **Step 3 (Verified):** Re-introduced input range processing and comparison logic (with state updates commented out). The server remains stable.
-        -   **Step 4 (Falsified):** Re-introducing the simplified state update logic for `covered_to` re-introduced the server crash. This approach is flawed.
-        -   **Step 5 (Verified):** Reverting the transition function's logic to a more verbose implementation based on the `no_gaps.c` prototype has stabilized the server. The foreign key tests now pass without crashing.
-        -   **Step 6 (Falsified):** The initial attempt to fix the memory leak by tracking allocated datums was flawed. It led to a `pfree` crash by attempting to free a pointer to temporary, non-`palloc`'d memory from a deserialized range.
-        -   **Step 7 (Verified):** Corrected the memory management logic for pass-by-reference types. The server is now stable and does not crash or leak memory when processing any range type.
-        -   **Step 8 (Verified):** Added a final check in `covers_without_gaps_finalfn` to correctly assess coverage after all rows are processed.
-        -   **Step 9 (Falsified):** The attempt to create a generic logic for boundary inclusivity was flawed. It correctly handled continuous ranges but failed for discrete ranges, causing many tests to fail.
-        -   **Step 10 (Falsified):** The attempt to use `rng_is_discrete` failed because this member does not exist in the `TypeCacheEntry` struct. This approach was based on an incorrect assumption about the PostgreSQL internals.
-        -   **Step 11 (Falsified):** The attempt to differentiate logic based on discrete vs. continuous range types was flawed. While the detection mechanism was corrected, the logic itself was overly complex and failed for continuous types like `numeric`.
-        -   **Step 12 (Falsified):** Reverting to a simpler logic (always inclusive) fixed discrete range tests but failed for continuous ones because the tests themselves were flawed.
-        -   **Step 13 (Falsified):** The generalized logic and corrected tests still revealed a fundamental flaw. The root cause was the incorrect use of `range_cmp_bounds` for contiguity checking, which is designed for sorting and misinterprets adjacent bounds as gaps.
-        -   **Step 14 (Verified):** Implemented a correct, manual contiguity check in `covers_without_gaps.c`, and enhanced the test suite. All `covers_without_gaps` tests now pass.
-        -   **Step 15 (Falsified):** The hypothesis to exclude the `OLD` row was correct, but the implementation introduced a SQL syntax error (`missing FROM-clause entry for table "uk"`) by incorrectly using an outer alias inside a subquery.
-        -   **Step 16 (Falsified):** The attempt to fix the SQL syntax by removing the `uk.` prefix from the `old_pk_val_clause` did not resolve the issue, indicating a deeper problem with the subquery approach.
-        -   **Step 17 (Falsified):** The attempt to fix the SQL syntax by moving the exclusion logic to the `ON` clause was syntactically correct but did not fix the underlying logical error, as the tests still failed to detect violations.
-        -   **Step 18 (Falsified):** Simplifying the validation query by removing the `OLD` row exclusion logic did not work. The query still failed to detect foreign key violations, indicating the issue is not with the exclusion logic but something more fundamental.
-        -   **Step 19 (Falsified):** The hypothesis that refactoring `validate_foreign_key_old_row` to a `LOOP` that calls `validate_foreign_key_new_row` would work was incorrect. This change failed to detect violations and produced confusing error messages.
-        -   **Step 20 (Current):** Correcting foreign key validation by inlining logic.
-            1.  **Hypothesis:** The `LOOP` approach is correct, but re-using `validate_foreign_key_new_row` is flawed. Inlining the validation logic directly into `validate_foreign_key_old_row`'s `LOOP` and raising a context-appropriate error will be more robust.
-            2.  **Action:** Replace the `PERFORM` call inside the `LOOP` in `validate_foreign_key_old_row` with the explicit `SELECT ... INTO okay` and `IF NOT okay THEN RAISE ...` logic from `validate_foreign_key_new_row`. This makes the function self-contained and should fix all remaining test failures.
+- [x] **Make `drop_*` commands fail for incorrect parameters:**
+  - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
+  - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
 
 - [x] **Make `drop_*` commands fail for incorrect parameters:**
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
@@ -115,6 +86,11 @@ This section summarizes potential improvements and features adapted from the `pe
 
 ## Done
 
+- **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:** This was a complex, multi-stage bug fix. The final solution involved:
+    1.  **Memory Safety:** Replacing a flawed, simplified implementation with a more verbose but stable one based on the `no_gaps.c` prototype, then fixing memory leaks for pass-by-reference types by carefully managing `palloc`'d memory within the aggregate's context.
+    2.  **Correct Logic:** Implementing a fully generalized contiguity logic that correctly handles both discrete (e.g., `integer`, `date`) and continuous (e.g., `numeric`, `timestamp`) range types. The final implementation correctly checks for gaps between adjacent boundaries by comparing datums directly and then inspecting the `inclusive` flags, rather than using the incorrect `range_cmp_bounds` function.
+    3.  **Test Suite Correction:** Correcting all `covers_without_gaps` tests to be deterministic by using `ORDER BY` inside the aggregate call to guarantee sorted input, which is a requirement of the function.
+    4.  **Foreign Key Validation:** Refactored the `validate_foreign_key_old_row` function to use a `LOOP` over affected foreign key rows. This prioritizes correctness and robustness over a complex set-based query that is difficult to implement correctly due to PostgreSQL's transaction visibility rules.
 - **Clarify variable naming in `add_api`:** A misleading variable name inside the `add_api` function loop was corrected for clarity.
 - **Clarify parameter naming in `_make_api_view_name`:** A misleading parameter name in the `_make_api_view_name` function was corrected for clarity.
 - **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.

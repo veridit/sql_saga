@@ -2192,7 +2192,25 @@ END;
 $function$;
 
 /*
- * This function either returns true or raises an exception.
+ * This function is called by an AFTER UPDATE or AFTER DELETE trigger on a
+ * referenced (unique key) table. It finds all rows in the referencing table
+ * that pointed to the OLD row and validates that their validity periods are
+ * still covered after the change.
+ *
+ * Performance characteristics:
+ * This function uses a FOR ... LOOP to iterate over each foreign key row that
+ * references the OLD unique key. Inside the loop, it executes a validation
+ * query. This results in N queries, where N is the number of referencing rows.
+ * The total complexity is roughly O(N * M log M), where M is the number of
+ * unique key rows.
+ *
+ * This loop-based approach was chosen for correctness and robustness over a
+ * single, complex set-based query. A set-based query is difficult to implement
+ * correctly due to PostgreSQL's MVCC and transaction visibility rules within
+ * AFTER triggers, and previous attempts resulted in subtle bugs where
+ * violations were not detected. This implementation prioritizes correctness,
+ * but may be slow for bulk DELETEs or UPDATEs that affect many foreign key
+ * relationships.
  */
 CREATE FUNCTION sql_saga.validate_foreign_key_old_row(
     row_data jsonb,
@@ -2297,7 +2315,15 @@ END;
 $function$;
 
 /*
- * This function either returns true or raises an exception.
+ * This function validates a single new or updated row in a referencing
+ * (foreign key) table.
+ *
+ * Performance characteristics:
+ * This function executes a single set-based query against the referenced
+ * table. The primary cost is the `covers_without_gaps` aggregate, which
+ * operates on the set of unique key rows matching the foreign key.
+ * Performance is roughly O(M log M) where M is the number of referenced key
+ * rows, due to the sorting required by the aggregate.
  */
 CREATE FUNCTION sql_saga.validate_foreign_key_new_row(row_data jsonb
     , foreign_key_name name
