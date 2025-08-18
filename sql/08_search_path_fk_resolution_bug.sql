@@ -25,9 +25,8 @@ CREATE TABLE public.legal_unit (
     PRIMARY KEY (id, valid_after)
 );
 SELECT sql_saga.add_era('public.legal_unit', 'valid_after', 'valid_to');
--- On the impostor table, create a unique key with a name that will be
--- referenced by the foreign key, to simulate the ambiguous resolution.
-SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', 'legal_unit_id_valid');
+-- On the impostor table, create a unique key with a non-interfering name.
+SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', 'impostor_uk');
 
 
 -- Create the real parent table in the `saga_bug_test` schema.
@@ -54,17 +53,17 @@ CREATE TABLE saga_bug_test.establishment (
 SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_after', 'valid_to');
 SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id']);
 
--- Add the temporal FK.
--- We explicitly point to 'legal_unit_id_valid', which is the unique key on the
--- impostor table (`public.legal_unit`). This forces the trigger to check
--- against the wrong table. This setup now deterministically reproduces the
--- behavior seen in the manual test run, where the INSERT fails with an
--- FK violation.
+-- Add the temporal FK, correctly pointing to the unique key on the
+-- `saga_bug_test.legal_unit` table.
+-- If the bug exists, the C-trigger will get confused by the search_path and
+-- check `public.legal_unit` anyway, causing a failure.
+-- If the bug is fixed, the trigger will check the correct table, and the
+-- INSERT will succeed.
 SELECT sql_saga.add_foreign_key(
     'saga_bug_test.establishment',
     ARRAY['legal_unit_id'],
     'valid',
-    'legal_unit_id_valid' -- This UK is on public.legal_unit
+    'correct_table_uk' -- This UK is on saga_bug_test.legal_unit
 );
 
 -- 2. Insert Data
@@ -82,5 +81,25 @@ INSERT INTO saga_bug_test.establishment (id, legal_unit_id, valid_after, valid_t
 
 -- If we get here, the bug is fixed.
 SELECT 'BUG IS FIXED: INSERT into child table succeeded.' as status;
+
+-- 3. Verify UPDATE trigger
+-- Insert another parent record and a child record to be updated.
+INSERT INTO saga_bug_test.legal_unit (id, valid_after, valid_to, name) VALUES
+(2, '2023-12-30', 'infinity', 'Another Parent LU');
+
+INSERT INTO saga_bug_test.establishment (id, legal_unit_id, valid_after, valid_to, name) VALUES
+(102, 2, '2024-01-01', 'infinity', 'Child EST to be updated');
+
+-- This UPDATE should succeed.
+-- The `fk_update_check_c` trigger will fire. If the bug still existed, it
+-- would incorrectly check `public.legal_unit` and fail. With the fix, it
+-- checks the correct table and succeeds.
+UPDATE saga_bug_test.establishment
+SET legal_unit_id = 1
+WHERE id = 102;
+
+-- If we get here, the UPDATE trigger is also fixed.
+SELECT 'BUG IS FIXED: UPDATE on child table succeeded.' as status;
+
 
 ROLLBACK;

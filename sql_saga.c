@@ -200,12 +200,14 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(uk_table_oid_str));
+		char *qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
+		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s era %s", uk_table_oid_str, uk_era_name);
+			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+		pfree(qualified_uk_table_name);
 
 		/* Build uk_where_clause */
 		initStringInfo(&where_buf);
@@ -480,12 +482,14 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(uk_table_oid_str));
+		char *qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
+		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s era %s", uk_table_oid_str, uk_era_name);
+			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+		pfree(qualified_uk_table_name);
 
 		/* Build uk_where_clause */
 		initStringInfo(&where_buf);
