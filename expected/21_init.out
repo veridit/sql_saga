@@ -127,7 +127,7 @@ Check constraints:
     "rooms_valid_check" CHECK (valid_after < valid_to)
 Triggers:
     rooms_house_id_valid_fk_insert AFTER INSERT ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'houses', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    rooms_house_id_valid_fk_update AFTER UPDATE OF house_id, valid_after, valid_to ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'houses', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    rooms_house_id_valid_fk_update AFTER UPDATE OF house_id, valid_after, valid_to ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'houses', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 \d houses
                           Table "public.houses"

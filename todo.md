@@ -24,12 +24,14 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
       4.  Fixed compilation warnings and a runtime error (`cache lookup failed for type 125`) by correctly parsing array-of-name trigger arguments and moving variable declarations.
     - **Verification:** `make installcheck TESTS=26_insert_fk_test` passes.
 
-  - [ ] **Step 2: Convert `fk_update_check` to C**
+  - [x] **Step 2: Convert `fk_update_check` to C**
+    - **Status:** Done. The C function `fk_update_check_c` is now successfully used for update triggers.
     - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
     - **Action:**
-      1.  Create `fk_update_check_c` in `sql_saga.c`, mirroring the logic from `fk_update_check` and `validate_foreign_key_new_row`.
-      2.  Update `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function for the FK update trigger.
-    - **Verification:** Run `make installcheck TESTS=27_update_fk_test`.
+      1.  Created `fk_update_check_c` in `sql_saga.c`, which is a copy of `fk_insert_check_c` but correctly uses `tg_newtuple` for `UPDATE` triggers.
+      2.  Updated `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function.
+      3.  Fixed regressions caused by the initial implementation using the wrong tuple (`tg_trigtuple` instead of `tg_newtuple`).
+    - **Verification:** `make fast-tests` passes.
 
   - [ ] **Step 3: Convert `uk_delete_check` to C**
     - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
