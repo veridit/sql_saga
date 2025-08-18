@@ -52,3 +52,21 @@ Reference: [PostgreSQL Documentation: User-Defined Aggregates](https://www.postg
         FROM my_table;
         ```
     *   This is a critical implementation detail for both users and developers of `sql_saga`. The aggregate does not perform the sorting; it validates that the sorting has been done.
+
+## Trigger Behavior and Data Visibility
+
+Reference: [PostgreSQL Documentation: Overview of Trigger Behavior](https://www.postgresql.org/docs/current/trigger-definition.html) and [Visibility of Data Changes](https://www.postgresql.org/docs/current/trigger-datachanges.html)
+
+### Key Concepts for `sql_saga`
+
+*   **Execution Context**: A trigger function is always executed as part of the same transaction as the statement that fired it. If the trigger fails, the entire statement is rolled back.
+*   **MVCC and Snapshots**: The most critical concept for `sql_saga`'s triggers is PostgreSQL's Multiversion Concurrency Control (MVCC).
+    *   A trigger function does **not** see the changes made by the current statement. Any SQL query executed inside the trigger function operates on a snapshot of the database as it existed *at the beginning of the statement*.
+    *   This has a direct impact on `AFTER` triggers:
+        *   An `AFTER INSERT` trigger's query will **not** see the newly inserted row.
+        *   An `AFTER UPDATE` trigger's query will see the old version of the row, **not** the updated version.
+        *   An `AFTER DELETE` trigger's query **will** see the row that was just deleted.
+*   **Implications for `sql_saga`'s `uk_delete_check_c`**:
+    *   The `uk_delete_check_c` function is an `AFTER DELETE` trigger on a unique key (UK) table. Its purpose is to verify that no foreign key (FK) rows are left "orphaned" (i.e., without a covering period in the UK table).
+    *   Because the trigger's query sees the pre-delete snapshot, it will include the row that is being deleted when it checks for coverage. This would cause the validation to incorrectly succeed, as the row to be deleted still covers the FK.
+    *   **Solution**: The validation query must be written to explicitly exclude the `OLD` row from the set of rows it checks for coverage. This simulates the state of the table *after* the deletion has committed, allowing the `covers_without_gaps` aggregate to perform a correct check.

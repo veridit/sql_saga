@@ -33,12 +33,11 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
       3.  Fixed regressions caused by the initial implementation using the wrong tuple (`tg_trigtuple` instead of `tg_newtuple`).
     - **Verification:** `make fast-tests` passes.
 
-  - [ ] **Step 3: Convert `uk_delete_check` to C**
-    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
-    - **Action:**
-      1.  Create `uk_delete_check_c` in `sql_saga.c`, implementing the logic from `uk_delete_check` and `validate_foreign_key_old_row`.
-      2.  Update `add_foreign_key` in `sql_saga--1.0.sql` to use the C function for the UK delete trigger.
-    - **Verification:** Run `make installcheck TESTS=24_delete_pk_test`.
+  - [x] **Step 3: Convert `uk_delete_check` to C**
+    - **Status:** Done. The C function `uk_delete_check_c` now correctly validates deletions on referenced tables.
+    - **Files:** `sql_saga.c`, `sql_saga--1.0.sql`.
+    - **Fix:** The initial implementation failed because the validation query, running in an `AFTER DELETE` trigger, operated on a data snapshot that still included the row being deleted. This caused `covers_without_gaps` to incorrectly find coverage. The fix was to modify the query to explicitly exclude the `OLD` row from the check. Additionally, error messages were made schema-qualified.
+    - **Verification:** All tests in `make fast-tests` pass.
 
   - [ ] **Step 4: Convert `uk_update_check` to C**
     - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
