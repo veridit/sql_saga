@@ -1,5 +1,9 @@
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
+/* DDL on unrelated tables should not be affected */
+CREATE TABLE unrelated(a int);
+ALTER TABLE unrelated RENAME a TO b;
+DROP TABLE unrelated;
 /*
  * If anything we store as "name" is renamed, we need to update our catalogs or
  * throw an error.

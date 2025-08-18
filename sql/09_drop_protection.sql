@@ -1,6 +1,10 @@
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 
+/* DDL on unrelated tables should not be affected */
+CREATE TABLE unrelated();
+DROP TABLE unrelated;
+
 /* Make sure nobody drops the objects we keep track of in our catalogs. */
 
 CREATE TYPE integerrange AS RANGE (SUBTYPE = integer);
