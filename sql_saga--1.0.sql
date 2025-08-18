@@ -239,7 +239,7 @@ $synchronize_valid_from_after$;
  * should not be called by outsiders.  When all the other functions have been
  * translated to C, they will be removed.
  */
-CREATE FUNCTION sql_saga._serialize(table_name regclass)
+CREATE FUNCTION sql_saga.__internal_serialize(table_name regclass)
  RETURNS void
  LANGUAGE sql
 AS
@@ -248,7 +248,7 @@ $function$
 SELECT pg_catalog.pg_advisory_xact_lock('sql_saga.era'::regclass::oid::integer, table_name::oid::integer);
 $function$;
 
-CREATE FUNCTION sql_saga._make_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
+CREATE FUNCTION sql_saga.__internal_make_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
  RETURNS name
  IMMUTABLE
  LANGUAGE plpgsql
@@ -287,7 +287,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga._make_api_view_name(table_name name, era_name name)
+CREATE FUNCTION sql_saga.__internal_make_api_view_name(table_name name, era_name name)
  RETURNS name
  IMMUTABLE
  LANGUAGE plpgsql
@@ -427,7 +427,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     /* Period names are limited to lowercase alphanumeric characters for now */
     era_name := lower(era_name);
@@ -610,7 +610,7 @@ BEGIN
                 FROM pg_catalog.pg_class AS c
                 WHERE c.oid = table_oid;
 
-                bounds_check_constraint := sql_saga._make_name(ARRAY[table_name, era_name], 'check');
+                bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
                 alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
             END IF;
         END IF;
@@ -738,7 +738,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     /*
      * Has the table been dropped already?  This could happen if the period is
@@ -929,7 +929,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     /*
      * We require the table to have a primary key, so check to see if there is
@@ -958,7 +958,7 @@ BEGIN
                 SELECT FROM sql_saga.api_view AS _fpv
                 WHERE (_fpv.table_oid, _fpv.era_name) = (p.table_oid, p.era_name))
     LOOP
-        view_name := sql_saga._make_api_view_name(r.table_name, r.era_name);
+        view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
         trigger_name := 'for_portion_of_' || r.era_name;
         EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
         EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
@@ -997,7 +997,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     FOR view_oid, trigger_name IN
         DELETE FROM sql_saga.api_view AS fp
@@ -1270,7 +1270,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     SELECT p.*
     INTO era_row
@@ -1426,7 +1426,7 @@ BEGIN
      * concurrency here because all period ddl commands lock the periods table.
      */
     IF unique_key_name IS NULL THEN
-        unique_key_name := sql_saga._make_name(
+        unique_key_name := sql_saga.__internal_make_name(
             ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid)]
                 || column_names
                 || ARRAY[era_name]);
@@ -1508,7 +1508,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     FOR unique_key_row IN
         SELECT uk.*
@@ -1651,7 +1651,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(fk_table_oid);
+    PERFORM sql_saga.__internal_serialize(fk_table_oid);
 
     SELECT n.nspname, c.relname INTO fk_schema_name, fk_table_name
     FROM pg_catalog.pg_class c
@@ -1739,7 +1739,7 @@ BEGIN
      * concurrency here because all period ddl commands lock the periods table.
      */
     IF foreign_key_name IS NULL THEN
-        foreign_key_name := sql_saga._make_name(
+        foreign_key_name := sql_saga.__internal_make_name(
             ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = fk_table_oid)]
                || fk_column_names
                || ARRAY[fk_era_name]);
@@ -1787,7 +1787,7 @@ BEGIN
         uk_stop_on_column_name text := uk_era_row.stop_on_column_name;
     BEGIN
         /* Time to make the underlying triggers */
-        fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'fk_insert'));
+        fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_insert'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %19$I AFTER INSERT ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
             sql_saga.fk_insert_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
@@ -1815,7 +1815,7 @@ BEGIN
             , /* %19$  */ fk_insert_trigger
         );
 
-        fk_update_trigger := coalesce(fk_update_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'fk_update'));
+        fk_update_trigger := coalesce(fk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_update'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %3$I.%4$I FROM %10$I.%11$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
             sql_saga.fk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
@@ -1844,7 +1844,7 @@ BEGIN
             , /* %20$   */ foreign_columns_with_era_columns
         );
 
-        uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'uk_update'));
+        uk_update_trigger := coalesce(uk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_update'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
             sql_saga.uk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
@@ -1873,7 +1873,7 @@ BEGIN
             , /* %20$ */ unique_columns_with_era_columns
         );
 
-        uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'uk_delete'));
+        uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_delete'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %19$I AFTER DELETE ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
             sql_saga.uk_delete_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
@@ -2033,7 +2033,7 @@ BEGIN
     END IF;
 
     /* Always serialize operations on our catalogs */
-    PERFORM sql_saga._serialize(table_oid);
+    PERFORM sql_saga.__internal_serialize(table_oid);
 
     FOR foreign_key_row IN
         SELECT fk.*
