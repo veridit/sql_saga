@@ -1,5 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
-NOTICE:  installing required extension "btree_gist"
+NOTICE:  extension "sql_saga" already exists, skipping
 CREATE TABLE legal_unit (
   id INTEGER,
   valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
@@ -209,11 +209,11 @@ ORDER BY
  BEGIN                               |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
  Constraints enabled                 |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
  INSERTs delayed constraints start   |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints end     |     10000 | 1 secs          | 1 secs         | 10000 rows | ~12200 rows/s
+ INSERTs delayed constraints end     |     10000 | 1 secs          | 1 secs         | 10000 rows | ~12300 rows/s
  INSERTs immediate constraints start |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs immediate constraints end   |     10000 | 2 secs          | 1 secs         | 10000 rows | ~10400 rows/s
+ INSERTs immediate constraints end   |     10000 | 2 secs          | 1 secs         | 10000 rows | ~10200 rows/s
  Update deferred constraints start   |         0 | 2 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Update deferred constraints end     |     20000 | 12 secs         | 10 secs        | 20000 rows | ~2000 rows/s
+ Update deferred constraints end     |     20000 | 12 secs         | 10 secs        | 20000 rows | ~1900 rows/s
  Constraints disabled                |         0 | 12 secs         | 0 secs         | 0 rows     | ~0 rows/s
  Tear down complete                  |         0 | 12 secs         | 0 secs         | 0 rows     | ~0 rows/s
 (10 rows)
