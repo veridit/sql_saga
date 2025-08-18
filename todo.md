@@ -73,8 +73,8 @@ This section summarizes potential improvements and features adapted from the `pe
 
 ### From `time_for_keys` extension:
 
-- [ ] **Analyze Alternative Foreign Key Implementation (`TRI_FKey_*`):** This represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint.
-  - **Action:** Analyze the performance of this approach vs. `sql_saga`'s metadata-driven approach. The recent refactoring in `sql_saga` to pass metadata as arguments to triggers might have closed the performance gap.
+- [ ] **Analyze Alternative Foreign Key Implementation:** The `time_for_keys` project represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint. The legacy code for this was removed from `sql_saga` to avoid confusion.
+  - **Action:** Analyze the performance of this approach (by reviewing the `time_for_keys` project) vs. `sql_saga`'s metadata-driven approach. The recent refactoring in `sql_saga` to pass metadata as arguments to triggers might have closed the performance gap.
 
 - [ ] **Evaluate `completely_covers` Aggregate Function:** The C function in `completely_covers.c` is specialized for `tstzrange` and is used to validate temporal foreign keys. `sql_saga` has a generic `covers_without_gaps` aggregate for `anyrange`.
   - **Action:** Compare the performance and correctness of `completely_covers` against `covers_without_gaps`. A specialized function might be faster. Determine if `sql_saga` would benefit from specialized aggregates for common range types.
@@ -82,6 +82,7 @@ This section summarizes potential improvements and features adapted from the `pe
 
 ## Done
 
+ **Remove legacy `time_for_keys` implementation:** Removed the `TRI_FKey_*` trigger functions and the `create/drop_temporal_foreign_key` helper functions. This code was part of an alternative, non-metadata-driven foreign key implementation from the `time_for_keys` project. It was removed to avoid confusion with `sql_saga`'s primary metadata-driven API. This resulted in a significant performance improvement, with the `43_benchmark` test runtime dropping from over 40 seconds to approximately 12 seconds. The analysis of this alternative approach remains as a research task, referencing the original `time_for_keys` project.
 - **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:** This was a complex, multi-stage bug fix. The final solution involved:
     1.  **Memory Safety:** Replacing a flawed, simplified implementation with a more verbose but stable one based on the `no_gaps.c` prototype, then fixing memory leaks for pass-by-reference types by carefully managing `palloc`'d memory within the aggregate's context.
     2.  **Correct Logic:** Implementing a fully generalized contiguity logic that correctly handles both discrete (e.g., `integer`, `date`) and continuous (e.g., `numeric`, `timestamp`) range types. The final implementation correctly checks for gaps between adjacent boundaries by comparing datums directly and then inspecting the `inclusive` flags, rather than using the incorrect `range_cmp_bounds` function.
