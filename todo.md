@@ -4,6 +4,14 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
+- [ ] **Fix FK resolution bug with ambiguous table names in `search_path`:**
+  - **Issue:** When a `search_path` contains multiple schemas with tables of the same name, the C-based FK triggers (`fk_insert_check_c`, `fk_update_check_c`) incorrectly resolve the target (unique key) table. They use a `regclass` cast to `text`, which can become an unqualified name, leading to resolution against the wrong schema.
+  - **Files:** `sql_saga.c`, `sql_saga--1.0.sql`.
+  - **Action:**
+    1.  **In Progress:** A regression test (`08_search_path_fk_resolution_bug.sql`) has been created. Previous attempts failed to reproduce the bug. The test is now being corrected to deterministically point the foreign key to an "impostor" table in a different schema. This will cause the test to fail with the expected foreign key violation, thus successfully reproducing the bug.
+    2.  **Next:** Modify `fk_insert_check_c` and `fk_update_check_c` to correctly resolve the `uk_table_oid`. The trigger should receive the fully qualified name of the target table or its OID from the `sql_saga.foreign_keys` catalog table, instead of relying on a `regclass::text` cast that is subject to `search_path` ambiguity.
+  - **Verification:** The new test should pass, and all other tests should continue to pass.
+
 - [x] **Make `drop_*` commands fail for incorrect parameters:**
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
   - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
