@@ -10,10 +10,44 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [ ] **Improve trigger performance by converting to C:**
-  - **Files:** `sql_saga--1.0.sql`, `sql_saga.c`
-  - **Issue:** Many trigger functions are written in `pl/pgsql`, which can be slow.
-  - **Action:** Port performance-critical trigger functions to C for better execution speed. This includes caching query plans and metadata.
+- [ ] **Convert pl/pgsql Foreign Key Triggers to C for Performance and Better Error Messages:**
+  - **Goal:** Replace the four `pl/pgsql` foreign key trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`) and their helper validation functions with C implementations. This will significantly improve performance and provide clean, native PostgreSQL error messages instead of verbose `pl/pgsql` stack traces.
+  - **Overall Strategy:** The conversion will be done incrementally, one trigger at a time, ensuring tests pass after each step. Each new C trigger function will be self-contained, incorporating the logic from the corresponding `validate_foreign_key_*_row` helper.
+
+  - [ ] **Step 1: Convert `fk_insert_check` to C**
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Create a new C function `fk_insert_check_c` in `sql_saga.c` that replicates the logic of `fk_insert_check` and `validate_foreign_key_new_row`. It will be a proper trigger function that reads metadata from `tg_trigger->tgargs`.
+      2.  The C function will use `SPI` to execute the `covers_without_gaps` query.
+      3.  It will use `ereport(ERROR, ...)` for constraint violations.
+      4.  In `sql_saga--1.0.sql`, update the `add_foreign_key` function to create the insert trigger using the new C function instead of the `pl/pgsql` version.
+    - **Verification:** Run `make installcheck TESTS=26_insert_fk_test`.
+
+  - [ ] **Step 2: Convert `fk_update_check` to C**
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Create `fk_update_check_c` in `sql_saga.c`, mirroring the logic from `fk_update_check` and `validate_foreign_key_new_row`.
+      2.  Update `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function for the FK update trigger.
+    - **Verification:** Run `make installcheck TESTS=27_update_fk_test`.
+
+  - [ ] **Step 3: Convert `uk_delete_check` to C**
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Create `uk_delete_check_c` in `sql_saga.c`, implementing the logic from `uk_delete_check` and `validate_foreign_key_old_row`.
+      2.  Update `add_foreign_key` in `sql_saga--1.0.sql` to use the C function for the UK delete trigger.
+    - **Verification:** Run `make installcheck TESTS=24_delete_pk_test`.
+
+  - [ ] **Step 4: Convert `uk_update_check` to C**
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Create `uk_update_check_c` in `sql_saga.c`, implementing the logic from `uk_update_check` and `validate_foreign_key_old_row`.
+      2.  Update `add_foreign_key` in `sql_saga--1.0.sql` to use the C function for the UK update trigger.
+    - **Verification:** Run `make installcheck TESTS=25_update_pk_test`.
+
+  - [ ] **Step 5: Cleanup**
+    - **File:** `sql_saga--1.0.sql`.
+    - **Action:** Once all C trigger functions are in place and verified, remove the now-unused pl/pgsql functions: `fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`, `validate_foreign_key_new_row`, and `validate_foreign_key_old_row`.
+    - **Verification:** Run a full `make installcheck` to ensure no regressions were introduced.
 
 - [ ] **Implement hook for DDL changes (drop/rename):**
   - **Files:** `sql_saga--1.0.sql`, `sql_saga.c`
