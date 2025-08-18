@@ -141,6 +141,11 @@ RETURNS trigger
 AS 'sql_saga', 'uk_delete_check_c'
 LANGUAGE c;
 
+CREATE OR REPLACE FUNCTION sql_saga.uk_update_check_c()
+RETURNS trigger
+AS 'sql_saga', 'uk_update_check_c'
+LANGUAGE c;
+
 CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_finalfn(internal, anyrange, anyrange)
 RETURNS boolean
 AS 'sql_saga', 'covers_without_gaps_finalfn'
@@ -1935,7 +1940,7 @@ BEGIN
         uk_update_trigger := coalesce(uk_update_trigger, sql_saga._make_name(ARRAY[foreign_key_name], 'uk_update'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %19$I AFTER UPDATE OF %20$s ON %10$I.%11$I FROM %3$I.%4$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_update_check(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
+            sql_saga.uk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L);
             $$
             -- Parameters for the function call in the template
             , /* %1$  */ foreign_key_name
