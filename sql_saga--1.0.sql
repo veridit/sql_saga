@@ -1949,10 +1949,10 @@ BEGIN
 
                     EXECUTE format(
                         'SELECT EXISTS (SELECT 1 FROM %1$I.%2$I AS fk WHERE (%3$s) AND NOT (%4$s))',
-                        fk_schema_name,       -- %1
-                        fk_table_name,        -- %2
-                        fk_any_null_clause,   -- %3
-                        fk_all_null_clause    -- %4
+                        fk_schema_name,       -- %1$I
+                        fk_table_name,        -- %2$I
+                        fk_any_null_clause,   -- %3$s
+                        fk_all_null_clause    -- %4$s
                     )
                     INTO violating_row_found;
 
@@ -1989,10 +1989,10 @@ BEGIN
                     '), false))',
                     fk_schema_name,                     -- %1$I
                     fk_table_name,                      -- %2$I
-                    uk_era_row.range_type,              -- %3$s
+                    uk_era_row.range_type,              -- %3$s (regtype cast to text)
                     uk_era_row.start_after_column_name,   -- %4$I
                     uk_era_row.stop_on_column_name,     -- %5$I
-                    fk_era_row.range_type,              -- %6$s
+                    fk_era_row.range_type,              -- %6$s (regtype cast to text)
                     fk_start_after_column_name,   -- %7$I
                     fk_stop_on_column_name,     -- %8$I
                     uk_schema_name,                     -- %9$I
@@ -3344,78 +3344,5 @@ $function$;
 
 CREATE EVENT TRIGGER sql_saga_health_checks ON ddl_command_end EXECUTE PROCEDURE sql_saga.health_checks();
 
-/* Predicates */
-
-CREATE FUNCTION sql_saga.contains(sv1 anyelement, ev1 anyelement, ve anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 <= ve AND ev1 > ve;
-$function$;
-
-CREATE FUNCTION sql_saga.contains(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 <= sv2 AND ev1 >= ev2;
-$function$;
-
-CREATE FUNCTION sql_saga.equals(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 = sv2 AND ev1 = ev2;
-$function$;
-
-CREATE FUNCTION sql_saga.overlaps(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 < ev2 AND ev1 > sv2;
-$function$;
-
-CREATE FUNCTION sql_saga.precedes(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT ev1 <= sv2;
-$function$;
-
-CREATE FUNCTION sql_saga.succeeds(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 >= ev2;
-$function$;
-
-CREATE FUNCTION sql_saga.immediately_precedes(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT ev1 = sv2;
-$function$;
-
-CREATE FUNCTION sql_saga.immediately_succeeds(sv1 anyelement, ev1 anyelement, sv2 anyelement, ev2 anyelement)
- RETURNS boolean
- LANGUAGE sql
- IMMUTABLE
-AS
-$function$
-    SELECT sv1 = ev2;
-$function$;
 
 

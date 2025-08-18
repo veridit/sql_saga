@@ -64,9 +64,7 @@ DELETE FROM rooms;
 INSERT INTO rooms(id,house_id,valid_after,valid_to) VALUES (1, 2, '2015-01-01'::TIMESTAMPTZ, '2016-01-01'::TIMESTAMPTZ);
 SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 96 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(to_jsonb(rooms.*),'rooms_house_id_valid','rooms','public','rooms','{{house_id}}','valid','valid_after','valid_to','houses','public','houses','{{id}}','valid','valid_after','valid_to','SIMPLE','NO ACTION','NO ACTION') FROM public.rooms;"
-PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 303 at EXECUTE
+CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 375 at RAISE
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
@@ -80,9 +78,7 @@ DELETE FROM rooms;
 INSERT INTO rooms(id,house_id,valid_after,valid_to) VALUES (1, 1, '2010-01-01'::TIMESTAMPTZ, '2011-01-01'::TIMESTAMPTZ);
 SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 96 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(to_jsonb(rooms.*),'rooms_house_id_valid','rooms','public','rooms','{{house_id}}','valid','valid_after','valid_to','houses','public','houses','{{id}}','valid','valid_after','valid_to','SIMPLE','NO ACTION','NO ACTION') FROM public.rooms;"
-PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 303 at EXECUTE
+CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 375 at RAISE
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();
@@ -96,9 +92,7 @@ DELETE FROM rooms;
 INSERT INTO rooms(id,house_id,valid_after,valid_to) VALUES (1, 1, '2015-01-01'::TIMESTAMPTZ, '2018-01-01'::TIMESTAMPTZ);
 SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_new_row(jsonb,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 96 at RAISE
-SQL statement "SELECT sql_saga.validate_foreign_key_new_row(to_jsonb(rooms.*),'rooms_house_id_valid','rooms','public','rooms','{{house_id}}','valid','valid_after','valid_to','houses','public','houses','{{id}}','valid','valid_after','valid_to','SIMPLE','NO ACTION','NO ACTION') FROM public.rooms;"
-PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 303 at EXECUTE
+CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 375 at RAISE
 SQL statement "SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid')"
 PL/pgSQL function enable_sql_saga_for_shifts_houses_and_rooms() line 11 at PERFORM
 SELECT disable_sql_saga_for_shifts_houses_and_rooms();

@@ -41,9 +41,6 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
   - [x] **Step 4: Convert `uk_update_check` to C**
     - **Status:** Done. This revealed a fundamental limitation in using row-level triggers for certain multi-row updates.
-    - **Hypothesis Falsified (1):** The logic for `uk_update_check` is not identical to `uk_delete_check`.
-    - **Hypothesis Falsified (2):** The `tg_oldtuple` member does not exist. `tg_trigtuple` holds the OLD row in `AFTER UPDATE` triggers.
-    - **Hypothesis Falsified (3):** A complex query to handle period-only changes was still insufficient for multi-row updates inside a single transaction.
     - **Verified Solution:** The C implementation of `uk_update_check_c` is logically correct for single-row `UPDATE` statements. However, it fails for multi-row updates where the transaction is valid only after all statements have completed (e.g., swapping periods). This is a limitation of row-level triggers. The test case `28_with_exclusion_constraints.sql` was passing only due to a bug in the old `pl/pgsql` trigger: for period-only updates, its validation query incorrectly included the `OLD` row in its coverage check, causing the check to always pass and mask the temporary invalid state. The correct C trigger now properly detects this temporary violation.
     - **Files:** `sql_saga.c`, `sql/28_with_exclusion_constraints.sql`.
     - **Action:**
@@ -53,7 +50,10 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
   - [x] **Step 5: Cleanup**
     - **File:** `sql_saga--1.0.sql`.
-    - **Action:** Removed the now-unused pl/pgsql trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`, `validate_foreign_key_new_row`, and `validate_foreign_key_old_row`) as they have been fully replaced by their C counterparts.
+    - **Action:**
+        1. Removed the now-unused pl/pgsql trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`, `validate_foreign_key_new_row`, and `validate_foreign_key_old_row`) as they have been fully replaced by their C counterparts.
+        2. Replaced the call to `validate_foreign_key_new_row` inside `add_foreign_key` with a new, self-contained validation query.
+        3. Removed obsolete `pl/pgsql` predicate functions (`contains`, `overlaps`, etc.) and their tests, as they were superseded by the `covers_without_gaps` aggregate.
     - **Verification:** `make installcheck` passes.
 
 - [ ] **Implement hook for DDL changes (drop/rename):**
