@@ -4,6 +4,14 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
+- [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
+  - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
+  - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
+  - **Validated Solution (The "Statbus Pattern"):** An external project (`statbus_speed`) has validated the definitive "Plan and Execute" solution. This pattern must be implemented inside a single procedural function (ideally in C for performance) that:
+    1.  **Plans (Read-Only):** Reads all source and target data and calculates a complete DML plan (`DELETE`s, `UPDATE`s, `INSERT`s) that is guaranteed to result in a consistent final timeline.
+    2.  **Executes (Write-Only):** Executes the pre-calculated plan using a specific **"add-then-modify" order**. It must perform `INSERT`s of new data before `UPDATE`ing or `DELETE`ing the old data that is being replaced. This ensures `sql_saga`'s triggers can validate the final state correctly.
+  - **Benefit:** A call to this function is a single top-level statement. `sql_saga`'s deferred triggers fire only at the end, validating a state that the planner has already guaranteed is correct. This is the architecturally sound solution to the multi-statement update problem and provides a path to re-enabling the tests in `28_with_exclusion_constraints.sql` by having them use this new API.
+
 - [x] **Fix FK resolution bug with ambiguous table names in `search_path`:**
   - **Issue:** When a `search_path` contains multiple schemas with tables of the same name, the C-based FK triggers (`fk_insert_check_c`, `fk_update_check_c`) incorrectly resolved the target (unique key) table. They used a `regclass` cast to `text`, which can become an unqualified name, leading to resolution against the wrong schema.
   - **Files:** `sql_saga.c`, `sql_saga--1.0.sql`.
@@ -47,7 +55,7 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
   - [x] **Step 4: Convert `uk_update_check` to C**
     - **Status:** Done. The C implementation is logically correct, but this has revealed a fundamental limitation of row-level triggers for certain multi-statement updates.
-    - **Problem Analysis:** The C implementation of `uk_update_check_c` is logically stricter and more correct than the `pl/pgsql` version it replaced. This causes tests for multi-statement `UPDATE`s (like swapping time periods in `28_with_exclusion_constraints.sql`) to fail. The root cause is a fundamental behavior of PostgreSQL's MVCC: a deferred trigger operates on a data snapshot taken at the *start of the statement that queued it*, not at the end of the transaction. Consequently, the trigger for the first `UPDATE` cannot see the changes from the second `UPDATE` in the same transaction, leading it to incorrectly detect a temporary constraint violation that would be resolved by the transaction's end.
+    - **Problem Analysis:** The C implementation of `uk_update_check_c` is logically stricter and more correct than the `pl/pgsql` version it replaced. This causes tests for multi-statement `UPDATE`s (like swapping time periods in `28_with_exclusion_constraints.sql`) to fail. The root cause is a fundamental behavior of PostgreSQL's MVCC for constraint triggers. According to the PostgreSQL documentation for `CREATE TRIGGER`: *"A query started by a constraint trigger will see the state of the database as of the start of the statement that caused the trigger to fire, regardless of the SET CONSTRAINTS mode."* (See: https://www.postgresql.org/docs/current/sql-createtrigger.html). Consequently, the trigger for the first `UPDATE` in a transaction cannot see the changes from a subsequent `UPDATE`, leading it to incorrectly detect a temporary constraint violation that would be resolved by the transaction's end.
     - **Attempted Workaround & Reversal:** An attempt to replicate a "bug" from the old `pl/pgsql` trigger (which ignored some violations) was made to allow these tests to pass. This workaround proved to be fundamentally flawed, as it made the trigger too permissive and caused numerous regressions in other tests (`06`, `13`, `25`, `42`). The faulty workaround has been reverted.
     - **Files:** `sql_saga.c`, `sql/28_with_exclusion_constraints.sql`.
     - **Action:**
@@ -65,6 +73,11 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
         2. Replaced the call to `validate_foreign_key_new_row` inside `add_foreign_key` with a new, self-contained validation query.
         3. Removed obsolete `pl/pgsql` predicate functions (`contains`, `overlaps`, etc.) and their tests, as they were superseded by the `covers_without_gaps` aggregate.
     - **Verification:** `make installcheck` passes.
+
+- [ ] **Investigate Statement-Level Triggers:**
+  - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.
+  - **Benefit:** This would provide correct validation for complex, single-statement DML operations that modify multiple rows (e.g., `UPDATE ... FROM ...`, `MERGE`). This is the architecturally correct way to handle multi-row validation.
+  - **Limitation:** This would not solve the problem of multi-statement transactions that are only valid at commit time (e.g., two separate `UPDATE` statements swapping periods), as statement-level triggers are not deferrable to the end of the transaction. This limitation should be documented.
 
 - [ ] **Implement hook for DDL changes (drop/rename):**
   - **Files:** `sql_saga--1.0.sql`, `sql_saga.c`

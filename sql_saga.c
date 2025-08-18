@@ -1,5 +1,25 @@
 /**
  * sql_saga.c -
+ *
+ * Core architectural pattern for complex temporal updates:
+ *
+ * Due to PostgreSQL's MVCC rules for constraint triggers, multi-statement
+ * transactions that are only valid at commit time cannot be reliably validated.
+ *
+ * The correct solution is the "Plan and Execute" pattern, implemented in a
+ * single C function using SPI. This function will:
+ * 1. (Plan) Read all source and target data to calculate a complete and
+ *    correct DML plan (DELETEs, UPDATEs, INSERTs).
+ * 2. (Execute) Apply this plan using a crucial "add-then-modify" order.
+ *    New timeline segments must be INSERTed before old ones are UPDATE_d or
+ *    DELETE_d. This ensures the trigger's statement-level snapshot contains
+ *    all the necessary rows for validation to succeed.
+ *
+ * From PostgreSQL's perspective, this is a single statement. All deferred
+ * triggers fire at the end, validating a state that the planner has already
+ * guaranteed is consistent. This is the strategic direction for future API
+ * development.
+ *
  * TODO:
  * Install a hook so we can get called with a table/column is dropped/renamed,
  * so that we can drop/update our constraints as necessary.

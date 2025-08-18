@@ -55,18 +55,110 @@ Reference: [PostgreSQL Documentation: User-Defined Aggregates](https://www.postg
 
 ## Trigger Behavior and Data Visibility
 
-Reference: [PostgreSQL Documentation: Overview of Trigger Behavior](https://www.postgresql.org/docs/current/trigger-definition.html) and [Visibility of Data Changes](https://www.postgresql.org/docs/current/trigger-datachanges.html)
+A deep understanding of PostgreSQL's data visibility rules for triggers is essential for developing `sql_saga`. The documentation reveals that there are two distinct models of behavior, and the choice between them has profound consequences for our implementation.
 
-### Key Concepts for `sql_saga`
+### The Two Models of Data Visibility
 
-*   **Execution Context**: A trigger function is always executed as part of the same transaction as the statement that fired it. If the trigger fails, the entire statement is rolled back.
-*   **MVCC and Snapshots**: The most critical concept for `sql_saga`'s triggers is PostgreSQL's Multiversion Concurrency Control (MVCC).
-    *   A trigger function does **not** see the changes made by the current statement. Any SQL query executed inside the trigger function operates on a snapshot of the database as it existed *at the beginning of the statement*.
-    *   This has a direct impact on `AFTER` triggers:
-        *   An `AFTER INSERT` trigger's query will **not** see the newly inserted row.
-        *   An `AFTER UPDATE` trigger's query will see the old version of the row, **not** the updated version.
-        *   An `AFTER DELETE` trigger's query **will** see the row that was just deleted.
-*   **Implications for `sql_saga`'s `uk_delete_check_c`**:
-    *   The `uk_delete_check_c` function is an `AFTER DELETE` trigger on a unique key (UK) table. Its purpose is to verify that no foreign key (FK) rows are left "orphaned" (i.e., without a covering period in the UK table).
-    *   Because the trigger's query sees the pre-delete snapshot, it will include the row that is being deleted when it checks for coverage. This would cause the validation to incorrectly succeed, as the row to be deleted still covers the FK.
-    *   **Solution**: The validation query must be written to explicitly exclude the `OLD` row from the set of rows it checks for coverage. This simulates the state of the table *after* the deletion has committed, allowing the `covers_without_gaps` aggregate to perform a correct check.
+The core distinction lies between regular `AFTER` triggers and `CONSTRAINT TRIGGER`s.
+
+#### Model 1: Regular `AFTER` Triggers (Sees Final State)
+
+Reference: [Visibility of Data Changes](https://www.postgresql.org/docs/current/trigger-datachanges.html)
+
+A regular row-level `AFTER` trigger sees the final state of the data after the DML operation is complete. The documentation states: *"When a row-level `AFTER` trigger is fired, all data changes made by the outer command are already complete, and are visible to the invoked trigger function."*
+
+The example in the documentation ([A Complete Trigger Example](https://www.postgresql.org/docs/current/trigger-example.html)) confirms this. When a regular `AFTER DELETE` trigger runs `SELECT count(*)`, it sees that the row count has been decremented.
+
+#### Model 2: `CONSTRAINT TRIGGER`s (Sees Initial State)
+
+Reference: [Overview of Trigger Behavior](https://www.postgresql.org/docs/current/trigger-definition.html)
+
+`CONSTRAINT TRIGGER`s, which `sql_saga` uses, are subject to a much stricter visibility rule. The documentation is explicit: *"A query started by a constraint trigger will see the state of the database as of the start of the statement that caused the trigger to fire, regardless of the SET CONSTRAINTS mode."*
+
+This means that even if a constraint trigger is `DEFERRABLE` and its *execution* is postponed until the end of the transaction, any query it runs operates on a data snapshot from the *past*. It is blind to the changes made by the statement that queued it, and any subsequent statements in the same transaction.
+
+### Implications for `sql_saga`
+
+`sql_saga`'s entire design is dictated by the trade-offs between these two models.
+
+1.  **Why `sql_saga` MUST Use `CONSTRAINT TRIGGER`s**: The primary reason is to get the `DEFERRABLE` property. This allows `sql_saga` to validate temporal foreign keys at the end of a transaction, permitting multi-statement updates (like an `UPDATE` followed by an `INSERT` that "fills the gap") to succeed if the final state is consistent. Regular `AFTER` triggers are not deferrable and would fail immediately.
+
+2.  **Consequence 1: The Multi-Statement Update Limitation**: By choosing `CONSTRAINT TRIGGER`s, `sql_saga` is locked into the stricter "sees initial state" visibility model. This fully explains why the multi-statement `UPDATE`s in `28_with_exclusion_constraints.sql` fail. The trigger for the first `UPDATE` is queued, but its view of the database is frozen. It cannot see the changes from the second `UPDATE`. At the end of the transaction, it executes its query against its old snapshot, sees a temporary gap, and correctly (from its perspective) reports a violation. This is a fundamental and documented limitation of PostgreSQL's trigger architecture.
+
+3.  **Consequence 2: The `uk_delete_check_c` Logic**: This clarifies why the `uk_delete_check_c` function must explicitly exclude the `OLD` row from its validation query.
+    *   A regular `AFTER DELETE` trigger (Model 1) would see the final state where the row is already gone, and would not need special logic.
+    *   However, `uk_delete_check_c` is a `CONSTRAINT TRIGGER` (Model 2). Its query sees the *initial* state of the table, which includes the row that is about to be deleted. Without excluding the `OLD` row, the validation query would incorrectly find that the row still provides coverage, and the check would always pass. The current implementation is therefore correct and necessary.
+
+## Advanced Trigger Concepts and Design Learnings
+
+Analysis of PostgreSQL's trigger system reveals important details that directly influence `sql_saga`'s design and limitations.
+
+### Constraint Triggers
+
+Reference: [PostgreSQL Documentation: Overview of Trigger Behavior](https://www.postgresql.org/docs/current/trigger-definition.html)
+
+*   **Definition**: A `CONSTRAINT TRIGGER` is a special type of `AFTER ROW` trigger whose execution timing can be controlled with `SET CONSTRAINTS`. They can be `DEFERRABLE`, allowing their execution to be postponed until the end of the transaction.
+*   **Usage in `sql_saga`**: All of `sql_saga`'s temporal foreign key triggers are implemented as constraint triggers. This is what allows multi-statement updates to proceed without failing immediately, by deferring the check.
+*   **The MVCC Snapshot Rule for Constraint Triggers**: There is a subtle but critical distinction between *when a trigger executes* and *what data it sees*.
+    *   **Execution Time**: As described in the `CREATE TRIGGER` documentation, a `DEFERRABLE` constraint trigger's execution can be postponed until the end of the transaction. This is why multi-statement updates don't fail immediately.
+    *   **Data Visibility**: However, the "Overview of Trigger Behavior" chapter provides the crucial context on data visibility: *"A query started by a constraint trigger will see the state of the database as of the start of the statement that caused the trigger to fire, regardless of the SET CONSTRAINTS mode."*
+    *   **Reconciling the Two**: This means that although the trigger function *runs* at commit time, any query it executes operates on a data snapshot from the past—specifically from the beginning of the statement that originally queued it. It is blind to its own statement's changes and any subsequent statements in the transaction. This is the root cause of the validation failures for multi-statement updates seen in `28_with_exclusion_constraints_test.sql`.
+
+### Statement-Level Triggers and `REFERENCING`
+
+*   **Definition**: A statement-level trigger fires only once per statement, regardless of the number of rows affected. The optional `REFERENCING` clause allows the trigger to access all modified rows in "transition tables" (e.g., `OLD TABLE` and `NEW TABLE`).
+*   **Use Case**: This mechanism is the correct way to validate complex changes that occur within a **single statement**. For example, an `UPDATE ... FROM ...` that modifies multiple rows could be validated correctly by a statement-level trigger that examines the final state of all affected rows in the `NEW TABLE` transition table.
+*   **Limitation for `sql_saga`**: While powerful, this does not solve the multi-statement transaction problem. A statement-level trigger still fires at the end of each *statement*, not at the end of the *transaction*, so it remains blind to changes from subsequent statements within the same transaction block.
+
+### Built-in vs. User-Defined Constraint Triggers
+
+The core of the multi-statement update problem lies in the difference between PostgreSQL's built-in `DEFERRABLE` foreign keys and the user-defined `CONSTRAINT TRIGGER`s that `sql_saga` must use.
+
+*   **Built-in Foreign Keys**: These are deeply integrated into the PostgreSQL executor. When deferred, their final validation can re-check the constraint against the actual, final state of the data at the end of the transaction. They have access to internal state management that is not exposed to user-defined functions. This is why they work as users intuitively expect.
+
+*   **User-Defined `CONSTRAINT TRIGGER`s**: These are a more limited mechanism. As documented, they are bound by a strict MVCC snapshot rule: their queries always see the state of the database as of the *start of the statement* that queued them, even when execution is deferred to the end of the transaction. They cannot see the final, transaction-complete state.
+
+*   **The Previous `pl/pgsql` Illusion**: The old `pl/pgsql` triggers in `sql_saga` did **not** have the same semantics as built-in FKs. They only *appeared* to work for the multi-statement `UPDATE` case because of a bug. For updates that only changed the time period, the validation query failed to exclude the `OLD` row from its coverage check. This effectively disabled the validation for that specific scenario, masking the underlying limitation. The correct C implementation fixed this bug, which brought the architectural limitation to light.
+
+### Conclusion: The Multi-Statement Update Problem and The Principled Solution
+
+From first principles, we have learned that there is a fundamental limitation in PostgreSQL's trigger architecture for validating multi-statement transactions that are only consistent at the very end. Standard `DEFERRABLE` foreign keys can handle this because they use internal mechanisms not available to user-defined triggers.
+
+#### The Principled Solution for Single-Statement Updates
+
+The correct way to validate a complex change affecting multiple rows within a **single DML statement** is with a statement-level trigger.
+
+*   An `AFTER UPDATE ... FOR EACH STATEMENT` trigger with a `REFERENCING OLD TABLE AS old_rows, NEW TABLE AS new_rows` clause can see the complete "before" and "after" state of all rows modified by the statement.
+*   This trigger could then identify the full set of unique keys that were affected and re-validate all foreign keys that reference them. This would correctly handle complex operations like `UPDATE ... FROM ...` or `MERGE`.
+
+#### Why This Doesn't Solve the Multi-Statement Transaction Problem
+
+The critical limitation is that statement-level triggers are **not deferrable** to the end of a transaction. They execute at the end of each statement. In a transaction consisting of an `UPDATE` followed by an `INSERT`, the statement-level trigger for the `UPDATE` would fire before the `INSERT` occurs, see a temporary gap in coverage, and report a violation.
+
+#### The `sql_saga` Compromise
+
+*   `sql_saga` uses `CONSTRAINT TRIGGER`s because they are the only user-definable trigger type that is `DEFERRABLE` to the end of the transaction.
+*   However, these triggers are restricted to `FOR EACH ROW` and, crucially, operate on a data snapshot from the start of the statement, not the transaction.
+*   This is a pragmatic compromise. It correctly handles the common cases of single-row changes and simple multi-statement transactions (e.g., `UPDATE` then `INSERT` to fill a gap), but it cannot support complex multi-statement `UPDATE`s as demonstrated in `28_with_exclusion_constraints.sql`.
+
+Therefore, the decision to comment out these tests is correct. The architectural pattern they represent is fundamentally incompatible with the validation mechanisms available to user-defined triggers in PostgreSQL.
+
+#### The Encapsulated, Set-Based API Solution
+
+The correct and most robust way to perform complex temporal modifications is to encapsulate the logic within a single, high-level procedural function. This approach, validated by the external `statbus_speed` project, is the strategic path forward for `sql_saga`.
+
+**The "Plan and Execute" Pattern with "Add-Then-Modify" Ordering:**
+
+The definitive solution for complex temporal modifications is the "Plan and Execute" pattern, implemented within a single C or pl/pgsql function.
+
+1.  **The Plan Phase (Read-Only):** The function first reads all source and target data and calculates a complete DML plan (`DELETE`s, `UPDATE`s, `INSERT`s) that is guaranteed to result in a consistent final state. This phase is pure and does not write to the database or queue any triggers.
+
+2.  **The Execute Phase (Write-Only):** The function then executes this plan using a critical **"add-then-modify"** order. It first performs all `INSERT` operations to add new timeline segments. This creates a temporary state of overlapping periods. It then performs all `UPDATE`s and `DELETE`s to truncate or remove the old segments.
+
+**Why This Is the Correct Solution:**
+
+*   **Deferred Exclusion Constraints:** The temporary overlaps created by the "add-first" approach would normally fail. However, they are correctly handled by setting the table's exclusion constraints to `DEFERRED`.
+*   **Working with the Snapshot Rule:** The `sql_saga` `CONSTRAINT TRIGGER`s queued by the later `UPDATE` or `DELETE` statements will see a snapshot that contains **both** the new rows (from the earlier `INSERT`s) and the old rows. The trigger's validation logic (`all_rows_in_snapshot - OLD_row + NEW_row`) will therefore be checking a set of rows that correctly represents the final, consistent state of the timeline.
+*   **A Single Top-Level Statement:** All triggers are deferred until the top-level function call completes, at which point the planner has already guaranteed the timeline is consistent. The triggers act as a powerful, low-level safety net that verifies the planner's logic.
+
+This "add-then-modify" execution strategy is the principled way to solve the multi-statement update problem. It avoids the MVCC snapshot limitation by creating an intermediate state that allows the trigger's validation logic to see the future.
