@@ -45,6 +45,11 @@ All development work, especially bug fixing, must follow this iterative cycle. D
 
 By strictly following this process, we ensure that progress is real, verifiable, and that the project's state remains consistently stable.
 
+## Known Pitfalls and Falsified Assumptions
+This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.
+
+*   **MVCC and Transaction Visibility in PL/pgSQL:** The set of rows visible to a `pl/pgsql` function is determined when the function begins execution. Within a single function, a `SET`-based query and a `LOOP` that executes queries will both operate on the same data snapshot. It is a flawed assumption to think that a `LOOP` is somehow more robust to transaction visibility issues than a single complex query within the same function. If a set-based query is failing, the bug is in the query's logic, not in a fundamental limitation of MVCC for set-based operations.
+
 ## When the Cycle Fails: Changing Strategy
 When repeated iterations of the hypothesis-driven cycle fail to resolve a persistent and complex bug (such as a memory corruption crash), it is a sign that the underlying assumptions are wrong and a change in strategy is required.
 
