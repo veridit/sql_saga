@@ -14,14 +14,15 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
   - **Goal:** Replace the four `pl/pgsql` foreign key trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`) and their helper validation functions with C implementations. This will significantly improve performance and provide clean, native PostgreSQL error messages instead of verbose `pl/pgsql` stack traces.
   - **Overall Strategy:** The conversion will be done incrementally, one trigger at a time, ensuring tests pass after each step. Each new C trigger function will be self-contained, incorporating the logic from the corresponding `validate_foreign_key_*_row` helper.
 
-  - [ ] **Step 1: Convert `fk_insert_check` to C**
+  - [x] **Step 1: Convert `fk_insert_check` to C**
+    - **Status:** Done. The C function `fk_insert_check_c` is now successfully used for insert triggers.
     - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
     - **Action:**
-      1.  Create a new C function `fk_insert_check_c` in `sql_saga.c` that replicates the logic of `fk_insert_check` and `validate_foreign_key_new_row`. It will be a proper trigger function that reads metadata from `tg_trigger->tgargs`.
-      2.  The C function will use `SPI` to execute the `covers_without_gaps` query.
-      3.  It will use `ereport(ERROR, ...)` for constraint violations.
-      4.  In `sql_saga--1.0.sql`, update the `add_foreign_key` function to create the insert trigger using the new C function instead of the `pl/pgsql` version.
-    - **Verification:** Run `make installcheck TESTS=26_insert_fk_test`.
+      1.  Created a new C function `fk_insert_check_c` in `sql_saga.c` that replicates the logic of `fk_insert_check` and `validate_foreign_key_new_row`.
+      2.  The C function uses `SPI` to execute the `covers_without_gaps` query and `ereport(ERROR, ...)` for constraint violations.
+      3.  Updated `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function.
+      4.  Fixed compilation warnings and a runtime error (`cache lookup failed for type 125`) by correctly parsing array-of-name trigger arguments and moving variable declarations.
+    - **Verification:** `make installcheck TESTS=26_insert_fk_test` passes.
 
   - [ ] **Step 2: Convert `fk_update_check` to C**
     - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
