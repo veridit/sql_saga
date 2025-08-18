@@ -19,10 +19,6 @@
  * triggers fire at the end, validating a state that the planner has already
  * guaranteed is consistent. This is the strategic direction for future API
  * development.
- *
- * TODO:
- * Install a hook so we can get called with a table/column is dropped/renamed,
- * so that we can drop/update our constraints as necessary.
  */
 
 #include "postgres.h"

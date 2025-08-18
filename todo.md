@@ -4,6 +4,14 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
 
 ## High Priority - Bugs & Core Features
 
+- [ ] **Optimize Slow DDL Operations Caused by Event Triggers:**
+  - **Problem:** All DDL operations (including `CREATE`, `ALTER`, `DROP` on unrelated tables) become significantly slower after `sql_saga` is installed.
+  - **Analysis (Root Cause):** The extension installs event triggers (`sql_saga_rename_following`, `sql_saga_health_checks`) on `ddl_command_end` that execute expensive queries for every DDL command. The complexity of these checks is `O(N)` where `N` is the number of tables and constraints managed by `sql_saga`. This means that as an application uses `sql_saga` more, all DDLs across the entire database become progressively slower.
+  - **Optimization Plan:**
+    1.  **Filter Irrelevant DDLs:** The primary optimization is to modify the event trigger functions (`rename_following` and `health_checks`) to exit immediately if the DDL command does not affect a managed object. This can be achieved by checking if the `objid` from `pg_event_trigger_ddl_commands()` exists in `sql_saga.era` or other `sql_saga` catalog tables. This will make DDLs on non-managed tables fast again.
+    2.  **Combine Event Triggers:** Combine `rename_following` and `health_checks` into a single function and a single `ddl_command_end` event trigger. This reduces overhead and centralizes the logic.
+    3.  **Optimize Internal Queries:** Review and optimize the queries within the trigger functions to ensure they are as efficient as possible for the cases where they do need to run. This may include adding indexes to the `sql_saga` catalog tables.
+
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
   - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
   - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
@@ -79,10 +87,12 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
   - **Benefit:** This would provide correct validation for complex, single-statement DML operations that modify multiple rows (e.g., `UPDATE ... FROM ...`, `MERGE`). This is the architecturally correct way to handle multi-row validation.
   - **Limitation:** This would not solve the problem of multi-statement transactions that are only valid at commit time (e.g., two separate `UPDATE` statements swapping periods), as statement-level triggers are not deferrable to the end of the transaction. This limitation should be documented.
 
-- [ ] **Implement hook for DDL changes (drop/rename):**
-  - **Files:** `sql_saga--1.0.sql`, `sql_saga.c`
-  - **Issue:** The extension does not currently handle `DROP` or `RENAME` operations on tables or columns that are part of a temporal setup, which can leave the metadata in an inconsistent state.
-  - **Action:** Implement an event trigger or hook to detect these DDL changes and either update the `sql_saga` catalog or prevent the operation.
+- [x] **Implement hook for DDL changes (drop/rename):**
+  - **Files:** `sql_saga--1.0.sql`
+  - **Issue:** The extension must handle `DROP` or `RENAME` operations on tables or columns that are part of a temporal setup, to prevent the metadata from becoming inconsistent.
+  - **Fix:** This functionality is implemented via two `pl/pgsql` event triggers defined in `sql_saga--1.0.sql`.
+    1.  `sql_saga_drop_protection` (on `sql_drop`): Prevents dropping objects that `sql_saga` depends on (e.g., columns in an era) and cleans up `sql_saga`'s metadata when a managed table is dropped.
+    2.  `sql_saga_rename_following` (on `ddl_command_end`): Detects `RENAME` operations and updates the metadata catalog to reflect the new names of columns and constraints.
 
 - [ ] **Make `add_*`/`drop_*` API symmetric:**
   - **Status:** Done.
