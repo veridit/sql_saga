@@ -1576,53 +1576,6 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.uk_update_check()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-#variable_conflict use_variable
-DECLARE
-    /* Use jsonb to look up values by parameterized names */
-    jold jsonb := to_jsonb(OLD);
-
-    foreign_key_name name              := TG_ARGV[0];
-    fk_table_oid regclass              := TG_ARGV[1];
-    fk_schema_name text                := TG_ARGV[2];
-    fk_table_name text                 := TG_ARGV[3];
-    fk_column_names text[]             := TG_ARGV[4];
-    fk_era_name text                   := TG_ARGV[5];
-    fk_start_after_column_name text          := TG_ARGV[6];
-    fk_stop_on_column_name text            := TG_ARGV[7];
-    uk_table_oid regclass              := TG_ARGV[8];
-    uk_schema_name text                := TG_ARGV[9];
-    uk_table_name text                 := TG_ARGV[10];
-    uk_column_names text[]             := TG_ARGV[11];
-    uk_era_name text                   := TG_ARGV[12];
-    uk_start_after_column_name text          := TG_ARGV[13];
-    uk_stop_on_column_name text            := TG_ARGV[14];
-    match_type sql_saga.fk_match_types := TG_ARGV[15];
-    update_action sql_saga.fk_actions  := TG_ARGV[16];
-    delete_action sql_saga.fk_actions  := TG_ARGV[17];
-BEGIN
-    /*
-     * This function is called when a table referenced by foreign keys with
-     * periods is updated.  It checks to verify that the referenced table still
-     * contains the proper data to satisfy the foreign key constraint.
-     *
-     * The first argument is the name of the foreign key in our custom
-     * catalogs.
-     *
-     * If this is a NO ACTION constraint, we need to check if there is a new
-     * row that still satisfies the constraint, in which case there is no
-     * error.
-     */
-
-    /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
-
-    RETURN NULL;
-END;
-$function$;
 
 CREATE FUNCTION sql_saga.drop_foreign_key(
     table_oid regclass,
@@ -1653,52 +1606,6 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.uk_delete_check()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-#variable_conflict use_variable
-DECLARE
-    /* Use jsonb to look up values by parameterized names */
-    jold jsonb := to_jsonb(OLD);
-
-    foreign_key_name name              := TG_ARGV[0];
-    fk_table_oid regclass              := TG_ARGV[1];
-    fk_schema_name text                := TG_ARGV[2];
-    fk_table_name text                 := TG_ARGV[3];
-    fk_column_names text[]             := TG_ARGV[4];
-    fk_era_name text                   := TG_ARGV[5];
-    fk_start_after_column_name text          := TG_ARGV[6];
-    fk_stop_on_column_name text            := TG_ARGV[7];
-    uk_table_oid regclass              := TG_ARGV[8];
-    uk_schema_name text                := TG_ARGV[9];
-    uk_table_name text                 := TG_ARGV[10];
-    uk_column_names text[]             := TG_ARGV[11];
-    uk_era_name text                   := TG_ARGV[12];
-    uk_start_after_column_name text          := TG_ARGV[13];
-    uk_stop_on_column_name text            := TG_ARGV[14];
-    match_type sql_saga.fk_match_types := TG_ARGV[15];
-    update_action sql_saga.fk_actions  := TG_ARGV[16];
-    delete_action sql_saga.fk_actions  := TG_ARGV[17];
-BEGIN
-    /*
-     * This function is called when a table referenced by foreign keys with
-     * periods is deleted from.  It checks to verify that the referenced table
-     * still contains the proper data to satisfy the foreign key constraint.
-     *
-     * The first argument is the name of the foreign key in our custom
-     * catalogs.
-     *
-     * The only difference between NO ACTION and RESTRICT is when the check is
-     * done, so this function is used for both.
-     */
-
-    /* Check the constraint */
-    PERFORM sql_saga.validate_foreign_key_old_row(jold, false /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
-
-    RETURN NULL;
-END;
-$function$;
 
 
 CREATE FUNCTION sql_saga.add_foreign_key(
@@ -2022,31 +1929,85 @@ BEGIN
             , uk_delete_trigger
             );
 
-        /* Validate the constraint on existing data, iterating over each row. */
-        EXECUTE format(
-            'SELECT sql_saga.validate_foreign_key_new_row('||
-            'to_jsonb(%4$I.*)'||
-            ',%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L,%17$L,%18$L'||
-            ') FROM %3$I.%4$I;'
-            , /* %1$  */ foreign_key_name
-            , /* %2$  */ fk_table_oid
-            , /* %3$  */ fk_schema_name
-            , /* %4$  */ fk_table_name
-            , /* %5$  */ fk_column_names_arr_str
-            , /* %6$  */ fk_era_name
-            , /* %7$  */ fk_start_after_column_name
-            , /* %8$  */ fk_stop_on_column_name
-            , /* %9$  */ uk_table_oid
-            , /* %10$ */ uk_schema_name
-            , /* %11$ */ uk_table_name
-            , /* %12$ */ uk_column_names_arr_str
-            , /* %13$ */ uk_era_name
-            , /* %14$ */ uk_start_after_column_name
-            , /* %15$ */ uk_stop_on_column_name
-            , /* %16$ */ match_type
-            , /* %17$ */ update_action
-            , /* %18$ */ delete_action
-            );
+        /* Validate the constraint on existing data. */
+        DECLARE
+            uk_where_clause text;
+            violating_row_found boolean;
+        BEGIN
+            IF match_type = 'FULL' THEN
+                DECLARE
+                    fk_any_null_clause text;
+                    fk_all_null_clause text;
+                BEGIN
+                    SELECT string_agg(format('fk.%I IS NULL', u.fkc), ' OR ')
+                    INTO fk_any_null_clause
+                    FROM unnest(fk_column_names) AS u(fkc);
+
+                    SELECT string_agg(format('fk.%I IS NULL', u.fkc), ' AND ')
+                    INTO fk_all_null_clause
+                    FROM unnest(fk_column_names) AS u(fkc);
+
+                    EXECUTE format(
+                        'SELECT EXISTS (SELECT 1 FROM %1$I.%2$I AS fk WHERE (%3$s) AND NOT (%4$s))',
+                        fk_schema_name,       -- %1
+                        fk_table_name,        -- %2
+                        fk_any_null_clause,   -- %3
+                        fk_all_null_clause    -- %4
+                    )
+                    INTO violating_row_found;
+
+                    IF violating_row_found THEN
+                        RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%" (MATCH FULL with NULLs)',
+                                fk_table_oid,
+                                foreign_key_name;
+                    END IF;
+                END;
+            END IF;
+
+            -- Now check for coverage violations on rows with non-null keys.
+            DECLARE
+                fk_not_null_clause text;
+            BEGIN
+                SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc), ' AND ')
+                INTO fk_not_null_clause
+                FROM unnest(fk_column_names) AS u(fkc);
+
+                SELECT string_agg(format('uk.%I = fk.%I', u.ukc, u.fkc), ' AND ')
+                INTO uk_where_clause
+                FROM unnest(uk_row.column_names, fk_column_names) AS u(ukc, fkc);
+
+                EXECUTE format('SELECT EXISTS( ' ||
+                    'SELECT 1 FROM %1$I.%2$I AS fk ' ||
+                    'WHERE %12$s AND NOT COALESCE(( ' ||
+                    '  SELECT sql_saga.covers_without_gaps( ' ||
+                    '    %3$s(uk.%4$I, uk.%5$I, ''(]''), ' ||
+                    '    %6$s(fk.%7$I, fk.%8$I, ''(]'') ' ||
+                    '    ORDER BY uk.%4$I ' ||
+                    '  ) ' ||
+                    '  FROM %9$I.%10$I AS uk ' ||
+                    '  WHERE %11$s ' ||
+                    '), false))',
+                    fk_schema_name,                     -- %1$I
+                    fk_table_name,                      -- %2$I
+                    uk_era_row.range_type,              -- %3$s
+                    uk_era_row.start_after_column_name,   -- %4$I
+                    uk_era_row.stop_on_column_name,     -- %5$I
+                    fk_era_row.range_type,              -- %6$s
+                    fk_start_after_column_name,   -- %7$I
+                    fk_stop_on_column_name,     -- %8$I
+                    uk_schema_name,                     -- %9$I
+                    uk_table_name,                      -- %10$I
+                    uk_where_clause,                    -- %11$s
+                    fk_not_null_clause                  -- %12$s
+                ) INTO violating_row_found;
+
+                IF violating_row_found THEN
+                    RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
+                        fk_table_oid,
+                        foreign_key_name;
+                END IF;
+            END;
+        END;
     END;
 
     RETURN foreign_key_name;
@@ -2124,345 +2085,8 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.fk_insert_check()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-#variable_conflict use_variable
-DECLARE
-    /* Use jsonb to look up values by parameterized names */
-    jnew jsonb := to_jsonb(NEW);
-    foreign_key_name name              := TG_ARGV[0];
-    fk_table_oid regclass              := TG_ARGV[1];
-    fk_schema_name text                := TG_ARGV[2];
-    fk_table_name text                 := TG_ARGV[3];
-    fk_column_names text[]             := TG_ARGV[4];
-    fk_era_name text                   := TG_ARGV[5];
-    fk_start_after_column_name text          := TG_ARGV[6];
-    fk_stop_on_column_name text            := TG_ARGV[7];
-    uk_table_oid regclass              := TG_ARGV[8];
-    uk_schema_name text                := TG_ARGV[9];
-    uk_table_name text                 := TG_ARGV[10];
-    uk_column_names text[]             := TG_ARGV[11];
-    uk_era_name text                   := TG_ARGV[12];
-    uk_start_after_column_name text          := TG_ARGV[13];
-    uk_stop_on_column_name text            := TG_ARGV[14];
-    match_type sql_saga.fk_match_types := TG_ARGV[15];
-    update_action sql_saga.fk_actions  := TG_ARGV[16];
-    delete_action sql_saga.fk_actions  := TG_ARGV[17];
-BEGIN
-    /*
-     * This function is called when a new row is inserted into a table
-     * containing foreign keys with sql_saga.  It checks to verify that the
-     * referenced table contains the proper data to satisfy the foreign key
-     * constraint.
-     *
-     * The first argument is the name of the foreign key in our custom
-     * catalogs.
-     */
 
-    jnew := to_jsonb(NEW);
-    PERFORM sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
-    RETURN NULL;
-END;
-$function$;
 
-CREATE FUNCTION sql_saga.fk_update_check()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-#variable_conflict use_variable
-DECLARE
-    /* Use jsonb to look up values by parameterized names */
-    jnew jsonb := to_jsonb(NEW);
-
-    foreign_key_name name              := TG_ARGV[0];
-    fk_table_oid regclass              := TG_ARGV[1];
-    fk_schema_name text                := TG_ARGV[2];
-    fk_table_name text                 := TG_ARGV[3];
-    fk_column_names text[]             := TG_ARGV[4];
-    fk_era_name text                   := TG_ARGV[5];
-    fk_start_after_column_name text          := TG_ARGV[6];
-    fk_stop_on_column_name text            := TG_ARGV[7];
-    uk_table_oid regclass              := TG_ARGV[8];
-    uk_schema_name text                := TG_ARGV[9];
-    uk_table_name text                 := TG_ARGV[10];
-    uk_column_names text[]             := TG_ARGV[11];
-    uk_era_name text                   := TG_ARGV[12];
-    uk_start_after_column_name text          := TG_ARGV[13];
-    uk_stop_on_column_name text            := TG_ARGV[14];
-    match_type sql_saga.fk_match_types := TG_ARGV[15];
-    update_action sql_saga.fk_actions  := TG_ARGV[16];
-    delete_action sql_saga.fk_actions  := TG_ARGV[17];
-BEGIN
-    /*
-     * This function is called when a table containing foreign keys with
-     * periods is updated.  It checks to verify that the referenced table
-     * contains the proper data to satisfy the foreign key constraint.
-     *
-     * The first argument is the name of the foreign key in our custom
-     * catalogs.
-     */
-
-    /* Check the constraint */
-
-    PERFORM sql_saga.validate_foreign_key_new_row(jnew, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action);
-    RETURN NULL;
-END;
-$function$;
-
-/*
- * This function is called by an AFTER UPDATE or AFTER DELETE trigger on a
- * referenced (unique key) table. It finds all rows in the referencing table
- * that pointed to the OLD row and validates that their validity periods are
- * still covered after the change.
- *
- * Performance characteristics:
- * This function uses a single, set-based query. It finds all affected foreign
- * key rows and, for each one, runs a correlated subquery with the
- * `covers_without_gaps` aggregate to validate its coverage. This is generally
- * more performant than a `LOOP` for bulk operations. The total complexity is
- * roughly O(N * M log M), where N is the number of referencing rows and M is
- * the number of unique key rows, but with lower per-row overhead than a
- * pl/pgsql loop.
- *
- * NOTE: Previous attempts at a set-based query failed due to subtle bugs in
- * the `covers_without_gaps` aggregate itself. Now that the aggregate is
- * robust, this more performant set-based approach is viable and correct.
- */
-CREATE FUNCTION sql_saga.validate_foreign_key_old_row(
-    row_data jsonb,
-    is_update boolean,
-
-    foreign_key_name name,
-    fk_table_oid regclass,
-    fk_schema_name text,
-    fk_table_name text,
-    fk_column_names text[],
-    fk_era_name text,
-    fk_start_after_column_name text,
-    fk_stop_on_column_name text,
-    uk_table_oid regclass,
-    uk_schema_name text,
-    uk_table_name text,
-    uk_column_names text[],
-    uk_era_name text,
-    uk_start_after_column_name text,
-    uk_stop_on_column_name text,
-    match_type sql_saga.fk_match_types,
-    delete_action sql_saga.fk_actions,
-    update_action sql_saga.fk_actions
-    )
- RETURNS boolean
- LANGUAGE plpgsql
-AS
-$function$
-DECLARE
-    column_name name;
-    join_on text;
-    where_clause text;
-    uk_range_constructor regtype;
-    fk_range_constructor regtype;
-    violation boolean;
-
-    QSQL_VALIDATE_FKS CONSTANT text :=
-    'SELECT EXISTS ('
-    '  SELECT 1'
-    '  FROM %1$s AS fk'
-    '  WHERE %4$s AND COALESCE(NOT ('
-    '    SELECT sql_saga.covers_without_gaps('
-    '      %7$I(uk.%8$I, uk.%9$I, ''(]''),'
-    '      %10$I(fk.%5$I, fk.%6$I, ''(]'')'
-    '      ORDER BY uk.%8$I'
-    '    )'
-    '    FROM %2$s AS uk'
-    '    WHERE %3$s' -- join condition: fk.col = uk.col
-    '  ), true)'
-    ')';
-
-BEGIN
-    -- If any part of the key in the OLD row is NULL, it cannot be referenced.
-    FOREACH column_name IN ARRAY uk_column_names LOOP
-        IF row_data->>column_name IS NULL THEN
-            RETURN true;
-        END IF;
-    END LOOP;
-
-    -- Build JOIN clause for subquery: fk -> uk
-    SELECT string_agg(format('fk.%I = uk.%I', u.fkc, u.ukc), ' AND ')
-    INTO join_on
-    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
-
-    -- Build WHERE clause to find fk rows that reference the OLD uk row
-    SELECT string_agg(format('fk.%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
-    INTO where_clause
-    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
-
-    SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
-    SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
-
-    EXECUTE format(QSQL_VALIDATE_FKS,
-        fk_table_oid,                                -- %1$s: fk table
-        uk_table_oid,                                -- %2$s: uk table
-        join_on,                                     -- %3$s: join condition
-        where_clause,                                -- %4$s: where condition
-        fk_start_after_column_name,                  -- %5$I: fk start col
-        fk_stop_on_column_name,                      -- %6$I: fk end col
-        uk_range_constructor,                        -- %7$I: uk range type constructor
-        uk_start_after_column_name,                  -- %8$I: uk start col
-        uk_stop_on_column_name,                      -- %9$I: uk end col
-        fk_range_constructor                         -- %10$I: fk range type constructor
-    )
-    INTO violation;
-
-    IF violation THEN
-        RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-            uk_table_oid,
-            foreign_key_name,
-            fk_table_oid;
-    END IF;
-
-    RETURN true;
-END;
-$function$;
-
-/*
- * This function validates a single new or updated row in a referencing
- * (foreign key) table.
- *
- * Performance characteristics:
- * This function executes a single set-based query against the referenced
- * table. The primary cost is the `covers_without_gaps` aggregate, which
- * operates on the set of unique key rows matching the foreign key.
- * Performance is roughly O(M log M) where M is the number of referenced key
- * rows, due to the sorting required by the aggregate.
- */
-CREATE FUNCTION sql_saga.validate_foreign_key_new_row(row_data jsonb
-    , foreign_key_name name
-    , fk_table_oid regclass
-    , fk_schema_name text
-    , fk_table_name text
-    , fk_column_names text[]
-    , fk_era_name text
-    , fk_start_after_column_name text
-    , fk_stop_on_column_name text
-    , uk_table_oid regclass
-    , uk_schema_name text
-    , uk_table_name text
-    , uk_column_names text[]
-    , uk_era_name text
-    , uk_start_after_column_name text
-    , uk_stop_on_column_name text
-    , match_type sql_saga.fk_match_types
-    , update_action sql_saga.fk_actions
-    , delete_action sql_saga.fk_actions
-    )
- RETURNS boolean
- LANGUAGE plpgsql
-AS
-$function$
-#variable_conflict use_variable
-DECLARE
-    okay boolean;
-    uk_where_clause text;
-    fk_start_val text;
-    fk_end_val text;
-    uk_range_constructor regtype;
-    fk_range_constructor regtype;
-
-    QSQL_VALIDATE_NEW_ROW CONSTANT text :=
-    'SELECT COALESCE(('
-    '  SELECT sql_saga.covers_without_gaps('
-    '    %1$I(uk.%2$I, uk.%3$I, ''(]''),'
-    '    %4$I(%5$L, %6$L, ''(]'')'
-    '    ORDER BY uk.%2$I'
-    '  )'
-    '  FROM %7$I.%8$I AS uk'
-    '  WHERE %9$s'
-    '), false)';
-
-BEGIN
-    IF row_data IS NULL THEN
-        RAISE EXCEPTION 'row_data is not provided';
-    END IF;
-
-    /*
-     * Check for NULLs in the foreign key columns and handle according to
-     * MATCH type.
-     */
-    DECLARE
-        column_name name;
-        has_nulls boolean := false;
-        all_nulls boolean := true;
-    BEGIN
-        FOREACH column_name IN ARRAY fk_column_names LOOP
-            IF row_data->>column_name IS NULL THEN
-                has_nulls := true;
-            ELSE
-                all_nulls := false;
-            END IF;
-        END LOOP;
-
-        IF all_nulls THEN
-            /*
-             * If there are no values at all, all three types pass.
-             *
-             * Period columns are by definition NOT NULL so the FULL MATCH
-             * type is only concerned with the non-period columns of the
-             * constraint.  SQL:2016 4.23.3.3
-             */
-            RETURN true;
-        END IF;
-
-        IF has_nulls THEN
-            CASE match_type
-                WHEN 'SIMPLE' THEN
-                    RETURN true;
-                WHEN 'PARTIAL' THEN
-                    RAISE EXCEPTION 'MATCH PARTIAL is not implemented';
-                WHEN 'FULL' THEN
-                    RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%" (MATCH FULL with NULLs)',
-                        fk_table_oid,
-                        foreign_key_name;
-            END CASE;
-        END IF;
-    END;
-
-    /*
-     * Build and execute a query to check if the referenced unique key
-     * completely covers the new row's validity period.
-     */
-    SELECT string_agg(format('uk.%I = %s', u.ukc, quote_literal(row_data->>u.fkc)), ' AND ')
-    INTO uk_where_clause
-    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
-
-    fk_start_val := row_data->>fk_start_after_column_name;
-    fk_end_val := row_data->>fk_stop_on_column_name;
-
-    SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
-    SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
-
-    EXECUTE format(QSQL_VALIDATE_NEW_ROW,
-        uk_range_constructor,           -- %1$I
-        uk_start_after_column_name,     -- %2$I
-        uk_stop_on_column_name,         -- %3$I
-        fk_range_constructor,           -- %4$I
-        fk_start_val,                   -- %5$L
-        fk_end_val,                     -- %6$L
-        uk_schema_name,                 -- %7$I
-        uk_table_name,                  -- %8$I
-        uk_where_clause                 -- %9$s
-    ) INTO okay;
-
-    IF NOT okay THEN
-        RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-            fk_table_oid,
-            foreign_key_name;
-    END IF;
-
-    RETURN true;
-END;
-$function$;
 
 --TODO: Pick relevant parts of creating functions for views
 -- to make the API for the `era` table.
