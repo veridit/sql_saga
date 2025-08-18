@@ -146,13 +146,13 @@ TABLE location;
 -- Can't delete referenced legal_Init
 DELETE FROM legal_unit WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 65 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 66 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, false /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
 PL/pgSQL function sql_saga.uk_delete_check() line 39 at PERFORM
 -- Can't shorten referenced legal_unit more than the referencing location
 UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id = 101;
 ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
-CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 65 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.validate_foreign_key_old_row(jsonb,boolean,name,regclass,text,text,text[],text,text,text,regclass,text,text,text[],text,text,text,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions) line 66 at RAISE
 SQL statement "SELECT sql_saga.validate_foreign_key_old_row(jold, true /* is_update */, foreign_key_name, fk_table_oid, fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_start_after_column_name, fk_stop_on_column_name, uk_table_oid, uk_schema_name, uk_table_name, uk_column_names, uk_era_name, uk_start_after_column_name, uk_stop_on_column_name, match_type, update_action, delete_action)"
 PL/pgSQL function sql_saga.uk_update_check() line 40 at PERFORM
 -- With deferred constraints, adjust the data

@@ -2223,72 +2223,74 @@ AS
 $function$
 DECLARE
     column_name name;
-    uk_join_on_fk text;
-    fk_where_clause text;
+    fk_row record;
+    fk_row_data jsonb;
+    find_fk_rows_sql text;
+    where_clause text;
+    uk_where_clause text;
+    fk_start_val text;
+    fk_end_val text;
     uk_range_constructor regtype;
     fk_range_constructor regtype;
-    violation boolean;
+    okay boolean;
 
-    -- This query checks for violations by finding any referencing row (`fk`)
-    -- for which the referenced rows (`uk`) no longer completely cover its
-    -- validity period. It uses a correlated subquery to re-check coverage
-    -- for each potentially affected foreign key row.
-    QSQL_VALIDATE_FKS CONSTANT text :=
-    'SELECT EXISTS ('
-    '  SELECT 1'
-    '  FROM %1$s AS fk'
-    '  WHERE %4$s AND NOT COALESCE(('
-    '    SELECT sql_saga.no_gaps('
-    '      %7$I(uk.%8$I, uk.%9$I),'
-    '      %10$I(fk.%5$I, fk.%6$I)'
-    '      ORDER BY uk.%8$I'
-    '    )'
-    '    FROM %2$s AS uk'
-    '    WHERE %3$s'
-    '  ), false)'
-    ')';
-
+    QSQL_VALIDATE_NEW_ROW CONSTANT text :=
+    'SELECT COALESCE(('
+    '  SELECT sql_saga.covers_without_gaps('
+    '    %1$I(uk.%2$I, uk.%3$I, ''(]''),'
+    '    %4$I(%5$L, %6$L, ''(]'')'
+    '    ORDER BY uk.%2$I'
+    '  )'
+    '  FROM %7$I.%8$I AS uk'
+    '  WHERE %9$s'
+    '), false)';
 BEGIN
-    -- If any part of the key in the OLD row is NULL, it cannot be referenced
-    -- by a valid foreign key row (unless MATCH PARTIAL is supported,
-    -- which it is not). So we can safely return.
+    -- If any part of the key in the OLD row is NULL, it cannot be referenced.
     FOREACH column_name IN ARRAY uk_column_names LOOP
         IF row_data->>column_name IS NULL THEN
             RETURN true;
         END IF;
     END LOOP;
 
-    SELECT string_agg(format('fk.%I = uk.%I', u.fkc, u.ukc), ' AND ')
-    INTO uk_join_on_fk
+    -- Build WHERE clause to find fk rows that reference the OLD uk row
+    SELECT string_agg(format('%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
+    INTO where_clause
     FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    SELECT string_agg(format('fk.%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
-    INTO fk_where_clause
-    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
+    find_fk_rows_sql := format('SELECT * FROM %s WHERE %s', fk_table_oid, where_clause);
 
     SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
     SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
 
-    EXECUTE format(QSQL_VALIDATE_FKS,
-        fk_table_oid,                                -- %1$s: fk table
-        uk_table_oid,                                -- %2$s: uk table
-        uk_join_on_fk,                               -- %3$s: join condition for subquery
-        fk_where_clause,                             -- %4$s: where condition for outer query
-        fk_start_after_column_name,                  -- %5$I: fk start col
-        fk_stop_on_column_name,                      -- %6$I: fk end col
-        uk_range_constructor,                        -- %7$I: uk range type constructor
-        uk_start_after_column_name,                  -- %8$I: uk start col
-        uk_stop_on_column_name,                      -- %9$I: uk end col
-        fk_range_constructor                         -- %10$I: fk range type constructor
-    )
-    INTO violation;
+    FOR fk_row IN EXECUTE find_fk_rows_sql LOOP
+        fk_row_data := to_jsonb(fk_row);
 
-    IF violation THEN
-        RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-            uk_table_oid,
-            foreign_key_name,
-            fk_table_oid;
-    END IF;
+        SELECT string_agg(format('uk.%I = %s', u.ukc, quote_literal(fk_row_data->>u.fkc)), ' AND ')
+        INTO uk_where_clause
+        FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
+
+        fk_start_val := fk_row_data->>fk_start_after_column_name;
+        fk_end_val := fk_row_data->>fk_stop_on_column_name;
+
+        EXECUTE format(QSQL_VALIDATE_NEW_ROW,
+            uk_range_constructor,           -- %1$I
+            uk_start_after_column_name,     -- %2$I
+            uk_stop_on_column_name,         -- %3$I
+            fk_range_constructor,           -- %4$I
+            fk_start_val,                   -- %5$L
+            fk_end_val,                     -- %6$L
+            uk_schema_name,                 -- %7$I
+            uk_table_name,                  -- %8$I
+            uk_where_clause                 -- %9$s
+        ) INTO okay;
+
+        IF NOT okay THEN
+            RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
+                uk_table_oid,
+                foreign_key_name,
+                fk_table_oid;
+        END IF;
+    END LOOP;
 
     RETURN true;
 END;
@@ -2323,32 +2325,23 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    row_clause text DEFAULT 'true';
-    violation boolean;
+    okay boolean;
+    uk_where_clause text;
+    fk_start_val text;
+    fk_end_val text;
+    uk_range_constructor regtype;
+    fk_range_constructor regtype;
 
-    QSQL CONSTANT text :=
-        'SELECT EXISTS ( '
-        '    SELECT FROM %5$I.%6$I AS fk '
-        '    WHERE NOT EXISTS ( '
-        '        SELECT FROM (SELECT uk.uk_start_value, '
-        '                            uk.uk_end_value, '
-        '                            nullif(lag(uk.uk_end_value) OVER (ORDER BY uk.uk_start_value), uk.uk_start_value) AS x '
-        '                     FROM (SELECT uk.%3$I AS uk_start_value, '
-        '                                  uk.%4$I AS uk_end_value '
-        '                           FROM %1$I.%2$I AS uk '
-        '                           WHERE %9$s '
-        '                             AND uk.%3$I <= fk.%8$I '
-        '                             AND uk.%4$I >= fk.%7$I '
-        '                           FOR KEY SHARE '
-        '                          ) AS uk '
-        '                    ) AS uk '
-        '        WHERE uk.uk_start_value < fk.%8$I '
-        '          AND uk.uk_end_value >= fk.%7$I '
-        '        HAVING min(uk.uk_start_value) <= fk.%7$I '
-        '           AND max(uk.uk_end_value) >= fk.%8$I '
-        '           AND array_agg(uk.x) FILTER (WHERE uk.x IS NOT NULL) IS NULL '
-        '    ) AND %10$s '
-        ')';
+    QSQL_VALIDATE_NEW_ROW CONSTANT text :=
+    'SELECT COALESCE(('
+    '  SELECT sql_saga.covers_without_gaps('
+    '    %1$I(uk.%2$I, uk.%3$I),'
+    '    %4$I(%5$L, %6$L)'
+    '    ORDER BY uk.%2$I'
+    '  )'
+    '  FROM %7$I.%8$I AS uk'
+    '  WHERE %9$s'
+    '), false)';
 
 BEGIN
     IF row_data IS NULL THEN
@@ -2356,21 +2349,20 @@ BEGIN
     END IF;
 
     /*
-     * Now that we have all of our names, we can see if there are any nulls in
-     * the row we were given.
+     * Check for NULLs in the foreign key columns and handle according to
+     * MATCH type.
      */
     DECLARE
         column_name name;
-        has_nulls boolean;
-        all_nulls boolean;
-        cols text[] DEFAULT '{}';
-        vals text[] DEFAULT '{}';
+        has_nulls boolean := false;
+        all_nulls boolean := true;
     BEGIN
         FOREACH column_name IN ARRAY fk_column_names LOOP
-            has_nulls := has_nulls OR row_data->>column_name IS NULL;
-            all_nulls := all_nulls IS NOT false AND row_data->>column_name IS NULL;
-            cols := cols || ('fk.' || quote_ident(column_name));
-            vals := vals || quote_literal(row_data->>column_name);
+            IF row_data->>column_name IS NULL THEN
+                has_nulls := true;
+            ELSE
+                all_nulls := false;
+            END IF;
         END LOOP;
 
         IF all_nulls THEN
@@ -2389,41 +2381,46 @@ BEGIN
                 WHEN 'SIMPLE' THEN
                     RETURN true;
                 WHEN 'PARTIAL' THEN
-                    RAISE EXCEPTION 'partial not implemented';
+                    RAISE EXCEPTION 'MATCH PARTIAL is not implemented';
                 WHEN 'FULL' THEN
-                    RAISE EXCEPTION 'foreign key violated (nulls in FULL)';
+                    RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%" (MATCH FULL with NULLs)',
+                        fk_table_oid,
+                        foreign_key_name;
             END CASE;
         END IF;
-
-        row_clause := format(' (%s) = (%s)', array_to_string(cols, ', '), array_to_string(vals, ', '));
     END;
 
-    BEGIN
-        EXECUTE format(QSQL, uk_schema_name,
-                             uk_table_name,
-                             uk_start_after_column_name,
-                             uk_stop_on_column_name,
-                             fk_schema_name,
-                             fk_table_name,
-                             fk_start_after_column_name,
-                             fk_stop_on_column_name,
-                             (SELECT string_agg(format('%I IS NOT DISTINCT FROM %I', ukc, fkc), ' AND ')
-                              FROM unnest(uk_column_names,
-                                          fk_column_names) AS u (ukc, fkc)
-                             ),
-                             row_clause)
-        INTO violation;
+    /*
+     * Build and execute a query to check if the referenced unique key
+     * completely covers the new row's validity period.
+     */
+    SELECT string_agg(format('uk.%I = %s', u.ukc, quote_literal(row_data->>u.fkc)), ' AND ')
+    INTO uk_where_clause
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-        IF violation THEN
-            IF row_data IS NULL THEN
-                RAISE EXCEPTION 'foreign key violated by some row';
-            ELSE
-                RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-                    fk_table_oid,
-                    foreign_key_name;
-            END IF;
-        END IF;
-    END;
+    fk_start_val := row_data->>fk_start_after_column_name;
+    fk_end_val := row_data->>fk_stop_on_column_name;
+
+    SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
+    SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
+
+    EXECUTE format(QSQL_VALIDATE_NEW_ROW,
+        uk_range_constructor,           -- %1$I
+        uk_start_after_column_name,     -- %2$I
+        uk_stop_on_column_name,         -- %3$I
+        fk_range_constructor,           -- %4$I
+        fk_start_val,                   -- %5$L
+        fk_end_val,                     -- %6$L
+        uk_schema_name,                 -- %7$I
+        uk_table_name,                  -- %8$I
+        uk_where_clause                 -- %9$s
+    ) INTO okay;
+
+    IF NOT okay THEN
+        RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
+            fk_table_oid,
+            foreign_key_name;
+    END IF;
 
     RETURN true;
 END;

@@ -27,10 +27,15 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
         -   **Step 11 (Falsified):** The attempt to differentiate logic based on discrete vs. continuous range types was flawed. While the detection mechanism was corrected, the logic itself was overly complex and failed for continuous types like `numeric`.
         -   **Step 12 (Falsified):** Reverting to a simpler logic (always inclusive) fixed discrete range tests but failed for continuous ones because the tests themselves were flawed.
         -   **Step 13 (Falsified):** The generalized logic and corrected tests still revealed a fundamental flaw. The root cause was the incorrect use of `range_cmp_bounds` for contiguity checking, which is designed for sorting and misinterprets adjacent bounds as gaps.
-        -   **Step 14 (Current):** Implementing a correct, manual contiguity check in `covers_without_gaps.c`.
-            1.  **C Code Fix:** Replaced the incorrect `range_cmp_bounds` call with a direct datum comparison, followed by a check on the `inclusive` flags to correctly identify gaps between adjacent boundaries (e.g., `(a,b)` and `(b,c)`). This provides a robust, generalized solution.
-            2.  **Test Suite Enhancement:** Added tests for all range boundary combinations (`[]`, `()`, `[)`) to `22_covers_without_gaps_test.sql` to verify the generalized logic.
-            3.  **Final Cleanup:** Refactored all `ORDER BY` clauses in tests to be simpler and more idiomatic. This resolves all known issues with the `covers_without_gaps` feature.
+        -   **Step 14 (Verified):** Implemented a correct, manual contiguity check in `covers_without_gaps.c`, and enhanced the test suite. All `covers_without_gaps` tests now pass.
+        -   **Step 15 (Falsified):** The hypothesis to exclude the `OLD` row was correct, but the implementation introduced a SQL syntax error (`missing FROM-clause entry for table "uk"`) by incorrectly using an outer alias inside a subquery.
+        -   **Step 16 (Falsified):** The attempt to fix the SQL syntax by removing the `uk.` prefix from the `old_pk_val_clause` did not resolve the issue, indicating a deeper problem with the subquery approach.
+        -   **Step 17 (Falsified):** The attempt to fix the SQL syntax by moving the exclusion logic to the `ON` clause was syntactically correct but did not fix the underlying logical error, as the tests still failed to detect violations.
+        -   **Step 18 (Falsified):** Simplifying the validation query by removing the `OLD` row exclusion logic did not work. The query still failed to detect foreign key violations, indicating the issue is not with the exclusion logic but something more fundamental.
+        -   **Step 19 (Falsified):** The hypothesis that refactoring `validate_foreign_key_old_row` to a `LOOP` that calls `validate_foreign_key_new_row` would work was incorrect. This change failed to detect violations and produced confusing error messages.
+        -   **Step 20 (Current):** Correcting foreign key validation by inlining logic.
+            1.  **Hypothesis:** The `LOOP` approach is correct, but re-using `validate_foreign_key_new_row` is flawed. Inlining the validation logic directly into `validate_foreign_key_old_row`'s `LOOP` and raising a context-appropriate error will be more robust.
+            2.  **Action:** Replace the `PERFORM` call inside the `LOOP` in `validate_foreign_key_old_row` with the explicit `SELECT ... INTO okay` and `IF NOT okay THEN RAISE ...` logic from `validate_foreign_key_new_row`. This makes the function self-contained and should fix all remaining test failures.
 
 - [x] **Make `drop_*` commands fail for incorrect parameters:**
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
