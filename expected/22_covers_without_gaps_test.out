@@ -125,6 +125,39 @@ FROM (VALUES
  t
 (1 row)
 
+-- it covers with [] boundaries
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '[]'))
+FROM (VALUES
+  (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '[]')), -- [10, 12]
+  (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '[]'))  -- [12, 14] -- overlaps are not gaps
+) AS t(v);
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
+-- it covers with (] boundaries
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '(]'))
+FROM (VALUES
+  (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '(]')), -- (10, 12]
+  (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '(]'))  -- (12, 14] -- contiguous
+) AS t(v);
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
+-- it covers with tsrange (timezone-naive)
+SELECT sql_saga.covers_without_gaps(v, tsrange('2024-01-01 10:00', '2024-01-01 14:00', '[)'))
+FROM (VALUES
+  (tsrange('2024-01-01 10:00', '2024-01-01 12:00', '[)')), -- [10, 12)
+  (tsrange('2024-01-01 12:00', '2024-01-01 14:00', '[)'))  -- [12, 14)
+) AS t(v);
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
 -- =============================================================================
 -- FALSE: Cases where ranges should NOT be considered covered
 -- =============================================================================
@@ -153,6 +186,32 @@ WHERE   job_id = 1;
 SELECT  sql_saga.covers_without_gaps(tstzrange(valid_after,valid_to), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
 FROM    covers_test_shifts
 WHERE   job_id = 2;
+ covers_without_gaps 
+---------------------
+ f
+(1 row)
+
+-- it does not cover when a [) and () meet at the boundary (gap at 12)
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '[)'))
+FROM (
+  SELECT v FROM (VALUES
+    (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '[)')), -- [10, 12)
+    (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '()'))  -- (12, 14)
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
+ covers_without_gaps 
+---------------------
+ f
+(1 row)
+
+-- it does not cover when a () and [) meet at the boundary (gap at 12)
+SELECT sql_saga.covers_without_gaps(v, tstzrange('2024-01-01 10:00', '2024-01-01 14:00', '[)'))
+FROM (
+  SELECT v FROM (VALUES
+    (tstzrange('2024-01-01 10:00', '2024-01-01 12:00', '()')), -- (10, 12)
+    (tstzrange('2024-01-01 12:00', '2024-01-01 14:00', '[)'))  -- [12, 14)
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
  covers_without_gaps 
 ---------------------
  f
@@ -218,6 +277,60 @@ WHERE   job_id = 4;
 -- it does not cover when a preceding range hides a gap at the start of the target
 SELECT  sql_saga.covers_without_gaps(v, tstzrange('2024-01-10', '2024-01-20'))
 FROM    (VALUES (tstzrange('2024-01-01', '2024-01-05')), (tstzrange('2024-01-12', '2024-01-25'))) AS t(v);
+ covers_without_gaps 
+---------------------
+ f
+(1 row)
+
+-- -----------------------------------------------------------------------------
+-- Sub-group: Mixed Boundary Semantics (using discrete ranges for clarity)
+-- -----------------------------------------------------------------------------
+-- it does not cover when exclusive bounds create a gap for a discrete type
+SELECT sql_saga.covers_without_gaps(v, int4range(1, 10, '[]'))
+FROM (
+  SELECT v FROM (VALUES
+    (int4range(1, 5, '[)')), -- covers 1,2,3,4
+    (int4range(5, 10, '(]'))  -- covers 6,7,8,9,10. The integer 5 is missing.
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
+ covers_without_gaps 
+---------------------
+ f
+(1 row)
+
+-- it covers when mixed bounds are contiguous for a discrete type
+SELECT sql_saga.covers_without_gaps(v, int4range(1, 10, '[]'))
+FROM (
+  SELECT v FROM (VALUES
+    (int4range(1, 5, '[]')), -- covers 1,2,3,4,5
+    (int4range(5, 10, '(]'))  -- covers 6,7,8,9,10
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
+-- it covers when mixed bounds are contiguous for a discrete type (case 2)
+SELECT sql_saga.covers_without_gaps(v, int4range(1, 10, '[]'))
+FROM (
+  SELECT v FROM (VALUES
+    (int4range(1, 5, '[)')), -- covers 1,2,3,4
+    (int4range(5, 10, '[]'))  -- covers 5,6,7,8,9,10
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
+-- it does not cover when the target's inclusive bound is not met by an exclusive input bound
+SELECT sql_saga.covers_without_gaps(v, int4range(1, 10, '[]'))
+FROM (
+  SELECT v FROM (VALUES
+    (int4range(1, 10, '[)')) -- covers 1..9, but target needs 10
+  ) AS t(v) ORDER BY v
+) AS sorted_v;
  covers_without_gaps 
 ---------------------
  f

@@ -84,6 +84,13 @@ typedef struct covers_without_gaps_state {
    * range-element types (e.g., numeric, text, timestamp).
    */
   bool covered_to_is_palloced;
+  /*
+   * The start bound of the previously processed range, used to verify that
+   * the input is correctly sorted.
+   */
+  RangeBound previous_start;
+  /* Memory management flag for previous_start.val. */
+  bool previous_start_is_palloced;
 } covers_without_gaps_state;
 
 
@@ -112,6 +119,7 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     // or the state will get cleared in between invocations:
     state = (covers_without_gaps_state *)MemoryContextAlloc(aggContext, sizeof(covers_without_gaps_state));
     state->covered_to_is_palloced = false;
+    state->previous_start_is_palloced = false;
     state->finished = false;
     state->is_covered = false;
     first_time = true;
@@ -154,6 +162,18 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     state->covered_to.infinite = true;
     state->covered_to.inclusive = true;
     state->covered_to.lower = true;
+
+    // Initialize previous_start to negative infinity as well.
+    state->previous_start = state->covered_to;
+    if (state->covered_to_is_palloced)
+    {
+        // covered_to.val was palloc'd. Need a new copy for previous_start.
+        oldContext = MemoryContextSwitchTo(aggContext);
+        state->previous_start.val = datumCopy(state->covered_to.val, false, -1);
+        MemoryContextSwitchTo(oldContext);
+        state->previous_start_is_palloced = true;
+    }
+
     //ereport(DEBUG1, (errmsg("initial covered_to is %s", DatumGetString(elem_oid, state->covered_to))));
   } else {
     // ereport(NOTICE, (errmsg("looking up state....")));
@@ -244,13 +264,11 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
   }
   
   /*
-   * The logic requires that input ranges are sorted by their start bound. The
-   * `range_cmp_bounds` function is suitable for this check. It handles cases
-   * where ranges overlap, which is valid input. A negative result indicates
-   * that a new range starts before the previous one ended, meaning the input
-   * is not sorted correctly.
+   * The logic requires that input ranges are sorted by their start bound.
+   * We check that the current start bound is not less than the previous start
+   * bound. This correctly handles overlapping ranges.
    */
-  if (range_cmp_bounds(typcache, &current_start, &state->covered_to) < 0) {
+  if (!first_time && range_cmp_bounds(typcache, &current_start, &state->previous_start) < 0) {
     //ereport(ERROR, (errmsg(
     //    "covers_without_gaps first argument should be sorted but got %s after covering up to %s",
     //    DatumGetString(elem_oid, current_start),
@@ -307,6 +325,22 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
   //oldContext = MemoryContextSwitchTo(aggContext);
   //ereport(DEBUG1, (errmsg("post state->covered_to is %s", DatumGetString(elem_oid, state->covered_to))));
   //MemoryContextSwitchTo(oldContext);
+
+  // Update previous_start for the next iteration's sort check
+  if (!elem_typcache->typbyval && elem_typcache->typlen == -1) {
+      oldContext = MemoryContextSwitchTo(aggContext);
+      if (state->previous_start_is_palloced)
+          pfree(DatumGetPointer(state->previous_start.val));
+
+      state->previous_start.val = datumCopy(current_start.val, false, -1);
+      state->previous_start_is_palloced = true;
+      MemoryContextSwitchTo(oldContext);
+  } else {
+      state->previous_start.val = current_start.val;
+  }
+  state->previous_start.infinite = current_start.infinite;
+  state->previous_start.inclusive = current_start.inclusive;
+  state->previous_start.lower = current_start.lower;
   
   PG_RETURN_POINTER(state);
 }

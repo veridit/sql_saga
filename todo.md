@@ -8,10 +8,6 @@ This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
   - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
   - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
 
-- [x] **Make `drop_*` commands fail for incorrect parameters:**
-  - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
-  - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
-
 ## Medium Priority - Refactoring & API Improvements
 
 - [ ] **Improve trigger performance by converting to C:**
@@ -90,7 +86,7 @@ This section summarizes potential improvements and features adapted from the `pe
     1.  **Memory Safety:** Replacing a flawed, simplified implementation with a more verbose but stable one based on the `no_gaps.c` prototype, then fixing memory leaks for pass-by-reference types by carefully managing `palloc`'d memory within the aggregate's context.
     2.  **Correct Logic:** Implementing a fully generalized contiguity logic that correctly handles both discrete (e.g., `integer`, `date`) and continuous (e.g., `numeric`, `timestamp`) range types. The final implementation correctly checks for gaps between adjacent boundaries by comparing datums directly and then inspecting the `inclusive` flags, rather than using the incorrect `range_cmp_bounds` function.
     3.  **Test Suite Correction:** Correcting all `covers_without_gaps` tests to be deterministic by using `ORDER BY` inside the aggregate call to guarantee sorted input, which is a requirement of the function.
-    4.  **Foreign Key Validation:** Refactored the `validate_foreign_key_old_row` function to use a `LOOP` over affected foreign key rows. This prioritizes correctness and robustness over a complex set-based query that is difficult to implement correctly due to PostgreSQL's transaction visibility rules.
+    4.  **Foreign Key Validation:** Fixed `validate_foreign_key_old_row` by refactoring it to use a robust, set-based query with the `covers_without_gaps` aggregate. This was an iterative process that involved fixing the aggregate itself and ensuring correct transaction visibility semantics and correct range bound construction.
 - **Clarify variable naming in `add_api`:** A misleading variable name inside the `add_api` function loop was corrected for clarity.
 - **Clarify parameter naming in `_make_api_view_name`:** A misleading parameter name in the `_make_api_view_name` function was corrected for clarity.
 - **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.

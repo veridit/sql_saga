@@ -2198,19 +2198,17 @@ $function$;
  * still covered after the change.
  *
  * Performance characteristics:
- * This function uses a FOR ... LOOP to iterate over each foreign key row that
- * references the OLD unique key. Inside the loop, it executes a validation
- * query. This results in N queries, where N is the number of referencing rows.
- * The total complexity is roughly O(N * M log M), where M is the number of
- * unique key rows.
+ * This function uses a single, set-based query. It finds all affected foreign
+ * key rows and, for each one, runs a correlated subquery with the
+ * `covers_without_gaps` aggregate to validate its coverage. This is generally
+ * more performant than a `LOOP` for bulk operations. The total complexity is
+ * roughly O(N * M log M), where N is the number of referencing rows and M is
+ * the number of unique key rows, but with lower per-row overhead than a
+ * pl/pgsql loop.
  *
- * This loop-based approach was chosen for correctness and robustness over a
- * single, complex set-based query. A set-based query is difficult to implement
- * correctly due to PostgreSQL's MVCC and transaction visibility rules within
- * AFTER triggers, and previous attempts resulted in subtle bugs where
- * violations were not detected. This implementation prioritizes correctness,
- * but may be slow for bulk DELETEs or UPDATEs that affect many foreign key
- * relationships.
+ * NOTE: Previous attempts at a set-based query failed due to subtle bugs in
+ * the `covers_without_gaps` aggregate itself. Now that the aggregate is
+ * robust, this more performant set-based approach is viable and correct.
  */
 CREATE FUNCTION sql_saga.validate_foreign_key_old_row(
     row_data jsonb,
@@ -2241,27 +2239,27 @@ AS
 $function$
 DECLARE
     column_name name;
-    fk_row record;
-    fk_row_data jsonb;
-    find_fk_rows_sql text;
+    join_on text;
     where_clause text;
-    uk_where_clause text;
-    fk_start_val text;
-    fk_end_val text;
     uk_range_constructor regtype;
     fk_range_constructor regtype;
-    okay boolean;
+    violation boolean;
 
-    QSQL_VALIDATE_NEW_ROW CONSTANT text :=
-    'SELECT COALESCE(('
-    '  SELECT sql_saga.covers_without_gaps('
-    '    %1$I(uk.%2$I, uk.%3$I, ''(]''),'
-    '    %4$I(%5$L, %6$L, ''(]'')'
-    '    ORDER BY uk.%2$I'
-    '  )'
-    '  FROM %7$I.%8$I AS uk'
-    '  WHERE %9$s'
-    '), false)';
+    QSQL_VALIDATE_FKS CONSTANT text :=
+    'SELECT EXISTS ('
+    '  SELECT 1'
+    '  FROM %1$s AS fk'
+    '  WHERE %4$s AND COALESCE(NOT ('
+    '    SELECT sql_saga.covers_without_gaps('
+    '      %7$I(uk.%8$I, uk.%9$I, ''(]''),'
+    '      %10$I(fk.%5$I, fk.%6$I, ''(]'')'
+    '      ORDER BY uk.%8$I'
+    '    )'
+    '    FROM %2$s AS uk'
+    '    WHERE %3$s' -- join condition: fk.col = uk.col
+    '  ), true)'
+    ')';
+
 BEGIN
     -- If any part of the key in the OLD row is NULL, it cannot be referenced.
     FOREACH column_name IN ARRAY uk_column_names LOOP
@@ -2270,45 +2268,39 @@ BEGIN
         END IF;
     END LOOP;
 
-    -- Build WHERE clause to find fk rows that reference the OLD uk row
-    SELECT string_agg(format('%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
-    INTO where_clause
+    -- Build JOIN clause for subquery: fk -> uk
+    SELECT string_agg(format('fk.%I = uk.%I', u.fkc, u.ukc), ' AND ')
+    INTO join_on
     FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
-    find_fk_rows_sql := format('SELECT * FROM %s WHERE %s', fk_table_oid, where_clause);
+    -- Build WHERE clause to find fk rows that reference the OLD uk row
+    SELECT string_agg(format('fk.%I = %s', u.fkc, quote_literal(row_data->>u.ukc)), ' AND ')
+    INTO where_clause
+    FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
 
     SELECT range_type INTO fk_range_constructor FROM sql_saga.era WHERE table_oid = fk_table_oid AND era_name = fk_era_name;
     SELECT range_type INTO uk_range_constructor FROM sql_saga.era WHERE table_oid = uk_table_oid AND era_name = uk_era_name;
 
-    FOR fk_row IN EXECUTE find_fk_rows_sql LOOP
-        fk_row_data := to_jsonb(fk_row);
+    EXECUTE format(QSQL_VALIDATE_FKS,
+        fk_table_oid,                                -- %1$s: fk table
+        uk_table_oid,                                -- %2$s: uk table
+        join_on,                                     -- %3$s: join condition
+        where_clause,                                -- %4$s: where condition
+        fk_start_after_column_name,                  -- %5$I: fk start col
+        fk_stop_on_column_name,                      -- %6$I: fk end col
+        uk_range_constructor,                        -- %7$I: uk range type constructor
+        uk_start_after_column_name,                  -- %8$I: uk start col
+        uk_stop_on_column_name,                      -- %9$I: uk end col
+        fk_range_constructor                         -- %10$I: fk range type constructor
+    )
+    INTO violation;
 
-        SELECT string_agg(format('uk.%I = %s', u.ukc, quote_literal(fk_row_data->>u.fkc)), ' AND ')
-        INTO uk_where_clause
-        FROM unnest(fk_column_names, uk_column_names) AS u(fkc, ukc);
-
-        fk_start_val := fk_row_data->>fk_start_after_column_name;
-        fk_end_val := fk_row_data->>fk_stop_on_column_name;
-
-        EXECUTE format(QSQL_VALIDATE_NEW_ROW,
-            uk_range_constructor,           -- %1$I
-            uk_start_after_column_name,     -- %2$I
-            uk_stop_on_column_name,         -- %3$I
-            fk_range_constructor,           -- %4$I
-            fk_start_val,                   -- %5$L
-            fk_end_val,                     -- %6$L
-            uk_schema_name,                 -- %7$I
-            uk_table_name,                  -- %8$I
-            uk_where_clause                 -- %9$s
-        ) INTO okay;
-
-        IF NOT okay THEN
-            RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
-                uk_table_oid,
-                foreign_key_name,
-                fk_table_oid;
-        END IF;
-    END LOOP;
+    IF violation THEN
+        RAISE EXCEPTION 'update or delete on table "%" violates foreign key constraint "%" on table "%"',
+            uk_table_oid,
+            foreign_key_name,
+            fk_table_oid;
+    END IF;
 
     RETURN true;
 END;
@@ -2361,8 +2353,8 @@ DECLARE
     QSQL_VALIDATE_NEW_ROW CONSTANT text :=
     'SELECT COALESCE(('
     '  SELECT sql_saga.covers_without_gaps('
-    '    %1$I(uk.%2$I, uk.%3$I),'
-    '    %4$I(%5$L, %6$L)'
+    '    %1$I(uk.%2$I, uk.%3$I, ''(]''),'
+    '    %4$I(%5$L, %6$L, ''(]'')'
     '    ORDER BY uk.%2$I'
     '  )'
     '  FROM %7$I.%8$I AS uk'
