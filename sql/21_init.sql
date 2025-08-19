@@ -35,7 +35,7 @@ TABLE sql_saga.era;
 SELECT sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
 SELECT sql_saga.add_unique_key('houses', ARRAY['id'], 'valid');
 SELECT sql_saga.add_unique_key('rooms', ARRAY['id'], 'valid');
-TABLE sql_saga.unique_keys;
+SELECT * FROM sql_saga.unique_keys ORDER BY unique_key_name;
 
 SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
 TABLE sql_saga.foreign_keys;
@@ -54,7 +54,7 @@ SELECT sql_saga.drop_unique_key('houses','houses_id_valid');
 -- TODO: Simplify this API, to take the same parameters when created.
 -- TODO: Detect and raise an error if there is no match in "sql_saga.unique_keys".
 SELECT sql_saga.drop_unique_key('shifts', 'shifts_job_id_worker_id_valid');
-TABLE sql_saga.unique_keys;
+SELECT * FROM sql_saga.unique_keys ORDER BY unique_key_name;
 
 SELECT sql_saga.drop_era('rooms');
 SELECT sql_saga.drop_era('houses');
