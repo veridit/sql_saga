@@ -45,6 +45,23 @@ All development work, especially bug fixing, must follow this iterative cycle. D
 
 By strictly following this process, we ensure that progress is real, verifiable, and that the project's state remains consistently stable.
 
+### The "Observe, Verify, Implement" Protocol for Complex Changes
+When a task is complex or has a history of regressions (e.g., the `rename_following` trigger), a more rigorous, data-driven protocol is required to avoid speculative fixes. This protocol is a practical application of the "Observe first, then change" principle.
+
+1.  **Establish a Baseline (Observe):**
+    *   **Action:** Before writing any new logic, instrument the existing, *passing* code with diagnostic logging (`RAISE NOTICE`).
+    *   **Goal:** Capture the exact inputs, outputs, and event sequences that occur during the relevant tests. This baseline data serves as a definitive specification for the new logic. The tests are expected to fail due to the new logging output.
+
+2.  **Verify New Logic in Read-Only Mode (Verify):**
+    *   **Action:** Implement the new logic, but keep it "read-only." It should calculate its decisions but only log them, *without* altering the program's control flow (e.g., no early `RETURN` statements).
+    *   **Goal:** Run the tests again. Analyze the new logs to compare the baseline data against the logic's decisions. This step proves the logic is correct against real-world test data *before* it is activated.
+
+3.  **Activate the Verified Logic (Implement):**
+    *   **Action:** Only after the logic has been verified in read-only mode, remove all diagnostic logging and enable the new control flow (e.g., add the early `RETURN` statement).
+    *   **Goal:** Run the tests a final time to confirm that the now-active logic works as intended and that no regressions have been introduced.
+
+This protocol transforms debugging from a cycle of "guess-and-check" into a methodical, scientific process of data gathering and verification, dramatically reducing the number of failed attempts.
+
 ## Known Pitfalls and Falsified Assumptions
 This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.
 

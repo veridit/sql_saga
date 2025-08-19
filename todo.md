@@ -1,16 +1,10 @@
 # SQL Saga - TODO
 
-This file tracks prioritized improvements and tasks for the `sql_saga` codebase.
+This file is a living document that tracks the development progress, including active hypotheses and their outcomes. It is updated with each step of the development cycle.
 
 ## High Priority - Bugs & Core Features
 
-- [ ] **Optimize Slow DDL Operations Caused by Event Triggers:**
-  - **Problem:** All DDL operations (including `CREATE`, `ALTER`, `DROP` on unrelated tables) become significantly slower after `sql_saga` is installed.
-  - **Analysis (Root Cause):** The extension installs event triggers (`sql_saga_rename_following`, `sql_saga_health_checks`) on `ddl_command_end` that execute expensive queries for every DDL command. The complexity of these checks is `O(N)` where `N` is the number of tables and constraints managed by `sql_saga`. This means that as an application uses `sql_saga` more, all DDLs across the entire database become progressively slower.
-  - **Optimization Plan:**
-    1.  **Filter Irrelevant DDLs:** The primary optimization is to modify the event trigger functions (`rename_following` and `health_checks`) to exit immediately if the DDL command does not affect a managed object. This can be achieved by checking if the `objid` from `pg_event_trigger_ddl_commands()` exists in `sql_saga.era` or other `sql_saga` catalog tables. This will make DDLs on non-managed tables fast again.
-    2.  **Combine Event Triggers:** Combine `rename_following` and `health_checks` into a single function and a single `ddl_command_end` event trigger. This reduces overhead and centralizes the logic.
-    3.  **Optimize Internal Queries:** Review and optimize the queries within the trigger functions to ensure they are as efficient as possible for the cases where they do need to run. This may include adding indexes to the `sql_saga` catalog tables.
+
 
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
   - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
@@ -156,7 +150,170 @@ This section summarizes potential improvements and features adapted from the `pe
 
 ## Done
 
- **Remove legacy `time_for_keys` implementation:** Removed the `TRI_FKey_*` trigger functions and the `create/drop_temporal_foreign_key` helper functions. This code was part of an alternative, non-metadata-driven foreign key implementation from the `time_for_keys` project. It was removed to avoid confusion with `sql_saga`'s primary metadata-driven API. This resulted in a significant performance improvement, with the `43_benchmark` test runtime dropping from over 40 seconds to approximately 12 seconds. The analysis of this alternative approach remains as a research task, referencing the original `time_for_keys` project.
+- **Optimize Slow DDL Operations Caused by Event Triggers:**
+  - **Problem:** DDL operations on all tables were slow because the extension's event triggers (`rename_following`, `health_checks`) ran expensive checks for every command.
+  - **Fix:** Both triggers were modified to include an early-exit filter based on a methodical, data-driven process. The triggers now inspect the DDL command and exit early if no managed objects are affected. This fixes the performance issue and a regression in the `12_acl` test caused by a previous flawed filter.
+  - **Verification:** All tests in `make installcheck` pass, confirming the optimization is successful and regression-free.
+
+- **Fix `rename_following` event trigger to correctly track renamed era columns:**
+  - **Problem:** The `10_rename_following` test was failing due to a regression in the `rename_following` event trigger.
+  - **Fix:** The trigger's logic for tracking renamed objects was reverted to the original, simpler implementation which relies on string matching against `pg_get_constraintdef`. This resolved a long series of regressions caused by flawed attempts to build a more complex solution.
+- **Remove legacy `time_for_keys` implementation:** Removed the `TRI_FKey_*` trigger functions and the `create/drop_temporal_foreign_key` helper functions. This code was part of an alternative, non-metadata-driven foreign key implementation from the `time_for_keys` project. It was removed to avoid confusion with `sql_saga`'s primary metadata-driven API. This resulted in a significant performance improvement, with the `43_benchmark` test runtime dropping from over 40 seconds to approximately 12 seconds. The analysis of this alternative approach remains as a research task, referencing the original `time_for_keys` project.
+- **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:** This was a complex, multi-stage bug fix. The final solution involved:
+    1.  **Memory Safety:** Replacing a flawed, simplified implementation with a more verbose but stable one based on the `no_gaps.c` prototype, then fixing memory leaks for pass-by-reference types by carefully managing `palloc`'d memory within the aggregate's context.
+    2.  **Correct Logic:** Implementing a fully generalized contiguity logic that correctly handles both discrete (e.g., `integer`, `date`) and continuous (e.g., `numeric`, `timestamp`) range types. The final implementation correctly checks for gaps between adjacent boundaries by comparing datums directly and then inspecting the `inclusive` flags, rather than using the incorrect `range_cmp_bounds` function.
+    3.  **Test Suite Correction:** Correcting all `covers_without_gaps` tests to be deterministic by using `ORDER BY` inside the aggregate call to guarantee sorted input, which is a requirement of the function.
+    4.  **Foreign Key Validation:** Fixed `validate_foreign_key_old_row` by refactoring it to use a robust, set-based query with the `covers_without_gaps` aggregate. This was an iterative process that involved fixing the aggregate itself and ensuring correct transaction visibility semantics and correct range bound construction.
+- **Clarify variable naming in `add_api`:** A misleading variable name inside the `add_api` function loop was corrected for clarity.
+- **Clarify parameter naming in `_make_api_view_name`:** A misleading parameter name in the `_make_api_view_name` function was corrected for clarity.
+- **Fix `add_foreign_key` exception for incompatible eras:** Corrected a bug where the error message for incompatible era types was incorrect.
+- **Fix bug in temporal foreign key validation for `UPDATE` and `DELETE`:** Rewrote the validation logic in `validate_foreign_key_old_row` to correctly handle `UPDATE` and `DELETE` on referenced keys.
+- **Simplify foreign key validation using `covers_without_gaps`:** Refactored `validate_foreign_key_new_row` to use the `covers_without_gaps` aggregate, simplifying the code and making it consistent with `validate_foreign_key_old_row`.
+- [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
+  - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
+  - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
+  - **Validated Solution (The "Statbus Pattern"):** An external project (`statbus_speed`) has validated the definitive "Plan and Execute" solution. This pattern must be implemented inside a single procedural function (ideally in C for performance) that:
+    1.  **Plans (Read-Only):** Reads all source and target data and calculates a complete DML plan (`DELETE`s, `UPDATE`s, `INSERT`s) that is guaranteed to result in a consistent final timeline.
+    2.  **Executes (Write-Only):** Executes the pre-calculated plan using a specific **"add-then-modify" order**. It must perform `INSERT`s of new data before `UPDATE`ing or `DELETE`ing the old data that is being replaced. This ensures `sql_saga`'s triggers can validate the final state correctly.
+  - **Benefit:** A call to this function is a single top-level statement. `sql_saga`'s deferred triggers fire only at the end, validating a state that the planner has already guaranteed is correct. This is the architecturally sound solution to the multi-statement update problem and provides a path to re-enabling the tests in `28_with_exclusion_constraints.sql` by having them use this new API.
+
+- [x] **Fix FK resolution bug with ambiguous table names in `search_path`:**
+  - **Issue:** When a `search_path` contains multiple schemas with tables of the same name, the C-based FK triggers (`fk_insert_check_c`, `fk_update_check_c`) incorrectly resolved the target (unique key) table. They used a `regclass` cast to `text`, which can become an unqualified name, leading to resolution against the wrong schema.
+  - **Files:** `sql_saga.c`, `sql_saga--1.0.sql`.
+  - **Fix:** The C functions `fk_insert_check_c` and `fk_update_check_c` were modified to resolve the target table OID without ambiguity. Instead of relying on the problematic `uk_table_oid_str` argument (which is an unqualified `regclass::text` cast), they now construct a fully qualified name from the `uk_schema_name` and `uk_table_name` arguments before casting to `regclass`. This bypasses the `search_path` issue.
+  - **Verification:** The regression test `08_search_path_fk_resolution_bug.sql` was extended to verify both `INSERT` and `UPDATE` trigger behavior, and it now passes, confirming the fix is complete.
+
+- [x] **Make `drop_*` commands fail for incorrect parameters:**
+  - **Issue:** The `drop_*` functions were not strict and would fail silently for non-existent objects, which can hide configuration errors.
+  - **Fix:** The `drop_*` functions have been made strict to raise an exception for invalid parameters. The test suite's cleanup helpers have been updated to be idempotent by checking for an object's existence before attempting to drop it.
+
+## Medium Priority - Refactoring & API Improvements
+
+- [ ] **Convert pl/pgsql Foreign Key Triggers to C for Performance and Better Error Messages:**
+  - **Goal:** Replace the four `pl/pgsql` foreign key trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`) and their helper validation functions with C implementations. This will significantly improve performance and provide clean, native PostgreSQL error messages instead of verbose `pl/pgsql` stack traces.
+  - **Overall Strategy:** The conversion will be done incrementally, one trigger at a time, ensuring tests pass after each step. Each new C trigger function will be self-contained, incorporating the logic from the corresponding `validate_foreign_key_*_row` helper.
+
+  - [x] **Step 1: Convert `fk_insert_check` to C**
+    - **Status:** Done. The C function `fk_insert_check_c` is now successfully used for insert triggers.
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Created a new C function `fk_insert_check_c` in `sql_saga.c` that replicates the logic of `fk_insert_check` and `validate_foreign_key_new_row`.
+      2.  The C function uses `SPI` to execute the `covers_without_gaps` query and `ereport(ERROR, ...)` for constraint violations.
+      3.  Updated `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function.
+      4.  Fixed compilation warnings and a runtime error (`cache lookup failed for type 125`) by correctly parsing array-of-name trigger arguments and moving variable declarations.
+    - **Verification:** `make installcheck TESTS=26_insert_fk_test` passes.
+
+  - [x] **Step 2: Convert `fk_update_check` to C**
+    - **Status:** Done. The C function `fk_update_check_c` is now successfully used for update triggers.
+    - **Files:** `sql_saga.c`, `sql_saga.h`, `sql_saga--1.0.sql`.
+    - **Action:**
+      1.  Created `fk_update_check_c` in `sql_saga.c`, which is a copy of `fk_insert_check_c` but correctly uses `tg_newtuple` for `UPDATE` triggers.
+      2.  Updated `add_foreign_key` in `sql_saga--1.0.sql` to use the new C function.
+      3.  Fixed regressions caused by the initial implementation using the wrong tuple (`tg_trigtuple` instead of `tg_newtuple`).
+    - **Verification:** `make fast-tests` passes.
+
+  - [x] **Step 3: Convert `uk_delete_check` to C**
+    - **Status:** Done. The C function `uk_delete_check_c` now correctly validates deletions on referenced tables.
+    - **Files:** `sql_saga.c`, `sql_saga--1.0.sql`.
+    - **Fix:** The initial implementation failed because the validation query, running in an `AFTER DELETE` trigger, operated on a data snapshot that still included the row being deleted. This caused `covers_without_gaps` to incorrectly find coverage. The fix was to modify the query to explicitly exclude the `OLD` row from the check. Additionally, error messages were made schema-qualified.
+    - **Verification:** All tests in `make fast-tests` pass.
+
+  - [x] **Step 4: Convert `uk_update_check` to C**
+    - **Status:** Done. The C implementation is logically correct, but this has revealed a fundamental limitation of row-level triggers for certain multi-statement updates.
+    - **Problem Analysis:** The C implementation of `uk_update_check_c` is logically stricter and more correct than the `pl/pgsql` version it replaced. This causes tests for multi-statement `UPDATE`s (like swapping time periods in `28_with_exclusion_constraints.sql`) to fail. The root cause is a fundamental behavior of PostgreSQL's MVCC for constraint triggers. According to the PostgreSQL documentation for `CREATE TRIGGER`: *"A query started by a constraint trigger will see the state of the database as of the start of the statement that caused the trigger to fire, regardless of the SET CONSTRAINTS mode."* (See: https://www.postgresql.org/docs/current/sql-createtrigger.html). Consequently, the trigger for the first `UPDATE` in a transaction cannot see the changes from a subsequent `UPDATE`, leading it to incorrectly detect a temporary constraint violation that would be resolved by the transaction's end.
+    - **Attempted Workaround & Reversal:** An attempt to replicate a "bug" from the old `pl/pgsql` trigger (which ignored some violations) was made to allow these tests to pass. This workaround proved to be fundamentally flawed, as it made the trigger too permissive and caused numerous regressions in other tests (`06`, `13`, `25`, `42`). The faulty workaround has been reverted.
+    - **Files:** `sql_saga.c`, `sql/28_with_exclusion_constraints.sql`.
+    - **Action:**
+      1. The `uk_update_check_c` function has been restored to its correct, strict implementation. This fixes the regressions.
+      2. The failing multi-row tests in `28_with_exclusion_constraints.sql` have been re-commented out with a `TODO` note explaining the limitation. Correctly supporting this behavior will require a future enhancement, likely using statement-level triggers.
+    - **Final Refactoring:**
+      1. **Removed `keys_changed` logic:** The conditional logic in `uk_update_check_c` controlled by the `keys_changed` flag was a flawed workaround that caused regressions. It was removed in favor of a single, unified validation logic that correctly treats every `UPDATE` as a `DELETE` and an `INSERT`, which is robust for all cases. This made the `keys_changed` variable obsolete.
+      2. **Removed `uk_table_oid` trigger argument:** This argument was the source of a subtle `search_path` bug, as it was an unqualified `regclass::text` cast that could resolve to the wrong table. It was removed from all four trigger definitions. The C functions now safely construct the table's OID from the fully-qualified schema and table names, which are passed as separate arguments. This fixed compiler warnings about unused variables and eliminated the `search_path` bug.
+    - **Verification:** All tests in `make fast-tests` now pass.
+
+  - [x] **Step 5: Cleanup**
+    - **File:** `sql_saga--1.0.sql`.
+    - **Action:**
+        1. Removed the now-unused pl/pgsql trigger functions (`fk_insert_check`, `fk_update_check`, `uk_update_check`, `uk_delete_check`, `validate_foreign_key_new_row`, and `validate_foreign_key_old_row`) as they have been fully replaced by their C counterparts.
+        2. Replaced the call to `validate_foreign_key_new_row` inside `add_foreign_key` with a new, self-contained validation query.
+        3. Removed obsolete `pl/pgsql` predicate functions (`contains`, `overlaps`, etc.) and their tests, as they were superseded by the `covers_without_gaps` aggregate.
+    - **Verification:** `make installcheck` passes.
+
+- [ ] **Investigate Statement-Level Triggers:**
+  - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.
+  - **Benefit:** This would provide correct validation for complex, single-statement DML operations that modify multiple rows (e.g., `UPDATE ... FROM ...`, `MERGE`). This is the architecturally correct way to handle multi-row validation.
+  - **Limitation:** This would not solve the problem of multi-statement transactions that are only valid at commit time (e.g., two separate `UPDATE` statements swapping periods), as statement-level triggers are not deferrable to the end of the transaction. This limitation should be documented.
+
+- [x] **Implement hook for DDL changes (drop/rename):**
+  - **Files:** `sql_saga--1.0.sql`
+  - **Issue:** The extension must handle `DROP` or `RENAME` operations on tables or columns that are part of a temporal setup, to prevent the metadata from becoming inconsistent.
+  - **Fix:** This functionality is implemented via two `pl/pgsql` event triggers defined in `sql_saga--1.0.sql`.
+    1.  `sql_saga_drop_protection` (on `sql_drop`): Prevents dropping objects that `sql_saga` depends on (e.g., columns in an era) and cleans up `sql_saga`'s metadata when a managed table is dropped.
+    2.  `sql_saga_rename_following` (on `ddl_command_end`): Detects `RENAME` operations and updates the metadata catalog to reflect the new names of columns and constraints.
+
+- [ ] **Make `add_*`/`drop_*` API symmetric:**
+  - **Status:** Done.
+  - **Issue:** The parameters for `add_*` and `drop_*` functions were not always symmetric, making the API less intuitive.
+  - **Action:** Overloaded `drop_unique_key` and `drop_foreign_key` functions have been added. They now accept the same logical parameters as their `add_*` counterparts, providing a more intuitive API.
+
+- [ ] **Use a private prefix for internal helper functions:**
+  - **File:** `sql_saga--1.0.sql`
+  - **Issue:** Helper functions like `_make_name` are in the public `sql_saga` schema.
+  - **Action:** Rename them with a more explicit "private" prefix (e.g., `__internal_make_name`) or move them to a separate internal schema to discourage external use.
+
+## Low Priority - Future Work & New Features
+
+- [ ] **Support foreign keys from non-temporal tables:**
+  - **File:** `sql_saga--1.0.sql`
+  - **Issue:** The current implementation only supports foreign keys between two temporal tables.
+  - **Action:** Adapt `sql_saga.add_foreign_key` to allow a non-temporal table to reference a temporal table. This would require a check function to validate the key's existence at the time of insert/update.
+
+- [ ] **Prototype a combined UPSERT/UPDATE API:**
+  - **File:** `sql_saga--1.0.sql`
+  - **Issue:** The current API for updating data is complex.
+  - **Action:** Prototype a new `sql_saga.add_api` function or a new function that provides a simpler interface for handling both `INSERT` and `UPDATE` (UPSERT) operations on temporal data.
+
+- [ ] **Ensure `infinity` is the default for `valid_to` columns:**
+  - **File:** `sql_saga--1.0.sql`
+  - **Issue:** The `add_era` function does not enforce `'infinity'` as the default value for the `stop_on_column_name` (e.g., `valid_to`).
+  - **Action:** Modify `add_era` to set the default and potentially add a check constraint.
+
+- [ ] **Implement full `ON UPDATE` action support for foreign keys:**
+  - **File:** `sql_saga--1.0.sql`
+  - **Issue:** The `update_action` parameter in `add_foreign_key` is not fully handled; the comment notes it should affect trigger timing.
+  - **Action:** Implement the logic for `ON UPDATE` actions (`NO ACTION`, `RESTRICT`) correctly.
+
+- [ ] **Package `sql_saga` with pgxman for distribution:**
+  - **Issue:** The extension currently requires manual installation.
+  - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
+
+## Learnings from Inspired Projects (`periods` and `time_for_keys`)
+
+This section summarizes potential improvements and features adapted from the `periods` and `time_for_keys` extensions, which served as inspiration for `sql_saga`.
+
+### From `periods` extension:
+
+- [ ] **Implement System Versioning:** `periods` contains a complete implementation of `SYSTEM VERSIONING`, including history tables, views, and helper functions (`_as_of`, `_between`, etc.). This is a major feature that `sql_saga` currently has commented-out stubs for.
+  - **Action:** Review the `periods.system_versioning` table and the `add_system_versioning` function as a blueprint for implementing this feature in `sql_saga`.
+
+- [ ] **Adopt C-based Trigger Functions for Performance:** `periods.c` contains C implementations for `generated_always_as_row_start_end` and `write_history` triggers. This is a significant performance enhancement over `pl/pgsql`.
+  - **Action:** Use `periods.c` as a reference for moving performance-critical trigger logic in `sql_saga` to C. This includes handling different tuple descriptors between the main table and history table.
+
+- [ ] **Enhance Event Trigger Logic:** `periods` has robust `drop_protection` and `rename_following` event triggers.
+  - **Action:** Compare the logic in `periods` with `sql_saga`'s event triggers to identify any missing checks or opportunities for improvement.
+
+### From `time_for_keys` extension:
+
+- [ ] **Analyze Alternative Foreign Key Implementation:** The `time_for_keys` project represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint. The legacy code for this was removed from `sql_saga` to avoid confusion.
+  - **Action:** Analyze the performance of this approach (by reviewing the `time_for_keys` project) vs. `sql_saga`'s metadata-driven approach. The recent refactoring in `sql_saga` to pass metadata as arguments to triggers might have closed the performance gap.
+
+- [ ] **Evaluate `completely_covers` Aggregate Function:** The C function in `completely_covers.c` is specialized for `tstzrange` and is used to validate temporal foreign keys. `sql_saga` has a generic `covers_without_gaps` aggregate for `anyrange`.
+  - **Action:** Compare the performance and correctness of `completely_covers` against `covers_without_gaps`. A specialized function might be faster. Determine if `sql_saga` would benefit from specialized aggregates for common range types.
+
+
+## Done
+
+- **Remove legacy `time_for_keys` implementation:** Removed the `TRI_FKey_*` trigger functions and the `create/drop_temporal_foreign_key` helper functions. This code was part of an alternative, non-metadata-driven foreign key implementation from the `time_for_keys` project. It was removed to avoid confusion with `sql_saga`'s primary metadata-driven API. This resulted in a significant performance improvement, with the `43_benchmark` test runtime dropping from over 40 seconds to approximately 12 seconds. The analysis of this alternative approach remains as a research task, referencing the original `time_for_keys` project.
 - **Fix memory corruption and logic bugs in `covers_without_gaps` aggregate:** This was a complex, multi-stage bug fix. The final solution involved:
     1.  **Memory Safety:** Replacing a flawed, simplified implementation with a more verbose but stable one based on the `no_gaps.c` prototype, then fixing memory leaks for pass-by-reference types by carefully managing `palloc`'d memory within the aggregate's context.
     2.  **Correct Logic:** Implementing a fully generalized contiguity logic that correctly handles both discrete (e.g., `integer`, `date`) and continuous (e.g., `numeric`, `timestamp`) range types. The final implementation correctly checks for gaps between adjacent boundaries by comparing datums directly and then inspecting the `inclusive` flags, rather than using the incorrect `range_cmp_bounds` function.

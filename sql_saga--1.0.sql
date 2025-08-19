@@ -2711,6 +2711,52 @@ DECLARE
     r record;
     sql text;
 BEGIN
+    -- Exit early if the DDL command does not affect a managed object.
+    -- This is a performance optimization to avoid running expensive checks
+    -- for DDL on unrelated tables.
+    IF NOT EXISTS (
+        WITH affected_relations AS (
+            SELECT objid AS relid FROM pg_event_trigger_ddl_commands()
+            WHERE object_type IN ('table', 'view', 'table column')
+            UNION ALL
+            SELECT conrelid AS relid FROM pg_event_trigger_ddl_commands() ddl
+            JOIN pg_constraint c ON c.oid = ddl.objid
+            WHERE ddl.object_type IN ('constraint', 'table constraint')
+            UNION ALL
+            SELECT tgrelid AS relid FROM pg_event_trigger_ddl_commands() ddl
+            JOIN pg_trigger t ON t.oid = ddl.objid
+            WHERE ddl.object_type = 'trigger'
+        )
+        SELECT 1
+        FROM affected_relations ar
+        WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE e.table_oid = ar.relid)
+           OR EXISTS (SELECT 1 FROM sql_saga.api_view v WHERE v.view_oid = ar.relid)
+    ) THEN
+        RETURN;
+    END IF;
+    -- Exit early if the DDL command does not affect a managed object.
+    -- This is a performance optimization to avoid running expensive checks
+    -- for DDL on unrelated tables.
+    IF NOT EXISTS (
+        WITH affected_relations AS (
+            SELECT objid AS relid FROM pg_event_trigger_ddl_commands()
+            WHERE object_type IN ('table', 'view', 'table column')
+            UNION ALL
+            SELECT conrelid AS relid FROM pg_event_trigger_ddl_commands() ddl
+            JOIN pg_constraint c ON c.oid = ddl.objid
+            WHERE ddl.object_type IN ('constraint', 'table constraint')
+            UNION ALL
+            SELECT tgrelid AS relid FROM pg_event_trigger_ddl_commands() ddl
+            JOIN pg_trigger t ON t.oid = ddl.objid
+            WHERE ddl.object_type = 'trigger'
+        )
+        SELECT 1
+        FROM affected_relations ar
+        WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE e.table_oid = ar.relid)
+           OR EXISTS (SELECT 1 FROM sql_saga.api_view v WHERE v.view_oid = ar.relid)
+    ) THEN
+        RETURN;
+    END IF;
     /*
      * Anything that is stored by reg* type will auto-adjust, but anything we
      * store by name will need to be updated after a rename. One way to do this
@@ -2968,7 +3014,26 @@ DECLARE
     cmd text;
     r record;
     save_search_path text;
+    tags text[];
 BEGIN
+    -- Exit early if the DDL command does not affect a managed object.
+    -- This is a performance optimization. We are interested in ALTER TABLE on
+    -- managed tables (for persistence checks), and GRANT/REVOKE on managed
+    -- tables or views (for permission propagation).
+    SELECT array_agg(command_tag) INTO tags FROM pg_event_trigger_ddl_commands();
+
+    IF 'GRANT' = ANY(tags) OR 'REVOKE' = ANY(tags) THEN
+        -- Always run for GRANT/REVOKE, as objid can be NULL.
+        -- The internal logic will handle filtering to relevant objects.
+    ELSIF NOT EXISTS (
+        SELECT 1
+        FROM pg_event_trigger_ddl_commands() ddl
+        WHERE ddl.command_tag = 'ALTER TABLE'
+          AND ddl.objid IN (SELECT table_oid FROM sql_saga.era)
+    ) THEN
+        RETURN;
+    END IF;
+
     /* Make sure that all of our tables are still persistent */
     FOR r IN
         SELECT e.table_oid

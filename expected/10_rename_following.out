@@ -130,19 +130,19 @@ TABLE sql_saga.foreign_keys;
 
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
 ERROR:  cannot drop or rename column "COLUMN1" on table "rename_test_ref" because it is used in era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 209 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 255 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 290 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_update" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 290 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_update" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 290 at RAISE
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 244 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 290 at RAISE
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |    table_oid    |    column_names     | era_name |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
 -------------------------------------+-----------------+---------------------+----------+------------------------------+------------+---------------+---------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------
