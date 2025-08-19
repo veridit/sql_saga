@@ -62,6 +62,9 @@ When a task is complex or has a history of regressions (e.g., the `rename_follow
 
 This protocol transforms debugging from a cycle of "guess-and-check" into a methodical, scientific process of data gathering and verification, dramatically reducing the number of failed attempts.
 
+### Development Journaling
+For complex tasks, a detailed journal of hypotheses, data, and outcomes should be maintained in `journal.md`. This provides a low-level history of the development process, complementing the high-level summary in `todo.md`.
+
 ## Known Pitfalls and Falsified Assumptions
 This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.
 
