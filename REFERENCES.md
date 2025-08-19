@@ -176,3 +176,41 @@ The definitive solution for complex temporal modifications is the "Plan and Exec
 *   **A Single Top-Level Statement:** All triggers are deferred until the top-level function call completes, at which point the planner has already guaranteed the timeline is consistent. The triggers act as a powerful, low-level safety net that verifies the planner's logic.
 
 This "add-then-modify" execution strategy is the principled way to solve the multi-statement update problem. It avoids the MVCC snapshot limitation by creating an intermediate state that allows the trigger's validation logic to see the future.
+
+## Event Triggers
+
+Reference: [PostgreSQL Documentation: Chapter 38. Event Triggers](https://www.postgresql.org/docs/current/event-triggers.html)
+
+This section summarizes key concepts about event triggers, focusing on their behavior and how they are used within `sql_saga`.
+
+### Core Concepts
+
+*   **Scope**: Unlike regular triggers, which are attached to a single table, event triggers are global to a database.
+*   **Events**: They capture DDL (Data Definition Language) events, not DML (Data Manipulation Language) events.
+*   **Execution Order**: If multiple event triggers are defined for the same event, they are fired in alphabetical order by name.
+*   **Creation**: They are created with `CREATE EVENT TRIGGER` and require a special function that returns the `event_trigger` pseudo-type.
+
+### Key Events and Their Timing
+
+`sql_saga` relies on the precise timing of two key events:
+
+#### `ddl_command_end`
+
+*   **Fires**: *After* a DDL command has executed and its changes have been written to the system catalogs, but *before* the transaction commits.
+*   **`sql_saga` Usage**: Used by the `rename_following` trigger. Because it fires after the catalog changes, the trigger can inspect the "new" state of renamed objects (like columns or constraints) and update `sql_saga`'s metadata tables accordingly.
+*   **Context Function**: `pg_event_trigger_ddl_commands()` returns a list of the DDL commands that were executed.
+
+#### `sql_drop`
+
+*   **Fires**: Just before the `ddl_command_end` event for any command that drops objects.
+*   **Critical Timing Detail**: The documentation states: *"the trigger is executed **after** the objects have been deleted from the system catalogs, so it's not possible to look them up anymore."* This is a fundamental point for understanding `sql_saga`'s protection logic.
+*   **`sql_saga` Usage**: Used by the `drop_protection` trigger. The trigger's logic is a direct consequence of this timing rule:
+    1.  **To detect dropped top-level objects** (like a table with an `era`): The trigger must use the `pg_event_trigger_dropped_objects()` function, which provides a list of objects that were just deleted. This is used for cleanup.
+    2.  **To protect dependent objects** (like constraints or triggers created by `sql_saga`): The protection logic must query the system catalogs and check if the object is *missing*. A query using `WHERE NOT EXISTS (SELECT FROM pg_constraint ...)` is the correct and necessary way to detect if a protected constraint was dropped, because the drop has already happened when the trigger code runs.
+
+### Writing Event Triggers in C
+
+*   **Interface**: C functions do not receive normal arguments. Instead, they get a context pointer to an `EventTriggerData` struct.
+*   **Macro**: The `CALLED_AS_EVENT_TRIGGER(fcinfo)` macro must be used to verify that the function was called as an event trigger.
+*   **`EventTriggerData` struct**: This struct provides the `event` name (e.g., `"sql_drop"`) and the command `tag` (e.g., `"DROP TABLE"`).
+*   **Return Value**: The function must return `NULL` via `PG_RETURN_NULL()`.
