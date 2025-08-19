@@ -53,6 +53,20 @@ Reference: [PostgreSQL Documentation: User-Defined Aggregates](https://www.postg
         ```
     *   This is a critical implementation detail for both users and developers of `sql_saga`. The aggregate does not perform the sorting; it validates that the sorting has been done.
 
+## Constraint Definitions and Renaming
+
+PostgreSQL provides several ways to inspect constraint definitions, and choosing the correct one is critical for robust event triggers that handle DDL changes.
+
+*   **`pg_constraint.consrc` (Deprecated and Removed):** This column stored a human-readable text representation of a `CHECK` constraint's expression. It was removed in PostgreSQL 12 because it was not reliably updated when referenced objects were renamed, making it unsafe for use in event triggers.
+
+*   **`pg_get_constraintdef(oid)` (For Display):** This function returns a formatted, human-readable string representing a constraint's definition (e.g., `CHECK ((col1 < col2))`). While useful for display, it is not ideal for programmatic logic because the exact formatting can change between PostgreSQL versions, and it may not accurately reflect the state of renamed objects within the same transaction that the trigger is handling. `sql_saga`'s `rename_following` trigger initially used this, leading to brittle string comparisons.
+
+*   **`pg_constraint.conbin` and `pg_get_expr()` (Robust for `CHECK` constraints):** The `conbin` column stores the internal, parsed expression tree for a `CHECK` constraint. The `pg_get_expr(conbin, conrelid)` function decompiles this tree back into a canonical string representation (e.g., `(col1 < col2)`). This is the most reliable way to inspect a `CHECK` constraint's logic, as it is independent of display formatting. `sql_saga` now uses this method.
+
+*   **`pg_constraint.conkey` (Robust for `UNIQUE`, `PRIMARY KEY`, `FOREIGN KEY`):** This column stores an array of the attribute numbers (`attnum`) that make up the constraint. This is the most robust way to identify these types of constraints, as it is completely independent of column names. `sql_saga` uses this method to track renamed `UNIQUE` constraints.
+
+*   **`EXCLUDE` Constraints:** These are more complex. While they have `conkey`, they also have `conexclop` (an array of operator OIDs). Reconstructing the definition programmatically is difficult. For these, `sql_saga` still relies on a pattern match (`LIKE`) against `pg_get_constraintdef()`, which is a pragmatic compromise.
+
 ## Trigger Behavior and Data Visibility
 
 A deep understanding of PostgreSQL's data visibility rules for triggers is essential for developing `sql_saga`. The documentation reveals that there are two distinct models of behavior, and the choice between them has profound consequences for our implementation.
