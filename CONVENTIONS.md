@@ -1,4 +1,4 @@
-# AI Agent Development Conventions
+# Development Conventions
 
 ## Introduction
 This document outlines the standard operating procedure for all AI agents contributing to this project. Adhering to these conventions ensures a systematic, verifiable, and robust development process.
@@ -69,6 +69,10 @@ For complex tasks, a detailed journal of hypotheses, data, and outcomes should b
 This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.
 
 *   **MVCC and Transaction Visibility in PL/pgSQL:** The set of rows visible to a `pl/pgsql` function is determined when the function begins execution. Within a single function, a `SET`-based query and a `LOOP` that executes queries will both operate on the same data snapshot. It is a flawed assumption to think that a `LOOP` is somehow more robust to transaction visibility issues than a single complex query within the same function. If a set-based query is failing, the bug is in the query's logic, not in a fundamental limitation of MVCC for set-based operations.
+
+*   **`regclass` Type Casting in C Event Triggers:** The `regclass` data type is a symbolic reference to a relation OID, not just the OID itself. When a C function using SPI executes a query that returns a `regclass` column, the PostgreSQL backend attempts to format this value, which involves looking up the object's name. This behavior is extremely dangerous in `sql_drop` event triggers.
+    *   **The Problem:** An `sql_drop` trigger fires *after* the object has been deleted from the system catalogs. If an SPI query in the trigger function selects a `regclass` column that refers to a now-deleted object, the backend's attempt to look up the object's name will fail. This causes `SPI_execute` to return an error, leading to unpredictable behavior if not handled precisely. This can manifest as cascading, incorrect error messages or the appearance that queries are returning rows when they have actually failed.
+    *   **The Solution:** When writing SPI queries for `sql_drop` event triggers, **never select `regclass` columns directly**. Always explicitly `CAST` them to `oid` within the SQL query string (e.g., `SELECT table_oid::oid FROM ...`). This fetches the raw OID without triggering the problematic name lookup. Any conversion from the OID to a textual name for error messages must be done manually in the C code (e.g., using `regclassout`) *after* the query has successfully completed and returned a row.
 
 ## When the Cycle Fails: Changing Strategy
 When repeated iterations of the hypothesis-driven cycle fail to resolve a persistent and complex bug (such as a memory corruption crash), it is a sign that the underlying assumptions are wrong and a change in strategy is required.
