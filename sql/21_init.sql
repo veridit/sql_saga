@@ -99,13 +99,13 @@ BEGIN
     PERFORM sql_saga.drop_unique_key('shifts'::regclass, 'shifts_job_id_worker_id_valid');
   END IF;
 
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'rooms'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'rooms', 'valid')) THEN
     PERFORM sql_saga.drop_era('rooms'::regclass);
   END IF;
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'houses'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'houses', 'valid')) THEN
     PERFORM sql_saga.drop_era('houses'::regclass);
   END IF;
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'shifts'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'shifts', 'valid')) THEN
     PERFORM sql_saga.drop_era('shifts'::regclass);
   END IF;
 END;

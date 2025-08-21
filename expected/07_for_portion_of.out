@@ -39,9 +39,9 @@ SELECT sql_saga.add_api('pricing', 'quantities');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_oid |  era_name  |              view_oid              |       trigger_name        
------------+------------+------------------------------------+---------------------------
- pricing   | quantities | pricing__for_portion_of_quantities | for_portion_of_quantities
+ table_schema | table_name |  era_name  |              view_oid              |       trigger_name        
+--------------+------------+------------+------------------------------------+---------------------------
+ public       | pricing    | quantities | pricing__for_portion_of_quantities | for_portion_of_quantities
 (1 row)
 
 /* Test UPDATE FOR PORTION */
@@ -105,8 +105,8 @@ SELECT sql_saga.drop_era('pricing', 'quantities');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_oid | era_name | view_oid | trigger_name 
------------+----------+----------+--------------
+ table_schema | table_name | era_name | view_oid | trigger_name 
+--------------+------------+----------+----------+--------------
 (0 rows)
 
 -- Add it back to test the drop_for_portion_view function
@@ -136,8 +136,8 @@ SELECT sql_saga.drop_api('pricing', NULL);
 (1 row)
 
 TABLE sql_saga.api_view;
- table_oid | era_name | view_oid | trigger_name 
------------+----------+----------+--------------
+ table_schema | table_name | era_name | view_oid | trigger_name 
+--------------+------------+----------+----------+--------------
 (0 rows)
 
 DROP TABLE pricing;

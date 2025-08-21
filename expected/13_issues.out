@@ -39,9 +39,9 @@ ERROR:  relation "sql_saga.periods" does not exist
 LINE 1: TABLE sql_saga.periods;
               ^
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   |  uk_update_trigger   |  uk_delete_trigger   
-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+----------------------+----------------------+----------------------+----------------------
- fk_uk_id_q       | fk        | {uk_id}      | q        | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   |  uk_update_trigger   |  uk_delete_trigger   
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+----------------------+----------------------+----------------------+----------------------
+ fk_uk_id_q       | public       | fk         | {uk_id}      | q        | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
 (1 row)
 
 --
@@ -64,7 +64,7 @@ TABLE fk;
 
 --expected: fail
 DELETE FROM uk WHERE (id, s, e) = (1, 1, 3);
-ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
+ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
 TABLE uk;
  id | s | e 
 ----+---+---
@@ -81,7 +81,7 @@ TABLE fk;
 
 --expected: fail
 DELETE FROM uk WHERE (id, s, e) = (1, 3, 5);
-ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
+ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
 INSERT INTO uk(id, s, e)        VALUES    (2, 1, 5);
 INSERT INTO fk(id, uk_id, s, e) VALUES (4, 2, 2, 4);
 TABLE uk;
@@ -102,7 +102,7 @@ TABLE fk;
 
 --expected: fail
 UPDATE uk SET e = 3 WHERE (id, s, e) = (2, 1, 5);
-ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "fk"
+ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
 TABLE uk;
  id | s | e 
 ----+---+---

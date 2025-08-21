@@ -20,7 +20,7 @@ SELECT sql_saga.add_era('dp', 's', 'e', 'p', 'integerrange');
 
 DROP TYPE integerrange;
 ERROR:  cannot drop rangetype "public.integerrange" because it is used in period "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 56 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 96 at RAISE
 /* api */
 ALTER TABLE dp ADD CONSTRAINT dp_pkey PRIMARY KEY (id);
 SELECT sql_saga.add_api('dp', 'p');
@@ -31,13 +31,13 @@ SELECT sql_saga.add_api('dp', 'p');
 
 DROP VIEW dp__for_portion_of_p;
 ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_api()" instead
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 137 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 177 at RAISE
 DROP TRIGGER for_portion_of_p ON dp__for_portion_of_p;
 ERROR:  cannot drop trigger "for_portion_of_p" on view "dp__for_portion_of_p" because it is used in FOR PORTION OF view for period "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 149 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 189 at RAISE
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 ERROR:  cannot drop primary key on table "dp" because it has a FOR PORTION OF view for period "p"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 161 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 201 at RAISE
 SELECT sql_saga.drop_api('dp', 'p');
  drop_api 
 ----------
@@ -57,10 +57,10 @@ SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
 
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 182 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 222 at RAISE
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
 ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 193 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 233 at RAISE
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
@@ -78,16 +78,16 @@ SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_nam
 
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 209 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 249 at RAISE
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 220 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 260 at RAISE
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 232 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 272 at RAISE
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 244 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 284 at RAISE
 SELECT sql_saga.drop_foreign_key('dp_ref', 'f');
  drop_foreign_key 
 ------------------

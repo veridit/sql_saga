@@ -153,6 +153,9 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	char *uk_start_after_column_name;
 	char *uk_stop_on_column_name;
 	char *match_type;
+	char *fk_schema_name;
+	char *fk_table_name;
+	char *fk_era_name;
 
 	FkValidationPlan *plan_entry;
 	bool found;
@@ -168,22 +171,25 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	new_row = trigdata->tg_trigtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 17)
-		elog(ERROR, "fk_insert_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 16)
+		elog(ERROR, "fk_insert_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
 	foreign_key_name = tgargs[0];
-	fk_column_names_str = tgargs[4];
-	fk_start_after_column_name = tgargs[6];
-	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[8];
-	uk_table_name = tgargs[9];
-	uk_column_names_str = tgargs[10];
-	uk_era_name = tgargs[11];
-	uk_start_after_column_name = tgargs[12];
-	uk_stop_on_column_name = tgargs[13];
-	match_type = tgargs[14];
+	fk_schema_name = tgargs[1];
+	fk_table_name = tgargs[2];
+	fk_column_names_str = tgargs[3];
+	fk_era_name = tgargs[4];
+	fk_start_after_column_name = tgargs[5];
+	fk_stop_on_column_name = tgargs[6];
+	uk_schema_name = tgargs[7];
+	uk_table_name = tgargs[8];
+	uk_column_names_str = tgargs[9];
+	uk_era_name = tgargs[10];
+	uk_start_after_column_name = tgargs[11];
+	uk_stop_on_column_name = tgargs[12];
+	match_type = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -196,8 +202,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		char *fk_range_constructor;
 		char *uk_range_constructor;
 		char *query;
-		Datum get_range_type_values[2];
-		char *qualified_uk_table_name;
+		Datum get_range_type_values[3];
 		StringInfoData where_buf;
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;
@@ -208,31 +213,34 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		/* Get range constructor types from sql_saga.era */
 		if (get_range_type_plan == NULL)
 		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
-			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+				
+			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
 			if (get_range_type_plan == NULL)
 				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
 			ret = SPI_keepplan(get_range_type_plan);
 			if (ret != 0)
 				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
 		}
-		
-		get_range_type_values[0] = ObjectIdGetDatum(RelationGetRelid(rel));
-		get_range_type_values[1] = CStringGetDatum(tgargs[5]);
+			
+		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(fk_table_name);
+		get_range_type_values[2] = CStringGetDatum(fk_era_name);
+			
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
+			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
-		get_range_type_values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
-		get_range_type_values[1] = CStringGetDatum(uk_era_name);
+		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(uk_table_name);
+		get_range_type_values[2] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
+			elog(ERROR, "could not get range type for unique key table %s.%s era %s", uk_schema_name, uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		pfree(qualified_uk_table_name);
 
 		/* Build parameterized where clause and collect param info */
 		initStringInfo(&where_buf);
@@ -384,7 +392,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 				 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
-						tgargs[2], tgargs[3], foreign_key_name)));
+						tgargs[1], tgargs[2], foreign_key_name)));
 	}
 
 	SPI_finish();
@@ -412,6 +420,9 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	char *uk_start_after_column_name;
 	char *uk_stop_on_column_name;
 	char *match_type;
+	char *fk_schema_name;
+	char *fk_table_name;
+	char *fk_era_name;
 
 	FkValidationPlan *plan_entry;
 	bool found;
@@ -427,22 +438,25 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	new_row = trigdata->tg_newtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 17)
-		elog(ERROR, "fk_update_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 16)
+		elog(ERROR, "fk_update_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
 	foreign_key_name = tgargs[0];
-	fk_column_names_str = tgargs[4];
-	fk_start_after_column_name = tgargs[6];
-	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[8];
-	uk_table_name = tgargs[9];
-	uk_column_names_str = tgargs[10];
-	uk_era_name = tgargs[11];
-	uk_start_after_column_name = tgargs[12];
-	uk_stop_on_column_name = tgargs[13];
-	match_type = tgargs[14];
+	fk_schema_name = tgargs[1];
+	fk_table_name = tgargs[2];
+	fk_column_names_str = tgargs[3];
+	fk_era_name = tgargs[4];
+	fk_start_after_column_name = tgargs[5];
+	fk_stop_on_column_name = tgargs[6];
+	uk_schema_name = tgargs[7];
+	uk_table_name = tgargs[8];
+	uk_column_names_str = tgargs[9];
+	uk_era_name = tgargs[10];
+	uk_start_after_column_name = tgargs[11];
+	uk_stop_on_column_name = tgargs[12];
+	match_type = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -455,8 +469,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		char *fk_range_constructor;
 		char *uk_range_constructor;
 		char *query;
-		Datum get_range_type_values[2];
-		char *qualified_uk_table_name;
+		Datum get_range_type_values[3];
 		StringInfoData where_buf;
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;
@@ -467,31 +480,34 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		/* Get range constructor types from sql_saga.era */
 		if (get_range_type_plan == NULL)
 		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
-			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+				
+			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
 			if (get_range_type_plan == NULL)
 				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
 			ret = SPI_keepplan(get_range_type_plan);
 			if (ret != 0)
 				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
 		}
-		
-		get_range_type_values[0] = ObjectIdGetDatum(RelationGetRelid(rel));
-		get_range_type_values[1] = CStringGetDatum(tgargs[5]);
+			
+		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(fk_table_name);
+		get_range_type_values[2] = CStringGetDatum(fk_era_name);
+			
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
+			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
-		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
-		get_range_type_values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
-		get_range_type_values[1] = CStringGetDatum(uk_era_name);
+		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(uk_table_name);
+		get_range_type_values[2] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
+			elog(ERROR, "could not get range type for unique key table %s.%s era %s", uk_schema_name, uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		pfree(qualified_uk_table_name);
 
 		/* Build parameterized where clause and collect param info */
 		initStringInfo(&where_buf);
@@ -643,7 +659,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
 				 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
-						tgargs[2], tgargs[3], foreign_key_name)));
+						tgargs[1], tgargs[2], foreign_key_name)));
 	}
 
 	SPI_finish();
@@ -666,7 +682,6 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	char *fk_era_name;
 	char *fk_start_after_column_name;
 	char *fk_stop_on_column_name;
-	Oid uk_table_oid;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
@@ -687,27 +702,25 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	rel = trigdata->tg_relation;
 	tupdesc = rel->rd_att;
 	old_row = trigdata->tg_trigtuple;
-	uk_table_oid = RelationGetRelid(rel);
 
-	if (trigdata->tg_trigger->tgnargs != 17)
-		elog(ERROR, "uk_delete_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 16)
+		elog(ERROR, "uk_delete_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
 	foreign_key_name = tgargs[0];
-	/* fk_table_oid_str = tgargs[1]; */
-	fk_schema_name = tgargs[2];
-	fk_table_name = tgargs[3];
-	fk_column_names_str = tgargs[4];
-	fk_era_name = tgargs[5];
-	fk_start_after_column_name = tgargs[6];
-	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[8];
-	uk_table_name = tgargs[9];
-	uk_column_names_str = tgargs[10];
-	uk_era_name = tgargs[11];
-	uk_start_after_column_name = tgargs[12];
-	uk_stop_on_column_name = tgargs[13];
+	fk_schema_name = tgargs[1];
+	fk_table_name = tgargs[2];
+	fk_column_names_str = tgargs[3];
+	fk_era_name = tgargs[4];
+	fk_start_after_column_name = tgargs[5];
+	fk_stop_on_column_name = tgargs[6];
+	uk_schema_name = tgargs[7];
+	uk_table_name = tgargs[8];
+	uk_column_names_str = tgargs[9];
+	uk_era_name = tgargs[10];
+	uk_start_after_column_name = tgargs[11];
+	uk_stop_on_column_name = tgargs[12];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -720,8 +733,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		char *fk_range_constructor;
 		char *uk_range_constructor;
 		char *query;
-		Datum get_range_type_values[2];
-		Oid fk_table_oid;
+		Datum get_range_type_values[3];
 		StringInfoData join_buf, where_buf, exclude_buf;
 		int i;
 		Datum uk_column_names_datum, fk_column_names_datum;
@@ -733,9 +745,9 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		/* Get range constructor types from sql_saga.era */
 		if (get_range_type_plan == NULL)
 		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
-			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
 			if (get_range_type_plan == NULL)
 				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
 			ret = SPI_keepplan(get_range_type_plan);
@@ -743,15 +755,17 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
 		}
 
-		fk_table_oid = DirectFunctionCall1(regclassin, CStringGetDatum(psprintf("%s.%s", quote_identifier(fk_schema_name), quote_identifier(fk_table_name))));
-		get_range_type_values[0] = ObjectIdGetDatum(fk_table_oid);
-		get_range_type_values[1] = CStringGetDatum(fk_era_name);
+		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(fk_table_name);
+		get_range_type_values[2] = CStringGetDatum(fk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		get_range_type_values[0] = ObjectIdGetDatum(uk_table_oid);
-		get_range_type_values[1] = CStringGetDatum(uk_era_name);
+
+		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(uk_table_name);
+		get_range_type_values[2] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for unique key table %s era %s", quote_identifier(RelationGetRelationName(rel)), uk_era_name);
@@ -901,8 +915,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-					 errmsg("update or delete on table \"%s.%s\" violates foreign key constraint \"%s\" on table \"%s\"",
-							uk_schema_name, uk_table_name, foreign_key_name, tgargs[1])));
+					 errmsg("update or delete on table \"%s.%s\" violates foreign key constraint \"%s\" on table \"%s.%s\"",
+							uk_schema_name, uk_table_name, foreign_key_name, fk_schema_name, fk_table_name)));
 		}
 	}
 
@@ -927,7 +941,6 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	char *fk_era_name;
 	char *fk_start_after_column_name;
 	char *fk_stop_on_column_name;
-	Oid uk_table_oid;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
@@ -949,26 +962,25 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	old_row = trigdata->tg_trigtuple;
 	new_row = trigdata->tg_newtuple;
-	uk_table_oid = RelationGetRelid(rel);
 
-	if (trigdata->tg_trigger->tgnargs != 17)
-		elog(ERROR, "uk_update_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 16)
+		elog(ERROR, "uk_update_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
 	foreign_key_name = tgargs[0];
-	fk_schema_name = tgargs[2];
-	fk_table_name = tgargs[3];
-	fk_column_names_str = tgargs[4];
-	fk_era_name = tgargs[5];
-	fk_start_after_column_name = tgargs[6];
-	fk_stop_on_column_name = tgargs[7];
-	uk_schema_name = tgargs[8];
-	uk_table_name = tgargs[9];
-	uk_column_names_str = tgargs[10];
-	uk_era_name = tgargs[11];
-	uk_start_after_column_name = tgargs[12];
-	uk_stop_on_column_name = tgargs[13];
+	fk_schema_name = tgargs[1];
+	fk_table_name = tgargs[2];
+	fk_column_names_str = tgargs[3];
+	fk_era_name = tgargs[4];
+	fk_start_after_column_name = tgargs[5];
+	fk_stop_on_column_name = tgargs[6];
+	uk_schema_name = tgargs[7];
+	uk_table_name = tgargs[8];
+	uk_column_names_str = tgargs[9];
+	uk_era_name = tgargs[10];
+	uk_start_after_column_name = tgargs[11];
+	uk_stop_on_column_name = tgargs[12];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -981,8 +993,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		char *fk_range_constructor;
 		char *uk_range_constructor;
 		char *query;
-		Datum get_range_type_values[2];
-		Oid fk_table_oid;
+		Datum get_range_type_values[3];
 		StringInfoData where_buf, exclude_buf, union_buf, select_list_buf, alias_buf, join_buf;
 		int i;
 		Datum uk_column_names_datum, fk_column_names_datum;
@@ -995,18 +1006,24 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		/* Get range constructors */
 		if (get_range_type_plan == NULL)
 		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
-			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
-			if (!get_range_type_plan || SPI_keepplan(get_range_type_plan))
-				elog(ERROR, "SPI_prepare/keepplan for get_range_type failed");
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
+			if (get_range_type_plan == NULL)
+				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+			ret = SPI_keepplan(get_range_type_plan);
+			if (ret != 0)
+				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
 		}
-		fk_table_oid = DirectFunctionCall1(regclassin, CStringGetDatum(psprintf("%s.%s", quote_identifier(fk_schema_name), quote_identifier(fk_table_name))));
-		get_range_type_values[0] = ObjectIdGetDatum(fk_table_oid); get_range_type_values[1] = CStringGetDatum(fk_era_name);
+		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(fk_table_name);
+		get_range_type_values[2] = CStringGetDatum(fk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for fk table");
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		get_range_type_values[0] = ObjectIdGetDatum(uk_table_oid); get_range_type_values[1] = CStringGetDatum(uk_era_name);
+		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
+		get_range_type_values[1] = CStringGetDatum(uk_table_name);
+		get_range_type_values[2] = CStringGetDatum(uk_era_name);
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for uk table");
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -1169,8 +1186,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-					 errmsg("update or delete on table \"%s.%s\" violates foreign key constraint \"%s\" on table \"%s\"",
-							uk_schema_name, uk_table_name, foreign_key_name, tgargs[1])));
+					 errmsg("update or delete on table \"%s.%s\" violates foreign key constraint \"%s\" on table \"%s.%s\"",
+							uk_schema_name, uk_table_name, foreign_key_name, fk_schema_name, fk_table_name)));
 		}
 	}
 

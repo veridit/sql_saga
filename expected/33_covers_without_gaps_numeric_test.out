@@ -19,15 +19,15 @@ SELECT sql_saga.add_unique_key('numeric_shifts', ARRAY['job_id', 'worker_id']);
 (1 row)
 
 TABLE sql_saga.era;
-   table_oid    | era_name | start_after_column_name | stop_on_column_name | range_type |  bounds_check_constraint   | audit_table_oid 
-----------------+----------+-------------------------+---------------------+------------+----------------------------+-----------------
- numeric_shifts | valid    | valid_after             | valid_to            | numrange   | numeric_shifts_valid_check | 
+ table_schema |   table_name   | era_name | start_after_column_name | stop_on_column_name | range_type |  bounds_check_constraint   | audit_table_oid 
+--------------+----------------+----------+-------------------------+---------------------+------------+----------------------------+-----------------
+ public       | numeric_shifts | valid    | valid_after             | valid_to            | numrange   | numeric_shifts_valid_check | 
 (1 row)
 
 TABLE sql_saga.unique_keys;
-            unique_key_name            |   table_oid    |    column_names    | era_name |                    unique_constraint                     |              exclude_constraint               
----------------------------------------+----------------+--------------------+----------+----------------------------------------------------------+-----------------------------------------------
- numeric_shifts_job_id_worker_id_valid | numeric_shifts | {job_id,worker_id} | valid    | numeric_shifts_job_id_worker_id_valid_after_valid_to_key | numeric_shifts_job_id_worker_id_numrange_excl
+            unique_key_name            | table_schema |   table_name   |    column_names    | era_name |                    unique_constraint                     |              exclude_constraint               
+---------------------------------------+--------------+----------------+--------------------+----------+----------------------------------------------------------+-----------------------------------------------
+ numeric_shifts_job_id_worker_id_valid | public       | numeric_shifts | {job_id,worker_id} | valid    | numeric_shifts_job_id_worker_id_valid_after_valid_to_key | numeric_shifts_job_id_worker_id_numrange_excl
 (1 row)
 
 -- Insert test data into the integer shifts table

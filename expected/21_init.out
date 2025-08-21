@@ -66,11 +66,11 @@ SELECT sql_saga.add_era('rooms', 'valid_after', 'valid_to');
 (1 row)
 
 TABLE sql_saga.era;
- table_oid | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
- shifts    | valid    | valid_after             | valid_to            | tstzrange  | shifts_valid_check      | 
- houses    | valid    | valid_after             | valid_to            | tstzrange  | houses_valid_check      | 
- rooms     | valid    | valid_after             | valid_to            | tstzrange  | rooms_valid_check       | 
+ table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+--------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
+ public       | shifts     | valid    | valid_after             | valid_to            | tstzrange  | shifts_valid_check      | 
+ public       | houses     | valid    | valid_after             | valid_to            | tstzrange  | houses_valid_check      | 
+ public       | rooms      | valid    | valid_after             | valid_to            | tstzrange  | rooms_valid_check       | 
 (3 rows)
 
 SELECT sql_saga.add_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
@@ -92,11 +92,11 @@ SELECT sql_saga.add_unique_key('rooms', ARRAY['id'], 'valid');
 (1 row)
 
 SELECT * FROM sql_saga.unique_keys ORDER BY unique_key_name;
-        unique_key_name        | table_oid |    column_names    | era_name |                unique_constraint                 |           exclude_constraint           
--------------------------------+-----------+--------------------+----------+--------------------------------------------------+----------------------------------------
- houses_id_valid               | houses    | {id}               | valid    | houses_id_valid_after_valid_to_key               | houses_id_tstzrange_excl
- rooms_id_valid                | rooms     | {id}               | valid    | rooms_id_valid_after_valid_to_key                | rooms_id_tstzrange_excl
- shifts_job_id_worker_id_valid | shifts    | {job_id,worker_id} | valid    | shifts_job_id_worker_id_valid_after_valid_to_key | shifts_job_id_worker_id_tstzrange_excl
+        unique_key_name        | table_schema | table_name |    column_names    | era_name |                unique_constraint                 |           exclude_constraint           
+-------------------------------+--------------+------------+--------------------+----------+--------------------------------------------------+----------------------------------------
+ houses_id_valid               | public       | houses     | {id}               | valid    | houses_id_valid_after_valid_to_key               | houses_id_tstzrange_excl
+ rooms_id_valid                | public       | rooms      | {id}               | valid    | rooms_id_valid_after_valid_to_key                | rooms_id_tstzrange_excl
+ shifts_job_id_worker_id_valid | public       | shifts     | {job_id,worker_id} | valid    | shifts_job_id_worker_id_valid_after_valid_to_key | shifts_job_id_worker_id_tstzrange_excl
 (3 rows)
 
 SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_valid');
@@ -106,9 +106,9 @@ SELECT sql_saga.add_foreign_key('rooms', ARRAY['house_id'], 'valid', 'houses_id_
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-   foreign_key_name   | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |       fk_insert_trigger        |       fk_update_trigger        |       uk_update_trigger        |       uk_delete_trigger        
-----------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------
- rooms_house_id_valid | rooms     | {house_id}   | valid    | houses_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | rooms_house_id_valid_fk_insert | rooms_house_id_valid_fk_update | rooms_house_id_valid_uk_update | rooms_house_id_valid_uk_delete
+   foreign_key_name   | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |       fk_insert_trigger        |       fk_update_trigger        |       uk_update_trigger        |       uk_delete_trigger        
+----------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+--------------------------------+--------------------------------+--------------------------------+--------------------------------
+ rooms_house_id_valid | public       | rooms      | {house_id}   | valid    | houses_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | rooms_house_id_valid_fk_insert | rooms_house_id_valid_fk_update | rooms_house_id_valid_uk_update | rooms_house_id_valid_uk_delete
 (1 row)
 
 -- While sql_saga is active
@@ -126,8 +126,8 @@ Indexes:
 Check constraints:
     "rooms_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    rooms_house_id_valid_fk_insert AFTER INSERT ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    rooms_house_id_valid_fk_update AFTER UPDATE OF house_id, valid_after, valid_to ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    rooms_house_id_valid_fk_insert AFTER INSERT ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('rooms_house_id_valid', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    rooms_house_id_valid_fk_update AFTER UPDATE OF house_id, valid_after, valid_to ON rooms FROM houses DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('rooms_house_id_valid', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 \d houses
                           Table "public.houses"
@@ -143,8 +143,8 @@ Indexes:
 Check constraints:
     "houses_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    rooms_house_id_valid_uk_delete AFTER DELETE ON houses FROM rooms DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    rooms_house_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON houses FROM rooms DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('rooms_house_id_valid', 'rooms', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    rooms_house_id_valid_uk_delete AFTER DELETE ON houses FROM rooms DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('rooms_house_id_valid', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    rooms_house_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON houses FROM rooms DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('rooms_house_id_valid', 'public', 'rooms', '{{house_id}}', 'valid', 'valid_after', 'valid_to', 'public', 'houses', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 \d shifts
                           Table "public.shifts"
@@ -168,8 +168,8 @@ SELECT sql_saga.drop_foreign_key('rooms', 'rooms_house_id_valid');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('rooms', 'rooms_id_valid');
@@ -193,8 +193,8 @@ SELECT sql_saga.drop_unique_key('shifts', 'shifts_job_id_worker_id_valid');
 (1 row)
 
 SELECT * FROM sql_saga.unique_keys ORDER BY unique_key_name;
- unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
------------------+-----------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
 SELECT sql_saga.drop_era('rooms');
@@ -216,8 +216,8 @@ SELECT sql_saga.drop_era('shifts');
 (1 row)
 
 TABLE sql_saga.era;
- table_oid | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
+ table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+--------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
@@ -280,13 +280,13 @@ BEGIN
     PERFORM sql_saga.drop_unique_key('shifts'::regclass, 'shifts_job_id_worker_id_valid');
   END IF;
 
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'rooms'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'rooms', 'valid')) THEN
     PERFORM sql_saga.drop_era('rooms'::regclass);
   END IF;
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'houses'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'houses', 'valid')) THEN
     PERFORM sql_saga.drop_era('houses'::regclass);
   END IF;
-  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE table_oid = 'shifts'::regclass AND era_name = 'valid') THEN
+  IF EXISTS (SELECT 1 FROM sql_saga.era WHERE (table_schema, table_name, era_name) = ('public', 'shifts', 'valid')) THEN
     PERFORM sql_saga.drop_era('shifts'::regclass);
   END IF;
 END;

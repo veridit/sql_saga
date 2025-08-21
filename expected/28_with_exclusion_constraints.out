@@ -60,7 +60,7 @@ UPDATE  houses
 SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_after = '2016-01-01'
 ;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 --
 -- 1.2.2. When the exclusion constraint is checked immediately,
 --        you can't move the time in one transaction with two statements.
@@ -116,7 +116,7 @@ UPDATE  houses
 SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_after = '2016-01-01'
 ;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 UPDATE  houses
 SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_after = '2015-01-01'
@@ -196,7 +196,7 @@ UPDATE  houses
 SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_after = '2015-01-01'
 ;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 UPDATE  houses
 SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_after = '2016-01-01'
@@ -258,7 +258,7 @@ UPDATE  houses
 SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_after = '2015-01-01'
 ;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 --
 -- 2.3.2. When the exclusion constraint is checked immediately,
 --        you can't move the time in one transaction with two statements.
@@ -315,7 +315,7 @@ UPDATE houses
 SET valid_after = '2019-01-01', valid_to = '2020-01-01'
 WHERE id = 1 AND valid_after = '2016-01-01';
 COMMIT;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 -- 3.2. Large shift to a later time (all the way past the later range), later first:
 -- Similar setup as above but update the later range first
 BEGIN;
@@ -329,7 +329,7 @@ UPDATE houses
 SET valid_after = '2018-01-01', valid_to = '2019-01-01'
 WHERE id = 1 AND valid_after = '2015-01-01';
 COMMIT;
-ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "rooms"
+ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
 -- 4. Large shift to an earlier time (all the way past the earlier range)
 -- 4.1. Large shift to an earlier time (all the way past the earlier range), earlier first:
 -- Delete and re-insert

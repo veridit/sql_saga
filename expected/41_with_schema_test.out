@@ -67,10 +67,10 @@ SELECT sql_saga.add_era('hidden.staff', 'valid_after', 'valid_to');
 (1 row)
 
 TABLE sql_saga.era;
-     table_oid     | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
--------------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
- exposed.employees | valid    | valid_after             | valid_to            | daterange  | employees_valid_check   | 
- hidden.staff      | valid    | valid_after             | valid_to            | daterange  | staff_valid_check       | 
+ table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+--------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
+ exposed      | employees  | valid    | valid_after             | valid_to            | daterange  | employees_valid_check   | 
+ hidden       | staff      | valid    | valid_after             | valid_to            | daterange  | staff_valid_check       | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
@@ -86,10 +86,10 @@ SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name   |     table_oid     | column_names | era_name |           unique_constraint           |     exclude_constraint      
---------------------+-------------------+--------------+----------+---------------------------------------+-----------------------------
- employees_id_valid | exposed.employees | {id}         | valid    | employees_id_valid_after_valid_to_key | employees_id_daterange_excl
- staff_id_valid     | hidden.staff      | {id}         | valid    | staff_id_valid_after_valid_to_key     | staff_id_daterange_excl
+  unique_key_name   | table_schema | table_name | column_names | era_name |           unique_constraint           |     exclude_constraint      
+--------------------+--------------+------------+--------------+----------+---------------------------------------+-----------------------------
+ employees_id_valid | exposed      | employees  | {id}         | valid    | employees_id_valid_after_valid_to_key | employees_id_daterange_excl
+ staff_id_valid     | hidden       | staff      | {id}         | valid    | staff_id_valid_after_valid_to_key     | staff_id_daterange_excl
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
@@ -99,9 +99,9 @@ SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', '
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-    foreign_key_name     |  table_oid   | column_names  | era_name |  unique_key_name   | match_type | update_action | delete_action |         fk_insert_trigger         |         fk_update_trigger         |         uk_update_trigger         |         uk_delete_trigger         
--------------------------+--------------+---------------+----------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+-----------------------------------+-----------------------------------
- staff_employee_id_valid | hidden.staff | {employee_id} | valid    | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete
+    foreign_key_name     | table_schema | table_name | column_names  | era_name |  unique_key_name   | match_type | update_action | delete_action |         fk_insert_trigger         |         fk_update_trigger         |         uk_update_trigger         |         uk_delete_trigger         
+-------------------------+--------------+------------+---------------+----------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+-----------------------------------+-----------------------------------
+ staff_employee_id_valid | hidden       | staff      | {employee_id} | valid    | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete
 (1 row)
 
 -- While sql_saga is active
@@ -121,8 +121,8 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 \d hidden.staff
@@ -141,8 +141,8 @@ Indexes:
 Check constraints:
     "staff_valid_check" CHECK (valid_after < valid_to)
 Triggers:
-    staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_after, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden.staff', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_after, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
 
 -- Test data.
@@ -183,8 +183,8 @@ SELECT sql_saga.drop_foreign_key('hidden.staff', 'staff_employee_id_valid');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('exposed.employees', 'employees_id_valid');
@@ -200,8 +200,8 @@ SELECT sql_saga.drop_unique_key('hidden.staff','staff_id_valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
------------------+-----------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
 SELECT sql_saga.drop_era('exposed.employees');
@@ -217,8 +217,8 @@ SELECT sql_saga.drop_era('hidden.staff');
 (1 row)
 
 TABLE sql_saga.era;
- table_oid | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
+ table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
+--------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.

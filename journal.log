@@ -1,0 +1,51 @@
+# Refactor Core to use (schema, table) instead of oid
+
+**Goal:** Make event triggers robust by replacing `table_oid` (regclass) with `table_schema` (name) and `table_name` (name) in all metadata tables. This plan is designed to be executed incrementally, with each step resulting in a buildable (though not necessarily fully functional) state.
+
+---
+
+### Step 1: Modify Metadata Table DDL
+
+-   **Files to change:** `sql_saga--1.0.sql`
+-   **Action:**
+    1.  In `sql_saga.era`, replace `table_oid` with `table_schema` and `table_name`. Update the PRIMARY KEY.
+    2.  In `sql_saga.unique_keys`, do the same and update its FOREIGN KEY.
+    3.  In `sql_saga.foreign_keys`, do the same and update its FOREIGN KEY.
+    4.  In `sql_saga.api_view`, do the same and update its PRIMARY KEY and FOREIGN KEY.
+-   **Verification:** `make install` will fail, as the API functions (`add_era`, etc.) will now be referencing non-existent columns. This is the expected outcome and identifies the functions that need to be updated next.
+
+---
+
+### Step 2: Update API Functions (SQL)
+
+-   **Files to change:** `sql_saga--1.0.sql`
+-   **Action:** Update all API functions (`add_era`, `drop_era`, `add_unique_key`, etc.) one by one.
+    -   The function signatures will **not** change. They will continue to accept `regclass`.
+    -   Inside each function, add logic to look up the `schema_name` and `table_name` from the input `regclass` OID.
+    -   Update all `INSERT`, `UPDATE`, `DELETE`, and `SELECT` statements within the functions to use the new `table_schema` and `table_name` columns for all queries against the metadata tables.
+-   **Verification:** After updating all SQL functions, `make install` should succeed. However, `make installcheck` will fail because the C trigger functions are now broken.
+
+---
+
+### Step 3: Update C Trigger Function Arguments
+
+-   **Files to change:** `sql_saga--1.0.sql`
+-   **Action:** In `sql_saga.add_foreign_key`, change the arguments passed to the C trigger functions. Instead of passing OIDs as strings, pass the resolved schema and table names. The argument list for the triggers will need to be updated.
+-   **Verification:** `make install` will succeed, but `make installcheck` will still fail with C trigger errors.
+
+---
+
+### Step 4: Update C Trigger Function Logic
+
+-   **Files to change:** `sql_saga.c`
+-   **Action:**
+    -   Update the C trigger functions (`fk_insert_check_c`, `fk_update_check_c`, etc.) to parse the new arguments (schema and table names).
+    -   Modify the logic that looks up `range_type` and builds the validation query to use these names instead of OIDs. This will involve using `regclassin` to get an OID from the name when needed for SPI calls.
+-   **Verification:** `make install` will succeed.
+
+---
+
+### Step 5: Final Verification
+
+-   **Action:** Run all tests.
+-   **Verification:** `make installcheck` should now pass completely. The refactoring is complete.

@@ -27,9 +27,9 @@ SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p')
 
 -- Test overloaded drop_foreign_key
 TABLE sql_saga.foreign_keys;
- foreign_key_name  | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
--------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
- child_parent_id_q | child     | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
+ child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
@@ -39,8 +39,8 @@ SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
 -- Test original drop_foreign_key
@@ -51,9 +51,9 @@ SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p')
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
--------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
- child_parent_id_q | child     | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
+ child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('child', 'child_parent_id_q');
@@ -63,15 +63,15 @@ SELECT sql_saga.drop_foreign_key('child', 'child_parent_id_q');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_oid | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+-----------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_oid | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+-----------+--------------+----------+-------------------+--------------------------
- parent_id_p     | parent    | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
@@ -81,8 +81,8 @@ SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
------------------+-----------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
 -- Test original drop_unique_key
@@ -93,9 +93,9 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_oid | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+-----------+--------------+----------+-------------------+--------------------------
- parent_id_p     | parent    | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');
@@ -105,8 +105,8 @@ SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_oid | column_names | era_name | unique_constraint | exclude_constraint 
------------------+-----------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
 DROP TABLE child;
