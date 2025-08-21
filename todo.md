@@ -8,6 +8,14 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 - [x] Cached query plan for era range_type lookups to improve trigger speed.
 
+- [ ] **Refactor core to use `(schema, table)` instead of `oid`:**
+  - **Goal:** Make event triggers robust against DDL operations (like `DROP TABLE`) that invalidate object OIDs.
+  - **Problem:** Storing `table_oid` (`regclass`) in metadata tables makes event triggers fragile. An `sql_drop` trigger fires *after* an object is deleted, so looking up the object's name from its OID will fail, causing the trigger to error out incorrectly. Storing schema and table names as `text` avoids this system catalog lookup.
+  - **Strategy:**
+    1.  **Change Metadata:** Modify all metadata tables (`sql_saga.era`, `unique_keys`, etc.) to store `table_schema` and `table_name` instead of `table_oid`.
+    2.  **Preserve API:** Keep the public API functions (`add_era`, etc.) unchanged. They will continue to accept `regclass`.
+    3.  **Internal Conversion:** Inside the API functions, resolve the `regclass` input into schema and table names for storage. This encapsulates the change and avoids breaking user scripts.
+
 - [ ] **(Breaking Change)** Adopt `[)` period semantics
   **Goal:** Align with PostgreSQL's native `tsrange` and `daterange` types, making the extension more intuitive and compatible with built-in operators like `OVERLAPS`.
   **Problem:** The current `(valid_after, valid_to]` semantic (`(]`) is non-standard, requires explicit casting (`daterange(valid_after, valid_to, '(]')`), and prevents natural use of range operators.
@@ -15,11 +23,6 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
     1.  Replace `valid_after` with `valid_from` (inclusive start) and `valid_to` with `valid_until` (exclusive end) throughout the entire extension.
     2.  All internal logic, metadata tables (`sql_saga.era`), C code, and tests must be updated to use the new column names and `[)` period semantics.
     3.  The `synchronize_valid_from_after` trigger will be removed. A new trigger or recommendation might be needed to handle the old `valid_to` (inclusive) from `valid_until` (exclusive) if users need it for display purposes (e.g., `valid_to = valid_until - '1 day'`).
-
-- [ ] Change the core to use `table_schema and table_name` instead of the `table_oid` and change all relevant
-  tables and variables and code. An oid is looked up in the system tables, and for DDL triggers
-  it is not possible to look up since the trigger runs after the fact and can cause a rollback,
-  by using text variables, they can be checked and used without causing system table lookups.
 
 ## Medium Priority - Refactoring & API Improvements
 
