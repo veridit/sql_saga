@@ -6,6 +6,21 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 ## High Priority - Bugs & Core Features
 
+- [ ] Improve trigger speed by using cache for query plans, see how periods.c does some possible relevant caching
+
+- [ ] Change semantics to be more intuitive
+  **Goal:** Be easier for humans to read and compatible with daterange and overlaps and their semantics.
+  **Problem:** (valid_after,valid_to] is not intuitie for people (or AI), and daterange defaults to `[)` semantics,
+  so we must always use `daterange(valid_after,valid_to,'(]')` and the OVERLAPS operator only works with `[)`
+  semantics.
+  Instead change to to use valid_from and valid_until with `[)`  semantics, and change the current trigger
+  to sync valid_after and valid_from to instead sync `valid_to = valid_until - '1 day'`.
+
+- [ ] Change the core to use `table_schema and table_name` instead of the `table_oid` and change all relevant
+  tables and variables and code. An oid is looked up in the system tables, and for DDL triggers
+  it is not possible to look up since the trigger runs after the fact and can cause a rollback,
+  by using text variables, they can be checked and used without causing system table lookups.
+
 ## Medium Priority - Refactoring & API Improvements
 
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
