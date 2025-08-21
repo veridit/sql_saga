@@ -77,10 +77,16 @@ This section summarizes potential improvements and features adapted from the `pe
 ### From `periods` extension:
 
 - [ ] **Implement System Versioning (with C triggers):** `periods` contains a complete implementation of `SYSTEM VERSIONING`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`) for populating them, and helper functions (`_as_of`, `_between`, etc.). This is a major feature that `sql_saga` currently has commented-out stubs for.
+  - **Comparison to Audit Frameworks (`pgaudit`):** System Versioning (as implemented in `periods`) and audit logging (`pgaudit`) are complementary, can be used together without conflict, and solve different problems.
+    - **System Versioning** tracks the *state of the data* over time. It creates a complete, queryable history of every row, answering the question: "What did this record look like last year?" Its purpose is historical data analysis and reconstruction.
+    - **Audit Frameworks (`pgaudit`)** track the *actions performed on the data*. They log the `INSERT`, `UPDATE`, `DELETE` statements themselves, answering the question: "Who deleted a record from this table yesterday?" Their purpose is security, compliance, and forensics.
+    - **Combined Use Case:** For NSOs, using both provides a complete picture: `pgaudit` supplies the mandatory, unalterable log of *who made a change*, while System Versioning provides the queryable history of *what the data looked like* as a result of that change.
   - **Action:** Port the entire system versioning feature from `periods`. This includes:
     1.  The `system_versioning` and `system_time_periods` metadata tables.
     2.  The `add_system_versioning` and `drop_system_versioning` API functions.
     3.  The C trigger functions from `periods.c` for high-performance history tracking.
+  - **Design Constraints to Preserve:**
+    - **History Tables are Not Temporal:** The `periods` implementation correctly prevents a history table from being a temporal table itself. This is a critical design choice that separates concerns: the main table handles "application time," while the history table tracks "system time" (the audit trail). This prevents circular dependencies and preserves the integrity of the history log.
 
 - [x] **Enhance Event Trigger Logic:** `periods` has robust `drop_protection` and `rename_following` event triggers.
   - **Action:** Compared logic in `periods` with `sql_saga`'s event triggers. `sql_saga`'s logic is a correct subset of `periods`, and includes a performance optimization for `rename_following` that `periods` lacks. No further changes needed.
