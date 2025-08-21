@@ -3,6 +3,13 @@
 ## Introduction
 This document outlines the standard operating procedure for all AI agents contributing to this project. Adhering to these conventions ensures a systematic, verifiable, and robust development process.
 
+## Coding Standards
+
+### C Code (PostgreSQL Extensions)
+- **C99 Compliance:** All C code must be compatible with the C99 standard. The build process uses the `-Wdeclaration-after-statement` flag, which will generate a warning if variable declarations are mixed with code.
+  - **Rule:** Declare all variables at the beginning of a block (immediately after a `{`). Do not mix declarations and executable statements.
+- **PostgreSQL Coding Conventions:** Adhere to the formatting and naming conventions outlined in the official [PostgreSQL Documentation](https://www.postgresql.org/docs/current/source.html). This includes conventions for variable names, function names, and code layout.
+
 ## Guiding Principles
 
 ### 1. Maintain a Stateless Mindset
