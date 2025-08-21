@@ -23,6 +23,14 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [ ] **Cache Dynamic Validation Queries:**
+  - **Goal:** Improve trigger performance for large DML operations by caching the main validation query plans.
+  - **Problem:** The core validation queries in `fk_insert_check_c`, `fk_update_check_c`, `uk_delete_check_c`, and `uk_update_check_c` are dynamically constructed with `psprintf` and executed with `SPI_execute` on every trigger invocation. This incurs a significant overhead for query planning, especially in statements affecting many rows.
+  - **Action:** Refactor these functions to:
+    1.  Build a parameterized query string (using `$1`, `$2`, etc.) instead of injecting quoted literals.
+    2.  Use `SPI_prepare` to create a prepared statement.
+    3.  Implement a cache (e.g., a hash table keyed by foreign key name) to store and reuse these prepared statements across function calls within a transaction, similar to the plan caching in `periods.c`.
+
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
   - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
   - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
