@@ -85,9 +85,6 @@ This section summarizes potential improvements and features adapted from the `pe
 - [x] **Enhance Event Trigger Logic:** `periods` has robust `drop_protection` and `rename_following` event triggers.
   - **Action:** Compared logic in `periods` with `sql_saga`'s event triggers. `sql_saga`'s logic is a correct subset of `periods`, and includes a performance optimization for `rename_following` that `periods` lacks. No further changes needed.
 
-- [ ] **Port SQL Predicate Functions:** `periods` provides a suite of SQL helper functions (`periods.contains`, `periods.overlaps`, `periods.precedes`, etc.) that operate directly on start/end columns.
-  - **Action:** Evaluate these functions. Consider porting them to `sql_saga` to provide a more complete, user-friendly API for temporal queries, complementing PostgreSQL's native range operators.
-
 ### From `time_for_keys` extension:
 
 - [x] **Analyze Alternative Foreign Key Implementation:** The `time_for_keys` project represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint. The legacy code for this was removed from `sql_saga` to avoid confusion.
