@@ -37,7 +37,7 @@ test: installcheck
 
 # New target to run vimdiff for the first failing test
 vimdiff-fail-first:
-	@first_fail=$$(grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
+	@first_fail=$$(grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
 	if [ -n "$$first_fail" ]; then \
 		echo "Running vimdiff for test: $$first_fail"; \
 		vim -d expected/$$first_fail.out results/$$first_fail.out < /dev/tty; \
@@ -47,7 +47,7 @@ vimdiff-fail-first:
 
 # New target to run vimdiff for all failing tests
 vimdiff-fail-all:
-	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
+	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Next test: $$test"; \
 		echo "Press C to continue, s to skip, or b to break (default: C)"; \
 		read -n 1 -s input < /dev/tty; \
@@ -62,11 +62,11 @@ vimdiff-fail-all:
 
 # New target to show diff for all failing tests
 diff-fail-all:
-	@grep 'not ok' regression.out | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
+	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Showing diff for test: $$test"; \
 		diff -u "expected/$$test.out" "results/$$test.out" || true; \
 	done
-	@if grep -q 'not ok' regression.out; then exit 1; fi
+	@if grep -q 'not ok' regression.out 2>/dev/null; then exit 1; fi
 
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
