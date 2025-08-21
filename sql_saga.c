@@ -122,6 +122,10 @@ init_uk_update_plan_cache(void)
 
 static SPIPlanPtr get_range_type_plan = NULL;
 
+/* For NAMEARRAYOID type IO */
+static Oid namearray_input_func_oid = InvalidOid;
+static Oid namearray_ioparam_oid = InvalidOid;
+
 /* Function definitions */
 
 PG_FUNCTION_INFO_V1(fk_insert_check_c);
@@ -150,14 +154,6 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	char *uk_stop_on_column_name;
 	char *match_type;
 
-	/* For get_type_io_data */
-	Oid			typinput_func_oid;
-	Oid			typioparam_oid;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-	
 	FkValidationPlan *plan_entry;
 	bool found;
 	int ret;
@@ -241,11 +237,24 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		/* Build parameterized where clause and collect param info */
 		initStringInfo(&where_buf);
 
-		get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &typioparam_oid, &typinput_func_oid);
-		uk_column_names_datum = OidInputFunctionCall(typinput_func_oid, uk_column_names_str, typioparam_oid, -1);
+		if (namearray_input_func_oid == InvalidOid)
+		{
+			/*
+			 * We only need the input function and ioparam for NAMEARRAYOID,
+			 * so we cache them in static variables to avoid repeated catalog
+			 * lookups. Other type data is not needed.
+			 */
+			int16	typlen;
+			bool	typbyval;
+			char	typalign;
+			char	typdelim;
+			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
+		}
+
+		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-		fk_column_names_datum = OidInputFunctionCall(typinput_func_oid, fk_column_names_str, typioparam_oid, -1);
+		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
 		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
 		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
 
@@ -404,14 +413,6 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	char *uk_stop_on_column_name;
 	char *match_type;
 
-	/* For get_type_io_data */
-	Oid			typinput_func_oid;
-	Oid			typioparam_oid;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-	
 	FkValidationPlan *plan_entry;
 	bool found;
 	int ret;
@@ -495,11 +496,24 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		/* Build parameterized where clause and collect param info */
 		initStringInfo(&where_buf);
 
-		get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &typioparam_oid, &typinput_func_oid);
-		uk_column_names_datum = OidInputFunctionCall(typinput_func_oid, uk_column_names_str, typioparam_oid, -1);
+		if (namearray_input_func_oid == InvalidOid)
+		{
+			/*
+			 * We only need the input function and ioparam for NAMEARRAYOID,
+			 * so we cache them in static variables to avoid repeated catalog
+			 * lookups. Other type data is not needed.
+			 */
+			int16	typlen;
+			bool	typbyval;
+			char	typalign;
+			char	typdelim;
+			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
+		}
+
+		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-		fk_column_names_datum = OidInputFunctionCall(typinput_func_oid, fk_column_names_str, typioparam_oid, -1);
+		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
 		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
 		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
 
@@ -660,14 +674,6 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	char *uk_start_after_column_name;
 	char *uk_stop_on_column_name;
 
-	/* For get_type_io_data */
-	Oid			typinput_func_oid;
-	Oid			typioparam_oid;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-
 	FkValidationPlan *plan_entry;
 	bool found;
 	int ret;
@@ -756,11 +762,25 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		initStringInfo(&where_buf);
 		initStringInfo(&exclude_buf);
 
-		get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &typioparam_oid, &typinput_func_oid);
-		uk_column_names_datum = OidInputFunctionCall(typinput_func_oid, uk_column_names_str, typioparam_oid, -1);
+		if (namearray_input_func_oid == InvalidOid)
+		{
+			/*
+			 * We only need the input function and ioparam for NAMEARRAYOID,
+			 * so we cache them in static variables to avoid repeated catalog
+			 * lookups. Other type data is not needed.
+			 */
+			int16	typlen;
+			bool	typbyval;
+			char	typalign;
+			char	typdelim;
+			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
+		}
+
+		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-		fk_column_names_datum = OidInputFunctionCall(typinput_func_oid, fk_column_names_str, typioparam_oid, -1);
+
+		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
 		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
 		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
 
@@ -915,14 +935,6 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	char *uk_start_after_column_name;
 	char *uk_stop_on_column_name;
 
-	/* For get_type_io_data */
-	Oid			typinput_func_oid;
-	Oid			typioparam_oid;
-	int16		typlen;
-	bool		typbyval;
-	char		typalign;
-	char		typdelim;
-
 	UkUpdateValidationPlan *plan_entry;
 	bool found;
 	int ret;
@@ -1003,11 +1015,24 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		initStringInfo(&where_buf); initStringInfo(&exclude_buf); initStringInfo(&union_buf);
 		initStringInfo(&select_list_buf); initStringInfo(&alias_buf); initStringInfo(&join_buf);
 
-		get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &typioparam_oid, &typinput_func_oid);
-		uk_column_names_datum = OidInputFunctionCall(typinput_func_oid, uk_column_names_str, typioparam_oid, -1);
+		if (namearray_input_func_oid == InvalidOid)
+		{
+			/*
+			 * We only need the input function and ioparam for NAMEARRAYOID,
+			 * so we cache them in static variables to avoid repeated catalog
+			 * lookups. Other type data is not needed.
+			 */
+			int16	typlen;
+			bool	typbyval;
+			char	typalign;
+			char	typdelim;
+			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
+		}
+
+		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-		fk_column_names_datum = OidInputFunctionCall(typinput_func_oid, fk_column_names_str, typioparam_oid, -1);
+		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
 		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
 		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
 
