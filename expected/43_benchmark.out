@@ -172,6 +172,27 @@ DROP TABLE legal_unit;
 DROP EXTENSION sql_saga;
 DROP EXTENSION btree_gist;
 INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+-- Verify the benchmark events and row counts, but exclude volatile timing data
+-- from the regression test output to ensure stability.
+SELECT event, row_count FROM benchmark ORDER BY timestamp;
+                event                | row_count 
+-------------------------------------+-----------
+ BEGIN                               |         0
+ Constraints enabled                 |         0
+ INSERTs delayed constraints start   |         0
+ INSERTs delayed constraints end     |     10000
+ INSERTs immediate constraints start |         0
+ INSERTs immediate constraints end   |     10000
+ Update deferred constraints start   |         0
+ Update deferred constraints end     |     20000
+ Constraints disabled                |         0
+ Tear down complete                  |         0
+(10 rows)
+
+-- Capture performance metrics to a separate file for manual review.
+-- This output is not part of the main regression test, so timing variations
+-- will not cause the test to fail. You should commit this file to git.
+\o expected/43_benchmark_performance.out
 -- Calculate rows per second
 CREATE OR REPLACE FUNCTION round_to_nearest_100(value FLOAT8) RETURNS FLOAT8 AS $$
 BEGIN
@@ -204,17 +225,5 @@ FROM
   benchmark_calculated
 ORDER BY
   timestamp;
-                event                | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
--------------------------------------+-----------+-----------------+----------------+------------+-----------------
- BEGIN                               |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
- Constraints enabled                 |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints start   |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~25100 rows/s
- INSERTs immediate constraints start |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs immediate constraints end   |     10000 | 1 secs          | 1 secs         | 10000 rows | ~16200 rows/s
- Update deferred constraints start   |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Update deferred constraints end     |     20000 | 11 secs         | 10 secs        | 20000 rows | ~2100 rows/s
- Constraints disabled                |         0 | 11 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Tear down complete                  |         0 | 11 secs         | 0 secs         | 0 rows     | ~0 rows/s
-(10 rows)
-
+-- Stop redirecting output
+\o

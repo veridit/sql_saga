@@ -121,6 +121,15 @@ DROP EXTENSION btree_gist;
 
 INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
 
+-- Verify the benchmark events and row counts, but exclude volatile timing data
+-- from the regression test output to ensure stability.
+SELECT event, row_count FROM benchmark ORDER BY timestamp;
+
+-- Capture performance metrics to a separate file for manual review.
+-- This output is not part of the main regression test, so timing variations
+-- will not cause the test to fail. You should commit this file to git.
+\o expected/43_benchmark_performance.out
+
 -- Calculate rows per second
 CREATE OR REPLACE FUNCTION round_to_nearest_100(value FLOAT8) RETURNS FLOAT8 AS $$
 BEGIN
@@ -154,3 +163,6 @@ FROM
   benchmark_calculated
 ORDER BY
   timestamp;
+
+-- Stop redirecting output
+\o
