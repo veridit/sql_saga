@@ -44,6 +44,8 @@
 
 PG_MODULE_MAGIC;
 
+static SPIPlanPtr get_range_type_plan = NULL;
+
 /* Function definitions */
 
 PG_FUNCTION_INFO_V1(fk_insert_check_c);
@@ -182,11 +184,10 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	{
 		char *fk_range_constructor;
 		char *uk_range_constructor;
-		char *q, *query;
+		char *query;
 		int ret;
 		bool isnull, okay;
 		char *uk_where_clause;
-		Oid argtypes[] = { REGCLASSOID, NAMEOID };
 		Datum values[2];
 		StringInfoData where_buf;
 		Datum uk_column_names_datum;
@@ -205,12 +206,24 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		char *qualified_uk_table_name;
 
 		/* Get range constructor types from sql_saga.era */
-		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+		if (get_range_type_plan == NULL)
+		{
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
+			
+			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			if (get_range_type_plan == NULL)
+				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
+			ret = SPI_keepplan(get_range_type_plan);
+			if (ret != 0)
+				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
+		}
 		
 		values[0] = ObjectIdGetDatum(RelationGetRelid(rel));
 		values[1] = CStringGetDatum(tgargs[5]);
 		
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -218,7 +231,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
 		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -463,11 +476,10 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	{
 		char *fk_range_constructor;
 		char *uk_range_constructor;
-		char *q, *query;
+		char *query;
 		int ret;
 		bool isnull, okay;
 		char *uk_where_clause;
-		Oid argtypes[] = { REGCLASSOID, NAMEOID };
 		Datum values[2];
 		StringInfoData where_buf;
 		Datum uk_column_names_datum;
@@ -486,12 +498,24 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		char *qualified_uk_table_name;
 
 		/* Get range constructor types from sql_saga.era */
-		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+		if (get_range_type_plan == NULL)
+		{
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
+			
+			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			if (get_range_type_plan == NULL)
+				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
+			ret = SPI_keepplan(get_range_type_plan);
+			if (ret != 0)
+				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
+		}
 		
 		values[0] = ObjectIdGetDatum(RelationGetRelid(rel));
 		values[1] = CStringGetDatum(tgargs[5]);
 		
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s era %s", RelationGetRelationName(rel), tgargs[5]);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -499,7 +523,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		qualified_uk_table_name = psprintf("%s.%s", quote_identifier(uk_schema_name), quote_identifier(uk_table_name));
 		values[0] = DirectFunctionCall1(regclassin, CStringGetDatum(qualified_uk_table_name));
 		values[1] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for unique key table %s era %s", qualified_uk_table_name, uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -717,13 +741,12 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	{
 		char *fk_range_constructor;
 		char *uk_range_constructor;
-		char *q, *query;
+		char *query;
 		int ret;
 		bool isnull, violation;
 		char *join_on_clause;
 		char *where_clause;
 		char *exclude_old_row_clause;
-		Oid argtypes[] = { REGCLASSOID, NAMEOID };
 		Datum values[2];
 		StringInfoData join_buf;
 		StringInfoData where_buf;
@@ -740,21 +763,33 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		Oid fk_table_oid;
 
 		/* Get range constructor types from sql_saga.era */
-		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+		if (get_range_type_plan == NULL)
+		{
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
+			
+			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			if (get_range_type_plan == NULL)
+				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
+			ret = SPI_keepplan(get_range_type_plan);
+			if (ret != 0)
+				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
+		}
 
 		fk_table_oid = DirectFunctionCall1(regclassin, CStringGetDatum(psprintf("%s.%s", quote_identifier(fk_schema_name), quote_identifier(fk_table_name))));
 		
 		values[0] = ObjectIdGetDatum(fk_table_oid);
 		values[1] = CStringGetDatum(fk_era_name);
 		
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
 		values[0] = ObjectIdGetDatum(uk_table_oid);
 		values[1] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for unique key table %s era %s", quote_identifier(RelationGetRelationName(rel)), uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
@@ -1007,7 +1042,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	{
 		char *fk_range_constructor;
 		char *uk_range_constructor;
-		char *q, *query;
+		char *query;
 		int ret;
 		bool isnull, violation;
 		char *join_on_clause;
@@ -1017,7 +1052,6 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		char *sub_query_select_list;
 		char *sub_query_alias;
 		char *inner_alias = "sub_uk";
-		Oid argtypes[] = { REGCLASSOID, NAMEOID };
 		Datum values[2];
 		StringInfoData join_buf;
 		StringInfoData where_buf;
@@ -1037,19 +1071,31 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		Oid fk_table_oid;
 
 		/* Get range constructor types from sql_saga.era */
-		q = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+		if (get_range_type_plan == NULL)
+		{
+			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_oid = $1 AND era_name = $2";
+			Oid plan_argtypes[] = { REGCLASSOID, NAMEOID };
+
+			get_range_type_plan = SPI_prepare(sql, 2, plan_argtypes);
+			if (get_range_type_plan == NULL)
+				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+
+			ret = SPI_keepplan(get_range_type_plan);
+			if (ret != 0)
+				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
+		}
 
 		fk_table_oid = DirectFunctionCall1(regclassin, CStringGetDatum(psprintf("%s.%s", quote_identifier(fk_schema_name), quote_identifier(fk_table_name))));
 		values[0] = ObjectIdGetDatum(fk_table_oid);
 		values[1] = CStringGetDatum(fk_era_name);
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
 		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
 
 		values[0] = ObjectIdGetDatum(uk_table_oid);
 		values[1] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_with_args(q, 2, argtypes, values, NULL, true, 1);
+		ret = SPI_execute_plan(get_range_type_plan, values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for unique key table %s era %s", quote_identifier(RelationGetRelationName(rel)), uk_era_name);
 		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);

@@ -6,7 +6,7 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 ## High Priority - Bugs & Core Features
 
-- [ ] Improve trigger speed by using cache for query plans, see how periods.c does some possible relevant caching
+- [x] Cached query plan for era range_type lookups to improve trigger speed.
 
 - [ ] Change semantics to be more intuitive
   **Goal:** Be easier for humans to read and compatible with daterange and overlaps and their semantics.
