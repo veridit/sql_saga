@@ -8,13 +8,13 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 - [x] Cached query plan for era range_type lookups to improve trigger speed.
 
-- [ ] Change semantics to be more intuitive
-  **Goal:** Be easier for humans to read and compatible with daterange and overlaps and their semantics.
-  **Problem:** (valid_after,valid_to] is not intuitie for people (or AI), and daterange defaults to `[)` semantics,
-  so we must always use `daterange(valid_after,valid_to,'(]')` and the OVERLAPS operator only works with `[)`
-  semantics.
-  Instead change to to use valid_from and valid_until with `[)`  semantics, and change the current trigger
-  to sync valid_after and valid_from to instead sync `valid_to = valid_until - '1 day'`.
+- [ ] **(Breaking Change)** Adopt `[)` period semantics
+  **Goal:** Align with PostgreSQL's native `tsrange` and `daterange` types, making the extension more intuitive and compatible with built-in operators like `OVERLAPS`.
+  **Problem:** The current `(valid_after, valid_to]` semantic (`(]`) is non-standard, requires explicit casting (`daterange(valid_after, valid_to, '(]')`), and prevents natural use of range operators.
+  **Action:** This is a complete, breaking change.
+    1.  Replace `valid_after` with `valid_from` (inclusive start) and `valid_to` with `valid_until` (exclusive end) throughout the entire extension.
+    2.  All internal logic, metadata tables (`sql_saga.era`), C code, and tests must be updated to use the new column names and `[)` period semantics.
+    3.  The `synchronize_valid_from_after` trigger will be removed. A new trigger or recommendation might be needed to handle the old `valid_to` (inclusive) from `valid_until` (exclusive) if users need it for display purposes (e.g., `valid_to = valid_until - '1 day'`).
 
 - [ ] Change the core to use `table_schema and table_name` instead of the `table_oid` and change all relevant
   tables and variables and code. An oid is looked up in the system tables, and for DDL triggers
