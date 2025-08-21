@@ -3,9 +3,9 @@
  BEGIN                               |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
  Constraints enabled                 |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
  INSERTs delayed constraints start   |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~25100 rows/s
+ INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~24500 rows/s
  INSERTs immediate constraints start |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs immediate constraints end   |     10000 | 1 secs          | 1 secs         | 10000 rows | ~18400 rows/s
+ INSERTs immediate constraints end   |     10000 | 1 secs          | 1 secs         | 10000 rows | ~19200 rows/s
  Update deferred constraints start   |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
  Update deferred constraints end     |     20000 | 11 secs         | 10 secs        | 20000 rows | ~2000 rows/s
  Constraints disabled                |         0 | 11 secs         | 0 secs         | 0 rows     | ~0 rows/s
