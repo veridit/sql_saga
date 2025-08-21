@@ -214,3 +214,13 @@ This section summarizes key concepts about event triggers, focusing on their beh
 *   **Macro**: The `CALLED_AS_EVENT_TRIGGER(fcinfo)` macro must be used to verify that the function was called as an event trigger.
 *   **`EventTriggerData` struct**: This struct provides the `event` name (e.g., `"sql_drop"`) and the command `tag` (e.g., `"DROP TABLE"`).
 *   **Return Value**: The function must return `NULL` via `PG_RETURN_NULL()`.
+
+## Server Programming Interface (SPI)
+
+Reference: [PostgreSQL Documentation: Server Programming Interface](https://www.postgresql.org/docs/current/spi.html)
+
+### Key Concepts
+
+*   **Execution Context**: SPI allows C functions to execute SQL commands within the server. All SPI operations must be wrapped between `SPI_connect()` and `SPI_finish()`.
+*   **Error Handling**: A critical feature of SPI is its error handling model. If any command executed via SPI (e.g., `SPI_execute`) fails, **control is not returned to the C function**. Instead, the current transaction or subtransaction is immediately rolled back, and an error is raised, unwinding the stack. Documented error-return codes from SPI functions are only for errors detected within the SPI layer itself, not for errors from the executed SQL.
+*   **Memory Management**: Memory for query results (like `SPI_tuptable`) is allocated in a context that is automatically freed by `SPI_finish()`. For data that needs to be returned from the function, it must be copied into the upper executor context using functions like `SPI_palloc` or `SPI_copytuple`.
