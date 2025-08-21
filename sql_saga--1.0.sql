@@ -1100,17 +1100,35 @@ BEGIN
          * In addition to what the standard calls for, we also remove any
          * columns belonging to primary keys.
          */
-        IF SERVER_VERSION < 100000 THEN
-            generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_10;
-        ELSIF SERVER_VERSION < 120000 THEN
-            generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_12;
-        ELSE
-            generated_columns_sql := GENERATED_COLUMNS_SQL_CURRENT;
+        -- Create a cache table for generated columns if it doesn't exist for this session.
+        -- Using to_regclass is a clean way to check for a temp table's existence.
+        IF to_regclass('__sql_saga_generated_columns_cache') IS NULL THEN
+            CREATE TEMP TABLE __sql_saga_generated_columns_cache (
+                table_oid oid PRIMARY KEY,
+                column_names name[]
+            ) ON COMMIT DROP;
         END IF;
 
-        EXECUTE generated_columns_sql
-        INTO generated_columns
-        USING info.table_oid;
+        -- Try to fetch from cache first
+        SELECT column_names INTO generated_columns FROM __sql_saga_generated_columns_cache WHERE table_oid = info.table_oid;
+
+        IF NOT FOUND THEN
+            -- Not in cache, so query catalogs
+            IF SERVER_VERSION < 100000 THEN
+                generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_10;
+            ELSIF SERVER_VERSION < 120000 THEN
+                generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_12;
+            ELSE
+                generated_columns_sql := GENERATED_COLUMNS_SQL_CURRENT;
+            END IF;
+
+            EXECUTE generated_columns_sql
+            INTO generated_columns
+            USING info.table_oid;
+
+            -- Store in cache for subsequent calls in this transaction
+            INSERT INTO __sql_saga_generated_columns_cache (table_oid, column_names) VALUES (info.table_oid, generated_columns);
+        END IF;
 
         /* There may not be any generated columns. */
         IF generated_columns IS NOT NULL THEN
