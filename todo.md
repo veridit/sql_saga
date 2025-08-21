@@ -23,7 +23,7 @@ Keep a todo-journal.md that tracks the state of the current ongoing task and rel
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [ ] **Cache Dynamic Validation Queries:**
+- [x] **Cache Dynamic Validation Queries:**
   - **Goal:** Improve trigger performance for large DML operations by caching the main validation query plans.
   - **Problem:** The core validation queries in `fk_insert_check_c`, `fk_update_check_c`, `uk_delete_check_c`, and `uk_update_check_c` are dynamically constructed with `psprintf` and executed with `SPI_execute` on every trigger invocation. This incurs a significant overhead for query planning, especially in statements affecting many rows.
   - **Action:** Refactor these functions to:
