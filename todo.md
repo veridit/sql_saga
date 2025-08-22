@@ -2,31 +2,31 @@
 
 A living document of upcoming tasks.
 Tasks are checked ✅ when done and made brief.
-Keep a todo-journal.md that tracks the state of the current ongoing task and relevant details.
+Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
 
-- [x] Cached query plan for era range_type lookups to improve trigger speed.
+- [ ] **Foreign key validation fails for tables in different schemas:** The test `41_with_schema_test` has regressed. An `UPDATE` that should violate a temporal foreign key is now succeeding.
+  - **Hypothesis:** The `fk_update_check_c` trigger is failing to resolve the correct schema for the referenced table when it differs from the referencing table's schema. This bug was likely introduced during the `regclass` -> `(schema, table)` refactoring.
 
-- [x] **Refactor core to use `(schema, table)` instead of `oid`:** Replaced `regclass` OIDs with schema and table names in metadata tables to make event triggers robust against `DROP` operations.
-
-- [ ] **(Breaking Change)** Adopt `[)` period semantics
-  **Goal:** Align with PostgreSQL's native `tsrange` and `daterange` types, making the extension more intuitive and compatible with built-in operators like `OVERLAPS`.
-  **Problem:** The current `(valid_after, valid_to]` semantic (`(]`) is non-standard, requires explicit casting (`daterange(valid_after, valid_to, '(]')`), and prevents natural use of range operators.
-  **Action:** This is a complete, breaking change.
-    1.  Replace `valid_after` with `valid_from` (inclusive start) and `valid_to` with `valid_until` (exclusive end) throughout the entire extension.
-    2.  All internal logic, metadata tables (`sql_saga.era`), C code, and tests must be updated to use the new column names and `[)` period semantics.
-    3.  The `synchronize_valid_from_after` trigger will be removed. A new trigger or recommendation might be needed to handle the old `valid_to` (inclusive) from `valid_until` (exclusive) if users need it for display purposes (e.g., `valid_to = valid_until - '1 day'`).
+- [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
+- [x] **Cache query plans:** Cached query plans to improve trigger performance.
+- [x] **Refactor core to use `(schema, table)` instead of `oid`:** Made event triggers robust against `DROP`.
+- [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [x] **Cache Dynamic Validation Queries:**
-  - **Goal:** Improve trigger performance for large DML operations by caching the main validation query plans.
-  - **Problem:** The core validation queries in `fk_insert_check_c`, `fk_update_check_c`, `uk_delete_check_c`, and `uk_update_check_c` are dynamically constructed with `psprintf` and executed with `SPI_execute` on every trigger invocation. This incurs a significant overhead for query planning, especially in statements affecting many rows.
-  - **Action:** Refactor these functions to:
-    1.  Build a parameterized query string (using `$1`, `$2`, etc.) instead of injecting quoted literals.
-    2.  Use `SPI_prepare` to create a prepared statement.
-    3.  Implement a cache (e.g., a hash table keyed by foreign key name) to store and reuse these prepared statements across function calls within a transaction, similar to the plan caching in `periods.c`.
+- [ ] **Make regression tests self-contained:**
+  - **Issue:** Most tests rely on `01_install.sql` to be run first to set up roles and permissions. This makes it cumbersome to run a single test file in isolation during development.
+  - **Action:** Use common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts. Modify test files to include these so they can run independently, following the pattern established in `51_quoted_identifiers.sql`.
+  - **Note:** Tests that validate transaction semantics may need special handling and cannot be simply wrapped in a `BEGIN/ROLLBACK` block with the setup script.
+
+- [ ] **Complete the `regclass` -> `(schema, table)` refactoring:**
+  - **Issue:** The metadata tables `sql_saga.era` and `sql_saga.api_view` still contain `oid` columns (`audit_table_oid` and `view_oid` respectively). This is a remnant of the old design and should be removed to complete the refactoring.
+  - **Action:** Replace these columns with schema and table names.
+  - **Discussion Point:** The concept of an `api_view` is tied to PostgREST integration. Should we rename this metadata table and its functions (e.g., `add_api`, `drop_api`) to something more generic like `add_updatable_view` to better reflect its purpose, which is to provide a simplified view for `INSERT`, `UPDATE`, `DELETE` operations on a temporal table's history?
+
+- [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
 
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
   - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
@@ -78,7 +78,7 @@ This section summarizes potential improvements and features adapted from the `pe
     - **System Versioning** tracks the *state of the data* over time. It creates a complete, queryable history of every row, answering the question: "What did this record look like last year?" Its purpose is historical data analysis and reconstruction.
     - **Audit Frameworks (`pgaudit`)** track the *actions performed on the data*. They log the `INSERT`, `UPDATE`, `DELETE` statements themselves, answering the question: "Who deleted a record from this table yesterday?" Their purpose is security, compliance, and forensics.
     - **Combined Use Case:** For NSOs, using both provides a complete picture: `pgaudit` supplies the mandatory, unalterable log of *who made a change*, while System Versioning provides the queryable history of *what the data looked like* as a result of that change.
-  - **Action:** Port the entire system versioning feature from `periods`. This includes:
+  - **Action:** Port the entire system versioning feature from `periods`. The test `61_system_versioning_excluded_columns.sql` (also ported from `periods`) should be used to verify this functionality. This includes:
     1.  The `system_versioning` and `system_time_periods` metadata tables.
     2.  The `add_system_versioning` and `drop_system_versioning` API functions.
     3.  The C trigger functions from `periods.c` for high-performance history tracking.

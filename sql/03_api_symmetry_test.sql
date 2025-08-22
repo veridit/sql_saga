@@ -1,11 +1,11 @@
 -- Test that the overloaded drop_* functions work as expected.
 
-CREATE TABLE parent(id int, s int, e int);
-SELECT sql_saga.add_era('parent', 's', 'e', 'p');
+CREATE TABLE parent(id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('parent', 'valid_from', 'valid_until', 'p');
 SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 
-CREATE TABLE child(id int, parent_id int, s int, e int);
-SELECT sql_saga.add_era('child', 's', 'e', 'q');
+CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('child', 'valid_from', 'valid_until', 'q');
 SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
 
 -- Test overloaded drop_foreign_key

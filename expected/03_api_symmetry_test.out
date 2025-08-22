@@ -1,6 +1,6 @@
 -- Test that the overloaded drop_* functions work as expected.
-CREATE TABLE parent(id int, s int, e int);
-SELECT sql_saga.add_era('parent', 's', 'e', 'p');
+CREATE TABLE parent(id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('parent', 'valid_from', 'valid_until', 'p');
  add_era 
 ---------
  t
@@ -12,8 +12,8 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
  parent_id_p
 (1 row)
 
-CREATE TABLE child(id int, parent_id int, s int, e int);
-SELECT sql_saga.add_era('child', 's', 'e', 'q');
+CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('child', 'valid_from', 'valid_until', 'q');
  add_era 
 ---------
  t
@@ -69,9 +69,9 @@ TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+--------------+------------+--------------+----------+-------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
@@ -93,9 +93,9 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+--------------+------------+--------------+----------+-------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');

@@ -1,0 +1,168 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+--
+-- Test for handling of quoted identifiers (table, column, constraint names)
+-- including spaces and quotes within the names.
+--
+-- PostgreSQL Identifier Quoting Rules:
+--
+-- This test verifies that sql_saga API functions correctly handle complex
+-- identifier quoting. It's important to distinguish between how identifiers
+-- are written in DDL (Identifier Syntax, for `%I`) and how their names are
+-- passed as string literals to functions (Literal Syntax, for `%L`),
+-- especially for functions that take `regclass` arguments.
+--
+-- 1. **Identifier Syntax (`%I` format):** Used for database object names in DDL.
+--    - To handle spaces or case-sensitivity, use double quotes: `"My Table"`.
+--    - To include a double quote inside, escape it with another: `"""my "" table"""`.
+--    - The *actual name* of the table created by `"""my "" table"""` is `"my " table"`.
+--
+-- 2. **Literal Syntax (`%L` format):** Used for string values passed to functions.
+--    - The value is enclosed in single quotes: `'a string'`.
+--
+-- How to call sql_saga functions with complex names:
+--
+--  - **For `regclass` arguments (e.g., table_oid):**
+--    You must pass a string literal that contains the full *Identifier Syntax*
+--    used in the DDL. PostgreSQL's `regclass` type resolver uses this string
+--    to look up the object.
+--      - DDL: `CREATE TABLE """my "" table"""`
+--      - Function Call: `SELECT ...('"""my "" table"""', ...)`
+--      - The cast `'"""my "" table"""'::regclass` succeeds, but `'"my " table"'::regclass` fails.
+--
+--  - **For `text`, `name`, or `text[]` arguments (e.g., column/constraint names):**
+--    You must pass the *actual name* of the object as a string literal.
+--      - Column DDL: `"""col "" 1""" TEXT`
+--      - Actual Name: `"col " 1"`
+--      - Function Call: `..., ARRAY['"col " 1"'], ...`
+--
+SET ROLE TO sql_saga_unprivileged_user;
+-- 1. Table with a name containing quotes and spaces
+CREATE TABLE """quoted"" table" (
+    """id""" BIGINT,
+    """product "" code""" TEXT,
+    """valid from""" INTEGER,
+    """valid until""" INTEGER
+);
+-- 2. Add era with quoted columns
+SELECT sql_saga.add_era('"""quoted"" table"', '"valid from"', '"valid until"');
+ add_era 
+---------
+ t
+(1 row)
+
+TABLE sql_saga.era;
+ table_schema |   table_name   | era_name | valid_from_column_name | valid_until_column_name | range_type |  bounds_check_constraint   | audit_table_oid 
+--------------+----------------+----------+------------------------+-------------------------+------------+----------------------------+-----------------
+ public       | "quoted" table | valid    | "valid from"           | "valid until"           | int4range  | "quoted" table_valid_check | 
+(1 row)
+
+-- 3. Add unique key with quoted columns and constraint name
+SELECT sql_saga.add_unique_key(
+    table_oid => '"""quoted"" table"',
+    column_names => ARRAY['"id"', '"product " code"'],
+    era_name => 'valid',
+    unique_key_name => '"my " uk"'
+);
+ add_unique_key 
+----------------
+ "my " uk"
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_schema |   table_name   |           column_names           | era_name |                        unique_constraint                        |                 exclude_constraint                  
+-----------------+--------------+----------------+----------------------------------+----------+-----------------------------------------------------------------+-----------------------------------------------------
+ "my " uk"       | public       | "quoted" table | {"\"id\"","\"product \" code\""} | valid    | "quoted" table_"id"_"product " code"_"valid from"_"valid un_key | "quoted" table_"id"_"product " code"_int4range_excl
+(1 row)
+
+-- 4. Create referencing table with quoted names
+CREATE TABLE """fk "" test""" (
+    """ref "" id""" BIGINT,
+    """product""" TEXT,
+    """from""" INTEGER,
+    """until""" INTEGER
+);
+SELECT sql_saga.add_era('"""fk "" test"""', '"from"', '"until"');
+ add_era 
+---------
+ t
+(1 row)
+
+-- 5. Add foreign key referencing the complex unique key
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => '"""fk "" test"""',
+    fk_column_names => ARRAY['"ref " id"', '"product"'],
+    fk_era_name => 'valid',
+    unique_key_name => '"my " uk"'
+);
+            add_foreign_key             
+----------------------------------------
+ "fk " test"_"ref " id"_"product"_valid
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+            foreign_key_name            | table_schema | table_name  |          column_names           | era_name | unique_key_name | match_type | update_action | delete_action |                fk_insert_trigger                 |                fk_update_trigger                 |                uk_update_trigger                 |                uk_delete_trigger                 
+----------------------------------------+--------------+-------------+---------------------------------+----------+-----------------+------------+---------------+---------------+--------------------------------------------------+--------------------------------------------------+--------------------------------------------------+--------------------------------------------------
+ "fk " test"_"ref " id"_"product"_valid | public       | "fk " test" | {"\"ref \" id\"","\"product\""} | valid    | "my " uk"       | SIMPLE     | NO ACTION     | NO ACTION     | "fk " test"_"ref " id"_"product"_valid_fk_insert | "fk " test"_"ref " id"_"product"_valid_fk_update | "fk " test"_"ref " id"_"product"_valid_uk_update | "fk " test"_"ref " id"_"product"_valid_uk_delete
+(1 row)
+
+-- 6. Test data insertion
+-- This should succeed
+INSERT INTO """quoted"" table" VALUES (1, 'A', 10, 20);
+INSERT INTO """fk "" test""" VALUES (1, 'A', 12, 18);
+-- Show table contents before the expected failure
+TABLE """quoted"" table";
+ "id" | "product " code" | "valid from" | "valid until" 
+------+------------------+--------------+---------------
+    1 | A                |           10 |            20
+(1 row)
+
+TABLE """fk "" test""";
+ "ref " id" | "product" | "from" | "until" 
+------------+-----------+--------+---------
+          1 | A         |     12 |      18
+(1 row)
+
+-- This should fail (FK violation). Use a savepoint to contain the error.
+SAVEPOINT expect_fail;
+INSERT INTO """fk "" test""" VALUES (2, 'B', 15, 25);
+ERROR:  insert or update on table "public."fk " test"" violates foreign key constraint ""fk " test"_"ref " id"_"product"_valid"
+ROLLBACK TO SAVEPOINT expect_fail;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

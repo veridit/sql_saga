@@ -6,12 +6,12 @@ ALTER TABLE unrelated SET LOGGED;
 ALTER TABLE unrelated SET UNLOGGED;
 DROP TABLE unrelated;
 /* Ensure tables with periods are persistent */
-CREATE UNLOGGED TABLE log (id bigint, s date, e date);
-SELECT sql_saga.add_era('log', 's', 'e', 'p'); -- fails
+CREATE UNLOGGED TABLE log (id bigint, valid_from date, valid_until date);
+SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- fails
 ERROR:  table "log" must be persistent
 CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name) line 65 at RAISE
 ALTER TABLE log SET LOGGED;
-SELECT sql_saga.add_era('log', 's', 'e', 'p'); -- passes
+SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes
  add_era 
 ---------
  t

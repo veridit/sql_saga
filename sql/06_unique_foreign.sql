@@ -3,16 +3,16 @@ SET ROLE TO sql_saga_unprivileged_user;
 
 -- Unique keys are already pretty much guaranteed by the underlying features of
 -- PostgreSQL, but test them anyway.
-CREATE TABLE uk (id integer, s integer, e integer, CONSTRAINT uk_pkey PRIMARY KEY (id, s, e) DEFERRABLE);
-SELECT sql_saga.add_era('uk', 's', 'e', 'p');
+CREATE TABLE uk (id integer, valid_from integer, valid_until integer, CONSTRAINT uk_pkey PRIMARY KEY (id, valid_from, valid_until) DEFERRABLE);
+SELECT sql_saga.add_era('uk', 'valid_from', 'valid_until', 'p');
 SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
 TABLE sql_saga.unique_keys;
-INSERT INTO uk (id, s, e) VALUES (100, 1, 3), (100, 3, 4), (100, 4, 10); -- success
-INSERT INTO uk (id, s, e) VALUES (200, 1, 3), (200, 3, 4), (200, 5, 10); -- success
-INSERT INTO uk (id, s, e) VALUES (300, 1, 3), (300, 3, 5), (300, 4, 10); -- fail
+INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
+INSERT INTO uk (id, valid_from, valid_until) VALUES (200, 2, 4), (200, 4, 5), (200, 6, 11); -- success
+INSERT INTO uk (id, valid_from, valid_until) VALUES (300, 2, 4), (300, 4, 6), (300, 5, 11); -- fail
 
-CREATE TABLE fk (id integer, uk_id integer, s integer, e integer, PRIMARY KEY (id));
-SELECT sql_saga.add_era('fk', 's', 'e', 'q');
+CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id));
+SELECT sql_saga.add_era('fk', 'valid_from', 'valid_until', 'q');
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
     fk_insert_trigger => 'fki',
@@ -25,19 +25,19 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_ke
 TABLE sql_saga.foreign_keys;
 
 -- INSERT
-INSERT INTO fk VALUES (0, 100, 0, 1); -- fail
-INSERT INTO fk VALUES (0, 100, 0, 10); -- fail
+INSERT INTO fk VALUES (0, 100, 1, 2); -- fail
 INSERT INTO fk VALUES (0, 100, 1, 11); -- fail
-INSERT INTO fk VALUES (1, 100, 1, 3); -- success
-INSERT INTO fk VALUES (2, 100, 1, 10); -- success
+INSERT INTO fk VALUES (0, 100, 2, 12); -- fail
+INSERT INTO fk VALUES (1, 100, 2, 4); -- success
+INSERT INTO fk VALUES (2, 100, 2, 11); -- success
 -- UPDATE
-UPDATE fk SET e = 20 WHERE id = 1; -- fail
-UPDATE fk SET e = 6 WHERE id = 1; -- success
-UPDATE uk SET s = 2 WHERE (id, s, e) = (100, 1, 3); -- fail
-UPDATE uk SET s = 0 WHERE (id, s, e) = (100, 1, 3); -- success
+UPDATE fk SET valid_until = 21 WHERE id = 1; -- fail
+UPDATE fk SET valid_until = 7 WHERE id = 1; -- success
+UPDATE uk SET valid_from = 3 WHERE (id, valid_from, valid_until) = (100, 2, 4); -- fail
+UPDATE uk SET valid_from = 1 WHERE (id, valid_from, valid_until) = (100, 2, 4); -- success
 -- DELETE
-DELETE FROM uk WHERE (id, s, e) = (100, 3, 4); -- fail
-DELETE FROM uk WHERE (id, s, e) = (200, 3, 5); -- success
+DELETE FROM uk WHERE (id, valid_from, valid_until) = (100, 4, 5); -- fail
+DELETE FROM uk WHERE (id, valid_from, valid_until) = (200, 4, 6); -- success
 
 DROP TABLE fk;
 DROP TABLE uk;

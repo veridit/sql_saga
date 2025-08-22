@@ -9,14 +9,16 @@ DOCS = README.md
 
 SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
 
-REGRESS = $(if $(TESTS),$(TESTS),$(patsubst sql/%.sql,%,$(SQL_FILES)))
+REGRESS_ALL = $(patsubst sql/%.sql,%,$(SQL_FILES))
+REGRESS_FAST_LIST = $(filter-out 43_benchmark,$(REGRESS_ALL))
 
-# New REGRESS_FAST variable excluding the benchmark test
-REGRESS_FAST = $(filter-out 43_benchmark,$(REGRESS))
+# By default, run all tests. If 'fast' is a command line goal, run the fast subset.
+REGRESS_TO_RUN = $(REGRESS_ALL)
+ifeq (fast,$(filter fast,$(MAKECMDGOALS)))
+	REGRESS_TO_RUN = $(REGRESS_FAST_LIST)
+endif
 
-# New target for fast regression tests
-fast-tests:
-	$(MAKE) installcheck REGRESS="$(REGRESS_FAST)"
+REGRESS = $(if $(TESTS),$(TESTS),$(REGRESS_TO_RUN))
 
 # New target for benchmark regression test
 benchmark:
@@ -30,10 +32,17 @@ include $(PGXS)
 
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`
+# To run fast tests (excluding benchmarks): `make test fast`
 # To run a single test: `make test TESTS=21_init`
 # To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
 .PHONY: test
 test: installcheck
+
+# The 'fast' target is a dummy. Its presence in `make test fast` is used to
+# trigger the conditional logic that selects the fast test suite.
+.PHONY: fast
+fast:
+	@:
 
 # New target to run vimdiff for the first failing test
 vimdiff-fail-first:

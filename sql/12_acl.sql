@@ -23,9 +23,9 @@ CREATE VIEW show_owners AS
     WHERE p.pronamespace = 'public'::regnamespace
       AND p.proname = ANY (ARRAY['owner_test__as_of', 'owner_test__between', 'owner_test__between_symmetric', 'owner_test__from_to']);
 
-CREATE TABLE owner_test (col text PRIMARY KEY, s integer, e integer);
+CREATE TABLE owner_test (col text PRIMARY KEY, f integer, u integer);
 ALTER TABLE owner_test OWNER TO periods_acl_1;
-SELECT sql_saga.add_era('owner_test', 's', 'e', 'p');
+SELECT sql_saga.add_era('owner_test', 'f', 'u', 'p');
 SELECT sql_saga.add_api('owner_test', 'p');
 TABLE show_owners ORDER BY object_name;
 
@@ -58,9 +58,9 @@ CREATE VIEW show_acls AS
         WHERE c.relname IN ('fpacl', 'fpacl__for_portion_of_p')
     ) AS _;
 
-CREATE TABLE fpacl (col text PRIMARY KEY, s integer, e integer);
+CREATE TABLE fpacl (col text PRIMARY KEY, f integer, u integer);
 ALTER TABLE fpacl OWNER TO periods_acl_1;
-SELECT sql_saga.add_era('fpacl', 's', 'e', 'p');
+SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
 SELECT sql_saga.add_api('fpacl', 'p');
 TABLE show_acls ORDER BY sort_order;
 

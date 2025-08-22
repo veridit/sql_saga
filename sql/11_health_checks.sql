@@ -8,9 +8,9 @@ ALTER TABLE unrelated SET UNLOGGED;
 DROP TABLE unrelated;
 
 /* Ensure tables with periods are persistent */
-CREATE UNLOGGED TABLE log (id bigint, s date, e date);
-SELECT sql_saga.add_era('log', 's', 'e', 'p'); -- fails
+CREATE UNLOGGED TABLE log (id bigint, valid_from date, valid_until date);
+SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- fails
 ALTER TABLE log SET LOGGED;
-SELECT sql_saga.add_era('log', 's', 'e', 'p'); -- passes
+SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes
 ALTER TABLE log SET UNLOGGED; -- fails
 DROP TABLE log;

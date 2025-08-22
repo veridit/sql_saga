@@ -144,14 +144,14 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	char	  **tgargs;
 	char *foreign_key_name;
 	char *fk_column_names_str;
-	char *fk_start_after_column_name;
-	char *fk_stop_on_column_name;
+	char *fk_valid_from_column_name;
+	char *fk_valid_until_column_name;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
 	char *uk_era_name;
-	char *uk_start_after_column_name;
-	char *uk_stop_on_column_name;
+	char *uk_valid_from_column_name;
+	char *uk_valid_until_column_name;
 	char *match_type;
 	char *fk_schema_name;
 	char *fk_table_name;
@@ -181,14 +181,14 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	fk_table_name = tgargs[2];
 	fk_column_names_str = tgargs[3];
 	fk_era_name = tgargs[4];
-	fk_start_after_column_name = tgargs[5];
-	fk_stop_on_column_name = tgargs[6];
+	fk_valid_from_column_name = tgargs[5];
+	fk_valid_until_column_name = tgargs[6];
 	uk_schema_name = tgargs[7];
 	uk_table_name = tgargs[8];
 	uk_column_names_str = tgargs[9];
 	uk_era_name = tgargs[10];
-	uk_start_after_column_name = tgargs[11];
-	uk_stop_on_column_name = tgargs[12];
+	uk_valid_from_column_name = tgargs[11];
+	uk_valid_until_column_name = tgargs[12];
 	match_type = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -291,26 +291,26 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		if (num_fk_cols > 0) pfree(fk_col_datums);
 
 		/* Add range params */
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_start_after_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_from_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
 		param_idx++;
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_stop_on_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
 		
 		query = psprintf(
 			"SELECT COALESCE(("
 			"  SELECT sql_saga.covers_without_gaps("
-			"    %s(uk.%s, uk.%s, '(]'),"
-			"    %s($%d, $%d, '(]')"
+			"    %s(uk.%s, uk.%s),"
+			"    %s($%d, $%d)"
 			"    ORDER BY uk.%s"
 			"  )"
 			"  FROM %s.%s AS uk"
 			"  WHERE %s"
 			"), false)",
 			uk_range_constructor,
-			quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name),
+			quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
 			fk_range_constructor, num_fk_cols + 1, num_fk_cols + 2,
-			quote_identifier(uk_start_after_column_name),
+			quote_identifier(uk_valid_from_column_name),
 			quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
 			where_buf.data
 		);
@@ -411,14 +411,14 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	char	  **tgargs;
 	char *foreign_key_name;
 	char *fk_column_names_str;
-	char *fk_start_after_column_name;
-	char *fk_stop_on_column_name;
+	char *fk_valid_from_column_name;
+	char *fk_valid_until_column_name;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
 	char *uk_era_name;
-	char *uk_start_after_column_name;
-	char *uk_stop_on_column_name;
+	char *uk_valid_from_column_name;
+	char *uk_valid_until_column_name;
 	char *match_type;
 	char *fk_schema_name;
 	char *fk_table_name;
@@ -448,14 +448,14 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 	fk_table_name = tgargs[2];
 	fk_column_names_str = tgargs[3];
 	fk_era_name = tgargs[4];
-	fk_start_after_column_name = tgargs[5];
-	fk_stop_on_column_name = tgargs[6];
+	fk_valid_from_column_name = tgargs[5];
+	fk_valid_until_column_name = tgargs[6];
 	uk_schema_name = tgargs[7];
 	uk_table_name = tgargs[8];
 	uk_column_names_str = tgargs[9];
 	uk_era_name = tgargs[10];
-	uk_start_after_column_name = tgargs[11];
-	uk_stop_on_column_name = tgargs[12];
+	uk_valid_from_column_name = tgargs[11];
+	uk_valid_until_column_name = tgargs[12];
 	match_type = tgargs[13];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
@@ -558,26 +558,26 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		if (num_fk_cols > 0) pfree(fk_col_datums);
 
 		/* Add range params */
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_start_after_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_from_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
 		param_idx++;
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_stop_on_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
 		
 		query = psprintf(
 			"SELECT COALESCE(("
 			"  SELECT sql_saga.covers_without_gaps("
-			"    %s(uk.%s, uk.%s, '(]'),"
-			"    %s($%d, $%d, '(]')"
+			"    %s(uk.%s, uk.%s),"
+			"    %s($%d, $%d)"
 			"    ORDER BY uk.%s"
 			"  )"
 			"  FROM %s.%s AS uk"
 			"  WHERE %s"
 			"), false)",
 			uk_range_constructor,
-			quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name),
+			quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
 			fk_range_constructor, num_fk_cols + 1, num_fk_cols + 2,
-			quote_identifier(uk_start_after_column_name),
+			quote_identifier(uk_valid_from_column_name),
 			quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
 			where_buf.data
 		);
@@ -680,14 +680,14 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	char *fk_table_name;
 	char *fk_column_names_str;
 	char *fk_era_name;
-	char *fk_start_after_column_name;
-	char *fk_stop_on_column_name;
+	char *fk_valid_from_column_name;
+	char *fk_valid_until_column_name;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
 	char *uk_era_name;
-	char *uk_start_after_column_name;
-	char *uk_stop_on_column_name;
+	char *uk_valid_from_column_name;
+	char *uk_valid_until_column_name;
 
 	FkValidationPlan *plan_entry;
 	bool found;
@@ -713,14 +713,14 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	fk_table_name = tgargs[2];
 	fk_column_names_str = tgargs[3];
 	fk_era_name = tgargs[4];
-	fk_start_after_column_name = tgargs[5];
-	fk_stop_on_column_name = tgargs[6];
+	fk_valid_from_column_name = tgargs[5];
+	fk_valid_until_column_name = tgargs[6];
 	uk_schema_name = tgargs[7];
 	uk_table_name = tgargs[8];
 	uk_column_names_str = tgargs[9];
 	uk_era_name = tgargs[10];
-	uk_start_after_column_name = tgargs[11];
-	uk_stop_on_column_name = tgargs[12];
+	uk_valid_from_column_name = tgargs[11];
+	uk_valid_until_column_name = tgargs[12];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -826,14 +826,14 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		
 		/* Add era columns to exclude clause and params */
 		if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_start_after_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_start_after_column_name), param_idx + 1);
+		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1);
 		param_idx++;
 		appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_stop_on_column_name);
+		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_stop_on_column_name), param_idx + 1);
+		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1);
 		appendStringInfoChar(&exclude_buf, ')');
 		
 		pfree(DatumGetPointer(uk_column_names_datum));
@@ -847,8 +847,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 			"  FROM %s.%s AS fk"
 			"  WHERE %s AND COALESCE(NOT ("
 			"    SELECT sql_saga.covers_without_gaps("
-			"      %s(uk.%s, uk.%s, '(]'),"
-			"      %s(fk.%s, fk.%s, '(]')"
+			"      %s(uk.%s, uk.%s),"
+			"      %s(fk.%s, fk.%s)"
 			"      ORDER BY uk.%s"
 			"    )"
 			"    FROM %s.%s AS uk"
@@ -857,9 +857,9 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 			")",
 			quote_identifier(fk_schema_name), quote_identifier(fk_table_name),
 			where_buf.data,
-			uk_range_constructor, quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name),
-			fk_range_constructor, quote_identifier(fk_start_after_column_name), quote_identifier(fk_stop_on_column_name),
-			quote_identifier(uk_start_after_column_name),
+			uk_range_constructor, quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
+			fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
+			quote_identifier(uk_valid_from_column_name),
 			quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
 			join_buf.data, exclude_buf.data
 		);
@@ -939,14 +939,14 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	char *fk_table_name;
 	char *fk_column_names_str;
 	char *fk_era_name;
-	char *fk_start_after_column_name;
-	char *fk_stop_on_column_name;
+	char *fk_valid_from_column_name;
+	char *fk_valid_until_column_name;
 	char *uk_schema_name;
 	char *uk_table_name;
 	char *uk_column_names_str;
 	char *uk_era_name;
-	char *uk_start_after_column_name;
-	char *uk_stop_on_column_name;
+	char *uk_valid_from_column_name;
+	char *uk_valid_until_column_name;
 
 	UkUpdateValidationPlan *plan_entry;
 	bool found;
@@ -973,14 +973,14 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	fk_table_name = tgargs[2];
 	fk_column_names_str = tgargs[3];
 	fk_era_name = tgargs[4];
-	fk_start_after_column_name = tgargs[5];
-	fk_stop_on_column_name = tgargs[6];
+	fk_valid_from_column_name = tgargs[5];
+	fk_valid_until_column_name = tgargs[6];
 	uk_schema_name = tgargs[7];
 	uk_table_name = tgargs[8];
 	uk_column_names_str = tgargs[9];
 	uk_era_name = tgargs[10];
-	uk_start_after_column_name = tgargs[11];
-	uk_stop_on_column_name = tgargs[12];
+	uk_valid_from_column_name = tgargs[11];
+	uk_valid_until_column_name = tgargs[12];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -1071,14 +1071,14 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 			param_idx++;
 		}
 		if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums_old[num_uk_cols] = SPI_fnumber(tupdesc, uk_start_after_column_name);
+		plan_entry->param_attnums_old[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_start_after_column_name), param_idx + 1);
+		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1);
 		param_idx++;
 		appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums_old[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_stop_on_column_name);
+		plan_entry->param_attnums_old[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols+1]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_stop_on_column_name), param_idx + 1);
+		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1);
 		param_idx++;
 		appendStringInfoChar(&exclude_buf, ')');
 		
@@ -1094,12 +1094,12 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 			param_idx++;
 		}
 		appendStringInfoString(&union_buf, ", ");
-		plan_entry->param_attnums_new[num_uk_cols] = SPI_fnumber(tupdesc, uk_start_after_column_name);
+		plan_entry->param_attnums_new[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols]);
 		appendStringInfo(&union_buf, "$%d", param_idx + 1);
 		param_idx++;
 		appendStringInfoString(&union_buf, ", ");
-		plan_entry->param_attnums_new[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_stop_on_column_name);
+		plan_entry->param_attnums_new[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols+1]);
 		appendStringInfo(&union_buf, "$%d", param_idx + 1);
 
@@ -1112,19 +1112,19 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 			appendStringInfo(&alias_buf, "%s", quote_identifier(ukc));
 			appendStringInfo(&join_buf, "fk.%s = %s.%s", quote_identifier(fkc), inner_alias, quote_identifier(ukc));
 		}
-		appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
-		appendStringInfo(&alias_buf, ", %s, %s)", quote_identifier(uk_start_after_column_name), quote_identifier(uk_stop_on_column_name));
+		appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
+		appendStringInfo(&alias_buf, ", %s, %s)", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
 
 		query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s AND COALESCE(NOT ("
 			"SELECT sql_saga.covers_without_gaps("
-			"%s(%s.%s, %s.%s, '(]'), "
-			"%s(fk.%s, fk.%s, '(]') "
+			"%s(%s.%s, %s.%s), "
+			"%s(fk.%s, fk.%s) "
 			"ORDER BY %s.%s"
 			") FROM (SELECT %s FROM %s.%s AS uk WHERE TRUE %s %s) %s WHERE %s), true))",
 			quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data,
-			uk_range_constructor, inner_alias, quote_identifier(uk_start_after_column_name), inner_alias, quote_identifier(uk_stop_on_column_name),
-			fk_range_constructor, quote_identifier(fk_start_after_column_name), quote_identifier(fk_stop_on_column_name),
-			inner_alias, quote_identifier(uk_start_after_column_name),
+			uk_range_constructor, inner_alias, quote_identifier(uk_valid_from_column_name), inner_alias, quote_identifier(uk_valid_until_column_name),
+			fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
+			inner_alias, quote_identifier(uk_valid_from_column_name),
 			select_list_buf.data, quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
 			exclude_buf.data, union_buf.data, alias_buf.data,
 			join_buf.data

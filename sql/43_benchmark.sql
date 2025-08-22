@@ -2,17 +2,15 @@ CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 
 CREATE TABLE legal_unit (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   name varchar NOT NULL
 );
 
 CREATE TABLE establishment (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   legal_unit_id INTEGER NOT NULL,
   postal_place TEXT NOT NULL
 );
@@ -27,8 +25,8 @@ CREATE TEMPORARY TABLE benchmark (
 INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
 
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
-SELECT sql_saga.add_era('establishment', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('establishment', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
 SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'valid');
 SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
@@ -49,10 +47,10 @@ SET CONSTRAINTS ALL DEFERRED;
 DO $$
 BEGIN
   FOR i IN 1..10000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
     (i, '2015-01-01', 'infinity', 'Company ' || i);
 
-    INSERT INTO establishment (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
     (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
   END LOOP;
 END; $$;
@@ -72,10 +70,10 @@ BEGIN;
 DO $$
 BEGIN
   FOR i IN 10001..20000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
     (i, '2015-01-01', 'infinity', 'Company ' || i);
 
-    INSERT INTO establishment (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
     (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
   END LOOP;
 END; $$;
@@ -90,11 +88,11 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 INSERT INTO benchmark (event, row_count) VALUES ('Update deferred constraints start', 0);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
-  UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id <= 10000 AND valid_from = '2015-01-01';
+  UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
 
-  INSERT INTO legal_unit (id, valid_from, valid_to, name)
+  INSERT INTO legal_unit (id, valid_from, valid_until, name)
     SELECT id, '2016-01-01', 'infinity', name
-    FROM legal_unit WHERE valid_to = '2015-12-31';
+    FROM legal_unit WHERE valid_until = '2016-01-01';
 
   SET CONSTRAINTS ALL IMMEDIATE;
 END;

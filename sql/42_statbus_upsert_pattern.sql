@@ -2,17 +2,15 @@ CREATE EXTENSION sql_saga CASCADE;
 
 CREATE TABLE legal_unit (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   name varchar NOT NULL
 );
 
 CREATE TABLE location (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   legal_unit_id INTEGER NOT NULL,
   postal_place TEXT NOT NULL
 );
@@ -22,8 +20,8 @@ CREATE TABLE location (
 \d location
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
-SELECT sql_saga.add_era('location', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('location', 'valid_from', 'valid_until');
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -38,10 +36,10 @@ TABLE sql_saga.foreign_keys;
 \d location
 
 -- Initial Import
-INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
 (101, '2015-01-01', 'infinity', 'NANSETKRYSSET AS');
 
-INSERT INTO location (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+INSERT INTO location (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
 (201, '2015-01-01', 'infinity',101 , 'DRAMMEN');
 
 TABLE legal_unit;
@@ -51,18 +49,18 @@ TABLE location;
 DELETE FROM legal_unit WHERE id = 101;
 
 -- Can't shorten referenced legal_unit more than the referencing location
-UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id = 101;
+UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id = 101;
 
 -- With deferred constraints, adjust the data
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
 
-UPDATE legal_unit SET valid_to = '2015-12-31'
+UPDATE legal_unit SET valid_until = '2016-01-01'
 WHERE id = 101
   AND valid_from = '2015-01-01'
-  AND valid_to = 'infinity';
+  AND valid_until = 'infinity';
 
-INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
 (101, '2016-01-01', 'infinity', 'NANSETVEIEN AS');
 
 TABLE legal_unit;
@@ -81,9 +79,9 @@ SET CONSTRAINTS ALL DEFERRED;
 DELETE FROM location
 WHERE id = 201
   AND valid_from = '2015-01-01'
-  AND valid_to = 'infinity';
+  AND valid_until = 'infinity';
 
-INSERT INTO location (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+INSERT INTO location (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
 (201, '2015-01-01', 'infinity',101 , 'DRAMMEN');
 
 SET CONSTRAINTS ALL IMMEDIATE;
