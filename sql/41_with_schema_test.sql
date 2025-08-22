@@ -1,8 +1,10 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 -- Use a blank search path, so every table must
 -- be prefixed with a schema
 SELECT pg_catalog.set_config('search_path', '', false);
-
-CREATE EXTENSION sql_saga CASCADE;
 
 CREATE SCHEMA exposed;
 CREATE SCHEMA hidden;
@@ -72,22 +74,23 @@ INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 
 
 -- Fail
+SAVEPOINT expect_delete_fail;
 DELETE FROM exposed.employees WHERE id = 101;
+ROLLBACK TO SAVEPOINT expect_delete_fail;
 
 -- Success
 DELETE FROM hidden.staff WHERE employee_id = 101;
 DELETE FROM exposed.employees WHERE id = 101;
 
 -- Fail
+SAVEPOINT expect_update_fail;
 UPDATE hidden.staff SET valid_until = 'infinity' WHERE employee_id = 103;
+ROLLBACK TO SAVEPOINT expect_update_fail;
 
-BEGIN;
--- Regression
+-- Regression test: This should fail, same as the test above it.
 SAVEPOINT regression;
-TABLE hidden.staff;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
-TABLE hidden.staff;
-ABORT;
+ROLLBACK TO SAVEPOINT regression;
 
 -- Success
 UPDATE exposed.employees SET valid_to = 'infinity' WHERE id = 103;
@@ -110,8 +113,6 @@ TABLE sql_saga.era;
 \d exposed.employees
 \d hidden.staff
 
-DROP TABLE exposed.employees;
-DROP TABLE hidden.staff;
+ROLLBACK;
 
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
+\i sql/include/test_teardown.sql

@@ -6,8 +6,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
-- [ ] **Foreign key validation fails for tables in different schemas:** The test `41_with_schema_test` has regressed. An `UPDATE` that should violate a temporal foreign key is now succeeding.
-  - **Hypothesis:** The `fk_update_check_c` trigger is failing to resolve the correct schema for the referenced table when it differs from the referencing table's schema. This bug was likely introduced during the `regclass` -> `(schema, table)` refactoring.
+- [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
 
 - [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
 - [x] **Cache query plans:** Cached query plans to improve trigger performance.
@@ -18,7 +17,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [ ] **Make regression tests self-contained:**
   - **Issue:** Most tests rely on `01_install.sql` to be run first to set up roles and permissions. This makes it cumbersome to run a single test file in isolation during development.
-  - **Action:** Use common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts. Modify test files to include these so they can run independently, following the pattern established in `51_quoted_identifiers.sql`.
+  - **Action:** Use common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts. Modify test files to include these so they can run independently, following the pattern established in `51_quoted_identifiers.sql` and `41_with_schema_test.sql`.
   - **Note:** Tests that validate transaction semantics may need special handling and cannot be simply wrapped in a `BEGIN/ROLLBACK` block with the setup script.
 
 - [ ] **Complete the `regclass` -> `(schema, table)` refactoring:**

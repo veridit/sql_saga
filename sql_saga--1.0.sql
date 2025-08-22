@@ -1793,6 +1793,17 @@ BEGIN
     INTO foreign_columns_with_era_columns
     FROM unnest(fk_column_names || fk_era_row.valid_from_column_name || fk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
+    -- If a 'valid_to' column exists, add it to the list of columns that
+    -- trigger the fk_update_check. This handles cases where a BEFORE trigger
+    -- synchronizes valid_to and valid_until, ensuring validation fires correctly
+    -- without making the trigger an overly-broad row-level trigger.
+    IF EXISTS (
+        SELECT 1 FROM pg_catalog.pg_attribute
+        WHERE attrelid = fk_table_oid AND attname = 'valid_to' AND NOT attisdropped
+    ) THEN
+        foreign_columns_with_era_columns := foreign_columns_with_era_columns || ', ' || quote_ident('valid_to');
+    END IF;
+
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
     INTO unique_columns_with_era_columns
     FROM unnest(uk_row.column_names || uk_era_row.valid_from_column_name || uk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
