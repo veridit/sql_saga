@@ -154,11 +154,11 @@ CREATE TRIGGER legal_unit_synchronize_validity
     FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 
 -- Register the table as a temporal table (an "era")
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['name'], 'legal_unit_name_valid');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['legal_ident'], 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['name'], unique_key_name => 'legal_unit_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
 
 
 CREATE TABLE establishment (
@@ -170,11 +170,16 @@ CREATE TABLE establishment (
   valid_until TIMESTAMPTZ
 );
 
-SELECT sql_saga.add_era('establishment','valid_from','valid_until');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'establishment_id_valid');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['name'], 'establishment_name_valid');
+SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
-SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
 
 ```
 
@@ -182,16 +187,16 @@ SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid'
 
 ```
 -- Foreign keys must be dropped before the unique keys they reference.
-SELECT sql_saga.drop_foreign_key('establishment', 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
 
-SELECT sql_saga.drop_unique_key('establishment', 'establishment_id_valid');
-SELECT sql_saga.drop_unique_key('establishment', 'establishment_name_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_name_valid');
 SELECT sql_saga.drop_era('establishment');
 
 
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_name_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_legal_ident_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_name_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_legal_ident_valid');
 SELECT sql_saga.drop_era('legal_unit');
 ```
 
@@ -215,6 +220,29 @@ To quickly review and fix any diffs you can use
 ```
 make vimdiff-fail-all
 ```
+
+## API Reference
+
+### Era Management
+- `add_era(table_oid regclass, valid_from_column_name name, valid_until_column_name name, era_name name DEFAULT 'valid', range_type regtype DEFAULT NULL, bounds_check_constraint name DEFAULT NULL) RETURNS boolean`
+- `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS boolean`
+
+### Unique Keys
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
+- `drop_unique_key(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
+- `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
+
+### Foreign Keys
+- `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
+- `drop_foreign_key(table_oid regclass, key_name name) RETURNS boolean`
+- `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`
+
+### Updatable Views (for PostgREST)
+- `add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
+- `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
+
+### Convenience Triggers
+- `synchronize_valid_to_until() RETURNS trigger`
 
 ## Dependencies
 
