@@ -1,7 +1,6 @@
 MODULE_big = sql_saga
 EXTENSION = sql_saga
-EXTENSION_VERSION = 1.0
-DATA = $(EXTENSION)--$(EXTENSION_VERSION).sql
+DATA = sql_saga--1.0.sql
 
 DOCS = README.md
 #README.html: README.md
@@ -35,8 +34,17 @@ include $(PGXS)
 # To run fast tests (excluding benchmarks): `make test fast`
 # To run a single test: `make test TESTS=21_init`
 # To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
-.PHONY: test
-test: installcheck
+.PHONY: test setup_test_files
+test: setup_test_files installcheck
+
+# Create empty expected files for new tests if they don't exist.
+setup_test_files:
+	@mkdir -p expected
+	@for test in $(REGRESS); do \
+		if [ ! -f expected/$$test.out ]; then \
+			touch expected/$$test.out; \
+		fi; \
+	done
 
 # The 'fast' target is a dummy. Its presence in `make test fast` is used to
 # trigger the conditional logic that selects the fast test suite.
@@ -44,18 +52,10 @@ test: installcheck
 fast:
 	@:
 
-# New target to run vimdiff for the first failing test
-vimdiff-fail-first:
-	@first_fail=$$(grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | head -n 1); \
-	if [ -n "$$first_fail" ]; then \
-		echo "Running vimdiff for test: $$first_fail"; \
-		vim -d expected/$$first_fail.out results/$$first_fail.out < /dev/tty; \
-	else \
-		echo "No failing tests found."; \
-	fi
-
-# New target to run vimdiff for all failing tests
-vimdiff-fail-all:
+# Target to show diff for all failing tests. Use `make diff-fail-all vim` for vimdiff.
+.PHONY: diff-fail-all vim
+diff-fail-all:
+ifeq (vim,$(filter vim,$(MAKECMDGOALS)))
 	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Next test: $$test"; \
 		echo "Press C to continue, s to skip, or b to break (default: C)"; \
@@ -68,14 +68,16 @@ vimdiff-fail-all:
 		echo "Running vimdiff for test: $$test"; \
 		vim -d expected/$$test.out results/$$test.out < /dev/tty; \
 	done
-
-# New target to show diff for all failing tests
-diff-fail-all:
+else
 	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
 		echo "Showing diff for test: $$test"; \
 		diff -u "expected/$$test.out" "results/$$test.out" || true; \
 	done
 	@if grep -q 'not ok' regression.out 2>/dev/null; then exit 1; fi
+endif
+
+vim:
+	@:
 
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
