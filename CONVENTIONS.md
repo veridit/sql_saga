@@ -16,7 +16,7 @@ Key tools available for you to suggest:
 - **`tree`**: List files to understand directory structures.
 - **`head`**: Inspect the beginning of files to quickly understand their structure and content.
 - **`ls`**: Check file sizes to determine if they should be read or inspected.
-- **`psql`**: Run arbitrary SQL for debugging or inspection (e.g., `echo 'SELECT * FROM sql_saga.era;' | psql -d contrib_regression`).
+- **`psql`**: Run arbitrary SQL for debugging or inspection (e.g., `echo 'SELECT * FROM sql_saga.era;' | psql -d sql_saga_regression`).
 
 For file system operations and large-scale edits, prefer suggesting shell commands over generating `SEARCH/REPLACE` blocks where appropriate. This is faster and more efficient.
 - Use `rm` to delete files and `git mv` to move or rename them.

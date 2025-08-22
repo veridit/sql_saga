@@ -18,6 +18,7 @@ ifeq (fast,$(filter fast,$(MAKECMDGOALS)))
 endif
 
 REGRESS = $(if $(TESTS),$(TESTS),$(REGRESS_TO_RUN))
+REGRESS_OPTS = --dbname=sql_saga_regression
 
 # New target for benchmark regression test
 benchmark:
