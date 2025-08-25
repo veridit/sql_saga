@@ -1,5 +1,6 @@
-SELECT setting::integer < 120000 AS pre_12
-FROM pg_settings WHERE name = 'server_version_num';
+\i sql/include/test_setup.sql
+
+BEGIN;
 
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
@@ -14,75 +15,65 @@ CREATE TABLE pricing (id1 bigserial,
                       id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
                       id3 bigint GENERATED ALWAYS AS IDENTITY,
                       id4 bigint GENERATED ALWAYS AS (id1 + id2) STORED,
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
-                      id3 bigint GENERATED ALWAYS AS IDENTITY,
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+                      product text, quantity_from integer, quantity_until integer, price numeric);
+SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
 SELECT sql_saga.add_api('pricing', 'quantities');
 TABLE sql_saga.api_view;
 /* Test UPDATE FOR PORTION */
-INSERT INTO pricing (product, min_quantity, max_quantity, price) VALUES ('Trinket', 1, 20, 200);
-TABLE pricing ORDER BY min_quantity;
+INSERT INTO pricing (product, quantity_from, quantity_until, price) VALUES ('Trinket', 2, 21, 200);
+TABLE pricing ORDER BY quantity_from;
 -- UPDATE fully preceding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 0, max_quantity = 1, price = 0;
-TABLE pricing ORDER BY min_quantity;
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 1, quantity_until = 2, price = 0;
+TABLE pricing ORDER BY quantity_from;
 -- UPDATE fully succeeding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 30, max_quantity = 50, price = 0;
-TABLE pricing ORDER BY min_quantity;
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 31, quantity_until = 51, price = 0;
+TABLE pricing ORDER BY quantity_from;
 -- UPDATE fully surrounding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 0, max_quantity = 100, price = 100;
-TABLE pricing ORDER BY min_quantity;
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 1, quantity_until = 101, price = 100;
+TABLE pricing ORDER BY quantity_from;
 -- UPDATE portion
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 10, max_quantity = 20, price = 80;
-TABLE pricing ORDER BY min_quantity;
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 11, quantity_until = 21, price = 80;
+TABLE pricing ORDER BY quantity_from;
 -- UPDATE portion of multiple rows
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 5, max_quantity = 15, price = 90;
-TABLE pricing ORDER BY min_quantity;
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 5, quantity_until = 15, price = 90;
+TABLE pricing ORDER BY quantity_from;
 -- If we drop the period (without CASCADE) then the FOR PORTION views should be
 -- dropped, too.
 SELECT sql_saga.drop_era('pricing', 'quantities');
 TABLE sql_saga.api_view;
 -- Add it back to test the drop_for_portion_view function
-SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
 SELECT sql_saga.add_api('pricing', 'quantities');
 -- We can't drop the the table without first dropping the FOR PORTION views
 -- because Postgres will complain about dependant objects (our views) before we
 -- get a chance to clean them up.
+SAVEPOINT expect_fail;
 DROP TABLE pricing;
+ROLLBACK TO SAVEPOINT expect_fail;
 SELECT sql_saga.drop_api('pricing', NULL);
 TABLE sql_saga.api_view;
 DROP TABLE pricing;
 DROP SEQUENCE pricing_seq;
 
 /* Types without btree must be excluded, too */
--- v10+
 CREATE TABLE bt (
     id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     pt point,   -- something without btree
     t text,     -- something with btree
-    s integer,
-    e integer
+    valid_from integer,
+    valid_until integer
 );
--- pre v10
-CREATE TABLE bt (
-    id serial PRIMARY KEY,
-    pt point,   -- something without btree
-    t text,     -- something with btree
-    s integer,
-    e integer
-);
-SELECT sql_saga.add_era('bt', 's', 'e', 'p');
+SELECT sql_saga.add_era('bt', 'valid_from', 'valid_until', 'p');
 SELECT sql_saga.add_api('bt', 'p');
 
-INSERT INTO bt (pt, t, s, e) VALUES ('(0, 0)', 'sample', 10, 40);
-TABLE bt ORDER BY s, e;
-UPDATE bt__for_portion_of_p SET t = 'simple', s = 20, e = 30;
-TABLE bt ORDER BY s, e;
+INSERT INTO bt (pt, t, valid_from, valid_until) VALUES ('(0, 0)', 'sample', 10, 41);
+TABLE bt ORDER BY valid_from, valid_until;
+UPDATE bt__for_portion_of_p SET t = 'simple', valid_from = 21, valid_until = 31;
+TABLE bt ORDER BY valid_from, valid_until;
 
 SELECT sql_saga.drop_api('bt', 'p');
 DROP TABLE bt;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

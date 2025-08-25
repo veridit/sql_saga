@@ -1,6 +1,32 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
+BEGIN;
 -- Test that the overloaded drop_* functions work as expected.
-CREATE TABLE parent(id int, s int, e int);
-SELECT sql_saga.add_era('parent', 's', 'e', 'p');
+CREATE TABLE parent(id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('parent', 'valid_from', 'valid_until', 'p');
  add_era 
 ---------
  t
@@ -12,8 +38,8 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
  parent_id_p
 (1 row)
 
-CREATE TABLE child(id int, parent_id int, s int, e int);
-SELECT sql_saga.add_era('child', 's', 'e', 'q');
+CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('child', 'valid_from', 'valid_until', 'q');
  add_era 
 ---------
  t
@@ -43,7 +69,7 @@ TABLE sql_saga.foreign_keys;
 ------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
--- Test original drop_foreign_key
+-- Test original drop_foreign_key (with positional and named arguments)
 SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
   add_foreign_key  
 -------------------
@@ -56,7 +82,33 @@ TABLE sql_saga.foreign_keys;
  child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
+-- by name (positional)
 SELECT sql_saga.drop_foreign_key('child', 'child_parent_id_q');
+ drop_foreign_key 
+------------------
+ t
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
+------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+(0 rows)
+
+-- Re-create to test named arguments
+SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+  add_foreign_key  
+-------------------
+ child_parent_id_q
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
+ child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+(1 row)
+
+-- by name (named)
+SELECT sql_saga.drop_foreign_key(table_oid => 'child', key_name => 'child_parent_id_q');
  drop_foreign_key 
 ------------------
  t
@@ -69,9 +121,9 @@ TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+--------------+------------+--------------+----------+-------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
@@ -85,7 +137,7 @@ TABLE sql_saga.unique_keys;
 -----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
--- Test original drop_unique_key
+-- Test original drop_unique_key (with positional and named arguments)
 SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
  add_unique_key 
 ----------------
@@ -93,12 +145,38 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |    exclude_constraint    
------------------+--------------+------------+--------------+----------+-------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_s_e_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
 (1 row)
 
+-- by name (positional)
 SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------
+(0 rows)
+
+-- Re-create to test named arguments
+SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+ add_unique_key 
+----------------
+ parent_id_p
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
+(1 row)
+
+-- by name (named)
+SELECT sql_saga.drop_unique_key(table_oid => 'parent', key_name => 'parent_id_p');
  drop_unique_key 
 -----------------
  
@@ -111,3 +189,22 @@ TABLE sql_saga.unique_keys;
 
 DROP TABLE child;
 DROP TABLE parent;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

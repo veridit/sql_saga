@@ -1,6 +1,12 @@
--- MOVING THE TIME OF A CHANGE
+\i sql/include/test_setup.sql
 
-SELECT enable_sql_saga_for_shifts_houses_and_rooms();
+SET ROLE TO sql_saga_unprivileged_user;
+
+-- This test uses COMMIT and cannot be transactional.
+\i sql/support/shifts_houses_rooms_tables.sql
+\i sql/support/shifts_houses_rooms_enable_saga.sql
+
+-- MOVING THE TIME OF A CHANGE
 
 -- 1. Small shift to a later time
 
@@ -13,25 +19,25 @@ SELECT enable_sql_saga_for_shifts_houses_and_rooms();
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
 
 UPDATE houses
-SET valid_after = new_valid_after,
-    valid_to = new_valid_to
+SET valid_from = new_valid_from,
+    valid_until = new_valid_until
 FROM (VALUES
-    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ),
-    (1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
-) AS change(id, old_valid_after, new_valid_after, new_valid_to)
+    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2016-06-01'::DATE),
+    (1, '2016-01-01'::DATE, '2016-06-01'::DATE, '2017-01-01'::DATE)
+) AS change(id, old_valid_from, new_valid_from, new_valid_until)
 WHERE houses.id = change.id
-  AND valid_after = old_valid_after;
+  AND valid_from = old_valid_from;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 COMMIT;
@@ -44,12 +50,12 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES 
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1,'2015-01-01', '2017-01-01')
 ;
 
@@ -58,13 +64,13 @@ INSERT INTO rooms VALUES
 --
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 --
@@ -73,15 +79,15 @@ WHERE   id = 1 AND valid_after = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
@@ -91,17 +97,17 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
@@ -114,12 +120,12 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
 
@@ -128,13 +134,13 @@ INSERT INTO rooms VALUES
 --
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 --
@@ -143,17 +149,17 @@ WHERE   id = 1 AND valid_after = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -163,17 +169,17 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2016-09-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-06-01'
+SET     (valid_from, valid_until) = ('2016-09-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-06-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2016-09-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2016-09-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -182,26 +188,26 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
 
 UPDATE houses
-SET valid_after = new_valid_after,
-    valid_to = new_valid_to
+SET valid_from = new_valid_from,
+    valid_until = new_valid_until
 FROM (VALUES
-    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ),
-    (1, '2016-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
-) AS change(id, old_valid_after, new_valid_after, new_valid_to)
+    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2015-06-01'::DATE),
+    (1, '2016-01-01'::DATE, '2015-06-01'::DATE, '2017-01-01'::DATE)
+) AS change(id, old_valid_from, new_valid_from, new_valid_until)
 WHERE houses.id = change.id
-  AND valid_after = old_valid_after;
+  AND valid_from = old_valid_from;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 COMMIT;
@@ -210,12 +216,12 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
 
@@ -224,13 +230,13 @@ INSERT INTO rooms VALUES
 --
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 --
@@ -239,17 +245,17 @@ WHERE   id = 1 AND valid_after = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 COMMIT;
 
@@ -259,17 +265,17 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-03-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-03-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-03-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2015-06-01'
+SET     (valid_from, valid_until) = ('2015-03-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2015-06-01'
 ;
 COMMIT;
 
@@ -277,12 +283,12 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01')
 ;
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01')
 ;
 
@@ -291,13 +297,13 @@ INSERT INTO rooms VALUES
 --
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 --
@@ -306,15 +312,15 @@ WHERE   id = 1 AND valid_after = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -324,17 +330,17 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_after = '2016-01-01'
+SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
+WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 UPDATE  houses
-SET     (valid_after, valid_to) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_after = '2015-01-01'
+SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
+WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
 
@@ -344,11 +350,11 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2015-01-01', '2016-01-01'),
   (1, 200000, '2016-01-01', '2017-01-01');
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2015-01-01', '2017-01-01');
 
 -- Perform large shift
@@ -357,13 +363,13 @@ SET CONSTRAINTS ALL DEFERRED;
 
 -- Update earlier range first
 UPDATE houses
-SET valid_after = '2018-01-01', valid_to = '2019-01-01'
-WHERE id = 1 AND valid_after = '2015-01-01';
+SET valid_from = '2018-01-01', valid_until = '2019-01-01'
+WHERE id = 1 AND valid_from = '2015-01-01';
 
 -- Update later range
 UPDATE houses
-SET valid_after = '2019-01-01', valid_to = '2020-01-01'
-WHERE id = 1 AND valid_after = '2016-01-01';
+SET valid_from = '2019-01-01', valid_until = '2020-01-01'
+WHERE id = 1 AND valid_from = '2016-01-01';
 
 COMMIT;
 
@@ -374,13 +380,13 @@ SET CONSTRAINTS ALL DEFERRED;
 
 -- Update later range first
 UPDATE houses
-SET valid_after = '2019-01-01', valid_to = '2020-01-01'
-WHERE id = 1 AND valid_after = '2016-01-01';
+SET valid_from = '2019-01-01', valid_until = '2020-01-01'
+WHERE id = 1 AND valid_from = '2016-01-01';
 
 -- Update earlier range
 UPDATE houses
-SET valid_after = '2018-01-01', valid_to = '2019-01-01'
-WHERE id = 1 AND valid_after = '2015-01-01';
+SET valid_from = '2018-01-01', valid_until = '2019-01-01'
+WHERE id = 1 AND valid_from = '2015-01-01';
 
 COMMIT;
 
@@ -391,11 +397,11 @@ COMMIT;
 DELETE FROM rooms;
 DELETE FROM houses;
 
-INSERT INTO houses VALUES
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
   (1, 150000, '2020-01-01', '2021-01-01'),
   (1, 200000, '2021-01-01', '2022-01-01');
 
-INSERT INTO rooms VALUES
+INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
   (1, 1, '2020-01-01', '2022-01-01');
 
 -- Perform shift
@@ -404,17 +410,17 @@ SET CONSTRAINTS ALL DEFERRED;
 
 -- Update earlier range first
 UPDATE houses
-SET valid_after = '2018-01-01', valid_to = '2019-01-01'
-WHERE id = 1 AND valid_after = '2020-01-01';
+SET valid_from = '2018-01-01', valid_until = '2019-01-01'
+WHERE id = 1 AND valid_from = '2020-01-01';
 
 -- Update later range
 UPDATE houses
-SET valid_after = '2019-01-01', valid_to = '2020-01-01'
-WHERE id = 1 AND valid_to = '2022-01-01';
+SET valid_from = '2019-01-01', valid_until = '2020-01-01'
+WHERE id = 1 AND valid_until = '2022-01-01';
 
 -- Adjust rooms
 UPDATE rooms
-SET valid_after = '2018-01-01', valid_to = '2020-01-01'
+SET valid_from = '2018-01-01', valid_until = '2020-01-01'
 WHERE id = 1;
 
 COMMIT;
@@ -426,17 +432,17 @@ SET CONSTRAINTS ALL DEFERRED;
 
 -- Update later range first
 UPDATE houses
-SET valid_after = '2019-01-01', valid_to = '2020-01-01'
-WHERE id = 1 AND valid_after = '2021-01-01';
+SET valid_from = '2019-01-01', valid_until = '2020-01-01'
+WHERE id = 1 AND valid_from = '2021-01-01';
 
 -- Update earlier range
 UPDATE houses
-SET valid_after = '2018-01-01', valid_to = '2019-01-01'
-WHERE id = 1 AND valid_after = '2020-01-01';
+SET valid_from = '2018-01-01', valid_until = '2019-01-01'
+WHERE id = 1 AND valid_from = '2020-01-01';
 
 -- Adjust rooms
 UPDATE rooms
-SET valid_after = '2018-01-01', valid_to = '2020-01-01'
+SET valid_from = '2018-01-01', valid_until = '2020-01-01'
 WHERE id = 1;
 
 COMMIT;
@@ -508,5 +514,9 @@ COMMIT;
 --
 -- COMMIT;
 
+-- Manual Cleanup
+DROP TABLE rooms;
+DROP TABLE houses;
+DROP TABLE shifts;
 
-SELECT disable_sql_saga_for_shifts_houses_and_rooms();
+\i sql/include/test_teardown.sql

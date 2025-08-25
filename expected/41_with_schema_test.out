@@ -1,3 +1,28 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
 -- Use a blank search path, so every table must
 -- be prefixed with a schema
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -6,71 +31,73 @@ SELECT pg_catalog.set_config('search_path', '', false);
  
 (1 row)
 
-CREATE EXTENSION sql_saga CASCADE;
-ERROR:  extension "sql_saga" already exists
 CREATE SCHEMA exposed;
 CREATE SCHEMA hidden;
 CREATE TABLE exposed.employees (
   id INTEGER,
-  valid_after date,
   valid_from date,
   valid_to date,
+  valid_until date,
   name varchar NOT NULL,
   role varchar NOT NULL
 );
 CREATE TABLE hidden.staff (
   id INTEGER,
-  valid_after date,
   valid_from date,
   valid_to date,
+  valid_until date,
   salary FLOAT,
   employee_id INTEGER
 );
+CREATE TRIGGER synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees
+    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
+CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff
+    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 -- Before using sql_saga
 \d exposed.employees
                     Table "exposed.employees"
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
- valid_after | date              |           |          | 
  valid_from  | date              |           |          | 
  valid_to    | date              |           |          | 
+ valid_until | date              |           |          | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
+Triggers:
+    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_after | date             |           |          | 
  valid_from  | date             |           |          | 
  valid_to    | date             |           |          | 
+ valid_until | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
+Triggers:
+    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
-CREATE TRIGGER synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
-CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('hidden.staff', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until');
  add_era 
 ---------
  t
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
- exposed      | employees  | valid    | valid_after             | valid_to            | daterange  | employees_valid_check   | 
- hidden       | staff      | valid    | valid_after             | valid_to            | daterange  | staff_valid_check       | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ exposed      | employees  | valid    | valid_from             | valid_until             | daterange  | employees_valid_check   |                   | 
+ hidden       | staff      | valid    | valid_from             | valid_until             | daterange  | staff_valid_check       |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
@@ -86,10 +113,10 @@ SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name   | table_schema | table_name | column_names | era_name |           unique_constraint           |     exclude_constraint      
---------------------+--------------+------------+--------------+----------+---------------------------------------+-----------------------------
- employees_id_valid | exposed      | employees  | {id}         | valid    | employees_id_valid_after_valid_to_key | employees_id_daterange_excl
- staff_id_valid     | hidden       | staff      | {id}         | valid    | staff_id_valid_after_valid_to_key     | staff_id_daterange_excl
+  unique_key_name   | table_schema | table_name | column_names | era_name |            unique_constraint            |     exclude_constraint      
+--------------------+--------------+------------+--------------+----------+-----------------------------------------+-----------------------------
+ employees_id_valid | exposed      | employees  | {id}         | valid    | employees_id_valid_from_valid_until_key | employees_id_daterange_excl
+ staff_id_valid     | hidden       | staff      | {id}         | valid    | staff_id_valid_from_valid_until_key     | staff_id_daterange_excl
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
@@ -110,40 +137,40 @@ TABLE sql_saga.foreign_keys;
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
- valid_after | date              |           | not null | 
- valid_from  | date              |           |          | 
- valid_to    | date              |           | not null | 
+ valid_from  | date              |           | not null | 
+ valid_to    | date              |           |          | 
+ valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Indexes:
-    "employees_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
-    "employees_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
+    "employees_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "employees_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "employees_valid_check" CHECK (valid_after < valid_to)
+    "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_after, valid_to ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
+    staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_after | date             |           | not null | 
- valid_from  | date             |           |          | 
- valid_to    | date             |           | not null | 
+ valid_from  | date             |           | not null | 
+ valid_to    | date             |           |          | 
+ valid_until | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
-    "staff_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to, '(]'::text) WITH &&) DEFERRABLE
-    "staff_id_valid_after_valid_to_key" UNIQUE CONSTRAINT, btree (id, valid_after, valid_to) DEFERRABLE
+    "staff_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "staff_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "staff_valid_check" CHECK (valid_after < valid_to)
+    "staff_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_after, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_after', 'valid_to', 'exposed', 'employees', '{{id}}', 'valid', 'valid_after', 'valid_to', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
+    staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_until, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{{employee_id}}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 -- Test data.
 -- We only insert valid_from and valid_to, the trigger will set valid_after.
@@ -164,14 +191,23 @@ INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 (204, '2022-01-01', '2022-06-30',104 , 45000.00),
 (204, '2022-07-01', '2023-12-31',104 , 55000.00); -- Salary increase in July, a month after role change in June
 -- Fail
+SAVEPOINT expect_delete_fail;
 DELETE FROM exposed.employees WHERE id = 101;
 ERROR:  update or delete on table "exposed.employees" violates foreign key constraint "staff_employee_id_valid" on table "hidden.staff"
+ROLLBACK TO SAVEPOINT expect_delete_fail;
 -- Success
 DELETE FROM hidden.staff WHERE employee_id = 101;
 DELETE FROM exposed.employees WHERE id = 101;
 -- Fail
+SAVEPOINT expect_update_fail;
+UPDATE hidden.staff SET valid_until = 'infinity' WHERE employee_id = 103;
+ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
+ROLLBACK TO SAVEPOINT expect_update_fail;
+-- Regression test: This should fail, same as the test above it.
+SAVEPOINT regression;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
 ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
+ROLLBACK TO SAVEPOINT regression;
 -- Success
 UPDATE exposed.employees SET valid_to = 'infinity' WHERE id = 103;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
@@ -217,8 +253,8 @@ SELECT sql_saga.drop_era('hidden.staff');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | start_after_column_name | stop_on_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+------------+----------+-------------------------+---------------------+------------+-------------------------+-----------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
@@ -227,28 +263,43 @@ TABLE sql_saga.era;
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
- valid_after | date              |           | not null | 
- valid_from  | date              |           |          | 
- valid_to    | date              |           | not null | 
+ valid_from  | date              |           | not null | 
+ valid_to    | date              |           |          | 
+ valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Triggers:
-    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
+    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
- valid_after | date             |           | not null | 
- valid_from  | date             |           |          | 
- valid_to    | date             |           | not null | 
+ valid_from  | date             |           | not null | 
+ valid_to    | date             |           |          | 
+ valid_until | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Triggers:
-    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after()
+    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
-DROP TABLE exposed.employees;
-DROP TABLE hidden.staff;
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

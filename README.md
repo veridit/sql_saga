@@ -21,40 +21,43 @@ An Sql Saga is the history of a table (an era) over multiple periods of time.
 ## Temporal Tables with Foreign Keys example
 
 A simplified example to illustrate the concept.
-A table has `valid_from` and `valid_to` date columns, which define an inclusive period `[valid_from, valid_to]`.
+A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end), aligning with PostgreSQL's native range types.
 
-For `sql_saga` to work, an additional `valid_after` column is required. It represents the exclusive start of the period, `(valid_after, valid_to]`, which simplifies contiguity checks. When two periods are contiguous, the `valid_to` of the first period equals the `valid_after` of the second.
+### Entity Identifiers
 
-It is recommended to use a trigger to keep `valid_from` and `valid_after` synchronized. The generic trigger function `sql_saga.synchronize_valid_from_after()` is included with the extension to help with this synchronization.
+A key concept in temporal data modeling is the **entity identifier**. Since a temporal table tracks the history of an entity over time, a single conceptual "thing" (like a company or a person) will have multiple rows in the table, each representing a different slice of its history.
 
-The currently valid row has `infinity` in the `valid_to` column.
+The entity identifier is the column (or set of columns) that holds the same value for all rows that belong to the same conceptual entity. A common naming convention for this column is `entity_id` or simply `id`. In the examples below, the `id` column in `establishment` serves this purpose.
+
+The primary key of the temporal table is typically a composite key that includes the entity identifier and a temporal column (e.g., `(id, valid_from)`) to uniquely identify each historical version of the entity.
+
+The currently valid row has `infinity` in the `valid_until` column.
 
 ### Temporal Table with Valid Time
 
-For human readability `valid_from` is used, while for the extension `valid_after` is required. They should be kept synchronized such that `valid_from = valid_after + interval '1 day'`. The conceptual examples below show `valid_after` in table definitions but omit it from data listings for simplicity.
+For users who prefer to work with inclusive end dates (e.g., a `valid_to` column), `sql_saga` provides a convenience trigger `sql_saga.synchronize_valid_to_until()`. This trigger can be used to automatically maintain the relationship `valid_until = valid_to + '1 day'`.
 
 Example table:
 ```
 TABLE establishment (
-    id
-    valid_after date,
+    id,
     valid_from date,
-    valid_to date,
-    name,
+    valid_until date,
+    name
 )
 ```
 Example data
 ```
-------+------------+--------------+------------------------------------
-id    | valid_from |   valid_to   |  name
-------+------------+--------------+------------------------------------
-01    | 2023-01-01 |   2023-06-30 |  AutoParts LLC
-01    | 2023-07-01 |   2023-12-31 |  AutoSpareParts INC
-01    | 2024-01-01 |   infinity   |  SpareParts Corporation
-02    | 2022-01-01 |   2022-06-30 |  Gasoline Refinement LLC
-02    | 2022-07-01 |   2022-12-31 |  Gasoline and Diesel Refinement LLC
-02    | 2023-01-01 |   infinity   |  General Refinement LLC
-------+------------+--------------+------------------------------------
+------+------------+-------------+------------------------------------
+id    | valid_from | valid_until |  name
+------+------------+-------------+------------------------------------
+01    | 2023-01-01 |  2023-07-01 |  AutoParts LLC
+01    | 2023-07-01 |  2024-01-01 |  AutoSpareParts INC
+01    | 2024-01-01 |  infinity   |  SpareParts Corporation
+02    | 2022-01-01 |  2022-07-01 |  Gasoline Refinement LLC
+02    | 2022-07-01 |  2023-01-01 |  Gasoline and Diesel Refinement LLC
+02    | 2023-01-01 |  infinity   |  General Refinement LLC
+------+------------+-------------+------------------------------------
 ```
 
 A regular table of statistical values
@@ -79,7 +82,7 @@ There is no temporal information for the `stat_definition` table,
 as we don't report on their historic development.
 
 A table for tracking the measured values over time,
-using `valid_after`, `valid_from` and `valid_to`, in addition to having
+using `valid_from` and `valid_until`, in addition to having
 a regular foreign key to `stat_definition_id`, and a temporal
 foreign key to `establishment.id`.
 
@@ -87,9 +90,8 @@ foreign key to `establishment.id`.
 TABLE stat_for_unit (
     id
     stat_definition_id,
-    valid_after,
     valid_from,
-    valid_to,
+    valid_until,
     establishment_id,
     value,
 )
@@ -97,36 +99,36 @@ TABLE stat_for_unit (
 
 Some example data to show how measurements are kept in `stat_for_unit`.
 ```
------------+------------+------------+--------+-----------
- stat_def  | valid_from | valid_to   | est_id | value
------------+------------+------------+--------+-----------
- employees | 2020-01-01 | 2023-12-31 |  01    |         90
- employees | 2024-01-01 | infinity   |  01    |        130
- turnover  | 2023-01-01 | 2023-12-31 |  01    | 10 000 000
- turnover  | 2024-01-01 | infinity   |  01    | 30 000 000
- employees | 2022-01-01 | 2022-12-31 |  02    |         20
- employees | 2023-01-01 | infinity   |  02    |         80
- turnover  | 2022-01-01 | 2022-12-31 |  02    | 40 000 000
- turnover  | 2023-01-01 | infinity   |  02    | 70 000 000
------------+------------+------------+--------+-----------
+-----------+------------+-------------+--------+------------
+ stat_def  | valid_from | valid_until | est_id | value
+-----------+------------+-------------+--------+------------
+ employees | 2020-01-01 |  2024-01-01 |  01    |         90
+ employees | 2024-01-01 |  infinity   |  01    |        130
+ turnover  | 2023-01-01 |  2024-01-01 |  01    | 10 000 000
+ turnover  | 2024-01-01 |  infinity   |  01    | 30 000 000
+ employees | 2022-01-01 |  2023-01-01 |  02    |         20
+ employees | 2023-01-01 |  infinity   |  02    |         80
+ turnover  | 2022-01-01 |  2023-01-01 |  02    | 40 000 000
+ turnover  | 2023-01-01 |  infinity   |  02    | 70 000 000
+-----------+------------+-------------+--------+------------
 ```
 
 The purpose of this extension is to make sure that for foreign keys
 between temporal tables, the linked table, in this case `establishment`,
-must have the linked foreign key available for the entire period `[valid_from, valid_to]`
+must have the linked foreign key available for the entire period `[valid_from, valid_until)`
 of the `stat_for_unit` table.
 
 Notice that there can be multiple matching rows, and the periods do not
 need to align between the tables.
 
-So this line from `stat_for_unit` which represents the period `[2022-01-01, 2022-12-31]`
+So this line from `stat_for_unit` which represents the period `[2022-01-01, 2023-01-01)`
 ```
-turnover  | ... | 2022-01-01 | 2022-12-31 |  02    | 40 000 000
+turnover  | ... | 2022-01-01 | 2023-01-01 |  02    | 40 000 000
 ```
-is covered by these two contiguous lines in `establishment` for periods `[2022-01-01, 2022-06-30]` and `[2022-07-01, 2022-12-31]`
+is covered by these two contiguous lines in `establishment` for periods `[2022-01-01, 2022-07-01)` and `[2022-07-01, 2023-01-01)`
 ```
-02    | ... | 2022-01-01 | 2022-06-30 |  Gasoline Refinement LLC
-02    | ... | 2022-07-01 | 2022-12-31 |  Gasoline and Diesel Refinement LLC
+02    | ... | 2022-01-01 | 2022-07-01 |  Gasoline Refinement LLC
+02    | ... | 2022-07-01 | 2023-01-01 |  Gasoline and Diesel Refinement LLC
 ```
 
 ## Installation
@@ -148,23 +150,23 @@ CREATE TABLE legal_unit (
   id SERIAL NOT NULL,
   legal_ident VARCHAR NOT NULL,
   name VARCHAR NOT NULL,
-  valid_after TIMESTAMPTZ,
   valid_from TIMESTAMPTZ,
-  valid_to TIMESTAMPTZ
+  valid_until TIMESTAMPTZ,
+  valid_to DATE -- Optional: for human-readable inclusive end dates
   -- Note: A primary key on temporal tables is often not on the temporal columns
 );
 
--- It is recommended to create a trigger to keep valid_from and valid_after in sync.
+-- Optional: a trigger to keep valid_to and valid_until in sync.
 CREATE TRIGGER legal_unit_synchronize_validity
     BEFORE INSERT OR UPDATE ON legal_unit
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
+    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 
 -- Register the table as a temporal table (an "era")
-SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
+SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['name'], 'legal_unit_name_valid');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['legal_ident'], 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['name'], unique_key_name => 'legal_unit_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
 
 
 CREATE TABLE establishment (
@@ -172,21 +174,20 @@ CREATE TABLE establishment (
   name VARCHAR NOT NULL,
   address TEXT NOT NULL,
   legal_unit_id INTEGER NOT NULL,
-  valid_after TIMESTAMPTZ,
   valid_from TIMESTAMPTZ,
-  valid_to TIMESTAMPTZ
+  valid_until TIMESTAMPTZ
 );
 
--- It is recommended to create a trigger to keep valid_from and valid_after in sync.
-CREATE TRIGGER establishment_synchronize_validity
-    BEFORE INSERT OR UPDATE ON establishment
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_from_after();
-
-SELECT sql_saga.add_era('establishment','valid_after','valid_to');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'establishment_id_valid');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['name'], 'establishment_name_valid');
+SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
-SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
 
 ```
 
@@ -194,39 +195,65 @@ SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid'
 
 ```
 -- Foreign keys must be dropped before the unique keys they reference.
-SELECT sql_saga.drop_foreign_key('establishment', 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
 
-SELECT sql_saga.drop_unique_key('establishment', 'establishment_id_valid');
-SELECT sql_saga.drop_unique_key('establishment', 'establishment_name_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_name_valid');
 SELECT sql_saga.drop_era('establishment');
 
 
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_name_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_legal_ident_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_name_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_legal_ident_valid');
 SELECT sql_saga.drop_era('legal_unit');
 ```
 
 ## Development
-Run all regression tests with
-```
-make install && make test
-```
+The test suite uses `pg_regress` and is designed to be fully idempotent, creating a temporary database for each run to ensure a clean state.
 
-To run a single test file:
-```
-make test TESTS=22_covers_without_gaps_test
-```
+- To run all tests:
+  ```bash
+  make install && make test; make diff-fail-all
+  ```
+- To run fast tests (excluding benchmarks):
+  ```bash
+  make install && make test fast; make diff-fail-all
+  ```
+- To run a specific test:
+  ```bash
+  make install && make test TESTS="02_periods"; make diff-fail-all
+  ```
+- To run a subset of tests:
+  ```bash
+  make install && make test TESTS="02_periods 03_api_symmetry_test"; make diff-fail-all
+  ```
+- To quickly review and fix any diffs:
+  ```bash
+  make vimdiff-fail-all
+  ```
 
-To run a subset of tests:
-```
-make test TESTS="22_covers_without_gaps_test 23_create_temporal_foreign_key_test"
-```
+## API Reference
 
-To quickly review and fix any diffs you can use
-```
-make vimdiff-fail-all
-```
+### Era Management
+- `add_era(table_oid regclass, valid_from_column_name name, valid_until_column_name name, era_name name DEFAULT 'valid', range_type regtype DEFAULT NULL, bounds_check_constraint name DEFAULT NULL) RETURNS boolean`
+- `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS boolean`
+
+### Unique Keys
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
+- `drop_unique_key(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
+- `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
+
+### Foreign Keys
+- `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
+- `drop_foreign_key(table_oid regclass, key_name name) RETURNS boolean`
+- `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`
+
+### Updatable Views (for PostgREST)
+- `add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
+- `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
+
+### Convenience Triggers
+- `synchronize_valid_to_until() RETURNS trigger`
 
 ## Dependencies
 

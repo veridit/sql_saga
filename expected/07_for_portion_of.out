@@ -1,10 +1,28 @@
-SELECT setting::integer < 120000 AS pre_12
-FROM pg_settings WHERE name = 'server_version_num';
- pre_12 
---------
- f
-(1 row)
-
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /*
@@ -16,17 +34,8 @@ CREATE TABLE pricing (id1 bigserial,
                       id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
                       id3 bigint GENERATED ALWAYS AS IDENTITY,
                       id4 bigint GENERATED ALWAYS AS (id1 + id2) STORED,
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
-                      id3 bigint GENERATED ALWAYS AS IDENTITY,
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-ERROR:  relation "pricing" already exists
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
-                      product text, min_quantity integer, max_quantity integer, price numeric);
-ERROR:  relation "pricing" already exists
-SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+                      product text, quantity_from integer, quantity_until integer, price numeric);
+SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
  add_era 
 ---------
  t
@@ -39,61 +48,61 @@ SELECT sql_saga.add_api('pricing', 'quantities');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_schema | table_name |  era_name  |              view_oid              |       trigger_name        
---------------+------------+------------+------------------------------------+---------------------------
- public       | pricing    | quantities | pricing__for_portion_of_quantities | for_portion_of_quantities
+ table_schema | table_name |  era_name  | view_schema_name |          view_table_name           |       trigger_name        
+--------------+------------+------------+------------------+------------------------------------+---------------------------
+ public       | pricing    | quantities | public           | pricing__for_portion_of_quantities | for_portion_of_quantities
 (1 row)
 
 /* Test UPDATE FOR PORTION */
-INSERT INTO pricing (product, min_quantity, max_quantity, price) VALUES ('Trinket', 1, 20, 200);
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   1 |   1 |   1 |   2 | Trinket |            1 |           20 |   200
+INSERT INTO pricing (product, quantity_from, quantity_until, price) VALUES ('Trinket', 2, 21, 200);
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   1 |   1 |   1 |   2 | Trinket |             2 |             21 |   200
 (1 row)
 
 -- UPDATE fully preceding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 0, max_quantity = 1, price = 0;
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   1 |   1 |   1 |   2 | Trinket |            1 |           20 |   200
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 1, quantity_until = 2, price = 0;
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   1 |   1 |   1 |   2 | Trinket |             2 |             21 |   200
 (1 row)
 
 -- UPDATE fully succeeding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 30, max_quantity = 50, price = 0;
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   1 |   1 |   1 |   2 | Trinket |            1 |           20 |   200
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 31, quantity_until = 51, price = 0;
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   1 |   1 |   1 |   2 | Trinket |             2 |             21 |   200
 (1 row)
 
 -- UPDATE fully surrounding
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 0, max_quantity = 100, price = 100;
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   1 |   1 |   1 |   2 | Trinket |            1 |           20 |   100
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 1, quantity_until = 101, price = 100;
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   1 |   1 |   1 |   2 | Trinket |             2 |             21 |   100
 (1 row)
 
 -- UPDATE portion
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 10, max_quantity = 20, price = 80;
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   2 |   2 |   2 |   4 | Trinket |            1 |           10 |   100
-   1 |   1 |   1 |   2 | Trinket |           10 |           20 |    80
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 11, quantity_until = 21, price = 80;
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   2 |   2 |   2 |   4 | Trinket |             2 |             11 |   100
+   1 |   1 |   1 |   2 | Trinket |            11 |             21 |    80
 (2 rows)
 
 -- UPDATE portion of multiple rows
-UPDATE pricing__for_portion_of_quantities SET min_quantity = 5, max_quantity = 15, price = 90;
-TABLE pricing ORDER BY min_quantity;
- id1 | id2 | id3 | id4 | product | min_quantity | max_quantity | price 
------+-----+-----+-----+---------+--------------+--------------+-------
-   3 |   3 |   3 |   6 | Trinket |            1 |            5 |   100
-   2 |   2 |   2 |   4 | Trinket |            5 |           10 |    90
-   1 |   1 |   1 |   2 | Trinket |           10 |           15 |    90
-   4 |   4 |   4 |   8 | Trinket |           15 |           20 |    80
+UPDATE pricing__for_portion_of_quantities SET quantity_from = 5, quantity_until = 15, price = 90;
+TABLE pricing ORDER BY quantity_from;
+ id1 | id2 | id3 | id4 | product | quantity_from | quantity_until | price 
+-----+-----+-----+-----+---------+---------------+----------------+-------
+   3 |   3 |   3 |   6 | Trinket |             2 |              5 |   100
+   2 |   2 |   2 |   4 | Trinket |             5 |             11 |    90
+   1 |   1 |   1 |   2 | Trinket |            11 |             15 |    90
+   4 |   4 |   4 |   8 | Trinket |            15 |             21 |    80
 (4 rows)
 
 -- If we drop the period (without CASCADE) then the FOR PORTION views should be
@@ -105,12 +114,12 @@ SELECT sql_saga.drop_era('pricing', 'quantities');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_oid | trigger_name 
---------------+------------+----------+----------+--------------
+ table_schema | table_name | era_name | view_schema_name | view_table_name | trigger_name 
+--------------+------------+----------+------------------+-----------------+--------------
 (0 rows)
 
 -- Add it back to test the drop_for_portion_view function
-SELECT sql_saga.add_era('pricing', 'min_quantity', 'max_quantity', 'quantities');
+SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
  add_era 
 ---------
  t
@@ -125,10 +134,12 @@ SELECT sql_saga.add_api('pricing', 'quantities');
 -- We can't drop the the table without first dropping the FOR PORTION views
 -- because Postgres will complain about dependant objects (our views) before we
 -- get a chance to clean them up.
+SAVEPOINT expect_fail;
 DROP TABLE pricing;
 ERROR:  cannot drop table pricing because other objects depend on it
 DETAIL:  view pricing__for_portion_of_quantities depends on table pricing
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ROLLBACK TO SAVEPOINT expect_fail;
 SELECT sql_saga.drop_api('pricing', NULL);
  drop_api 
 ----------
@@ -136,31 +147,21 @@ SELECT sql_saga.drop_api('pricing', NULL);
 (1 row)
 
 TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_oid | trigger_name 
---------------+------------+----------+----------+--------------
+ table_schema | table_name | era_name | view_schema_name | view_table_name | trigger_name 
+--------------+------------+----------+------------------+-----------------+--------------
 (0 rows)
 
 DROP TABLE pricing;
 DROP SEQUENCE pricing_seq;
 /* Types without btree must be excluded, too */
--- v10+
 CREATE TABLE bt (
     id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     pt point,   -- something without btree
     t text,     -- something with btree
-    s integer,
-    e integer
+    valid_from integer,
+    valid_until integer
 );
--- pre v10
-CREATE TABLE bt (
-    id serial PRIMARY KEY,
-    pt point,   -- something without btree
-    t text,     -- something with btree
-    s integer,
-    e integer
-);
-ERROR:  relation "bt" already exists
-SELECT sql_saga.add_era('bt', 's', 'e', 'p');
+SELECT sql_saga.add_era('bt', 'valid_from', 'valid_until', 'p');
  add_era 
 ---------
  t
@@ -172,20 +173,20 @@ SELECT sql_saga.add_api('bt', 'p');
  t
 (1 row)
 
-INSERT INTO bt (pt, t, s, e) VALUES ('(0, 0)', 'sample', 10, 40);
-TABLE bt ORDER BY s, e;
- id |  pt   |   t    | s  | e  
-----+-------+--------+----+----
-  1 | (0,0) | sample | 10 | 40
+INSERT INTO bt (pt, t, valid_from, valid_until) VALUES ('(0, 0)', 'sample', 10, 41);
+TABLE bt ORDER BY valid_from, valid_until;
+ id |  pt   |   t    | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  1 | (0,0) | sample |         10 |          41
 (1 row)
 
-UPDATE bt__for_portion_of_p SET t = 'simple', s = 20, e = 30;
-TABLE bt ORDER BY s, e;
- id |  pt   |   t    | s  | e  
-----+-------+--------+----+----
-  2 | (0,0) | sample | 10 | 20
-  1 | (0,0) | simple | 20 | 30
-  3 | (0,0) | sample | 30 | 40
+UPDATE bt__for_portion_of_p SET t = 'simple', valid_from = 21, valid_until = 31;
+TABLE bt ORDER BY valid_from, valid_until;
+ id |  pt   |   t    | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  2 | (0,0) | sample |         10 |          21
+  1 | (0,0) | simple |         21 |          31
+  3 | (0,0) | sample |         31 |          41
 (3 rows)
 
 SELECT sql_saga.drop_api('bt', 'p');
@@ -195,3 +196,22 @@ SELECT sql_saga.drop_api('bt', 'p');
 (1 row)
 
 DROP TABLE bt;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

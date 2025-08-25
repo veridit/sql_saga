@@ -1,18 +1,18 @@
-CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+\i sql/include/test_setup.sql
+
+SET ROLE TO sql_saga_unprivileged_user;
 
 CREATE TABLE legal_unit (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   name varchar NOT NULL
 );
 
 CREATE TABLE establishment (
   id INTEGER,
-  valid_after date GENERATED ALWAYS AS (valid_from - INTERVAL '1 day') STORED,
   valid_from date,
-  valid_to date,
+  valid_until date,
   legal_unit_id INTEGER NOT NULL,
   postal_place TEXT NOT NULL
 );
@@ -27,11 +27,16 @@ CREATE TEMPORARY TABLE benchmark (
 INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
 
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era('legal_unit', 'valid_after', 'valid_to');
-SELECT sql_saga.add_era('establishment', 'valid_after', 'valid_to');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'valid');
-SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
 
 -- Record after enabling constraints
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints enabled', 0);
@@ -49,10 +54,10 @@ SET CONSTRAINTS ALL DEFERRED;
 DO $$
 BEGIN
   FOR i IN 1..10000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
     (i, '2015-01-01', 'infinity', 'Company ' || i);
 
-    INSERT INTO establishment (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
     (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
   END LOOP;
 END; $$;
@@ -72,10 +77,10 @@ BEGIN;
 DO $$
 BEGIN
   FOR i IN 10001..20000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_to, name) VALUES
+    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
     (i, '2015-01-01', 'infinity', 'Company ' || i);
 
-    INSERT INTO establishment (id, valid_from, valid_to, legal_unit_id, postal_place) VALUES
+    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
     (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
   END LOOP;
 END; $$;
@@ -90,11 +95,11 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 INSERT INTO benchmark (event, row_count) VALUES ('Update deferred constraints start', 0);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
-  UPDATE legal_unit SET valid_to = '2015-12-31' WHERE id <= 10000 AND valid_from = '2015-01-01';
+  UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
 
-  INSERT INTO legal_unit (id, valid_from, valid_to, name)
+  INSERT INTO legal_unit (id, valid_from, valid_until, name)
     SELECT id, '2016-01-01', 'infinity', name
-    FROM legal_unit WHERE valid_to = '2015-12-31';
+    FROM legal_unit WHERE valid_until = '2016-01-01';
 
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
@@ -105,9 +110,9 @@ UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key('establishment', 'establishment_legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('establishment','establishment_id_valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
 SELECT sql_saga.drop_era('legal_unit');
 SELECT sql_saga.drop_era('establishment');
 
@@ -115,9 +120,6 @@ INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 
 DROP TABLE establishment;
 DROP TABLE legal_unit;
-
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
 
 INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
 
@@ -166,3 +168,5 @@ ORDER BY
 
 -- Stop redirecting output
 \o
+
+\i sql/include/test_teardown.sql

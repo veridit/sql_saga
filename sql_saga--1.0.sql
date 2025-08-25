@@ -24,14 +24,15 @@ CREATE TABLE sql_saga.era (
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL DEFAULT 'valid',
-    start_after_column_name name NOT NULL,
-    stop_on_column_name name NOT NULL,
+    valid_from_column_name name NOT NULL,
+    valid_until_column_name name NOT NULL,
     -- active_column_name name NOT NULL,
     range_type regtype NOT NULL,
     bounds_check_constraint name NOT NULL,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
-    audit_table_oid regclass, -- NOT NULL
+    audit_schema_name name,
+    audit_table_name name,
     -- audit_trigger name NOT NULL,
     -- delete_trigger name NOT NULL,
     --excluded_column_names name[] NOT NULL DEFAULT '{}',
@@ -39,7 +40,7 @@ CREATE TABLE sql_saga.era (
 
     PRIMARY KEY (table_schema, table_name, era_name),
 
-    CHECK (start_after_column_name <> stop_on_column_name),
+    CHECK (valid_from_column_name <> valid_until_column_name),
     CHECK (era_name <> 'system_time')
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
@@ -98,8 +99,8 @@ CREATE VIEW sql_saga.information_schema__era AS
            e.table_schema,
            e.table_name,
            e.era_name,
-           e.start_after_column_name,
-           e.stop_on_column_name
+           e.valid_from_column_name,
+           e.valid_until_column_name
     FROM sql_saga.era AS e;
 
 
@@ -107,7 +108,8 @@ CREATE TABLE sql_saga.api_view (
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL,
-    view_oid regclass NOT NULL,
+    view_schema_name name NOT NULL,
+    view_table_name name NOT NULL,
     trigger_name name NOT NULL,
     -- truncate_trigger name NOT NULL,
 
@@ -115,7 +117,7 @@ CREATE TABLE sql_saga.api_view (
 
     FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name),
 
-    UNIQUE (view_oid)
+    UNIQUE (view_schema_name, view_table_name)
 );
 GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
@@ -166,73 +168,68 @@ CREATE AGGREGATE sql_saga.covers_without_gaps(anyrange, anyrange) (
 );
 
 /*
- * Generic trigger function to synchronize valid_from and valid_after columns.
- * Ensures valid_from = valid_after + 1 day.
+ * Generic trigger function to synchronize an inclusive end-date ('valid_to')
+ * with the exclusive end-date ('valid_until') required by sql_saga.
+ * Ensures valid_until = valid_to + '1 day'.
+ * This is provided as a convenience for users who prefer to work with
+ * inclusive end dates.
  */
-CREATE FUNCTION sql_saga.synchronize_valid_from_after()
-RETURNS TRIGGER LANGUAGE plpgsql AS $synchronize_valid_from_after$
+CREATE FUNCTION sql_saga.synchronize_valid_to_until()
+RETURNS TRIGGER LANGUAGE plpgsql AS $synchronize_valid_to_until$
 BEGIN
+    -- This trigger synchronizes an inclusive end column (e.g., 'valid_to')
+    -- with an exclusive end column ('valid_until') for date-based periods.
+    -- The relationship is valid_until = valid_to + '1 day'.
+
     -- For INSERT operations
     IF TG_OP = 'INSERT' THEN
-        IF NEW.valid_from IS NOT NULL AND NEW.valid_after IS NULL THEN
-            NEW.valid_after := NEW.valid_from - INTERVAL '1 day';
-        ELSIF NEW.valid_after IS NOT NULL AND NEW.valid_from IS NULL THEN
-            NEW.valid_from := NEW.valid_after + INTERVAL '1 day';
-        ELSIF NEW.valid_from IS NOT NULL AND NEW.valid_after IS NOT NULL THEN
-            IF NEW.valid_after != (NEW.valid_from - INTERVAL '1 day') THEN
-                RAISE EXCEPTION 'On INSERT, valid_from and valid_after are inconsistent. Expected valid_after = valid_from - 1 day. Got valid_from=%, valid_after=%', NEW.valid_from, NEW.valid_after;
+        IF NEW.valid_until IS NOT NULL AND NEW.valid_to IS NULL THEN
+            NEW.valid_to := NEW.valid_until - INTERVAL '1 day';
+        ELSIF NEW.valid_to IS NOT NULL AND NEW.valid_until IS NULL THEN
+            NEW.valid_until := NEW.valid_to + INTERVAL '1 day';
+        ELSIF NEW.valid_until IS NOT NULL AND NEW.valid_to IS NOT NULL THEN
+            IF NEW.valid_to != (NEW.valid_until - INTERVAL '1 day') THEN
+                RAISE EXCEPTION 'On INSERT, valid_to and valid_until are inconsistent. Expected valid_to = valid_until - 1 day. Got valid_to=%, valid_until=%', NEW.valid_to, NEW.valid_until;
             END IF;
-        ELSE -- Both are NULL, set a default validity period starting today
-            NEW.valid_after := current_date - INTERVAL '1 day'; -- (exclusive start) yesterday
-            NEW.valid_from  := current_date;                   -- (inclusive start) today
-            RAISE DEBUG 'On INSERT for table %, both valid_from and valid_after were NULL. Defaulted: valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
+        -- If both are NULL, do nothing, let table constraints handle it.
         END IF;
 
     -- For UPDATE operations
     ELSIF TG_OP = 'UPDATE' THEN
-        -- Case 1: Both valid_from and valid_after are being explicitly changed by the UPDATE statement
-        IF NEW.valid_from IS DISTINCT FROM OLD.valid_from AND NEW.valid_after IS DISTINCT FROM OLD.valid_after THEN
-            IF NEW.valid_from IS NULL OR NEW.valid_after IS NULL THEN
-                RAISE EXCEPTION 'On UPDATE for table %, when changing both valid_from and valid_after, neither can be set to NULL. Attempted valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
+        -- Case 1: Both columns are explicitly changed.
+        IF NEW.valid_until IS DISTINCT FROM OLD.valid_until AND NEW.valid_to IS DISTINCT FROM OLD.valid_to THEN
+            IF NEW.valid_until IS NULL OR NEW.valid_to IS NULL THEN
+                RAISE EXCEPTION 'On UPDATE, when changing both valid_to and valid_until, neither can be set to NULL.';
             END IF;
-            IF NEW.valid_after != (NEW.valid_from - INTERVAL '1 day') THEN
-                RAISE EXCEPTION 'On UPDATE for table %, conflicting explicit values for valid_from and valid_after. With valid_from=%, expected valid_after=%. Got valid_after=%', 
-                                 TG_TABLE_NAME, NEW.valid_from, NEW.valid_from - INTERVAL '1 day', NEW.valid_after;
+            IF NEW.valid_to != (NEW.valid_until - INTERVAL '1 day') THEN
+                RAISE EXCEPTION 'On UPDATE, conflicting explicit values for valid_to and valid_until. With valid_until=%, expected valid_to=%. Got valid_to=%', 
+                                 NEW.valid_until, NEW.valid_until - INTERVAL '1 day', NEW.valid_to;
             END IF;
-        -- Case 2: Only valid_from is being explicitly changed (and valid_after was not, or its change was not distinct)
-        ELSIF NEW.valid_from IS DISTINCT FROM OLD.valid_from THEN
-            IF NEW.valid_from IS NULL THEN
-                RAISE EXCEPTION 'On UPDATE for table %, valid_from cannot be set to NULL. Attempted valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
+        -- Case 2: Only valid_until is explicitly changed.
+        ELSIF NEW.valid_until IS DISTINCT FROM OLD.valid_until THEN
+            IF NEW.valid_until IS NULL THEN
+                RAISE EXCEPTION 'On UPDATE, valid_until cannot be set to NULL.';
             END IF;
-            NEW.valid_after := NEW.valid_from - INTERVAL '1 day';
-        -- Case 3: Only valid_after is being explicitly changed (and valid_from was not, or its change was not distinct)
-        ELSIF NEW.valid_after IS DISTINCT FROM OLD.valid_after THEN
-            IF NEW.valid_after IS NULL THEN
-                RAISE EXCEPTION 'On UPDATE for table %, valid_after cannot be set to NULL. Attempted valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
+            NEW.valid_to := NEW.valid_until - INTERVAL '1 day';
+        -- Case 3: Only valid_to is explicitly changed.
+        ELSIF NEW.valid_to IS DISTINCT FROM OLD.valid_to THEN
+            IF NEW.valid_to IS NULL THEN
+                RAISE EXCEPTION 'On UPDATE, valid_to cannot be set to NULL.';
             END IF;
-            NEW.valid_from := NEW.valid_after + INTERVAL '1 day';
-        -- Case 4: Neither valid_from nor valid_after is being distinctly changed by the UPDATE statement's SET clause.
+            NEW.valid_until := NEW.valid_to + INTERVAL '1 day';
+        -- Case 4: Neither is being distinctly changed. Check for consistency if they are not NULL.
         ELSE
-            IF NEW.valid_from IS NULL OR NEW.valid_after IS NULL THEN
-                 RAISE EXCEPTION 'On UPDATE for table %, valid_from and valid_after cannot be NULL (and were not changed by SET clause). Got valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
+            IF NEW.valid_until IS NOT NULL AND NEW.valid_to IS NOT NULL THEN
+                 IF NEW.valid_to != (NEW.valid_until - INTERVAL '1 day') THEN
+                     RAISE EXCEPTION 'On UPDATE, existing valid_to and valid_until are inconsistent. Got valid_to=%, valid_until=%', NEW.valid_to, NEW.valid_until;
+                 END IF;
             END IF;
-            IF NEW.valid_after != (NEW.valid_from - INTERVAL '1 day') THEN
-                 RAISE EXCEPTION 'On UPDATE for table %, existing valid_from and valid_after are inconsistent (and were not changed by SET clause). Got valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
-            END IF;
-        END IF;
-        
-        -- Final safeguard checks after all logic.
-        IF NEW.valid_from IS NULL OR NEW.valid_after IS NULL THEN
-            RAISE EXCEPTION 'On UPDATE for table %, valid_from and valid_after must result in non-NULL values. Got valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
-        END IF;
-
-        IF NEW.valid_after != (NEW.valid_from - INTERVAL '1 day') THEN
-            RAISE EXCEPTION 'On UPDATE for table %, derived valid_from and valid_after are inconsistent after all processing. Got valid_from=%, valid_after=%', TG_TABLE_NAME, NEW.valid_from, NEW.valid_after;
         END IF;
     END IF;
     RETURN NEW;
 END;
-$synchronize_valid_from_after$;
+$synchronize_valid_to_until$;
+
 
 
 
@@ -326,8 +323,8 @@ $function$;
 
 CREATE FUNCTION sql_saga.add_era(
     table_oid regclass,
-    start_after_column_name name,
-    stop_on_column_name name,
+    valid_from_column_name name,
+    valid_until_column_name name,
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
     bounds_check_constraint name DEFAULT NULL)
@@ -437,10 +434,10 @@ BEGIN
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
     INTO start_attnum, start_type, start_collation, start_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, start_after_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'column "%" not found in table "%"', start_after_column_name, table_oid;
+        RAISE EXCEPTION 'column "%" not found in table "%"', valid_from_column_name, table_oid;
     END IF;
 
     IF start_attnum < 0 THEN
@@ -451,10 +448,10 @@ BEGIN
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
     INTO end_attnum, end_type, end_collation, end_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, stop_on_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'column "%" not found in table "%"', stop_on_column_name, table_oid;
+        RAISE EXCEPTION 'column "%" not found in table "%"', valid_until_column_name, table_oid;
     END IF;
 
     IF end_attnum < 0 THEN
@@ -503,10 +500,10 @@ BEGIN
      * SQL:2016 11.27 SR 5.h
      */
     IF NOT start_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', start_after_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
     END IF;
     IF NOT end_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', stop_on_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
     END IF;
 
     /*
@@ -516,7 +513,7 @@ BEGIN
      * SQL:2016 11.27 GR 2.b
      */
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I < %I))', start_after_column_name, stop_on_column_name);
+        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
         context text;
     BEGIN
         IF bounds_check_constraint IS NOT NULL THEN
@@ -561,7 +558,7 @@ BEGIN
 --     * SQL:2016 4.15.2.2
 --     */
 --    DECLARE
---        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', stop_on_column_name);
+--        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
 --        context text;
 --    BEGIN
 --        IF infinity_check_constraint IS NOT NULL THEN
@@ -597,7 +594,7 @@ BEGIN
 --                FROM pg_catalog.pg_class AS c
 --                WHERE c.oid = table_class;
 --
---                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, stop_on_column_name], 'infinity_check');
+--                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
 --                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
 --            END IF;
 --        END IF;
@@ -609,8 +606,8 @@ BEGIN
         EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(alter_commands, ', '));
     END IF;
 
-    INSERT INTO sql_saga.era (table_schema, table_name, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint)
-    VALUES (table_schema, table_name, era_name, start_after_column_name, stop_on_column_name, range_type, bounds_check_constraint);
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint)
+    VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint);
 
     -- Code for creation of triggers, when extending the era api
     --        /* Make sure all the excluded columns exist */
@@ -832,7 +829,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    audit_table regclass;
+    audit_schema_name name;
+    audit_table_name name;
     table_schema name;
     table_name name;
 BEGIN
@@ -841,13 +839,13 @@ BEGIN
     FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
     WHERE c.oid = TG_RELID;
 
-    SELECT e.audit_table_oid
-    INTO audit_table
+    SELECT e.audit_schema_name, e.audit_table_name
+    INTO audit_schema_name, audit_table_name
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name) = (table_schema, table_name);
 
-    IF FOUND AND audit_table IS NOT NULL THEN
-        EXECUTE format('TRUNCATE %s', audit_table);
+    IF FOUND AND audit_table_name IS NOT NULL THEN
+        EXECUTE format('TRUNCATE %I.%I', audit_schema_name, audit_table_name);
     END IF;
 
     RETURN NULL;
@@ -925,8 +923,8 @@ BEGIN
             EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
             EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
                 trigger_name, r.schema_name, view_name);
-            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_oid, trigger_name)
-                VALUES (r.schema_name, r.table_name, r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
+            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
+                VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
         END LOOP;
     END;
 
@@ -942,7 +940,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    view_oid regclass;
+    view_schema_name name;
+    view_table_name name;
     trigger_name name;
     target_schema_name name;
     target_table_name name;
@@ -970,14 +969,14 @@ BEGIN
         WHERE c.oid = table_oid;
     END IF;
 
-    FOR view_oid, trigger_name IN
+    FOR view_schema_name, view_table_name, trigger_name IN
         DELETE FROM sql_saga.api_view AS fp
         WHERE (table_oid IS NULL OR (fp.table_schema, fp.table_name) = (target_schema_name, target_table_name))
           AND (era_name IS NULL OR fp.era_name = era_name)
-        RETURNING fp.view_oid, fp.trigger_name
+        RETURNING fp.view_schema_name, fp.view_table_name, fp.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %s', trigger_name, view_oid);
-        EXECUTE format('DROP VIEW %s %s', view_oid, drop_behavior);
+        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name, view_schema_name, view_table_name);
+        EXECUTE format('DROP VIEW %I.%I %s', view_schema_name, view_table_name, drop_behavior);
     END LOOP;
 
     RETURN true;
@@ -992,6 +991,8 @@ $function$
 #variable_conflict use_variable
 DECLARE
     info record;
+    view_schema_name name;
+    view_table_name name;
     test boolean;
     generated_columns_sql text;
     generated_columns text[];
@@ -1031,7 +1032,7 @@ DECLARE
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
         '               WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' '
-        '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
+        '                 AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
 
     GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text :=
         'SELECT array_agg(a.attname) '
@@ -1049,7 +1050,7 @@ DECLARE
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
         '               WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' '
-        '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
+        '                 AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
 
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text :=
         'SELECT array_agg(a.attname) '
@@ -1068,7 +1069,7 @@ DECLARE
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
         '               WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' '
-        '                 AND a.attname IN (_p.start_after_column_name, _p.stop_on_column_name)))';
+        '                 AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
 
 BEGIN
     /*
@@ -1076,38 +1077,43 @@ BEGIN
      *     SQL:2016 15.13 GR 10
      */
 
+    SELECT n.nspname, c.relname
+    INTO view_schema_name, view_table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = TG_RELID;
+
     /* Get the table information from this view */
     SELECT c.oid AS table_oid,
            fpv.table_schema, fpv.table_name, fpv.era_name,
-           e.start_after_column_name, e.stop_on_column_name,
+           e.valid_from_column_name, e.valid_until_column_name,
            format_type(a.atttypid, a.atttypmod) AS datatype
     INTO info
     FROM sql_saga.api_view AS fpv
     JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (fpv.table_schema, fpv.table_name, fpv.era_name)
     JOIN pg_catalog.pg_namespace AS n ON n.nspname = fpv.table_schema
     JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, fpv.table_name)
-    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (c.oid, e.start_after_column_name)
-    WHERE fpv.view_oid = TG_RELID;
+    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (c.oid, e.valid_from_column_name)
+    WHERE (fpv.view_schema_name, fpv.view_table_name) = (view_schema_name, view_table_name);
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'table and era information not found for view "%"', TG_RELID::regclass;
     END IF;
 
     jnew := to_jsonb(NEW);
-    fromval := jnew->info.start_after_column_name;
-    toval := jnew->info.stop_on_column_name;
+    fromval := jnew->info.valid_from_column_name;
+    toval := jnew->info.valid_until_column_name;
 
     jold := to_jsonb(OLD);
-    bstartval := jold->info.start_after_column_name;
-    bendval := jold->info.stop_on_column_name;
+    bstartval := jold->info.valid_from_column_name;
+    bendval := jold->info.valid_until_column_name;
 
     pre_row := jold;
     new_row := jnew;
     post_row := jold;
 
     /* Reset the period columns */
-    new_row := jsonb_set(new_row, ARRAY[info.start_after_column_name], bstartval);
-    new_row := jsonb_set(new_row, ARRAY[info.stop_on_column_name], bendval);
+    new_row := jsonb_set(new_row, ARRAY[info.valid_from_column_name], bstartval);
+    new_row := jsonb_set(new_row, ARRAY[info.valid_until_column_name], bendval);
 
     /* If the period is the only thing changed, do nothing */
     IF new_row = jold THEN
@@ -1118,16 +1124,16 @@ BEGIN
     EXECUTE format(TEST_SQL, info.datatype, bstartval, fromval, bendval) INTO test;
     IF test THEN
         pre_assigned := true;
-        pre_row := jsonb_set(pre_row, ARRAY[info.stop_on_column_name], fromval);
-        new_row := jsonb_set(new_row, ARRAY[info.start_after_column_name], fromval);
+        pre_row := jsonb_set(pre_row, ARRAY[info.valid_until_column_name], fromval);
+        new_row := jsonb_set(new_row, ARRAY[info.valid_from_column_name], fromval);
     END IF;
 
     post_assigned := false;
     EXECUTE format(TEST_SQL, info.datatype, bstartval, toval, bendval) INTO test;
     IF test THEN
         post_assigned := true;
-        new_row := jsonb_set(new_row, ARRAY[info.stop_on_column_name], toval::jsonb);
-        post_row := jsonb_set(post_row, ARRAY[info.start_after_column_name], toval::jsonb);
+        new_row := jsonb_set(new_row, ARRAY[info.valid_until_column_name], toval::jsonb);
+        post_row := jsonb_set(post_row, ARRAY[info.valid_from_column_name], toval::jsonb);
     END IF;
 
     IF pre_assigned OR post_assigned THEN
@@ -1220,9 +1226,9 @@ BEGIN
                     WHERE a.attrelid = info.table_oid
                       AND c.conrelid = info.table_oid
                    ),
-                   info.stop_on_column_name,
+                   info.valid_until_column_name,
                    fromval,
-                   info.start_after_column_name,
+                   info.valid_from_column_name,
                    toval
                   );
 
@@ -1291,8 +1297,8 @@ BEGIN
 
     /* For convenience, put the period's attnums in an array */
     era_attnums := ARRAY[
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.start_after_column_name)),
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.stop_on_column_name))
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_from_column_name)),
+        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_until_column_name))
     ];
 
     /* Get attnums from column names */
@@ -1313,11 +1319,11 @@ BEGIN
     END IF;
 
     /* Make sure the period columns aren't also in the normal columns */
-    IF era_row.start_after_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.start_after_column_name;
+    IF era_row.valid_from_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.valid_from_column_name;
     END IF;
-    IF era_row.stop_on_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.stop_on_column_name;
+    IF era_row.valid_until_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', era_row.valid_until_column_name;
     END IF;
 
     /*
@@ -1327,7 +1333,7 @@ BEGIN
     IF EXISTS (
         SELECT FROM sql_saga.era AS e
         WHERE (e.table_schema, e.table_name, e.era_name) = (era_row.table_schema, era_row.table_name, 'system_time')
-          AND ARRAY[e.start_after_column_name, e.stop_on_column_name] && column_names)
+          AND ARRAY[e.valid_from_column_name, e.valid_until_column_name] && column_names)
     THEN
         RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
@@ -1335,7 +1341,7 @@ BEGIN
     /* If we were given a unique constraint to use, look it up and make sure it matches */
     SELECT format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality))
     INTO unique_sql
-    FROM unnest(column_names || era_row.start_after_column_name || era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     IF unique_constraint IS NOT NULL THEN
         SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
@@ -1388,8 +1394,8 @@ BEGIN
         INTO withs
         FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
 
-        withs := withs || format('%I(%I, %I, ''(]''::text) WITH &&',
-            era_row.range_type, era_row.start_after_column_name, era_row.stop_on_column_name);
+        withs := withs || format('%I(%I, %I) WITH &&',
+            era_row.range_type, era_row.valid_from_column_name, era_row.valid_until_column_name);
 
         exclude_sql := format('EXCLUDE USING gist (%s) DEFERRABLE', array_to_string(withs, ', '));
     END;
@@ -1533,7 +1539,7 @@ BEGIN
     LOOP
         /* Cascade to foreign keys, if desired */
         FOR foreign_key_row IN
-            SELECT fk.foreign_key_name
+            SELECT fk.*
             FROM sql_saga.foreign_keys AS fk
             WHERE fk.unique_key_name = unique_key_row.unique_key_name
         LOOP
@@ -1717,11 +1723,11 @@ BEGIN
     END IF;
 
     /* Make sure the period columns aren't also in the normal columns */
-    IF fk_era_row.start_after_column_name = ANY (fk_column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.start_after_column_name;
+    IF fk_era_row.valid_from_column_name = ANY (fk_column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.valid_from_column_name;
     END IF;
-    IF fk_era_row.stop_on_column_name = ANY (fk_column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.stop_on_column_name;
+    IF fk_era_row.valid_until_column_name = ANY (fk_column_names) THEN
+        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.valid_until_column_name;
     END IF;
 
     /* Get the unique key we're linking to */
@@ -1796,16 +1802,27 @@ BEGIN
     /* Get the columns that require checking the constraint */
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
     INTO foreign_columns_with_era_columns
-    FROM unnest(fk_column_names || fk_era_row.start_after_column_name || fk_era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(fk_column_names || fk_era_row.valid_from_column_name || fk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+
+    -- If a 'valid_to' column exists, add it to the list of columns that
+    -- trigger the fk_update_check. This handles cases where a BEFORE trigger
+    -- synchronizes valid_to and valid_until, ensuring validation fires correctly
+    -- without making the trigger an overly-broad row-level trigger.
+    IF EXISTS (
+        SELECT 1 FROM pg_catalog.pg_attribute
+        WHERE attrelid = fk_table_oid AND attname = 'valid_to' AND NOT attisdropped
+    ) THEN
+        foreign_columns_with_era_columns := foreign_columns_with_era_columns || ', ' || quote_ident('valid_to');
+    END IF;
 
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
     INTO unique_columns_with_era_columns
-    FROM unnest(uk_row.column_names || uk_era_row.start_after_column_name || uk_era_row.stop_on_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    FROM unnest(uk_row.column_names || uk_era_row.valid_from_column_name || uk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
     /* Add all the known variables for the triggers to avoid lookups when executing the triggers. */
     DECLARE
-        fk_start_after_column_name text := fk_era_row.start_after_column_name;
-        fk_stop_on_column_name text := fk_era_row.stop_on_column_name;
+        fk_valid_from_column_name text := fk_era_row.valid_from_column_name;
+        fk_valid_until_column_name text := fk_era_row.valid_until_column_name;
 
         fk_column_names_arr_str text := format('{%s}',fk_column_names);
         uk_column_names_arr_str text := format('{%s}',uk_row.column_names);
@@ -1813,8 +1830,8 @@ BEGIN
         uk_era_name text := uk_era_row.era_name;
         uk_table_oid regclass := uk_table_oid;
 
-        uk_start_after_column_name text := uk_era_row.start_after_column_name;
-        uk_stop_on_column_name text := uk_era_row.stop_on_column_name;
+        uk_valid_from_column_name text := uk_era_row.valid_from_column_name;
+        uk_valid_until_column_name text := uk_era_row.valid_until_column_name;
     BEGIN
         /* Time to make the underlying triggers */
         fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_insert'));
@@ -1828,14 +1845,14 @@ BEGIN
             , /* %3$  */ fk_table_name
             , /* %4$  */ fk_column_names_arr_str
             , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_start_after_column_name
-            , /* %7$  */ fk_stop_on_column_name
+            , /* %6$  */ fk_valid_from_column_name
+            , /* %7$  */ fk_valid_until_column_name
             , /* %8$ */ uk_schema_name
             , /* %9$ */ uk_table_name
             , /* %10$ */ uk_column_names_arr_str
             , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_start_after_column_name
-            , /* %13$ */ uk_stop_on_column_name
+            , /* %12$ */ uk_valid_from_column_name
+            , /* %13$ */ uk_valid_until_column_name
             , /* %14$ */ match_type
             , /* %15$ */ update_action
             , /* %16$ */ delete_action
@@ -1854,14 +1871,14 @@ BEGIN
             , /* %3$  */ fk_table_name
             , /* %4$  */ fk_column_names_arr_str
             , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_start_after_column_name
-            , /* %7$  */ fk_stop_on_column_name
+            , /* %6$  */ fk_valid_from_column_name
+            , /* %7$  */ fk_valid_until_column_name
             , /* %8$ */ uk_schema_name
             , /* %9$ */ uk_table_name
             , /* %10$ */ uk_column_names_arr_str
             , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_start_after_column_name
-            , /* %13$ */ uk_stop_on_column_name
+            , /* %12$ */ uk_valid_from_column_name
+            , /* %13$ */ uk_valid_until_column_name
             , /* %14$ */ match_type
             , /* %15$ */ update_action
             , /* %16$ */ delete_action
@@ -1881,14 +1898,14 @@ BEGIN
             , /* %3$  */ fk_table_name
             , /* %4$  */ fk_column_names_arr_str
             , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_start_after_column_name
-            , /* %7$  */ fk_stop_on_column_name
+            , /* %6$  */ fk_valid_from_column_name
+            , /* %7$  */ fk_valid_until_column_name
             , /* %8$ */ uk_schema_name
             , /* %9$ */ uk_table_name
             , /* %10$ */ uk_column_names_arr_str
             , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_start_after_column_name
-            , /* %13$ */ uk_stop_on_column_name
+            , /* %12$ */ uk_valid_from_column_name
+            , /* %13$ */ uk_valid_until_column_name
             , /* %14$ */ match_type
             , /* %15$ */ update_action
             , /* %16$ */ delete_action
@@ -1908,14 +1925,14 @@ BEGIN
             , /* %3$  */ fk_table_name
             , /* %4$  */ fk_column_names_arr_str
             , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_start_after_column_name
-            , /* %7$  */ fk_stop_on_column_name
+            , /* %6$  */ fk_valid_from_column_name
+            , /* %7$  */ fk_valid_until_column_name
             , /* %8$ */ uk_schema_name
             , /* %9$ */ uk_table_name
             , /* %10$ */ uk_column_names_arr_str
             , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_start_after_column_name
-            , /* %13$ */ uk_stop_on_column_name
+            , /* %12$ */ uk_valid_from_column_name
+            , /* %13$ */ uk_valid_until_column_name
             , /* %14$ */ match_type
             , /* %15$ */ update_action
             , /* %16$ */ delete_action
@@ -2004,22 +2021,22 @@ BEGIN
                     'SELECT 1 FROM %1$I.%2$I AS fk ' ||
                     'WHERE %12$s AND NOT COALESCE(( ' ||
                     '  SELECT sql_saga.covers_without_gaps( ' ||
-                    '    %3$s(uk.%4$I, uk.%5$I, ''(]''), ' ||
-                    '    %6$s(fk.%7$I, fk.%8$I, ''(]'') ' ||
+                    '    %3$s(uk.%4$I, uk.%5$I), ' ||
+                    '    %6$s(fk.%7$I, fk.%8$I) ' ||
                     '    ORDER BY uk.%4$I ' ||
                     '  ) ' ||
                     '  FROM %9$I.%10$I AS uk ' ||
                     '  WHERE %11$s ' ||
                     '), false))',
-                    fk_schema_name,                     -- %1$I
-                    fk_table_name,                      -- %2$I
-                    uk_era_row.range_type,              -- %3$s (regtype cast to text)
-                    uk_era_row.start_after_column_name,   -- %4$I
-                    uk_era_row.stop_on_column_name,     -- %5$I
-                    fk_era_row.range_type,              -- %6$s (regtype cast to text)
-                    fk_start_after_column_name,   -- %7$I
-                    fk_stop_on_column_name,     -- %8$I
-                    uk_schema_name,                     -- %9$I
+                    fk_schema_name,                       -- %1$I
+                    fk_table_name,                        -- %2$I
+                    uk_era_row.range_type,                -- %3$s (regtype cast to text)
+                    uk_era_row.valid_from_column_name,    -- %4$I
+                    uk_era_row.valid_until_column_name,   -- %5$I
+                    fk_era_row.range_type,                -- %6$s (regtype cast to text)
+                    fk_valid_from_column_name,    -- %7$I
+                    fk_valid_until_column_name,   -- %8$I
+                    uk_schema_name,                       -- %9$I
                     uk_table_name,                      -- %10$I
                     uk_where_clause,                    -- %11$s
                     fk_not_null_clause                  -- %12$s
@@ -2589,14 +2606,11 @@ BEGIN
     FOR r IN
         SELECT dobj.object_identity, e.era_name
         FROM sql_saga.era AS e
-        JOIN pg_class c ON c.relname = e.table_name
-        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
-        JOIN pg_catalog.pg_attribute AS sa ON (sa.attrelid, sa.attname) = (c.oid, e.start_after_column_name)
-        JOIN pg_catalog.pg_attribute AS ea ON (ea.attrelid, ea.attname) = (c.oid, e.stop_on_column_name)
-        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = c.oid AND dobj.objsubid IN (sa.attnum, ea.attnum)
-        WHERE dobj.object_type = 'table column'
-        ORDER BY dobj.ordinality
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() AS dobj
+            ON dobj.object_type = 'table column'
+            AND dobj.address_names[1] = e.table_schema
+            AND dobj.address_names[2] = e.table_name
+            AND dobj.address_names[3] IN (e.valid_from_column_name, e.valid_until_column_name)
     LOOP
         RAISE EXCEPTION 'cannot drop column "%" because it is part of the period "%"',
             r.object_identity, r.era_name;
@@ -2686,10 +2700,9 @@ BEGIN
     FOR r IN
         SELECT dobj.object_identity
         FROM sql_saga.api_view AS fpv
-        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = fpv.view_oid
-        WHERE dobj.object_type = 'view'
-        ORDER BY dobj.ordinality
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() AS dobj
+            ON dobj.object_type = 'view'
+            AND (dobj.address_names[1], dobj.address_names[2]) = (fpv.view_schema_name, fpv.view_table_name)
     LOOP
         RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_api()" instead',
             r.object_identity;
@@ -2697,11 +2710,11 @@ BEGIN
 
     /* Complain if the FOR PORTION OF trigger is missing. */
     FOR r IN
-        SELECT format('%I.%I', fpv.table_schema, fpv.table_name)::regclass AS table_oid, fpv.era_name, fpv.view_oid, fpv.trigger_name
+        SELECT format('%I.%I', fpv.table_schema, fpv.table_name)::regclass AS table_oid, fpv.era_name, format('%I.%I', fpv.view_schema_name, fpv.view_table_name)::regclass as view_oid, fpv.trigger_name
         FROM sql_saga.api_view AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fpv.view_oid, fpv.trigger_name))
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fpv.view_schema_name, fpv.view_table_name)), fpv.trigger_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is used in FOR PORTION OF view for period "%" on table "%"',
             r.trigger_name, r.view_oid, r.era_name, r.table_oid;
@@ -2878,7 +2891,7 @@ BEGIN
         JOIN pg_class c ON c.oid = ar.relid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname))
-           OR EXISTS (SELECT 1 FROM sql_saga.api_view v WHERE v.view_oid = ar.relid)
+           OR EXISTS (SELECT 1 FROM sql_saga.api_view v JOIN pg_class vc ON vc.relname = v.view_table_name JOIN pg_namespace vn ON vn.oid = vc.relnamespace AND vn.nspname = v.view_schema_name WHERE vc.oid = ar.relid)
     ) THEN
         RETURN;
     END IF;
@@ -2898,14 +2911,14 @@ BEGIN
      * constraint.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.era SET start_after_column_name = %L, stop_on_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+        SELECT pg_catalog.format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
             sa.attname, ea.attname, e.table_schema, e.table_name, e.era_name)
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.bounds_check_constraint)
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
-        WHERE (e.start_after_column_name, e.stop_on_column_name) <> (sa.attname, ea.attname)
+        WHERE (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
           AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
     LOOP
         EXECUTE sql;
@@ -2925,7 +2938,7 @@ BEGIN
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
         WHERE e.bounds_check_constraint <> c.conname
           AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
-          AND (e.start_after_column_name, e.stop_on_column_name) = (sa.attname, ea.attname)
+          AND (e.valid_from_column_name, e.valid_until_column_name) = (sa.attname, ea.attname)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.bounds_check_constraint))
     LOOP
         EXECUTE sql;
@@ -3007,7 +3020,7 @@ BEGIN
             t.tgname, fpv.table_schema, fpv.table_name, fpv.era_name)
         FROM sql_saga.api_view AS fpv
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (fpv.table_name, (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema))
-        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = fpv.view_oid
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = to_regclass(format('%I.%I', fpv.view_schema_name, fpv.view_table_name))
         WHERE t.tgname <> fpv.trigger_name
           AND t.tgfoid = 'sql_saga.update_portion_of()'::regprocedure
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (pc.oid, fpv.trigger_name))
@@ -3030,7 +3043,7 @@ BEGIN
             SELECT array_agg(a.attname ORDER BY u.ordinality) AS column_names
             FROM unnest(c.conkey) WITH ORDINALITY AS u (attnum, ordinality)
             JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (pc.oid, u.attnum)
-            WHERE a.attname NOT IN (e.start_after_column_name, e.stop_on_column_name)
+            WHERE a.attname NOT IN (e.valid_from_column_name, e.valid_until_column_name)
             ) AS a ON true
         WHERE uk.column_names <> a.column_names
     LOOP
@@ -3044,7 +3057,7 @@ BEGIN
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
-        CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[e.start_after_column_name, e.stop_on_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
+        CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[e.valid_from_column_name, e.valid_until_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
         GROUP BY uk.unique_key_name, c.oid, c.conname
@@ -3063,12 +3076,12 @@ BEGIN
         CROSS JOIN LATERAL unnest(uk.column_names) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
-        GROUP BY uk.unique_key_name, c.oid, c.conname, e.range_type, e.start_after_column_name, e.stop_on_column_name
-        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I, ''(]''::text) WITH &&) DEFERRABLE',
+        GROUP BY uk.unique_key_name, c.oid, c.conname, e.range_type, e.valid_from_column_name, e.valid_until_column_name
+        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I) WITH &&) DEFERRABLE',
                       string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality),
                       e.range_type,
-                      e.start_after_column_name,
-                      e.stop_on_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
+                      e.valid_from_column_name,
+                      e.valid_until_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
         --RAISE DEBUG 'exclude_constraint sql:%', sql;
         EXECUTE sql;
@@ -3182,8 +3195,9 @@ BEGIN
     FOR r IN
         SELECT to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid
         FROM sql_saga.era AS e
-        JOIN pg_catalog.pg_class AS c ON c.oid = e.audit_table_oid
-        WHERE c.relpersistence <> 'p'
+        JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
+        WHERE e.audit_table_name IS NOT NULL AND c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
             r.table_oid;
@@ -3222,10 +3236,10 @@ BEGIN
         --
         --        UNION ALL
 
-        SELECT format('ALTER VIEW %s OWNER TO %I', fpt.oid::regclass, t.relowner::regrole)
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', fpv.view_schema_name, fpv.view_table_name, t.relowner::regrole)
         FROM sql_saga.api_view AS fpv
         JOIN pg_class AS t ON t.relname = fpv.table_name AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
-        JOIN pg_class AS fpt ON fpt.oid = fpv.view_oid
+        JOIN pg_class AS fpt ON (fpt.relnamespace, fpt.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
         WHERE t.relowner <> fpt.relowner
 
         --        UNION ALL
@@ -3276,7 +3290,7 @@ BEGIN
                        acl.grantee,
                        'p' AS history_or_portion
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS c ON c.oid = fpv.view_oid
+                JOIN pg_class AS c ON (c.relnamespace, c.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 
 --                UNION ALL
@@ -3336,7 +3350,7 @@ BEGIN
                 FROM sql_saga.api_view AS fpv
                 JOIN pg_class AS c ON c.relname = fpv.table_name AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_class AS fpc ON fpc.oid = fpv.view_oid
+                JOIN pg_class AS fpc ON (fpc.relnamespace, fpc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 WHERE NOT has_table_privilege(acl.grantee, fpc.oid, acl.privilege_type)
 
 --                UNION ALL
@@ -3389,7 +3403,7 @@ BEGIN
             FROM sql_saga.api_view AS fpv
             JOIN pg_class AS c ON c.relname = fpv.table_name AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_class AS hc ON hc.oid = fpv.view_oid
+            JOIN pg_class AS hc ON (hc.relnamespace, hc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
             WHERE NOT EXISTS (
                 SELECT
                 FROM aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS _acl
@@ -3444,7 +3458,7 @@ BEGIN
                        hacl.privilege_type,
                        hacl.grantee
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS hc ON hc.oid = fpv.view_oid
+                JOIN pg_class AS hc ON (hc.relnamespace, hc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 CROSS JOIN LATERAL aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS hacl
                 WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', fpv.table_schema, fpv.table_name)), hacl.privilege_type)
 

@@ -1,0 +1,108 @@
+SELECT setting::integer < 90600 AS pre_96
+FROM pg_settings WHERE name = 'server_version_num';
+ pre_96 
+--------
+ f
+(1 row)
+
+/* Run tests as unprivileged user */
+SET ROLE TO periods_unprivileged_user;
+ERROR:  role "periods_unprivileged_user" does not exist
+CREATE TABLE excl (
+    value text NOT NULL,
+    null_value integer,
+    flap text NOT NULL
+);
+SELECT periods.add_system_time_period('excl', excluded_column_names => ARRAY['xmin']); -- fails
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.add_system_time_period('excl', excluded_colum...
+               ^
+SELECT periods.add_system_time_period('excl', excluded_column_names => ARRAY['none']); -- fails
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.add_system_time_period('excl', excluded_colum...
+               ^
+SELECT periods.add_system_time_period('excl', excluded_column_names => ARRAY['flap']); -- passes
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.add_system_time_period('excl', excluded_colum...
+               ^
+SELECT periods.add_system_versioning('excl');
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.add_system_versioning('excl');
+               ^
+TABLE periods.periods;
+ERROR:  relation "periods.periods" does not exist
+LINE 1: TABLE periods.periods;
+              ^
+TABLE periods.system_time_periods;
+ERROR:  relation "periods.system_time_periods" does not exist
+LINE 1: TABLE periods.system_time_periods;
+              ^
+TABLE periods.system_versioning;
+ERROR:  relation "periods.system_versioning" does not exist
+LINE 1: TABLE periods.system_versioning;
+              ^
+BEGIN;
+SELECT CURRENT_TIMESTAMP AS now \gset
+INSERT INTO excl (value, flap) VALUES ('hello world', 'off');
+COMMIT;
+SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
+ERROR:  column "system_time_start" does not exist
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Mon Au...
+                                        ^
+UPDATE excl SET flap = 'off';
+UPDATE excl SET flap = 'on';
+UPDATE excl SET flap = 'off';
+UPDATE excl SET flap = 'on';
+SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
+ERROR:  column "system_time_start" does not exist
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Mon Au...
+                                        ^
+BEGIN;
+SELECT CURRENT_TIMESTAMP AS now2 \gset
+UPDATE excl SET value = 'howdy folks!';
+COMMIT;
+SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
+ERROR:  column "system_time_start" does not exist
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Mon Au...
+                                        ^
+UPDATE excl SET null_value = 0;
+SELECT value, null_value, flap, system_time_start <> :'now2' AS changed FROM excl;
+ERROR:  column "system_time_start" does not exist
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Mon Au...
+                                        ^
+/* Test directly setting the excluded columns */
+SELECT periods.drop_system_versioning('excl');
+ERROR:  schema "periods" does not exist
+LINE 2: SELECT periods.drop_system_versioning('excl');
+               ^
+ALTER TABLE excl ADD COLUMN flop text;
+ALTER TABLE excl_history ADD COLUMN flop text;
+ERROR:  relation "excl_history" does not exist
+SELECT periods.add_system_versioning('excl');
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.add_system_versioning('excl');
+               ^
+SELECT periods.set_system_time_period_excluded_columns('excl', ARRAY['flap', 'flop']);
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.set_system_time_period_excluded_columns('excl...
+               ^
+TABLE periods.system_time_periods;
+ERROR:  relation "periods.system_time_periods" does not exist
+LINE 1: TABLE periods.system_time_periods;
+              ^
+UPDATE excl SET flop = 'flop';
+SELECT value, null_value, flap, flop FROM excl;
+    value     | null_value | flap | flop 
+--------------+------------+------+------
+ howdy folks! |          0 | on   | flop
+(1 row)
+
+SELECT value, null_value, flap, flop FROM excl_history ORDER BY system_time_start;
+ERROR:  relation "excl_history" does not exist
+LINE 1: SELECT value, null_value, flap, flop FROM excl_history ORDER...
+                                                  ^
+SELECT periods.drop_system_versioning('excl', drop_behavior => 'CASCADE', purge => true);
+ERROR:  schema "periods" does not exist
+LINE 1: SELECT periods.drop_system_versioning('excl', drop_behavior ...
+               ^
+DROP TABLE excl;
