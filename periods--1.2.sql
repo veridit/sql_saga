@@ -632,8 +632,8 @@ $function$;
 
 CREATE FUNCTION periods.add_system_time_period(
     table_class regclass,
-    start_column_name name DEFAULT 'system_time_start',
-    end_column_name name DEFAULT 'system_time_end',
+    start_column_name name DEFAULT 'system_valid_from',
+    end_column_name name DEFAULT 'system_valid_until',
     bounds_check_constraint name DEFAULT NULL,
     infinity_check_constraint name DEFAULT NULL,
     generated_always_trigger name DEFAULT NULL,

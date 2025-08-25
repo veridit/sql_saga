@@ -32,7 +32,7 @@ WHERE id = 1 AND valid_from = '2023-01-01';
 
 -- Check the current and history tables
 SELECT id, name, valid_from, valid_until FROM temporal_and_versioned;
-SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_time_start;
+SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_from;
 
 -- 5. Drop system versioning and check that the era is still intact
 SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true);

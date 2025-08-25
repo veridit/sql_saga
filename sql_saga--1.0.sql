@@ -2242,8 +2242,8 @@ $function$;
 
 CREATE FUNCTION sql_saga.__internal_add_system_time_era(
     table_oid regclass,
-    valid_from_column_name name DEFAULT 'system_time_start',
-    valid_until_column_name name DEFAULT 'system_time_end',
+    valid_from_column_name name DEFAULT 'system_valid_from',
+    valid_until_column_name name DEFAULT 'system_valid_until',
     bounds_check_constraint name DEFAULT NULL,
     infinity_check_constraint name DEFAULT NULL,
     generated_always_trigger name DEFAULT NULL,

@@ -35,18 +35,18 @@ SELECT sql_saga.add_system_versioning('system_versioning_test');
 
 -- Check that columns and triggers were added
 \d system_versioning_test
-                                   Table "public.system_versioning_test"
-      Column       |           Type           | Collation | Nullable |               Default                
--------------------+--------------------------+-----------+----------+--------------------------------------
- id                | integer                  |           | not null | 
- name              | text                     |           |          | 
- system_time_start | timestamp with time zone |           | not null | transaction_timestamp()
- system_time_end   | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+                                    Table "public.system_versioning_test"
+       Column       |           Type           | Collation | Nullable |               Default                
+--------------------+--------------------------+-----------+----------+--------------------------------------
+ id                 | integer                  |           | not null | 
+ name               | text                     |           |          | 
+ system_valid_from  | timestamp with time zone |           | not null | transaction_timestamp()
+ system_valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Indexes:
     "system_versioning_test_pkey" PRIMARY KEY, btree (id)
 Check constraints:
-    "system_versioning_test_system_time_check" CHECK (system_time_start < system_time_end)
-    "system_versioning_test_system_time_end_infinity_check" CHECK (system_time_end = 'infinity'::timestamp with time zone)
+    "system_versioning_test_system_time_check" CHECK (system_valid_from < system_valid_until)
+    "system_versioning_test_system_valid_until_infinity_check" CHECK (system_valid_until = 'infinity'::timestamp with time zone)
 Triggers:
     system_versioning_test_system_time_generated_always BEFORE INSERT OR UPDATE ON system_versioning_test FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end()
     system_versioning_test_system_time_write_history AFTER INSERT OR DELETE OR UPDATE ON system_versioning_test FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history()
@@ -56,13 +56,13 @@ Triggers:
 SELECT table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name FROM sql_saga.era WHERE table_name = 'system_versioning_test';
  table_schema |       table_name       |  era_name   | valid_from_column_name | valid_until_column_name 
 --------------+------------------------+-------------+------------------------+-------------------------
- public       | system_versioning_test | system_time | system_time_start      | system_time_end
+ public       | system_versioning_test | system_time | system_valid_from      | system_valid_until
 (1 row)
 
 SELECT table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger FROM sql_saga.system_time_era WHERE table_name = 'system_versioning_test';
- table_schema |       table_name       |  era_name   |               infinity_check_constraint               |              generated_always_trigger               |              write_history_trigger               |        truncate_trigger         
---------------+------------------------+-------------+-------------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+---------------------------------
- public       | system_versioning_test | system_time | system_versioning_test_system_time_end_infinity_check | system_versioning_test_system_time_generated_always | system_versioning_test_system_time_write_history | system_versioning_test_truncate
+ table_schema |       table_name       |  era_name   |                infinity_check_constraint                 |              generated_always_trigger               |              write_history_trigger               |        truncate_trigger         
+--------------+------------------------+-------------+----------------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+---------------------------------
+ public       | system_versioning_test | system_time | system_versioning_test_system_valid_until_infinity_check | system_versioning_test_system_time_generated_always | system_versioning_test_system_time_write_history | system_versioning_test_truncate
 (1 row)
 
 SELECT table_schema, table_name, era_name, history_table_name, view_table_name FROM sql_saga.system_versioning WHERE table_name = 'system_versioning_test';
@@ -74,21 +74,21 @@ SELECT table_schema, table_name, era_name, history_table_name, view_table_name F
 -- Check history table and view
 \d system_versioning_test_history
                  Table "public.system_versioning_test_history"
-      Column       |           Type           | Collation | Nullable | Default 
--------------------+--------------------------+-----------+----------+---------
- id                | integer                  |           | not null | 
- name              | text                     |           |          | 
- system_time_start | timestamp with time zone |           | not null | 
- system_time_end   | timestamp with time zone |           | not null | 
+       Column       |           Type           | Collation | Nullable | Default 
+--------------------+--------------------------+-----------+----------+---------
+ id                 | integer                  |           | not null | 
+ name               | text                     |           |          | 
+ system_valid_from  | timestamp with time zone |           | not null | 
+ system_valid_until | timestamp with time zone |           | not null | 
 
 \d system_versioning_test_with_history
                View "public.system_versioning_test_with_history"
-      Column       |           Type           | Collation | Nullable | Default 
--------------------+--------------------------+-----------+----------+---------
- id                | integer                  |           |          | 
- name              | text                     |           |          | 
- system_time_start | timestamp with time zone |           |          | 
- system_time_end   | timestamp with time zone |           |          | 
+       Column       |           Type           | Collation | Nullable | Default 
+--------------------+--------------------------+-----------+----------+---------
+ id                 | integer                  |           |          | 
+ name               | text                     |           |          | 
+ system_valid_from  | timestamp with time zone |           |          | 
+ system_valid_until | timestamp with time zone |           |          | 
 
 -- Drop system versioning
 SELECT sql_saga.drop_system_versioning('system_versioning_test');

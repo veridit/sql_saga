@@ -253,7 +253,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### System Versioning (History Tables)
-`sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?").
+`sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
 
 - `add_system_versioning(table_oid regclass, history_table_name name DEFAULT NULL, view_name name DEFAULT NULL)`
 - `drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)`

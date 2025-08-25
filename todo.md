@@ -18,6 +18,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Medium Priority - Refactoring & API Improvements
 
 - [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
+- [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
 
 - [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
 

@@ -23,7 +23,7 @@ UPDATE excl SET null_value = 100 WHERE id = 1;
 
 -- Check history. Should have 3 rows from the 3 updates.
 -- The third row has a NULL in null_value because it's the state BEFORE the update.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
 
 -- Now, set 'flap' as an excluded column. This function will be created next.
 SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{flap}');
@@ -34,7 +34,7 @@ SELECT excluded_column_names FROM sql_saga.system_time_era WHERE table_name = 'e
 UPDATE excl SET flap = 'C' WHERE id = 1;
 
 -- Check history. Should still have only 3 rows.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
 
 -- This update SHOULD generate a history row.
 -- The OLD row now has null_value = 100 and flap = 'C' (from the un-historized update).
@@ -43,7 +43,7 @@ UPDATE excl SET value = 'another update' WHERE id = 1;
 
 -- Check history. Should now have 4 rows.
 -- The new fourth row shows the state before the final update.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
 
 -- Test that excluding a non-existent column fails.
 SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{nonexistent}');
