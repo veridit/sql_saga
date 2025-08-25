@@ -18,7 +18,7 @@ ifeq (fast,$(filter fast,$(MAKECMDGOALS)))
 endif
 
 REGRESS = $(if $(TESTS),$(TESTS),$(REGRESS_TO_RUN))
-REGRESS_OPTS = --dbname=sql_saga_regression
+REGRESS_OPTS := --create-role=sql_saga_regress --dbname=sql_saga_regress
 
 # New target for benchmark regression test
 benchmark:
@@ -53,29 +53,35 @@ setup_test_files:
 fast:
 	@:
 
-# Target to show diff for all failing tests. Use `make diff-fail-all vim` for vimdiff.
-.PHONY: diff-fail-all vim
-diff-fail-all:
-ifeq (vim,$(filter vim,$(MAKECMDGOALS)))
-	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
-		echo "Next test: $$test"; \
-		echo "Press C to continue, s to skip, or b to break (default: C)"; \
-		read -n 1 -s input < /dev/tty; \
-		if [ "$$input" = "b" ]; then \
-			break; \
-		elif [ "$$input" = "s" ]; then \
-			continue; \
-		fi; \
-		echo "Running vimdiff for test: $$test"; \
-		vim -d expected/$$test.out results/$$test.out < /dev/tty; \
-	done
-else
-	@grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}' | while read test; do \
-		echo "Showing diff for test: $$test"; \
-		diff -u "expected/$$test.out" "results/$$test.out" || true; \
-	done
-	@if grep -q 'not ok' regression.out 2>/dev/null; then exit 1; fi
-endif
+# Target to show diff for failing tests. Use with 'vim' for vimdiff.
+# `make diff-fail-all`: shows all failures.
+# `make diff-fail-first`: shows the first failure.
+.PHONY: diff-fail-all diff-fail-first vim
+diff-fail-all diff-fail-first:
+	@FAILED_TESTS=`grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}'`; \
+	if [ "$@" = "diff-fail-first" ]; then \
+		FAILED_TESTS=`echo "$$FAILED_TESTS" | head -n 1`; \
+	fi; \
+	if [ "$(filter vim,$(MAKECMDGOALS))" = "vim" ]; then \
+		for test in $$FAILED_TESTS; do \
+			echo "Next test: $$test"; \
+			echo "Press C to continue, s to skip, or b to break (default: C)"; \
+			read -n 1 -s input < /dev/tty; \
+			if [ "$$input" = "b" ]; then \
+				break; \
+			elif [ "$$input" = "s" ]; then \
+				continue; \
+			fi; \
+			echo "Running vimdiff for test: $$test"; \
+			vim -d "expected/$$test.out" "results/$$test.out" < /dev/tty; \
+		done; \
+	else \
+		for test in $$FAILED_TESTS; do \
+			echo "Showing diff for test: $$test"; \
+			diff -u "expected/$$test.out" "results/$$test.out" || true; \
+		done; \
+	fi; \
+	if [ -n "$$FAILED_TESTS" ]; then exit 1; fi
 
 vim:
 	@:

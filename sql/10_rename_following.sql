@@ -1,3 +1,7 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 
@@ -49,11 +53,17 @@ SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 TABLE sql_saga.era;
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
+SAVEPOINT pristine;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
+ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
 
 SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1_col3_q');
@@ -62,3 +72,7 @@ DROP TABLE rename_test;
 
 SELECT sql_saga.drop_era('rename_test_ref','q');
 DROP TABLE rename_test_ref;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

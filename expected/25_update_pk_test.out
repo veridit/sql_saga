@@ -1,139 +1,247 @@
--- ON UPDATE RESTRICT
-BEGIN;
-SELECT enable_sql_saga_for_shifts_houses_and_rooms();
- enable_sql_saga_for_shifts_houses_and_rooms 
----------------------------------------------
- 
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
+\i sql/support/shifts_houses_rooms_tables.sql
+--
+-- Creates the shifts, houses, and rooms tables used by many legacy tests.
+--
+CREATE TABLE shifts (
+  job_id INTEGER,
+  worker_id INTEGER,
+  valid_from DATE,
+  valid_until DATE
+);
+CREATE TABLE houses (
+  id INTEGER,
+  assessment FLOAT,
+  valid_from DATE,
+  valid_until DATE
+);
+CREATE TABLE rooms (
+  id INTEGER,
+  house_id INTEGER,
+  valid_from DATE,
+  valid_until DATE
+);
+\i sql/support/shifts_houses_rooms_enable_saga.sql
+--
+-- Activates sql_saga for the shifts, houses, and rooms tables.
+-- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
+--
+SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
 (1 row)
 
-INSERT INTO houses VALUES
-  (1, 150000, '2015-01-01', '2016-01-01'),
-  (1, 200000, '2016-01-01', '2017-01-01'),
-  (2, 300000, '2015-01-01', '2016-01-01'),
-  (3, 100000, '2014-01-01', '2015-01-01'),
-  (3, 200000, '2015-01-01', 'infinity')
+SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid');
+        add_unique_key         
+-------------------------------
+ shifts_job_id_worker_id_valid
+(1 row)
+
+SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid');
+ add_unique_key  
+-----------------
+ houses_id_valid
+(1 row)
+
+SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid');
+ add_unique_key 
+----------------
+ rooms_id_valid
+(1 row)
+
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'rooms',
+    fk_column_names => ARRAY['house_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'houses_id_valid'
+);
+   add_foreign_key    
+----------------------
+ rooms_house_id_valid
+(1 row)
+
+-- This test uses COMMIT, so it cannot be wrapped in a single transaction.
+-- Manual cleanup is required.
+\i sql/support/houses_data.sql
+--
+-- Inserts a common dataset into the `houses` table, used by tests
+-- 24, 25, 26, 27.
+--
+INSERT INTO houses (id, assessment, valid_from, valid_until) VALUES
+  (1, 150000, '2015-01-01'::DATE, '2016-01-01'::DATE),
+  (1, 200000, '2016-01-01'::DATE, '2017-01-01'::DATE),
+  (2, 300000, '2015-01-01'::DATE, '2016-01-01'::DATE),
+  (3, 100000, '2014-01-01'::DATE, '2015-01-01'::DATE),
+  (3, 200000, '2015-01-01'::DATE, 'infinity'::DATE),
+  (4, 200000, '-infinity'::DATE, '2014-01-01'::DATE)
 ;
 -- You can update a finite pk id with no references
-UPDATE houses SET id = 4 WHERE id = 1;
-UPDATE houses SET id = 1 WHERE id = 4;
+BEGIN;
+UPDATE houses SET id = 4 WHERE id = 2;
+ABORT;
 -- You can update a finite pk range with no references
-UPDATE houses SET valid_from = '1999-01-01', valid_until = '2000-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2015-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2015-01-01', valid_until = '2016-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '1999-06-01'::timestamptz;
+BEGIN;
+UPDATE houses SET valid_from = '1999-01-01', valid_until = '2000-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2015-06-01'::DATE;
+UPDATE houses SET valid_from = '2015-01-01', valid_until = '2016-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '1999-06-01'::DATE;
+ABORT;
 -- You can update a finite pk range that is partly covered elsewhere
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
-UPDATE houses SET valid_from = '2016-01-01', valid_until = '2016-09-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2016-01-01', valid_until = '2017-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-DELETE FROM rooms;
+UPDATE houses SET valid_from = '2016-01-01', valid_until = '2016-09-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+UPDATE houses SET valid_from = '2016-01-01', valid_until = '2017-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+ABORT;
 -- You can't update a finite pk id that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update a finite pk range that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update a finite pk id that is exactly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update a finite pk range that is exactly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update a finite pk id that is more than covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update a finite pk range that is more than covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can update an infinite pk id with no references
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 UPDATE houses SET id = 3 WHERE id = 4;
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can update an infinite pk range with no references
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-UPDATE houses SET (valid_from, valid_until) = ('2015-01-01', 'infinity') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2017-06-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+UPDATE houses SET (valid_from, valid_until) = ('2015-01-01', 'infinity') WHERE id = 3 and daterange(valid_from, valid_until) @> '2017-06-01'::DATE;
+ABORT;
 -- You can't update an infinite pk id that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update an infinite pk range that is partly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update an infinite pk id that is exactly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update an infinite pk range that is exactly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
-UPDATE  houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE  houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update an infinite pk id that is more than covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 -- You can't update an infinite pk range that is more than covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 ERROR:  update or delete on table "public.houses" violates foreign key constraint "rooms_house_id_valid" on table "public.rooms"
-ROLLBACK TO SAVEPOINT test;
--- ON UPDATE NOACTION
--- TODO
--- ON UPDATE CASCADE
--- TODO
--- ON UPDATE SET NULL
--- TODO
--- ON UPDATE SET DEFAULT
--- TODO
-COMMIT;
-DELETE FROM rooms;
-DELETE FROM houses;
-SELECT disable_sql_saga_for_shifts_houses_and_rooms();
- disable_sql_saga_for_shifts_houses_and_rooms 
-----------------------------------------------
- 
-(1 row)
-
+ABORT;
+-- Manual Cleanup
+DROP TABLE rooms;
+DROP TABLE houses;
+DROP TABLE shifts;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

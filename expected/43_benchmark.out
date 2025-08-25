@@ -1,5 +1,28 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
-NOTICE:  installing required extension "btree_gist"
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE legal_unit (
   id INTEGER,
   valid_from date,
@@ -21,31 +44,36 @@ CREATE TEMPORARY TABLE benchmark (
 -- Record the start of the setup
 INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], era_name => 'valid');
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], era_name => 'valid');
      add_unique_key     
 ------------------------
  establishment_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
           add_foreign_key          
 -----------------------------------
  establishment_legal_unit_id_valid
@@ -134,19 +162,19 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key('establishment', 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
  drop_foreign_key 
 ------------------
  t
 (1 row)
 
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
-SELECT sql_saga.drop_unique_key('establishment','establishment_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
  drop_unique_key 
 -----------------
  
@@ -167,8 +195,6 @@ SELECT sql_saga.drop_era('establishment');
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 DROP TABLE establishment;
 DROP TABLE legal_unit;
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
 INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
@@ -225,3 +251,21 @@ ORDER BY
   timestamp;
 -- Stop redirecting output
 \o
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

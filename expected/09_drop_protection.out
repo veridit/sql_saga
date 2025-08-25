@@ -1,3 +1,28 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /* DDL on unrelated tables should not be affected */
@@ -11,16 +36,28 @@ CREATE TABLE dp (
     e integer,
     x boolean
 );
-/* periods */
+/* era */
 SELECT sql_saga.add_era('dp', 's', 'e', 'p', 'integerrange');
  add_era 
 ---------
  t
 (1 row)
 
-DROP TYPE integerrange;
+SAVEPOINT s1;
+ALTER TABLE dp DROP COLUMN s; -- fails
+ERROR:  cannot drop column "public.dp.s" because it is part of the period "p"
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 81 at RAISE
+ROLLBACK TO SAVEPOINT s1;
+SAVEPOINT s2;
+ALTER TABLE dp ALTER COLUMN s TYPE text; -- fails
+ERROR:  operator does not exist: text < integer
+HINT:  No operator matches the given name and argument types. You might need to add explicit type casts.
+ROLLBACK TO SAVEPOINT s2;
+SAVEPOINT s3;
+DROP TYPE integerrange; -- fails
 ERROR:  cannot drop rangetype "public.integerrange" because it is used in period "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 96 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 93 at RAISE
+ROLLBACK TO SAVEPOINT s3;
 /* api */
 ALTER TABLE dp ADD CONSTRAINT dp_pkey PRIMARY KEY (id);
 SELECT sql_saga.add_api('dp', 'p');
@@ -29,15 +66,21 @@ SELECT sql_saga.add_api('dp', 'p');
  t
 (1 row)
 
+SAVEPOINT s4;
 DROP VIEW dp__for_portion_of_p;
 ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_api()" instead
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 177 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 174 at RAISE
+ROLLBACK TO SAVEPOINT s4;
+SAVEPOINT s5;
 DROP TRIGGER for_portion_of_p ON dp__for_portion_of_p;
 ERROR:  cannot drop trigger "for_portion_of_p" on view "dp__for_portion_of_p" because it is used in FOR PORTION OF view for period "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 189 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 186 at RAISE
+ROLLBACK TO SAVEPOINT s5;
+SAVEPOINT s6;
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 ERROR:  cannot drop primary key on table "dp" because it has a FOR PORTION OF view for period "p"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 201 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 198 at RAISE
+ROLLBACK TO SAVEPOINT s6;
 SELECT sql_saga.drop_api('dp', 'p');
  drop_api 
 ----------
@@ -55,13 +98,19 @@ SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
  k
 (1 row)
 
+SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 222 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 219 at RAISE
+ROLLBACK TO SAVEPOINT s7;
+SAVEPOINT s8;
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
 ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 233 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 230 at RAISE
+ROLLBACK TO SAVEPOINT s8;
+SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
+ROLLBACK TO SAVEPOINT s9;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
@@ -76,18 +125,26 @@ SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_nam
  f
 (1 row)
 
+SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 249 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 246 at RAISE
+ROLLBACK TO SAVEPOINT s10;
+SAVEPOINT s11;
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 260 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 257 at RAISE
+ROLLBACK TO SAVEPOINT s11;
+SAVEPOINT s12;
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 272 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 269 at RAISE
+ROLLBACK TO SAVEPOINT s12;
+SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 284 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 281 at RAISE
+ROLLBACK TO SAVEPOINT s13;
 SELECT sql_saga.drop_foreign_key('dp_ref', 'f');
  drop_foreign_key 
 ------------------
@@ -97,3 +154,22 @@ SELECT sql_saga.drop_foreign_key('dp_ref', 'f');
 DROP TABLE dp_ref;
 DROP TABLE dp;
 DROP TYPE integerrange;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

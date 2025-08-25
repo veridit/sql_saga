@@ -1,6 +1,12 @@
--- MOVING THE TIME OF A CHANGE
+\i sql/include/test_setup.sql
 
-SELECT enable_sql_saga_for_shifts_houses_and_rooms();
+SET ROLE TO sql_saga_unprivileged_user;
+
+-- This test uses COMMIT and cannot be transactional.
+\i sql/support/shifts_houses_rooms_tables.sql
+\i sql/support/shifts_houses_rooms_enable_saga.sql
+
+-- MOVING THE TIME OF A CHANGE
 
 -- 1. Small shift to a later time
 
@@ -27,8 +33,8 @@ UPDATE houses
 SET valid_from = new_valid_from,
     valid_until = new_valid_until
 FROM (VALUES
-    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ),
-    (1, '2016-01-01'::TIMESTAMPTZ, '2016-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2016-06-01'::DATE),
+    (1, '2016-01-01'::DATE, '2016-06-01'::DATE, '2017-01-01'::DATE)
 ) AS change(id, old_valid_from, new_valid_from, new_valid_until)
 WHERE houses.id = change.id
   AND valid_from = old_valid_from;
@@ -73,7 +79,7 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -91,7 +97,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -143,7 +149,7 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -163,7 +169,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -197,8 +203,8 @@ UPDATE houses
 SET valid_from = new_valid_from,
     valid_until = new_valid_until
 FROM (VALUES
-    (1, '2015-01-01'::TIMESTAMPTZ, '2015-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ),
-    (1, '2016-01-01'::TIMESTAMPTZ, '2015-06-01'::TIMESTAMPTZ, '2017-01-01'::TIMESTAMPTZ)
+    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2015-06-01'::DATE),
+    (1, '2016-01-01'::DATE, '2015-06-01'::DATE, '2017-01-01'::DATE)
 ) AS change(id, old_valid_from, new_valid_from, new_valid_until)
 WHERE houses.id = change.id
   AND valid_from = old_valid_from;
@@ -239,7 +245,7 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -259,7 +265,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -306,7 +312,7 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -324,7 +330,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_tstzrange_excl DEFERRED;
+SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -508,5 +514,9 @@ COMMIT;
 --
 -- COMMIT;
 
+-- Manual Cleanup
+DROP TABLE rooms;
+DROP TABLE houses;
+DROP TABLE shifts;
 
-SELECT disable_sql_saga_for_shifts_houses_and_rooms();
+\i sql/include/test_teardown.sql

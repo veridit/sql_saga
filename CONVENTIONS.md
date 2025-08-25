@@ -16,7 +16,7 @@ Key tools available for you to suggest:
 - **`tree`**: List files to understand directory structures.
 - **`head`**: Inspect the beginning of files to quickly understand their structure and content.
 - **`ls`**: Check file sizes to determine if they should be read or inspected.
-- **`psql`**: Run arbitrary SQL for debugging or inspection (e.g., `echo 'SELECT * FROM sql_saga.era;' | psql -d sql_saga_regression`).
+- **`psql`**: Run arbitrary SQL for debugging or inspection (e.g., `echo 'SELECT * FROM sql_saga.era;' | psql -d sql_saga_regress`).
 
 For file system operations and large-scale edits, prefer suggesting shell commands over generating `SEARCH/REPLACE` blocks where appropriate. This is faster and more efficient.
 - Use `rm` to delete files and `git mv` to move or rename them.
@@ -80,6 +80,7 @@ All development work, especially bug fixing, must follow this iterative cycle. D
 ### 4. Gather Real-World Data
 - **Action:** After the user applies the changes, request that they run the relevant tests or commands to gather empirical evidence of the change's impact.
 - **Standard Command Format:** Always use the following command structure to run tests. This ensures the extension is installed before testing and that any failures are immediately diffed for analysis.
+  - **Debugging Tip:** For complex SQL or C functions, prefer adding `RAISE DEBUG` statements over `RAISE NOTICE`. In the corresponding test file, temporarily wrap the relevant commands with `SET client_min_messages TO DEBUG;` and `RESET client_min_messages;`. This provides targeted diagnostic output without permanently cluttering the test results.
   - **Command:** `make install && make test ...; make diff-fail-all`
   - **Usage:**
     - To run all tests: `make install && make test; make diff-fail-all`

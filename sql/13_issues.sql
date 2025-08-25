@@ -1,3 +1,7 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 
@@ -12,7 +16,7 @@ SELECT sql_saga.add_era('fk', 'f', 'u', 'q');
 SELECT sql_saga.add_unique_key('fk', ARRAY['id'], 'q');
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
 --
-TABLE sql_saga.periods;
+TABLE sql_saga.era;
 TABLE sql_saga.foreign_keys;
 
 --
@@ -24,13 +28,17 @@ TABLE uk;
 TABLE fk;
 
 --expected: fail
+SAVEPOINT s1;
 DELETE FROM uk WHERE (id, f, u) = (1, 1, 3);
+ROLLBACK TO SAVEPOINT s1;
 
 TABLE uk;
 TABLE fk;
 
 --expected: fail
+SAVEPOINT s2;
 DELETE FROM uk WHERE (id, f, u) = (1, 3, 5);
+ROLLBACK TO SAVEPOINT s2;
 
 INSERT INTO uk(id, f, u)        VALUES    (2, 1, 5);
 INSERT INTO fk(id, uk_id, f, u) VALUES (4, 2, 2, 4);
@@ -39,7 +47,9 @@ TABLE uk;
 TABLE fk;
 
 --expected: fail
+SAVEPOINT s3;
 UPDATE uk SET u = 3 WHERE (id, f, u) = (2, 1, 5);
+ROLLBACK TO SAVEPOINT s3;
 
 TABLE uk;
 TABLE fk;
@@ -49,12 +59,16 @@ INSERT INTO uk(id, f, u)        VALUES    (3, 1, 3),
                                           (3, 4, 5);
 
 -- Reference over non contiguous time - should fail
+SAVEPOINT s4;
 INSERT INTO fk(id, uk_id, f, u) VALUES (5, 3, 1, 5);
+ROLLBACK TO SAVEPOINT s4;
 
 
 -- Create overlappig range - should fail
+SAVEPOINT s5;
 INSERT INTO uk(id, f, u)        VALUES    (4, 1, 4),
                                           (4, 3, 5);
+ROLLBACK TO SAVEPOINT s5;
 DROP TABLE uk;
 DROP TABLE fk;
 
@@ -96,3 +110,7 @@ SELECT * FROM establishment_bug;
 
 DROP TABLE establishment_bug;
 DROP TABLE legal_unit_bug;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

@@ -23,6 +23,14 @@ An Sql Saga is the history of a table (an era) over multiple periods of time.
 A simplified example to illustrate the concept.
 A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end), aligning with PostgreSQL's native range types.
 
+### Entity Identifiers
+
+A key concept in temporal data modeling is the **entity identifier**. Since a temporal table tracks the history of an entity over time, a single conceptual "thing" (like a company or a person) will have multiple rows in the table, each representing a different slice of its history.
+
+The entity identifier is the column (or set of columns) that holds the same value for all rows that belong to the same conceptual entity. A common naming convention for this column is `entity_id` or simply `id`. In the examples below, the `id` column in `establishment` serves this purpose.
+
+The primary key of the temporal table is typically a composite key that includes the entity identifier and a temporal column (e.g., `(id, valid_from)`) to uniquely identify each historical version of the entity.
+
 The currently valid row has `infinity` in the `valid_until` column.
 
 ### Temporal Table with Valid Time
@@ -201,25 +209,28 @@ SELECT sql_saga.drop_era('legal_unit');
 ```
 
 ## Development
-Run all regression tests with
-```
-make install && make test
-```
+The test suite uses `pg_regress` and is designed to be fully idempotent, creating a temporary database for each run to ensure a clean state.
 
-To run a single test file:
-```
-make test TESTS=22_covers_without_gaps_test
-```
-
-To run a subset of tests:
-```
-make test TESTS="22_covers_without_gaps_test 23_create_temporal_foreign_key_test"
-```
-
-To quickly review and fix any diffs you can use
-```
-make vimdiff-fail-all
-```
+- To run all tests:
+  ```bash
+  make install && make test; make diff-fail-all
+  ```
+- To run fast tests (excluding benchmarks):
+  ```bash
+  make install && make test fast; make diff-fail-all
+  ```
+- To run a specific test:
+  ```bash
+  make install && make test TESTS="02_periods"; make diff-fail-all
+  ```
+- To run a subset of tests:
+  ```bash
+  make install && make test TESTS="02_periods 03_api_symmetry_test"; make diff-fail-all
+  ```
+- To quickly review and fix any diffs:
+  ```bash
+  make vimdiff-fail-all
+  ```
 
 ## API Reference
 

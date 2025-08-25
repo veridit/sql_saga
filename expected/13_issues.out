@@ -1,3 +1,28 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /* https://github.com/xocolatl/periods/issues/27 */
@@ -34,10 +59,13 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
 (1 row)
 
 --
-TABLE sql_saga.periods;
-ERROR:  relation "sql_saga.periods" does not exist
-LINE 1: TABLE sql_saga.periods;
-              ^
+TABLE sql_saga.era;
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
+ public       | uk         | p        | f                      | u                       | int4range  | uk_p_check              | 
+ public       | fk         | q        | f                      | u                       | int4range  | fk_q_check              | 
+(2 rows)
+
 TABLE sql_saga.foreign_keys;
  foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   |  uk_update_trigger   |  uk_delete_trigger   
 ------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+----------------------+----------------------+----------------------+----------------------
@@ -63,8 +91,10 @@ TABLE fk;
 (2 rows)
 
 --expected: fail
+SAVEPOINT s1;
 DELETE FROM uk WHERE (id, f, u) = (1, 1, 3);
 ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
+ROLLBACK TO SAVEPOINT s1;
 TABLE uk;
  id | f | u 
 ----+---+---
@@ -80,8 +110,10 @@ TABLE fk;
 (2 rows)
 
 --expected: fail
+SAVEPOINT s2;
 DELETE FROM uk WHERE (id, f, u) = (1, 3, 5);
 ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
+ROLLBACK TO SAVEPOINT s2;
 INSERT INTO uk(id, f, u)        VALUES    (2, 1, 5);
 INSERT INTO fk(id, uk_id, f, u) VALUES (4, 2, 2, 4);
 TABLE uk;
@@ -101,8 +133,10 @@ TABLE fk;
 (3 rows)
 
 --expected: fail
+SAVEPOINT s3;
 UPDATE uk SET u = 3 WHERE (id, f, u) = (2, 1, 5);
 ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
+ROLLBACK TO SAVEPOINT s3;
 TABLE uk;
  id | f | u 
 ----+---+---
@@ -123,13 +157,17 @@ TABLE fk;
 INSERT INTO uk(id, f, u)        VALUES    (3, 1, 3),
                                           (3, 4, 5);
 -- Reference over non contiguous time - should fail
+SAVEPOINT s4;
 INSERT INTO fk(id, uk_id, f, u) VALUES (5, 3, 1, 5);
 ERROR:  insert or update on table "public.fk" violates foreign key constraint "fk_uk_id_q"
+ROLLBACK TO SAVEPOINT s4;
 -- Create overlappig range - should fail
+SAVEPOINT s5;
 INSERT INTO uk(id, f, u)        VALUES    (4, 1, 4),
                                           (4, 3, 5);
 ERROR:  conflicting key value violates exclusion constraint "uk_id_int4range_excl"
 DETAIL:  Key (id, int4range(f, u))=(4, [3,5)) conflicts with existing key (id, int4range(f, u))=(4, [1,4)).
+ROLLBACK TO SAVEPOINT s5;
 DROP TABLE uk;
 DROP TABLE fk;
 -- Test case for bug with infinite parent validity
@@ -194,3 +232,22 @@ SELECT * FROM establishment_bug;
 
 DROP TABLE establishment_bug;
 DROP TABLE legal_unit_bug;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

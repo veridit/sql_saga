@@ -1,3 +1,9 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
+SET ROLE TO sql_saga_unprivileged_user;
+
 -- Setup: Create a local table for this test only to ensure isolation.
 CREATE TABLE covers_test_shifts (
     job_id      integer,
@@ -283,3 +289,7 @@ WHERE   job_id = 1;
 
 -- Cleanup
 DROP TABLE covers_test_shifts;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

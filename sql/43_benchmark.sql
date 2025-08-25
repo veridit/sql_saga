@@ -1,4 +1,6 @@
-CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+\i sql/include/test_setup.sql
+
+SET ROLE TO sql_saga_unprivileged_user;
 
 CREATE TABLE legal_unit (
   id INTEGER,
@@ -25,11 +27,16 @@ CREATE TEMPORARY TABLE benchmark (
 INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
 
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
-SELECT sql_saga.add_era('establishment', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
-SELECT sql_saga.add_unique_key('establishment', ARRAY['id'], 'valid');
-SELECT sql_saga.add_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
 
 -- Record after enabling constraints
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints enabled', 0);
@@ -103,9 +110,9 @@ UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key('establishment', 'establishment_legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('establishment','establishment_id_valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
 SELECT sql_saga.drop_era('legal_unit');
 SELECT sql_saga.drop_era('establishment');
 
@@ -113,9 +120,6 @@ INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 
 DROP TABLE establishment;
 DROP TABLE legal_unit;
-
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
 
 INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
 
@@ -164,3 +168,5 @@ ORDER BY
 
 -- Stop redirecting output
 \o
+
+\i sql/include/test_teardown.sql

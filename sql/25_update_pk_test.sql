@@ -1,140 +1,134 @@
--- ON UPDATE RESTRICT
-BEGIN;
-SELECT enable_sql_saga_for_shifts_houses_and_rooms();
+\i sql/include/test_setup.sql
 
-INSERT INTO houses VALUES
-  (1, 150000, '2015-01-01', '2016-01-01'),
-  (1, 200000, '2016-01-01', '2017-01-01'),
-  (2, 300000, '2015-01-01', '2016-01-01'),
-  (3, 100000, '2014-01-01', '2015-01-01'),
-  (3, 200000, '2015-01-01', 'infinity')
-;
+SET ROLE TO sql_saga_unprivileged_user;
+
+\i sql/support/shifts_houses_rooms_tables.sql
+\i sql/support/shifts_houses_rooms_enable_saga.sql
+
+-- This test uses COMMIT, so it cannot be wrapped in a single transaction.
+-- Manual cleanup is required.
+
+\i sql/support/houses_data.sql
 
 -- You can update a finite pk id with no references
-UPDATE houses SET id = 4 WHERE id = 1;
-UPDATE houses SET id = 1 WHERE id = 4;
+BEGIN;
+UPDATE houses SET id = 4 WHERE id = 2;
+ABORT;
 
 -- You can update a finite pk range with no references
-UPDATE houses SET valid_from = '1999-01-01', valid_until = '2000-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2015-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2015-01-01', valid_until = '2016-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '1999-06-01'::timestamptz;
+BEGIN;
+UPDATE houses SET valid_from = '1999-01-01', valid_until = '2000-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2015-06-01'::DATE;
+UPDATE houses SET valid_from = '2015-01-01', valid_until = '2016-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '1999-06-01'::DATE;
+ABORT;
 
 -- You can update a finite pk range that is partly covered elsewhere
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
-UPDATE houses SET valid_from = '2016-01-01', valid_until = '2016-09-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-UPDATE houses SET valid_from = '2016-01-01', valid_until = '2017-01-01' WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-DELETE FROM rooms;
+UPDATE houses SET valid_from = '2016-01-01', valid_until = '2016-09-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+UPDATE houses SET valid_from = '2016-01-01', valid_until = '2017-01-01' WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+ABORT;
 
 -- You can't update a finite pk id that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 
 -- You can't update a finite pk range that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2016-06-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+ABORT;
 
 -- You can't update a finite pk id that is exactly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 
 -- You can't update a finite pk range that is exactly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+ABORT;
 
 -- You can't update a finite pk id that is more than covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 -- The following UPDATE should fail.
 UPDATE houses SET id = 4 WHERE id = 1;
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 
 -- You can't update a finite pk range that is more than covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 1, '2015-06-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND tstzrange(valid_from, valid_until) @> '2016-06-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 1 AND daterange(valid_from, valid_until) @> '2016-06-01'::DATE;
+ABORT;
 
 -- You can update an infinite pk id with no references
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
 UPDATE houses SET id = 3 WHERE id = 4;
-ROLLBACK TO SAVEPOINT test;
+ABORT;
 
 -- You can update an infinite pk range with no references
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', '2015-01-01');
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-UPDATE houses SET (valid_from, valid_until) = ('2015-01-01', 'infinity') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2017-06-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+UPDATE houses SET (valid_from, valid_until) = ('2015-01-01', 'infinity') WHERE id = 3 and daterange(valid_from, valid_until) @> '2017-06-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk id that is partly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk range that is partly covered
-SAVEPOINT test;
+BEGIN;
 -- The following INSERT should pass.
 INSERT INTO rooms VALUES (1, 3, '2016-01-01', '2017-01-01');
 -- The following UPDATE should fail.
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk id that is exactly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk range that is exactly covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2015-01-01', 'infinity');
-UPDATE  houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE  houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk id that is more than covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
-UPDATE houses SET id = 4 WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET id = 4 WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
 -- You can't update an infinite pk range that is more than covered
-SAVEPOINT test;
+BEGIN;
 INSERT INTO rooms VALUES (1, 3, '2014-06-01', 'infinity');
-UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and tstzrange(valid_from, valid_until) @> '2016-01-01'::timestamptz;
-ROLLBACK TO SAVEPOINT test;
+UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE id = 3 and daterange(valid_from, valid_until) @> '2016-01-01'::DATE;
+ABORT;
 
--- ON UPDATE NOACTION
--- TODO
+-- Manual Cleanup
+DROP TABLE rooms;
+DROP TABLE houses;
+DROP TABLE shifts;
 
--- ON UPDATE CASCADE
--- TODO
-
--- ON UPDATE SET NULL
--- TODO
-
--- ON UPDATE SET DEFAULT
--- TODO
-
-COMMIT;
-DELETE FROM rooms;
-DELETE FROM houses;
-SELECT disable_sql_saga_for_shifts_houses_and_rooms();
+\i sql/include/test_teardown.sql

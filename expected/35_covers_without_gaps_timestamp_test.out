@@ -1,3 +1,29 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE timestamp_shifts (
   job_id INTEGER,
   worker_id INTEGER,
@@ -242,12 +268,21 @@ WHERE   job_id = 1;
 
 -- Errors:
 -- it fails if the input ranges go backwards:
+SAVEPOINT s;
 SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 13:00:00', '2017-11-27 20:00:00') ORDER BY worker_id DESC)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 ERROR:  input to covers_without_gaps must be sorted by range start
--- TODO: handle an empty target range? e.g. [5, 5)
--- Or maybe since that is a self-contradiction maybe ignore that case?
+ROLLBACK TO SAVEPOINT s;
+-- it handles an empty target range
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 10:00:00', '2017-11-27 10:00:00') ORDER BY valid_from)
+FROM    timestamp_shifts
+WHERE   job_id = 1;
+ covers_without_gaps 
+---------------------
+ t
+(1 row)
+
 DELETE FROM timestamp_shifts;
 SELECT sql_saga.drop_unique_key('timestamp_shifts', 'timestamp_shifts_job_id_worker_id_valid');
  drop_unique_key 
@@ -262,3 +297,22 @@ SELECT sql_saga.drop_era('timestamp_shifts');
 (1 row)
 
 DROP TABLE timestamp_shifts;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

@@ -15,10 +15,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [ ] **Make regression tests self-contained:**
-  - **Issue:** Most tests rely on `01_install.sql` to be run first to set up roles and permissions. This makes it cumbersome to run a single test file in isolation during development.
-  - **Action:** Use common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts. Modify test files to include these so they can run independently, following the pattern established in `51_quoted_identifiers.sql` and `41_with_schema_test.sql`.
-  - **Note:** Tests that validate transaction semantics may need special handling and cannot be simply wrapped in a `BEGIN/ROLLBACK` block with the setup script.
+- [x] **Fix regressions from test suite refactoring:** All tests now pass after being converted to the self-contained pattern.
+
+- [x] **Make regression tests self-contained:** All tests that can be self-contained now use the common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts.
 
 - [ ] **Complete the `regclass` -> `(schema, table)` refactoring:**
   - **Issue:** The metadata tables `sql_saga.era` and `sql_saga.api_view` still contain `oid` columns (`audit_table_oid` and `view_oid` respectively). This is a remnant of the old design and should be removed to complete the refactoring.
@@ -77,7 +76,7 @@ This section summarizes potential improvements and features adapted from the `pe
     - **System Versioning** tracks the *state of the data* over time. It creates a complete, queryable history of every row, answering the question: "What did this record look like last year?" Its purpose is historical data analysis and reconstruction.
     - **Audit Frameworks (`pgaudit`)** track the *actions performed on the data*. They log the `INSERT`, `UPDATE`, `DELETE` statements themselves, answering the question: "Who deleted a record from this table yesterday?" Their purpose is security, compliance, and forensics.
     - **Combined Use Case:** For NSOs, using both provides a complete picture: `pgaudit` supplies the mandatory, unalterable log of *who made a change*, while System Versioning provides the queryable history of *what the data looked like* as a result of that change.
-  - **Action:** Port the entire system versioning feature from `periods`. The test `61_system_versioning_excluded_columns.sql` (also ported from `periods`) should be used to verify this functionality. This includes:
+  - **Action:** Port the entire system versioning feature from `periods`. The existing (and currently failing) test `61_system_versioning_excluded_columns.sql` should be used to verify this functionality once implemented. This includes:
     1.  The `system_versioning` and `system_time_periods` metadata tables.
     2.  The `add_system_versioning` and `drop_system_versioning` API functions.
     3.  The C trigger functions from `periods.c` for high-performance history tracking.

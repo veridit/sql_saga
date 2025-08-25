@@ -1,5 +1,6 @@
-SELECT setting::integer < 120000 AS pre_12
-FROM pg_settings WHERE name = 'server_version_num';
+\i sql/include/test_setup.sql
+
+BEGIN;
 
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
@@ -14,13 +15,6 @@ CREATE TABLE pricing (id1 bigserial,
                       id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
                       id3 bigint GENERATED ALWAYS AS IDENTITY,
                       id4 bigint GENERATED ALWAYS AS (id1 + id2) STORED,
-                      product text, quantity_from integer, quantity_until integer, price numeric);
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
-                      id3 bigint GENERATED ALWAYS AS IDENTITY,
-                      product text, quantity_from integer, quantity_until integer, price numeric);
-CREATE TABLE pricing (id1 bigserial,
-                      id2 bigint PRIMARY KEY DEFAULT nextval('pricing_seq'),
                       product text, quantity_from integer, quantity_until integer, price numeric);
 SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
 SELECT sql_saga.add_api('pricing', 'quantities');
@@ -53,24 +47,17 @@ SELECT sql_saga.add_api('pricing', 'quantities');
 -- We can't drop the the table without first dropping the FOR PORTION views
 -- because Postgres will complain about dependant objects (our views) before we
 -- get a chance to clean them up.
+SAVEPOINT expect_fail;
 DROP TABLE pricing;
+ROLLBACK TO SAVEPOINT expect_fail;
 SELECT sql_saga.drop_api('pricing', NULL);
 TABLE sql_saga.api_view;
 DROP TABLE pricing;
 DROP SEQUENCE pricing_seq;
 
 /* Types without btree must be excluded, too */
--- v10+
 CREATE TABLE bt (
     id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-    pt point,   -- something without btree
-    t text,     -- something with btree
-    valid_from integer,
-    valid_until integer
-);
--- pre v10
-CREATE TABLE bt (
-    id serial PRIMARY KEY,
     pt point,   -- something without btree
     t text,     -- something with btree
     valid_from integer,
@@ -86,3 +73,7 @@ TABLE bt ORDER BY valid_from, valid_until;
 
 SELECT sql_saga.drop_api('bt', 'p');
 DROP TABLE bt;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

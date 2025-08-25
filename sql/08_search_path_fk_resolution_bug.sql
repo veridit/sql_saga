@@ -1,9 +1,20 @@
+\i sql/include/test_setup.sql
+
 --
 -- This script reproduces a bug where sql_saga's C-based FK triggers fail to
 -- resolve the correct target table when the table name is ambiguous due to the
 -- `search_path`.
 --
+
+-- Setup schema as superuser before starting transaction.
+-- Drop if exists ensures a clean state if the previous run failed.
+DROP SCHEMA IF EXISTS saga_bug_test CASCADE;
+CREATE SCHEMA saga_bug_test;
+GRANT ALL ON SCHEMA saga_bug_test TO sql_saga_unprivileged_user;
+
 BEGIN;
+
+SET ROLE TO sql_saga_unprivileged_user;
 
 SET client_min_messages TO NOTICE;
 SET datestyle TO 'ISO, DMY';
@@ -12,8 +23,7 @@ SET datestyle TO 'ISO, DMY';
 -- any unqualified table name that exists in both schemas will resolve to public.
 SET search_path TO public, saga_bug_test;
 
--- 1. Setup Schema and Tables
-CREATE SCHEMA IF NOT EXISTS saga_bug_test;
+-- 1. Setup Tables
 
 -- Create the "impostor" table in the `public` schema.
 CREATE TABLE public.legal_unit (
@@ -102,3 +112,5 @@ SELECT 'BUG IS FIXED: UPDATE on child table succeeded.' as status;
 
 
 ROLLBACK;
+
+\i sql/include/test_teardown.sql

@@ -1,4 +1,6 @@
-CREATE EXTENSION sql_saga CASCADE;
+\i sql/include/test_setup.sql
+
+SET ROLE TO sql_saga_unprivileged_user;
 
 CREATE TABLE legal_unit (
   id INTEGER,
@@ -111,5 +113,4 @@ TABLE sql_saga.era;
 DROP TABLE legal_unit;
 DROP TABLE location;
 
-DROP EXTENSION sql_saga;
-DROP EXTENSION btree_gist;
+\i sql/include/test_teardown.sql

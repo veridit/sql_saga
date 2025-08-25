@@ -47,7 +47,7 @@ INSERT INTO excl (value, flap) VALUES ('hello world', 'off');
 COMMIT;
 SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
 ERROR:  column "system_time_start" does not exist
-LINE 1: SELECT value, null_value, flap, system_time_start <> 'Fri Au...
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Sun Au...
                                         ^
 UPDATE excl SET flap = 'off';
 UPDATE excl SET flap = 'on';
@@ -55,7 +55,7 @@ UPDATE excl SET flap = 'off';
 UPDATE excl SET flap = 'on';
 SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
 ERROR:  column "system_time_start" does not exist
-LINE 1: SELECT value, null_value, flap, system_time_start <> 'Fri Au...
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Sun Au...
                                         ^
 BEGIN;
 SELECT CURRENT_TIMESTAMP AS now2 \gset
@@ -63,12 +63,12 @@ UPDATE excl SET value = 'howdy folks!';
 COMMIT;
 SELECT value, null_value, flap, system_time_start <> :'now' AS changed FROM excl;
 ERROR:  column "system_time_start" does not exist
-LINE 1: SELECT value, null_value, flap, system_time_start <> 'Fri Au...
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Sun Au...
                                         ^
 UPDATE excl SET null_value = 0;
 SELECT value, null_value, flap, system_time_start <> :'now2' AS changed FROM excl;
 ERROR:  column "system_time_start" does not exist
-LINE 1: SELECT value, null_value, flap, system_time_start <> 'Fri Au...
+LINE 1: SELECT value, null_value, flap, system_time_start <> 'Sun Au...
                                         ^
 /* Test directly setting the excluded columns */
 SELECT periods.drop_system_versioning('excl');

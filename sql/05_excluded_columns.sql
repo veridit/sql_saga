@@ -6,6 +6,10 @@
 -- exclude all varieties of generated columns (SERIAL, IDENTITY, STORED)
 -- from the INSERT statements it dynamically generates when splitting a row.
 --
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 SET ROLE TO sql_saga_unprivileged_user;
 
 CREATE TABLE gen_cols_test (
@@ -41,3 +45,7 @@ TABLE gen_cols_test ORDER BY """from""";
 SELECT sql_saga.drop_api('gen_cols_test', 'p');
 SELECT sql_saga.drop_era('gen_cols_test', 'p');
 DROP TABLE gen_cols_test;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

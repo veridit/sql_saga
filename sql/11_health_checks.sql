@@ -1,3 +1,7 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 
@@ -9,8 +13,16 @@ DROP TABLE unrelated;
 
 /* Ensure tables with periods are persistent */
 CREATE UNLOGGED TABLE log (id bigint, valid_from date, valid_until date);
+SAVEPOINT s1;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- fails
+ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes
+SAVEPOINT s2;
 ALTER TABLE log SET UNLOGGED; -- fails
+ROLLBACK TO SAVEPOINT s2;
 DROP TABLE log;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

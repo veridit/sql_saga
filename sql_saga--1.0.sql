@@ -1528,7 +1528,7 @@ BEGIN
     LOOP
         /* Cascade to foreign keys, if desired */
         FOR foreign_key_row IN
-            SELECT fk.foreign_key_name
+            SELECT fk.*
             FROM sql_saga.foreign_keys AS fk
             WHERE fk.unique_key_name = unique_key_row.unique_key_name
         LOOP
@@ -2595,14 +2595,11 @@ BEGIN
     FOR r IN
         SELECT dobj.object_identity, e.era_name
         FROM sql_saga.era AS e
-        JOIN pg_class c ON c.relname = e.table_name
-        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
-        JOIN pg_catalog.pg_attribute AS sa ON (sa.attrelid, sa.attname) = (c.oid, e.valid_from_column_name)
-        JOIN pg_catalog.pg_attribute AS ea ON (ea.attrelid, ea.attname) = (c.oid, e.valid_until_column_name)
-        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = c.oid AND dobj.objsubid IN (sa.attnum, ea.attnum)
-        WHERE dobj.object_type = 'table column'
-        ORDER BY dobj.ordinality
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() AS dobj
+            ON dobj.object_type = 'table column'
+            AND dobj.address_names[1] = e.table_schema
+            AND dobj.address_names[2] = e.table_name
+            AND dobj.address_names[3] IN (e.valid_from_column_name, e.valid_until_column_name)
     LOOP
         RAISE EXCEPTION 'cannot drop column "%" because it is part of the period "%"',
             r.object_identity, r.era_name;

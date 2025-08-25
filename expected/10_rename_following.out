@@ -1,3 +1,28 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /* DDL on unrelated tables should not be affected */
@@ -128,21 +153,27 @@ TABLE sql_saga.foreign_keys;
  rename_test_ref_col2_COLUMN1_col3_q | public       | rename_test_ref | {col2,COLUMN1,col3} | q        | rename_test_col2_col1_col3_p | SIMPLE     | NO ACTION     | NO ACTION     | rename_test_ref_col2_COLUMN1_col3_q_fk_insert | rename_test_ref_col2_COLUMN1_col3_q_fk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_delete
 (1 row)
 
+SAVEPOINT pristine;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
 ERROR:  cannot drop or rename column "COLUMN1" on table "rename_test_ref" because it is used in era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 240 at RAISE
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 275 at RAISE
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_update" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 275 at RAISE
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_update" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 275 at RAISE
+ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
 CONTEXT:  PL/pgSQL function sql_saga.rename_following() line 275 at RAISE
+ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           | table_schema |   table_name    |    column_names     | era_name |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               |               uk_update_trigger               |               uk_delete_trigger               
 -------------------------------------+--------------+-----------------+---------------------+----------+------------------------------+------------+---------------+---------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------+-----------------------------------------------
@@ -169,3 +200,22 @@ SELECT sql_saga.drop_era('rename_test_ref','q');
 (1 row)
 
 DROP TABLE rename_test_ref;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

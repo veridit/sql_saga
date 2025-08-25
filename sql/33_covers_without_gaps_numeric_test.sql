@@ -1,3 +1,9 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
+SET ROLE TO sql_saga_unprivileged_user;
+
 -- First, create the integer shifts table
 CREATE TABLE numeric_shifts (
   job_id INTEGER,
@@ -74,3 +80,7 @@ SELECT sql_saga.drop_unique_key('numeric_shifts', 'numeric_shifts_job_id_worker_
 SELECT sql_saga.drop_era('numeric_shifts');
 
 DROP TABLE numeric_shifts;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

@@ -1,7 +1,14 @@
+\i sql/include/test_setup.sql
+
 /* Tests for access control on the history tables */
 
 CREATE ROLE periods_acl_1;
 CREATE ROLE periods_acl_2;
+
+GRANT periods_acl_1 TO sql_saga_unprivileged_user;
+GRANT periods_acl_2 TO sql_saga_unprivileged_user;
+
+SET ROLE TO sql_saga_unprivileged_user;
 
 /* OWNER */
 
@@ -78,5 +85,8 @@ DROP VIEW show_acls;
 
 /* Clean up */
 
+RESET ROLE;
 DROP ROLE periods_acl_1;
 DROP ROLE periods_acl_2;
+
+\i sql/include/test_teardown.sql

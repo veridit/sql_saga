@@ -1,3 +1,7 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 
@@ -9,7 +13,10 @@ SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name
 TABLE sql_saga.unique_keys;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
 INSERT INTO uk (id, valid_from, valid_until) VALUES (200, 2, 4), (200, 4, 5), (200, 6, 11); -- success
+
+SAVEPOINT pristine;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (300, 2, 4), (300, 4, 6), (300, 5, 11); -- fail
+ROLLBACK TO SAVEPOINT pristine;
 
 CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id));
 SELECT sql_saga.add_era('fk', 'valid_from', 'valid_until', 'q');
@@ -25,19 +32,37 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_ke
 TABLE sql_saga.foreign_keys;
 
 -- INSERT
+SAVEPOINT insert_test;
 INSERT INTO fk VALUES (0, 100, 1, 2); -- fail
+ROLLBACK TO SAVEPOINT insert_test;
 INSERT INTO fk VALUES (0, 100, 1, 11); -- fail
+ROLLBACK TO SAVEPOINT insert_test;
 INSERT INTO fk VALUES (0, 100, 2, 12); -- fail
+ROLLBACK TO SAVEPOINT insert_test;
+
 INSERT INTO fk VALUES (1, 100, 2, 4); -- success
 INSERT INTO fk VALUES (2, 100, 2, 11); -- success
 -- UPDATE
+SAVEPOINT update_fk_test;
 UPDATE fk SET valid_until = 21 WHERE id = 1; -- fail
+ROLLBACK TO SAVEPOINT update_fk_test;
+
 UPDATE fk SET valid_until = 7 WHERE id = 1; -- success
+
+SAVEPOINT update_uk_test;
 UPDATE uk SET valid_from = 3 WHERE (id, valid_from, valid_until) = (100, 2, 4); -- fail
+ROLLBACK TO SAVEPOINT update_uk_test;
+
 UPDATE uk SET valid_from = 1 WHERE (id, valid_from, valid_until) = (100, 2, 4); -- success
 -- DELETE
+SAVEPOINT delete_test;
 DELETE FROM uk WHERE (id, valid_from, valid_until) = (100, 4, 5); -- fail
+ROLLBACK TO SAVEPOINT delete_test;
 DELETE FROM uk WHERE (id, valid_from, valid_until) = (200, 4, 6); -- success
 
 DROP TABLE fk;
 DROP TABLE uk;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

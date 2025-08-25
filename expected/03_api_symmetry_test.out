@@ -6,9 +6,7 @@
 -- This script creates the extension, a user role, and grants permissions.
 --
 CREATE EXTENSION IF NOT EXISTS btree_gist;
-psql:sql/include/test_setup.sql:7: NOTICE:  extension "btree_gist" already exists, skipping
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
-psql:sql/include/test_setup.sql:8: NOTICE:  extension "sql_saga" already exists, skipping
 DO $$
 BEGIN
     CREATE ROLE sql_saga_unprivileged_user;
@@ -202,6 +200,10 @@ ROLLBACK;
 -- It is important to reset the role first, in case a test fails and
 -- leaves the session role set to the user that is about to be dropped.
 RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

@@ -1,16 +1,46 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
 --
 -- This script reproduces a bug where sql_saga's C-based FK triggers fail to
 -- resolve the correct target table when the table name is ambiguous due to the
 -- `search_path`.
 --
+-- Setup schema as superuser before starting transaction.
+-- Drop if exists ensures a clean state if the previous run failed.
+DROP SCHEMA IF EXISTS saga_bug_test CASCADE;
+NOTICE:  schema "saga_bug_test" does not exist, skipping
+CREATE SCHEMA saga_bug_test;
+GRANT ALL ON SCHEMA saga_bug_test TO sql_saga_unprivileged_user;
 BEGIN;
+SET ROLE TO sql_saga_unprivileged_user;
 SET client_min_messages TO NOTICE;
 SET datestyle TO 'ISO, DMY';
 -- Set a search_path that will cause ambiguity. Because `public` is first,
 -- any unqualified table name that exists in both schemas will resolve to public.
 SET search_path TO public, saga_bug_test;
--- 1. Setup Schema and Tables
-CREATE SCHEMA IF NOT EXISTS saga_bug_test;
+-- 1. Setup Tables
 -- Create the "impostor" table in the `public` schema.
 CREATE TABLE public.legal_unit (
     id INT NOT NULL,
@@ -130,3 +160,21 @@ SELECT 'BUG IS FIXED: UPDATE on child table succeeded.' as status;
 (1 row)
 
 ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

@@ -124,14 +124,23 @@ Datum covers_without_gaps_transfn(PG_FUNCTION_ARGS)
     state->is_covered = false;
     first_time = true;
 
-    // Technically this will fail to detect an inconsistent target
-    // if only the first row is NULL or has an empty range, however,
-    // any target problem will be detected when the data is present.
-    if (PG_ARGISNULL(2) || RangeIsEmpty(target_range = PG_GETARG_RANGE_P(2))) {
-      // return NULL from the whole thing
-      state->answer_is_null = true;
-      state->finished = true;
-      PG_RETURN_POINTER(state);
+    // If the target range is NULL, the result is NULL.
+    if (PG_ARGISNULL(2))
+    {
+        state->answer_is_null = true;
+        state->finished = true;
+        PG_RETURN_POINTER(state);
+    }
+
+    target_range = PG_GETARG_RANGE_P(2);
+
+    // If the target range is empty, the result is TRUE.
+    if (RangeIsEmpty(target_range))
+    {
+        state->is_covered = true;
+        state->finished = true;
+        state->answer_is_null = false; /* Ensure this is not set */
+        PG_RETURN_POINTER(state);
     }
     state->answer_is_null = false;
 
@@ -358,8 +367,10 @@ Datum covers_without_gaps_finalfn(PG_FUNCTION_ARGS)
      */
     if (PG_ARGISNULL(0))
     {
-        if (PG_ARGISNULL(2) || RangeIsEmpty(PG_GETARG_RANGE_P(2)))
+        if (PG_ARGISNULL(2))
             PG_RETURN_NULL();
+        else if (RangeIsEmpty(PG_GETARG_RANGE_P(2)))
+            PG_RETURN_BOOL(true);
         else
             PG_RETURN_BOOL(false);
     }

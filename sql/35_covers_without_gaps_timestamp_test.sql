@@ -1,3 +1,9 @@
+\i sql/include/test_setup.sql
+
+BEGIN;
+
+SET ROLE TO sql_saga_unprivileged_user;
+
 CREATE TABLE timestamp_shifts (
   job_id INTEGER,
   worker_id INTEGER,
@@ -142,12 +148,16 @@ WHERE   job_id = 1;
 -- Errors:
 
 -- it fails if the input ranges go backwards:
+SAVEPOINT s;
 SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 13:00:00', '2017-11-27 20:00:00') ORDER BY worker_id DESC)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
+ROLLBACK TO SAVEPOINT s;
 
--- TODO: handle an empty target range? e.g. [5, 5)
--- Or maybe since that is a self-contradiction maybe ignore that case?
+-- it handles an empty target range
+SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 10:00:00', '2017-11-27 10:00:00') ORDER BY valid_from)
+FROM    timestamp_shifts
+WHERE   job_id = 1;
 
 DELETE FROM timestamp_shifts;
 
@@ -155,3 +165,7 @@ SELECT sql_saga.drop_unique_key('timestamp_shifts', 'timestamp_shifts_job_id_wor
 SELECT sql_saga.drop_era('timestamp_shifts');
 
 DROP TABLE timestamp_shifts;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql
