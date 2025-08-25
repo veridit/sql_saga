@@ -1,0 +1,126 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
+CREATE TABLE excl (
+    id int primary key,
+    value text NOT NULL,
+    null_value integer,
+    flap text NOT NULL
+);
+SELECT sql_saga.add_system_versioning('excl');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+-- Initially, no columns are excluded.
+INSERT INTO excl (id, value, flap) VALUES (1, 'initial', 'A');
+-- This update should generate a history row.
+UPDATE excl SET value = 'updated value' WHERE id = 1;
+-- This update should also generate a history row.
+UPDATE excl SET flap = 'B' WHERE id = 1;
+-- This update changes a NULL to a non-NULL value, should generate history.
+-- The OLD row, where null_value is still NULL, is written to history.
+UPDATE excl SET null_value = 100 WHERE id = 1;
+-- Check history. Should have 3 rows from the 3 updates.
+-- The third row has a NULL in null_value because it's the state BEFORE the update.
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+ id |     value     | null_value | flap 
+----+---------------+------------+------
+  1 | initial       |            | A
+  1 | updated value |            | A
+  1 | updated value |            | B
+(3 rows)
+
+-- Now, set 'flap' as an excluded column. This function will be created next.
+SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{flap}');
+ set_system_time_era_excluded_columns 
+--------------------------------------
+ 
+(1 row)
+
+-- Check that the metadata was updated.
+SELECT excluded_column_names FROM sql_saga.system_time_era WHERE table_name = 'excl';
+ excluded_column_names 
+-----------------------
+ {flap}
+(1 row)
+
+-- This update should NOT generate a history row.
+UPDATE excl SET flap = 'C' WHERE id = 1;
+-- Check history. Should still have only 3 rows.
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+ id |     value     | null_value | flap 
+----+---------------+------------+------
+  1 | initial       |            | A
+  1 | updated value |            | A
+  1 | updated value |            | B
+(3 rows)
+
+-- This update SHOULD generate a history row.
+-- The OLD row now has null_value = 100 and flap = 'C' (from the un-historized update).
+-- This is the row that will be written to history.
+UPDATE excl SET value = 'another update' WHERE id = 1;
+-- Check history. Should now have 4 rows.
+-- The new fourth row shows the state before the final update.
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_time_start;
+ id |     value     | null_value | flap 
+----+---------------+------------+------
+  1 | initial       |            | A
+  1 | updated value |            | A
+  1 | updated value |            | B
+  1 | updated value |        100 | C
+(4 rows)
+
+-- Test that excluding a non-existent column fails.
+SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{nonexistent}');
+ERROR:  column "nonexistent" does not exist in table excl
+CONTEXT:  PL/pgSQL function sql_saga.set_system_time_era_excluded_columns(regclass,name[]) line 24 at RAISE
+-- Test that excluding a system column fails.
+SELECT sql_saga.set_system_time_era_excluded_columns('excl', '{xmin}');
+ERROR:  cannot exclude system column "xmin"
+CONTEXT:  PL/pgSQL function sql_saga.set_system_time_era_excluded_columns(regclass,name[]) line 34 at RAISE
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+psql:sql/include/test_teardown.sql:13: NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to trigger excl_system_time_generated_always on table excl
+drop cascades to trigger excl_system_time_write_history on table excl
+drop cascades to trigger excl_truncate on table excl
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

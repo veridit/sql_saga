@@ -24,7 +24,7 @@ REGRESS_OPTS := --create-role=sql_saga_regress --dbname=sql_saga_regress
 benchmark:
 	$(MAKE) installcheck REGRESS="43_benchmark"
 
-OBJS = sql_saga.o periods.o covers_without_gaps.o $(WIN32RES)
+OBJS = sql_saga.o covers_without_gaps.o $(WIN32RES)
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

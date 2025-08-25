@@ -1,0 +1,147 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+CREATE TABLE system_versioning_test (
+    id int PRIMARY KEY,
+    name text
+);
+-- Add system versioning
+SELECT sql_saga.add_system_versioning('system_versioning_test');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+-- Check that columns and triggers were added
+\d system_versioning_test
+                                   Table "public.system_versioning_test"
+      Column       |           Type           | Collation | Nullable |               Default                
+-------------------+--------------------------+-----------+----------+--------------------------------------
+ id                | integer                  |           | not null | 
+ name              | text                     |           |          | 
+ system_time_start | timestamp with time zone |           | not null | transaction_timestamp()
+ system_time_end   | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+Indexes:
+    "system_versioning_test_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "system_versioning_test_system_time_check" CHECK (system_time_start < system_time_end)
+    "system_versioning_test_system_time_end_infinity_check" CHECK (system_time_end = 'infinity'::timestamp with time zone)
+Triggers:
+    system_versioning_test_system_time_generated_always BEFORE INSERT OR UPDATE ON system_versioning_test FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end()
+    system_versioning_test_system_time_write_history AFTER INSERT OR DELETE OR UPDATE ON system_versioning_test FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history()
+    system_versioning_test_truncate AFTER TRUNCATE ON system_versioning_test FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning()
+
+-- Check metadata tables
+SELECT table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name FROM sql_saga.era WHERE table_name = 'system_versioning_test';
+ table_schema |       table_name       |  era_name   | valid_from_column_name | valid_until_column_name 
+--------------+------------------------+-------------+------------------------+-------------------------
+ public       | system_versioning_test | system_time | system_time_start      | system_time_end
+(1 row)
+
+SELECT table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger FROM sql_saga.system_time_era WHERE table_name = 'system_versioning_test';
+ table_schema |       table_name       |  era_name   |               infinity_check_constraint               |              generated_always_trigger               |              write_history_trigger               |        truncate_trigger         
+--------------+------------------------+-------------+-------------------------------------------------------+-----------------------------------------------------+--------------------------------------------------+---------------------------------
+ public       | system_versioning_test | system_time | system_versioning_test_system_time_end_infinity_check | system_versioning_test_system_time_generated_always | system_versioning_test_system_time_write_history | system_versioning_test_truncate
+(1 row)
+
+SELECT table_schema, table_name, era_name, history_table_name, view_table_name FROM sql_saga.system_versioning WHERE table_name = 'system_versioning_test';
+ table_schema |       table_name       |  era_name   |       history_table_name       |           view_table_name           
+--------------+------------------------+-------------+--------------------------------+-------------------------------------
+ public       | system_versioning_test | system_time | system_versioning_test_history | system_versioning_test_with_history
+(1 row)
+
+-- Check history table and view
+\d system_versioning_test_history
+                 Table "public.system_versioning_test_history"
+      Column       |           Type           | Collation | Nullable | Default 
+-------------------+--------------------------+-----------+----------+---------
+ id                | integer                  |           | not null | 
+ name              | text                     |           |          | 
+ system_time_start | timestamp with time zone |           | not null | 
+ system_time_end   | timestamp with time zone |           | not null | 
+
+\d system_versioning_test_with_history
+               View "public.system_versioning_test_with_history"
+      Column       |           Type           | Collation | Nullable | Default 
+-------------------+--------------------------+-----------+----------+---------
+ id                | integer                  |           |          | 
+ name              | text                     |           |          | 
+ system_time_start | timestamp with time zone |           |          | 
+ system_time_end   | timestamp with time zone |           |          | 
+
+-- Drop system versioning
+SELECT sql_saga.drop_system_versioning('system_versioning_test');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+-- Check that objects are gone
+\d system_versioning_test
+                                   Table "public.system_versioning_test"
+      Column       |           Type           | Collation | Nullable |               Default                
+-------------------+--------------------------+-----------+----------+--------------------------------------
+ id                | integer                  |           | not null | 
+ name              | text                     |           |          | 
+ system_time_start | timestamp with time zone |           | not null | transaction_timestamp()
+ system_time_end   | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+Indexes:
+    "system_versioning_test_pkey" PRIMARY KEY, btree (id)
+
+\d system_versioning_test_history
+\d system_versioning_test_with_history
+-- Check that metadata is gone
+SELECT table_schema, table_name, era_name FROM sql_saga.era WHERE table_name = 'system_versioning_test';
+ table_schema | table_name | era_name 
+--------------+------------+----------
+(0 rows)
+
+SELECT table_schema, table_name, era_name FROM sql_saga.system_time_era WHERE table_name = 'system_versioning_test';
+ table_schema | table_name | era_name 
+--------------+------------+----------
+(0 rows)
+
+SELECT table_schema, table_name, era_name FROM sql_saga.system_versioning WHERE table_name = 'system_versioning_test';
+ table_schema | table_name | era_name 
+--------------+------------+----------
+(0 rows)
+
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

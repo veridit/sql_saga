@@ -6,18 +6,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
-- [ ] **Implement System Versioning (with C triggers):** `periods` contains a complete implementation of `SYSTEM VERSIONING`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`) for populating them, and helper functions (`_as_of`, `_between`, etc.). This is a major feature that `sql_saga` currently has commented-out stubs for.
-  - **Comparison to Audit Frameworks (`pgaudit`):** System Versioning (as implemented in `periods`) and audit logging (`pgaudit`) are complementary, can be used together without conflict, and solve different problems.
-    - **System Versioning** tracks the *state of the data* over time. It creates a complete, queryable history of every row, answering the question: "What did this record look like last year?" Its purpose is historical data analysis and reconstruction.
-    - **Audit Frameworks (`pgaudit`)** track the *actions performed on the data*. They log the `INSERT`, `UPDATE`, `DELETE` statements themselves, answering the question: "Who deleted a record from this table yesterday?" Their purpose is security, compliance, and forensics.
-    - **Combined Use Case:** For NSOs, using both provides a complete picture: `pgaudit` supplies the mandatory, unalterable log of *who made a change*, while System Versioning provides the queryable history of *what the data looked like* as a result of that change.
-  - **Action:** Port the entire system versioning feature from `periods`. The existing (and currently failing) test `61_system_versioning_excluded_columns.sql` should be used to verify this functionality once implemented. This includes:
-    1.  The `system_versioning` and `system_time_periods` metadata tables.
-    2.  The `add_system_versioning` and `drop_system_versioning` API functions.
-    3.  The C trigger functions from `periods.c` for high-performance history tracking.
-  - **Design Constraints to Preserve:**
-    - **History Tables are Not Temporal:** The `periods` implementation correctly prevents a history table from being a temporal table itself. This is a critical design choice that separates concerns: the main table handles "application time," while the history table tracks "system time" (the audit trail). This prevents circular dependencies and preserves the integrity of the history log.
-
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
 
 - [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
@@ -25,7 +13,11 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor core to use `(schema, table)` instead of `oid`:** Made event triggers robust against `DROP`.
 - [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
+- [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
+
 ## Medium Priority - Refactoring & API Improvements
+
+- [ ] **Ensure Symmetrical APIs:** Review `drop_` functions (e.g., `drop_unique_key`, `drop_foreign_key`) to ensure they can be called with the same arguments used for creation (e.g., `(table_oid, column_names[], era_name)` in addition to `(table_oid, key_name)`). This improves usability and predictability.
 
 - [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
 
