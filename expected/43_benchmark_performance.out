@@ -1,14 +1,24 @@
-                event                | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
--------------------------------------+-----------+-----------------+----------------+------------+-----------------
- BEGIN                               |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
- Constraints enabled                 |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints start   |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~25900 rows/s
- INSERTs immediate constraints start |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs immediate constraints end   |     10000 | 1 secs          | 1 secs         | 10000 rows | ~18500 rows/s
- Update deferred constraints start   |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Update deferred constraints end     |     20000 | 9 secs          | 8 secs         | 20000 rows | ~2400 rows/s
- Constraints disabled                |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Tear down complete                  |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
-(10 rows)
+                   event                   | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
+-------------------------------------------+-----------+-----------------+----------------+------------+-----------------
+ BEGIN                                     |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
+ Constraints enabled                       |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ INSERTs delayed constraints start         |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ INSERTs delayed constraints end           |     10000 | 0 secs          | 0 secs         | 10000 rows | ~25900 rows/s
+ INSERTs immediate constraints start       |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ INSERTs immediate constraints end         |     10000 | 1 secs          | 1 secs         | 10000 rows | ~20000 rows/s
+ Update deferred constraints start         |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ Update deferred constraints end           |     20000 | 10 secs         | 9 secs         | 20000 rows | ~2300 rows/s
+ System Versioning Only Benchmark          |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ SV INSERTs immediate constraints start    |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ SV INSERTs immediate constraints end      |     10000 | 10 secs         | 0 secs         | 10000 rows | ~51000 rows/s
+ SV Update start                           |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ SV Update end                             |     10000 | 10 secs         | 0 secs         | 10000 rows | ~42100 rows/s
+ Eras and SV Benchmark                     |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ Combo INSERTs immediate constraints start |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ Combo INSERTs immediate constraints end   |     10000 | 11 secs         | 1 secs         | 10000 rows | ~18500 rows/s
+ Combo Update deferred constraints start   |         0 | 11 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ Combo Update deferred constraints end     |     20000 | 16 secs         | 5 secs         | 20000 rows | ~4200 rows/s
+ Constraints disabled                      |         0 | 16 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ Tear down complete                        |         0 | 16 secs         | 0 secs         | 0 rows     | ~0 rows/s
+(20 rows)
 
