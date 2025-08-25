@@ -26,7 +26,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
 
-- [ ] **Refactor `add_api` to not require a primary key:** The `add_api` function currently requires a primary key on the target table to generate `UPDATE` triggers. This should be refactored to use a temporal unique key as the entity identifier, aligning it with the rest of the extension's design.
+- [x] **Refactor `add_api` to not require a primary key:** Refactored `add_api` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
 
 - [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
   - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.

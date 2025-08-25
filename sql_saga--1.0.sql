@@ -980,21 +980,6 @@ BEGIN
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
 
-    /*
-     * We require the table to have a primary key, so check to see if there is
-     * one.  This requires a lock on the table so no one removes it after we
-     * check and before we commit.
-     */
-    EXECUTE format('LOCK TABLE %s IN ACCESS SHARE MODE', table_oid);
-
-    /* Now check for the primary key */
-    IF NOT EXISTS (
-        SELECT FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_oid, 'p'))
-    THEN
-        RAISE EXCEPTION 'table "%" must have a primary key', table_oid;
-    END IF;
-
     DECLARE
         target_schema_name name;
         target_table_name name;
@@ -1006,7 +991,7 @@ BEGIN
         END IF;
 
         FOR r IN
-            SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name
+            SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid
             FROM sql_saga.era AS p
             JOIN pg_catalog.pg_class AS c ON c.relname = p.table_name
             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = p.table_schema
@@ -1017,14 +1002,42 @@ BEGIN
                     SELECT FROM sql_saga.api_view AS _fpv
                     WHERE (_fpv.table_schema, _fpv.table_name, _fpv.era_name) = (p.table_schema, p.table_name, p.era_name))
         LOOP
-            view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
-            trigger_name := 'for_portion_of_' || r.era_name;
-            EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
-            EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
-            EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
-                trigger_name, r.schema_name, view_name);
-            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
-                VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
+            DECLARE
+                identifier_columns name[];
+                identifier_columns_quoted text;
+            BEGIN
+                -- Prefer a single-column temporal unique key as the identifier
+                SELECT uk.column_names INTO identifier_columns
+                FROM sql_saga.unique_keys uk
+                WHERE (uk.table_schema, uk.table_name, uk.era_name) = (r.schema_name, r.table_name, r.era_name)
+                  AND array_length(uk.column_names, 1) = 1;
+
+                IF identifier_columns IS NULL THEN
+                    -- Fallback to primary key
+                    SELECT array_agg(a.attname ORDER BY u.ordinality)
+                    INTO identifier_columns
+                    FROM pg_catalog.pg_constraint c
+                    JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ordinality) ON true
+                    JOIN pg_catalog.pg_attribute a ON (a.attrelid, a.attnum) = (c.conrelid, u.attnum)
+                    WHERE (c.conrelid, c.contype) = (r.table_oid, 'p');
+                END IF;
+
+                IF identifier_columns IS NULL THEN
+                    RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key for era "%" to support updatable views',
+                        format('%I.%I', r.schema_name, r.table_name)::regclass, r.era_name;
+                END IF;
+
+                SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
+
+                view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
+                trigger_name := 'for_portion_of_' || r.era_name;
+                EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
+                EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
+                EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of(%s)',
+                    trigger_name, r.schema_name, view_name, identifier_columns_quoted);
+                INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
+                    VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
+            END;
         END LOOP;
     END;
 
@@ -1105,6 +1118,8 @@ DECLARE
     bstartval jsonb;
     bendval jsonb;
 
+    identifier_columns name[];
+
     pre_row jsonb;
     new_row jsonb;
     post_row jsonb;
@@ -1120,14 +1135,12 @@ DECLARE
     GENERATED_COLUMNS_SQL_PRE_10 CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1137,15 +1150,13 @@ DECLARE
     GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR a.attidentity <> '''' '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1155,16 +1166,14 @@ DECLARE
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR a.attidentity <> '''' '
         '    OR a.attgenerated <> '''' '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1176,6 +1185,12 @@ BEGIN
      * REFERENCES:
      *     SQL:2016 15.13 GR 10
      */
+
+    -- The identifier columns are passed as arguments to the trigger.
+    IF TG_NARGS = 0 THEN
+        RAISE EXCEPTION 'update_portion_of trigger must be created with identifier columns as arguments';
+    END IF;
+    identifier_columns := TG_ARGV;
 
     SELECT n.nspname, c.relname
     INTO view_schema_name, view_table_name
@@ -1206,6 +1221,30 @@ BEGIN
     jold := to_jsonb(OLD);
     bstartval := jold->info.valid_from_column_name;
     bendval := jold->info.valid_until_column_name;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)',
+        fromval, info.datatype, bendval, info.datatype, bstartval, info.datatype, toval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)',
+        fromval, info.datatype, bendval, info.datatype, bstartval, info.datatype, toval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT %L::%s < %L::%s AND %L::%s < %L::%s',
+        bstartval, info.datatype, toval, info.datatype, fromval, info.datatype, bendval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
 
     pre_row := jold;
     new_row := jnew;
@@ -1250,8 +1289,13 @@ BEGIN
          *
          * Columns belonging to a SYSTEM_TIME period are also removed.
          *
-         * In addition to what the standard calls for, we also remove any
-         * columns belonging to primary keys.
+         * Note: Primary key columns are not implicitly treated as generated.
+         * Columns are considered generated if they are `serial`, `IDENTITY`, a
+         * generated expression, part of the `system_time` period, or have a
+         * `DEFAULT` expression that calls `nextval()`. Other columns, including
+         * non-generated primary keys that often serve as entity identifiers, are
+         * preserved. This is crucial for maintaining historical integrity when
+         * splitting rows.
          */
         -- Create a cache table for generated columns if it doesn't exist for this session.
         -- Using to_regclass is a clean way to check for a temp table's existence.
@@ -1300,6 +1344,7 @@ BEGIN
                 post_row := post_row - generated_columns;
             END IF;
         END IF;
+
     END IF;
 
     IF pre_assigned THEN
@@ -1310,7 +1355,7 @@ BEGIN
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)));
     END IF;
 
-    EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I > %L AND %I < %L',
+    EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I = %s AND %I = %s',
                    info.table_schema,
                    info.table_name,
                    (SELECT string_agg(format('%I = %L', j.key, j.value), ', ')
@@ -1319,17 +1364,14 @@ BEGIN
                           SELECT key, value FROM jsonb_each_text(jold)
                          ) AS j
                    ),
-                   (SELECT string_agg(format('%I = %L', key, value), ' AND ')
-                    FROM pg_catalog.jsonb_each_text(jold) AS j
-                    JOIN pg_catalog.pg_attribute AS a ON a.attname = j.key
-                    JOIN pg_catalog.pg_constraint AS c ON c.conkey @> ARRAY[a.attnum]
-                    WHERE a.attrelid = info.table_oid
-                      AND c.conrelid = info.table_oid
+                   (SELECT string_agg(format('%I = %L', j.key, j.value), ' AND ')
+                    FROM jsonb_each_text(jold) j
+                    WHERE j.key = ANY(identifier_columns)
                    ),
-                   info.valid_until_column_name,
-                   fromval,
                    info.valid_from_column_name,
-                   toval
+                   quote_literal(bstartval::text),
+                   info.valid_until_column_name,
+                   quote_literal(bendval::text)
                   );
 
     IF post_assigned THEN
@@ -1338,6 +1380,10 @@ BEGIN
             info.table_name,
             (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)),
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row)));
+    END IF;
+
+    IF pre_assigned OR post_assigned THEN
+        SET CONSTRAINTS ALL IMMEDIATE;
     END IF;
 
     RETURN NEW;

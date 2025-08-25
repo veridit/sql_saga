@@ -79,3 +79,35 @@ DROP TABLE bt;
 ROLLBACK;
 
 \i sql/include/test_teardown.sql
+
+-- Test that add_api works without a PK, using a temporal unique key instead.
+\i sql/include/test_setup.sql
+
+BEGIN;
+SET ROLE TO sql_saga_unprivileged_user;
+
+CREATE TABLE no_pk_test (
+    id integer,
+    value text,
+    valid_from date,
+    valid_until date
+);
+
+SELECT sql_saga.add_era('no_pk_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
+SELECT sql_saga.add_api('no_pk_test');
+
+INSERT INTO no_pk_test (id, value, valid_from, valid_until) VALUES (1, 'initial', '2020-01-01', '2021-01-01');
+TABLE no_pk_test;
+
+UPDATE no_pk_test__for_portion_of_valid SET value = 'updated', valid_from = '2020-06-01', valid_until = '2020-09-01';
+TABLE no_pk_test ORDER BY valid_from;
+
+SELECT sql_saga.drop_api('no_pk_test', 'valid');
+SELECT sql_saga.drop_unique_key('no_pk_test', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('no_pk_test');
+DROP TABLE no_pk_test;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql
