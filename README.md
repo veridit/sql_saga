@@ -14,6 +14,7 @@ In the context of this extension, a **Saga** represents the complete history of 
 
 - Temporal Table Design Suggestions
 - Support for foreign keys between temporal tables.
+- High-performance, set-based API for bulk temporal data loading (`temporal_merge`).
 - Intuitive API for seamless integration with existing NSO systems.
 - Intuitive fetching of current data.
 - Compatible with PostgREST - that creates REST endpoints for the API's.
@@ -32,6 +33,8 @@ A key concept in temporal data modeling is the **entity identifier**. Since a te
 The entity identifier is the column (or set of columns) that holds the same value for all rows that belong to the same conceptual entity. A common naming convention for this column is `entity_id` or simply `id`. In the examples below, the `id` column in `establishment` serves this purpose.
 
 The primary key of the temporal table is typically a composite key that includes the entity identifier and a temporal column (e.g., `(id, valid_from)`) to uniquely identify each historical version of the entity.
+
+`sql_saga` formalizes the concept of the entity identifier through a **primary temporal unique key**. This is a temporal unique key that is flagged as the primary one for a given table. This allows functions like `temporal_merge` to automatically identify the correct columns for tracking entity history, simplifying the API and reducing the risk of errors.
 
 The currently valid row has `infinity` in the `valid_until` column.
 
@@ -241,7 +244,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### Unique Keys
-- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', is_primary boolean DEFAULT false, unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
 - `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 
@@ -250,9 +253,14 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`
 - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`
 
-### Updatable Views (for PostgREST)
+### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
+The `add_api` function creates views to simplify interaction with temporal tables. This includes a view that only shows the *current* state of data (ideal for PostgREST) and a view that emulates the `FOR PORTION OF` syntax for updating historical records.
+
 - `add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
 - `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
+
+### High-Performance Bulk Data Loading (`temporal_merge`)
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_mode sql_saga.temporal_merge_mode, p_ephemeral_columns text[] DEFAULT '{}', p_id_columns text[] DEFAULT NULL, p_era_name name DEFAULT NULL)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The `mode` parameter allows for explicit control over the behavior, such as patching (`'upsert_patch'`) versus replacing (`'upsert_replace'`) data.
 
 ### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.

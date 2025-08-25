@@ -28,13 +28,10 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Refactor `add_api` to not require a primary key:** Refactored `add_api` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
 
-- [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
-  - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
-  - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
-  - **Validated Solution (The "Statbus Pattern"):** An external project (`statbus_speed`) has validated the definitive "Plan and Execute" solution. This pattern must be implemented inside a single procedural function (ideally in C for performance) that:
-    1.  **Plans (Read-Only):** Reads all source and target data and calculates a complete DML plan (`DELETE`s, `UPDATE`s, `INSERT`s) that is guaranteed to result in a consistent final timeline.
-    2.  **Executes (Write-Only):** Executes the pre-calculated plan using a specific **"add-then-modify" order**. It must perform `INSERT`s of new data before `UPDATE`ing or `DELETE`ing the old data that is being replaced. This ensures `sql_saga`'s triggers can validate the final state correctly.
-  - **Benefit:** A call to this function is a single top-level statement. `sql_saga`'s deferred triggers fire only at the end, validating a state that the planner has already guaranteed is correct. This is the architecturally sound solution to the multi-statement update problem and provides a path to re-enabling the tests in `28_with_exclusion_constraints.sql` by having them use this new API.
+- [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
+  - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
+  - **Status:** **Design Phase**. A detailed design document (`todo-temporal-merge.md`) is being created based on the validated "Plan and Execute" pattern from the `statbus_speed` project. The API will be finalized before implementation begins.
+  - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
   - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.
