@@ -15,9 +15,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [x] **Fix regressions from test suite refactoring:** All tests now pass after being converted to the self-contained pattern.
-
-- [x] **Make regression tests self-contained:** All tests that can be self-contained now use the common `sql/include/test_setup.sql` and `sql/include/test_teardown.sql` scripts.
+- [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
 
 - [ ] **Complete the `regclass` -> `(schema, table)` refactoring:**
   - **Issue:** The metadata tables `sql_saga.era` and `sql_saga.api_view` still contain `oid` columns (`audit_table_oid` and `view_oid` respectively). This is a remnant of the old design and should be removed to complete the refactoring.

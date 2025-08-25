@@ -94,11 +94,11 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | shifts     | valid    | valid_from             | valid_until             | daterange  | shifts_valid_check      | 
- public       | houses     | valid    | valid_from             | valid_until             | daterange  | houses_valid_check      | 
- public       | rooms      | valid    | valid_from             | valid_until             | daterange  | rooms_valid_check       | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | shifts     | valid    | valid_from             | valid_until             | daterange  | shifts_valid_check      |                   | 
+ public       | houses     | valid    | valid_from             | valid_until             | daterange  | houses_valid_check      |                   | 
+ public       | rooms      | valid    | valid_from             | valid_until             | daterange  | rooms_valid_check       |                   | 
 (3 rows)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid');
@@ -247,8 +247,8 @@ SELECT sql_saga.drop_era('shifts');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.

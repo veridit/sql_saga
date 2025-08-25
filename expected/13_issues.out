@@ -60,10 +60,10 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
 
 --
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | uk         | p        | f                      | u                       | int4range  | uk_p_check              | 
- public       | fk         | q        | f                      | u                       | int4range  | fk_q_check              | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | uk         | p        | f                      | u                       | int4range  | uk_p_check              |                   | 
+ public       | fk         | q        | f                      | u                       | int4range  | fk_q_check              |                   | 
 (2 rows)
 
 TABLE sql_saga.foreign_keys;

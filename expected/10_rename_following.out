@@ -42,38 +42,38 @@ SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test | p        | s                      | e                       | int4range  | rename_test_p_check     | 
+ table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test | p        | s                      | e                       | int4range  | rename_test_p_check     |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME s TO start;
 ALTER TABLE rename_test RENAME e TO "end";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test | p        | start                  | end                     | int4range  | rename_test_p_check     | 
+ table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test | p        | start                  | end                     | int4range  | rename_test_p_check     |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME start TO "s < e";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test | p        | s < e                  | end                     | int4range  | rename_test_p_check     | 
+ table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test | p        | s < e                  | end                     | int4range  | rename_test_p_check     |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME "end" TO "embedded "" symbols";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test | p        | s < e                  | embedded " symbols      | int4range  | rename_test_p_check     | 
+ table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test | p        | s < e                  | embedded " symbols      | int4range  | rename_test_p_check     |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_p_check TO start_before_end;
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test | p        | s < e                  | embedded " symbols      | int4range  | start_before_end        | 
+ table_schema | table_name  | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test | p        | s < e                  | embedded " symbols      | int4range  | start_before_end        |                   | 
 (1 row)
 
 /* api */
@@ -85,16 +85,16 @@ SELECT sql_saga.add_api('rename_test', 'p');
 (1 row)
 
 TABLE sql_saga.api_view;
- table_schema | table_name  | era_name |           view_oid            |   trigger_name   
---------------+-------------+----------+-------------------------------+------------------
- public       | rename_test | p        | rename_test__for_portion_of_p | for_portion_of_p
+ table_schema | table_name  | era_name | view_schema_name |        view_table_name        |   trigger_name   
+--------------+-------------+----------+------------------+-------------------------------+------------------
+ public       | rename_test | p        | public           | rename_test__for_portion_of_p | for_portion_of_p
 (1 row)
 
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
 TABLE sql_saga.api_view;
- table_schema | table_name  | era_name |           view_oid            |  trigger_name   
---------------+-------------+----------+-------------------------------+-----------------
- public       | rename_test | p        | rename_test__for_portion_of_p | portion_trigger
+ table_schema | table_name  | era_name | view_schema_name |        view_table_name        |  trigger_name   
+--------------+-------------+----------+------------------+-------------------------------+-----------------
+ public       | rename_test | p        | public           | rename_test__for_portion_of_p | portion_trigger
 (1 row)
 
 SELECT sql_saga.drop_api('rename_test', 'p');
@@ -135,10 +135,10 @@ SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema |   table_name    | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_table_oid 
---------------+-----------------+----------+------------------------+-------------------------+------------+-------------------------+-----------------
- public       | rename_test     | p        | s < e                  | embedded " symbols      | int4range  | start_before_end        | 
- public       | rename_test_ref | q        | s < e                  | embedded " symbols      | int4range  | rename_test_ref_q_check | 
+ table_schema |   table_name    | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+-----------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ public       | rename_test     | p        | s < e                  | embedded " symbols      | int4range  | start_before_end        |                   | 
+ public       | rename_test_ref | q        | s < e                  | embedded " symbols      | int4range  | rename_test_ref_q_check |                   | 
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');

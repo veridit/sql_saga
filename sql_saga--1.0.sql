@@ -31,7 +31,8 @@ CREATE TABLE sql_saga.era (
     bounds_check_constraint name NOT NULL,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
-    audit_table_oid regclass, -- NOT NULL
+    audit_schema_name name,
+    audit_table_name name,
     -- audit_trigger name NOT NULL,
     -- delete_trigger name NOT NULL,
     --excluded_column_names name[] NOT NULL DEFAULT '{}',
@@ -107,7 +108,8 @@ CREATE TABLE sql_saga.api_view (
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL,
-    view_oid regclass NOT NULL,
+    view_schema_name name NOT NULL,
+    view_table_name name NOT NULL,
     trigger_name name NOT NULL,
     -- truncate_trigger name NOT NULL,
 
@@ -115,7 +117,7 @@ CREATE TABLE sql_saga.api_view (
 
     FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name),
 
-    UNIQUE (view_oid)
+    UNIQUE (view_schema_name, view_table_name)
 );
 GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
@@ -827,7 +829,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    audit_table regclass;
+    audit_schema_name name;
+    audit_table_name name;
     table_schema name;
     table_name name;
 BEGIN
@@ -836,13 +839,13 @@ BEGIN
     FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
     WHERE c.oid = TG_RELID;
 
-    SELECT e.audit_table_oid
-    INTO audit_table
+    SELECT e.audit_schema_name, e.audit_table_name
+    INTO audit_schema_name, audit_table_name
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name) = (table_schema, table_name);
 
-    IF FOUND AND audit_table IS NOT NULL THEN
-        EXECUTE format('TRUNCATE %s', audit_table);
+    IF FOUND AND audit_table_name IS NOT NULL THEN
+        EXECUTE format('TRUNCATE %I.%I', audit_schema_name, audit_table_name);
     END IF;
 
     RETURN NULL;
@@ -920,8 +923,8 @@ BEGIN
             EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
             EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
                 trigger_name, r.schema_name, view_name);
-            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_oid, trigger_name)
-                VALUES (r.schema_name, r.table_name, r.era_name, format('%I.%I', r.schema_name, view_name), trigger_name);
+            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
+                VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
         END LOOP;
     END;
 
@@ -937,7 +940,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    view_oid regclass;
+    view_schema_name name;
+    view_table_name name;
     trigger_name name;
     target_schema_name name;
     target_table_name name;
@@ -965,14 +969,14 @@ BEGIN
         WHERE c.oid = table_oid;
     END IF;
 
-    FOR view_oid, trigger_name IN
+    FOR view_schema_name, view_table_name, trigger_name IN
         DELETE FROM sql_saga.api_view AS fp
         WHERE (table_oid IS NULL OR (fp.table_schema, fp.table_name) = (target_schema_name, target_table_name))
           AND (era_name IS NULL OR fp.era_name = era_name)
-        RETURNING fp.view_oid, fp.trigger_name
+        RETURNING fp.view_schema_name, fp.view_table_name, fp.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %s', trigger_name, view_oid);
-        EXECUTE format('DROP VIEW %s %s', view_oid, drop_behavior);
+        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name, view_schema_name, view_table_name);
+        EXECUTE format('DROP VIEW %I.%I %s', view_schema_name, view_table_name, drop_behavior);
     END LOOP;
 
     RETURN true;
@@ -987,6 +991,8 @@ $function$
 #variable_conflict use_variable
 DECLARE
     info record;
+    view_schema_name name;
+    view_table_name name;
     test boolean;
     generated_columns_sql text;
     generated_columns text[];
@@ -1071,6 +1077,11 @@ BEGIN
      *     SQL:2016 15.13 GR 10
      */
 
+    SELECT n.nspname, c.relname
+    INTO view_schema_name, view_table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = TG_RELID;
+
     /* Get the table information from this view */
     SELECT c.oid AS table_oid,
            fpv.table_schema, fpv.table_name, fpv.era_name,
@@ -1082,7 +1093,7 @@ BEGIN
     JOIN pg_catalog.pg_namespace AS n ON n.nspname = fpv.table_schema
     JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (n.oid, fpv.table_name)
     JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (c.oid, e.valid_from_column_name)
-    WHERE fpv.view_oid = TG_RELID;
+    WHERE (fpv.view_schema_name, fpv.view_table_name) = (view_schema_name, view_table_name);
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'table and era information not found for view "%"', TG_RELID::regclass;
@@ -2689,10 +2700,9 @@ BEGIN
     FOR r IN
         SELECT dobj.object_identity
         FROM sql_saga.api_view AS fpv
-        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
-                ON dobj.objid = fpv.view_oid
-        WHERE dobj.object_type = 'view'
-        ORDER BY dobj.ordinality
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() AS dobj
+            ON dobj.object_type = 'view'
+            AND (dobj.address_names[1], dobj.address_names[2]) = (fpv.view_schema_name, fpv.view_table_name)
     LOOP
         RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_api()" instead',
             r.object_identity;
@@ -2700,11 +2710,11 @@ BEGIN
 
     /* Complain if the FOR PORTION OF trigger is missing. */
     FOR r IN
-        SELECT format('%I.%I', fpv.table_schema, fpv.table_name)::regclass AS table_oid, fpv.era_name, fpv.view_oid, fpv.trigger_name
+        SELECT format('%I.%I', fpv.table_schema, fpv.table_name)::regclass AS table_oid, fpv.era_name, format('%I.%I', fpv.view_schema_name, fpv.view_table_name)::regclass as view_oid, fpv.trigger_name
         FROM sql_saga.api_view AS fpv
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (fpv.view_oid, fpv.trigger_name))
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fpv.view_schema_name, fpv.view_table_name)), fpv.trigger_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is used in FOR PORTION OF view for period "%" on table "%"',
             r.trigger_name, r.view_oid, r.era_name, r.table_oid;
@@ -2881,7 +2891,7 @@ BEGIN
         JOIN pg_class c ON c.oid = ar.relid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname))
-           OR EXISTS (SELECT 1 FROM sql_saga.api_view v WHERE v.view_oid = ar.relid)
+           OR EXISTS (SELECT 1 FROM sql_saga.api_view v JOIN pg_class vc ON vc.relname = v.view_table_name JOIN pg_namespace vn ON vn.oid = vc.relnamespace AND vn.nspname = v.view_schema_name WHERE vc.oid = ar.relid)
     ) THEN
         RETURN;
     END IF;
@@ -3010,7 +3020,7 @@ BEGIN
             t.tgname, fpv.table_schema, fpv.table_name, fpv.era_name)
         FROM sql_saga.api_view AS fpv
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (fpv.table_name, (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema))
-        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = fpv.view_oid
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = to_regclass(format('%I.%I', fpv.view_schema_name, fpv.view_table_name))
         WHERE t.tgname <> fpv.trigger_name
           AND t.tgfoid = 'sql_saga.update_portion_of()'::regprocedure
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (pc.oid, fpv.trigger_name))
@@ -3185,8 +3195,9 @@ BEGIN
     FOR r IN
         SELECT to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid
         FROM sql_saga.era AS e
-        JOIN pg_catalog.pg_class AS c ON c.oid = e.audit_table_oid
-        WHERE c.relpersistence <> 'p'
+        JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
+        WHERE e.audit_table_name IS NOT NULL AND c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
             r.table_oid;
@@ -3225,10 +3236,10 @@ BEGIN
         --
         --        UNION ALL
 
-        SELECT format('ALTER VIEW %s OWNER TO %I', fpt.oid::regclass, t.relowner::regrole)
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', fpv.view_schema_name, fpv.view_table_name, t.relowner::regrole)
         FROM sql_saga.api_view AS fpv
         JOIN pg_class AS t ON t.relname = fpv.table_name AND t.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
-        JOIN pg_class AS fpt ON fpt.oid = fpv.view_oid
+        JOIN pg_class AS fpt ON (fpt.relnamespace, fpt.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
         WHERE t.relowner <> fpt.relowner
 
         --        UNION ALL
@@ -3279,7 +3290,7 @@ BEGIN
                        acl.grantee,
                        'p' AS history_or_portion
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS c ON c.oid = fpv.view_oid
+                JOIN pg_class AS c ON (c.relnamespace, c.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
 
 --                UNION ALL
@@ -3339,7 +3350,7 @@ BEGIN
                 FROM sql_saga.api_view AS fpv
                 JOIN pg_class AS c ON c.relname = fpv.table_name AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
                 CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_class AS fpc ON fpc.oid = fpv.view_oid
+                JOIN pg_class AS fpc ON (fpc.relnamespace, fpc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 WHERE NOT has_table_privilege(acl.grantee, fpc.oid, acl.privilege_type)
 
 --                UNION ALL
@@ -3392,7 +3403,7 @@ BEGIN
             FROM sql_saga.api_view AS fpv
             JOIN pg_class AS c ON c.relname = fpv.table_name AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = fpv.table_schema)
             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_class AS hc ON hc.oid = fpv.view_oid
+            JOIN pg_class AS hc ON (hc.relnamespace, hc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
             WHERE NOT EXISTS (
                 SELECT
                 FROM aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS _acl
@@ -3447,7 +3458,7 @@ BEGIN
                        hacl.privilege_type,
                        hacl.grantee
                 FROM sql_saga.api_view AS fpv
-                JOIN pg_class AS hc ON hc.oid = fpv.view_oid
+                JOIN pg_class AS hc ON (hc.relnamespace, hc.relname) = ((SELECT oid FROM pg_namespace WHERE nspname = fpv.view_schema_name), fpv.view_table_name)
                 CROSS JOIN LATERAL aclexplode(COALESCE(hc.relacl, acldefault('r', hc.relowner))) AS hacl
                 WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', fpv.table_schema, fpv.table_name)), hacl.privilege_type)
 

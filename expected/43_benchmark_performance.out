@@ -3,12 +3,12 @@
  BEGIN                               |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
  Constraints enabled                 |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
  INSERTs delayed constraints start   |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~26900 rows/s
+ INSERTs delayed constraints end     |     10000 | 0 secs          | 0 secs         | 10000 rows | ~28400 rows/s
  INSERTs immediate constraints start |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- INSERTs immediate constraints end   |     10000 | 1 secs          | 1 secs         | 10000 rows | ~19100 rows/s
+ INSERTs immediate constraints end   |     10000 | 1 secs          | 0 secs         | 10000 rows | ~20500 rows/s
  Update deferred constraints start   |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Update deferred constraints end     |     20000 | 10 secs         | 9 secs         | 20000 rows | ~2300 rows/s
- Constraints disabled                |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Tear down complete                  |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ Update deferred constraints end     |     20000 | 9 secs          | 9 secs         | 20000 rows | ~2300 rows/s
+ Constraints disabled                |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ Tear down complete                  |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
 (10 rows)
 
