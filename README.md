@@ -6,7 +6,9 @@ enabling efficient and intuitive handling of temporal tables.
 Drawing inspiration from Nordic sagas, the project aims at the seamless blending of
 ancient narrative with the contemporary purpose of global statistics.
 
-An Sql Saga is the history of a table (an era) over multiple periods of time.
+### What is a "Saga"?
+
+In the context of this extension, a **Saga** represents the complete history of a table's data over time. A Saga can be composed of one or more **Eras**, where each Era is a distinct temporal period defined by a pair of columns (e.g., `valid_from`/`valid_until` or `transaction_from`/`transaction_until`). This allows a single table to have its data managed across multiple, independent timelines if needed.
 
 ## Features
 
