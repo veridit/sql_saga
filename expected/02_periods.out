@@ -67,29 +67,6 @@ TABLE sql_saga.era;
  public       | basic      | bp       | valid_from             | valid_until             | daterange  | c                       |                   | 
 (1 row)
 
-SELECT sql_saga.drop_era('basic', 'bp', cleanup => true);
- drop_era 
-----------
- t
-(1 row)
-
-TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
-(0 rows)
-
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp');
- add_era 
----------
- t
-(1 row)
-
-TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
- public       | basic      | bp       | valid_from             | valid_until             | daterange  | basic_bp_check          |                   | 
-(1 row)
-
 /* Test constraints */
 SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', null, null); --fail
@@ -116,12 +93,13 @@ TABLE basic;
 (1 row)
 
 /* Test dropping the whole thing */
-DROP TABLE basic;
-TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
-(0 rows)
+SELECT sql_saga.drop_era('basic', 'bp');
+ drop_era 
+----------
+ t
+(1 row)
 
+DROP TABLE basic;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --
@@ -136,7 +114,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

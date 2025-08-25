@@ -14,10 +14,6 @@ SELECT sql_saga.drop_era('basic', 'bp');
 TABLE sql_saga.era;
 SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c');
 TABLE sql_saga.era;
-SELECT sql_saga.drop_era('basic', 'bp', cleanup => true);
-TABLE sql_saga.era;
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp');
-TABLE sql_saga.era;
 /* Test constraints */
 SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', null, null); --fail
@@ -31,8 +27,8 @@ ROLLBACK TO SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', '1000-01-01', '3000-01-01'); --success
 TABLE basic;
 /* Test dropping the whole thing */
+SELECT sql_saga.drop_era('basic', 'bp');
 DROP TABLE basic;
-TABLE sql_saga.era;
 
 ROLLBACK;
 

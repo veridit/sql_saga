@@ -52,6 +52,7 @@ DROP TABLE pricing;
 ROLLBACK TO SAVEPOINT expect_fail;
 SELECT sql_saga.drop_api('pricing', NULL);
 TABLE sql_saga.api_view;
+SELECT sql_saga.drop_era('pricing', 'quantities');
 DROP TABLE pricing;
 DROP SEQUENCE pricing_seq;
 
@@ -72,6 +73,7 @@ UPDATE bt__for_portion_of_p SET t = 'simple', valid_from = 21, valid_until = 31;
 TABLE bt ORDER BY valid_from, valid_until;
 
 SELECT sql_saga.drop_api('bt', 'p');
+SELECT sql_saga.drop_era('bt', 'p');
 DROP TABLE bt;
 
 ROLLBACK;

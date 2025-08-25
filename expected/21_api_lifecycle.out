@@ -194,10 +194,10 @@ Check constraints:
     "shifts_valid_check" CHECK (valid_from < valid_until)
 
 -- Remove sql_saga
-SELECT sql_saga.drop_foreign_key(table_oid => 'rooms', key_name => 'rooms_house_id_valid');
+SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
  drop_foreign_key 
 ------------------
- t
+ 
 (1 row)
 
 TABLE sql_saga.foreign_keys;
@@ -205,19 +205,19 @@ TABLE sql_saga.foreign_keys;
 ------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
-SELECT sql_saga.drop_unique_key(table_oid => 'rooms', key_name => 'rooms_id_valid');
+SELECT sql_saga.drop_unique_key('rooms', ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
-SELECT sql_saga.drop_unique_key(table_oid => 'houses', key_name => 'houses_id_valid');
+SELECT sql_saga.drop_unique_key('houses', ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
-SELECT sql_saga.drop_unique_key(table_oid => 'shifts', key_name => 'shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
  drop_unique_key 
 -----------------
  
@@ -260,6 +260,8 @@ TABLE sql_saga.era;
  house_id    | integer |           |          | 
  valid_from  | date    |           | not null | 
  valid_until | date    |           | not null | 
+Check constraints:
+    "rooms_valid_check" CHECK (valid_from < valid_until)
 
 \d houses
                       Table "public.houses"
@@ -269,6 +271,8 @@ TABLE sql_saga.era;
  assessment  | double precision |           |          | 
  valid_from  | date             |           | not null | 
  valid_until | date             |           | not null | 
+Check constraints:
+    "houses_valid_check" CHECK (valid_from < valid_until)
 
 \d shifts
                  Table "public.shifts"
@@ -278,6 +282,8 @@ TABLE sql_saga.era;
  worker_id   | integer |           |          | 
  valid_from  | date    |           | not null | 
  valid_until | date    |           | not null | 
+Check constraints:
+    "shifts_valid_check" CHECK (valid_from < valid_until)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql
@@ -293,7 +299,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

@@ -17,7 +17,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
-- [ ] **Ensure Symmetrical APIs:** Review `drop_` functions (e.g., `drop_unique_key`, `drop_foreign_key`) to ensure they can be called with the same arguments used for creation (e.g., `(table_oid, column_names[], era_name)` in addition to `(table_oid, key_name)`). This improves usability and predictability.
+- [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
 
 - [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
 

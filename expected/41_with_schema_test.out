@@ -212,10 +212,10 @@ ROLLBACK TO SAVEPOINT regression;
 UPDATE exposed.employees SET valid_to = 'infinity' WHERE id = 103;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
 -- Teardown
-SELECT sql_saga.drop_foreign_key('hidden.staff', 'staff_employee_id_valid');
+SELECT sql_saga.drop_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid');
  drop_foreign_key 
 ------------------
- t
+ 
 (1 row)
 
 TABLE sql_saga.foreign_keys;
@@ -223,13 +223,13 @@ TABLE sql_saga.foreign_keys;
 ------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
 (0 rows)
 
-SELECT sql_saga.drop_unique_key('exposed.employees', 'employees_id_valid');
+SELECT sql_saga.drop_unique_key('exposed.employees', ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
-SELECT sql_saga.drop_unique_key('hidden.staff','staff_id_valid');
+SELECT sql_saga.drop_unique_key('hidden.staff',ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
@@ -268,6 +268,8 @@ TABLE sql_saga.era;
  valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
+Check constraints:
+    "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
     synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
@@ -281,6 +283,8 @@ Triggers:
  valid_until | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
+Check constraints:
+    "staff_valid_check" CHECK (valid_from < valid_until)
 Triggers:
     synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
@@ -298,7 +302,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

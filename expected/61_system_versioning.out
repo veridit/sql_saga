@@ -99,13 +99,11 @@ SELECT sql_saga.drop_system_versioning('system_versioning_test');
 
 -- Check that objects are gone
 \d system_versioning_test
-                                   Table "public.system_versioning_test"
-      Column       |           Type           | Collation | Nullable |               Default                
--------------------+--------------------------+-----------+----------+--------------------------------------
- id                | integer                  |           | not null | 
- name              | text                     |           |          | 
- system_time_start | timestamp with time zone |           | not null | transaction_timestamp()
- system_time_end   | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+       Table "public.system_versioning_test"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ id     | integer |           | not null | 
+ name   | text    |           |          | 
 Indexes:
     "system_versioning_test_pkey" PRIMARY KEY, btree (id)
 
@@ -140,7 +138,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

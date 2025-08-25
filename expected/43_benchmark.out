@@ -162,31 +162,31 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid');
  drop_foreign_key 
 ------------------
- t
+ 
 (1 row)
 
-SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key('establishment', ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
-SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
+SELECT sql_saga.drop_era('establishment');
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
  drop_unique_key 
 -----------------
  
 (1 row)
 
 SELECT sql_saga.drop_era('legal_unit');
- drop_era 
-----------
- t
-(1 row)
-
-SELECT sql_saga.drop_era('establishment');
  drop_era 
 ----------
  t
@@ -264,7 +264,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

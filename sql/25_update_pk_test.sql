@@ -127,8 +127,17 @@ UPDATE houses SET (valid_from, valid_until) = ('2017-01-01', '2018-01-01') WHERE
 ABORT;
 
 -- Manual Cleanup
+SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
+SELECT sql_saga.drop_unique_key('rooms', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('rooms');
 DROP TABLE rooms;
+
+SELECT sql_saga.drop_unique_key('houses', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('houses');
 DROP TABLE houses;
+
+SELECT sql_saga.drop_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
+SELECT sql_saga.drop_era('shifts');
 DROP TABLE shifts;
 
 \i sql/include/test_teardown.sql

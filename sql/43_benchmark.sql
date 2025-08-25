@@ -110,11 +110,11 @@ UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
-SELECT sql_saga.drop_era('legal_unit');
+SELECT sql_saga.drop_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid');
+SELECT sql_saga.drop_unique_key('establishment', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_era('establishment');
+SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('legal_unit');
 
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 

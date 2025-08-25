@@ -73,7 +73,7 @@ FROM bigint_shifts
 WHERE job_id = 1;
 
 
-SELECT sql_saga.drop_unique_key('bigint_shifts', 'bigint_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('bigint_shifts', ARRAY['job_id', 'worker_id'], 'valid');
 SELECT sql_saga.drop_era('bigint_shifts');
 
 DROP TABLE bigint_shifts;

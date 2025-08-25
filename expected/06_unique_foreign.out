@@ -77,10 +77,10 @@ TABLE sql_saga.foreign_keys;
  fk_uk_id_q       | public       | fk         | {uk_id}      | q        | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fki               | fku               | uku               | ukd
 (1 row)
 
-SELECT sql_saga.drop_foreign_key('fk', 'fk_uk_id_q');
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
  drop_foreign_key 
 ------------------
- t
+ 
 (1 row)
 
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
@@ -125,7 +125,31 @@ DELETE FROM uk WHERE (id, valid_from, valid_until) = (100, 4, 5); -- fail
 ERROR:  update or delete on table "public.uk" violates foreign key constraint "fk_uk_id_q" on table "public.fk"
 ROLLBACK TO SAVEPOINT delete_test;
 DELETE FROM uk WHERE (id, valid_from, valid_until) = (200, 4, 6); -- success
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('fk', 'q');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE fk;
+SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('uk', 'p');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE uk;
 ROLLBACK;
 \i sql/include/test_teardown.sql
@@ -141,7 +165,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

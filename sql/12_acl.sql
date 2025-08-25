@@ -40,7 +40,8 @@ TABLE show_owners ORDER BY object_name;
 ALTER TABLE owner_test OWNER TO periods_acl_2;
 TABLE show_owners ORDER BY object_name;
 
-SELECT sql_saga.drop_api('owner_test', NULL);
+SELECT sql_saga.drop_api('owner_test', 'p');
+SELECT sql_saga.drop_era('owner_test', 'p');
 DROP TABLE owner_test CASCADE;
 DROP VIEW show_owners;
 
@@ -80,6 +81,7 @@ REVOKE UPDATE ON TABLE fpacl FROM periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
 
 SELECT sql_saga.drop_api('fpacl', 'p');
+SELECT sql_saga.drop_era('fpacl', 'p');
 DROP TABLE fpacl CASCADE;
 DROP VIEW show_acls;
 

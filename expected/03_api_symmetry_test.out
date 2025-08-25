@@ -83,9 +83,9 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 -- by name (positional)
-SELECT sql_saga.drop_foreign_key('child', 'child_parent_id_q');
- drop_foreign_key 
-------------------
+SELECT sql_saga.drop_foreign_key_by_name('child', 'child_parent_id_q');
+ drop_foreign_key_by_name 
+--------------------------
  t
 (1 row)
 
@@ -108,9 +108,9 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 -- by name (named)
-SELECT sql_saga.drop_foreign_key(table_oid => 'child', key_name => 'child_parent_id_q');
- drop_foreign_key 
-------------------
+SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child', key_name => 'child_parent_id_q');
+ drop_foreign_key_by_name 
+--------------------------
  t
 (1 row)
 
@@ -151,9 +151,9 @@ TABLE sql_saga.unique_keys;
 (1 row)
 
 -- by name (positional)
-SELECT sql_saga.drop_unique_key('parent', 'parent_id_p');
- drop_unique_key 
------------------
+SELECT sql_saga.drop_unique_key_by_name('parent', 'parent_id_p');
+ drop_unique_key_by_name 
+-------------------------
  
 (1 row)
 
@@ -176,9 +176,9 @@ TABLE sql_saga.unique_keys;
 (1 row)
 
 -- by name (named)
-SELECT sql_saga.drop_unique_key(table_oid => 'parent', key_name => 'parent_id_p');
- drop_unique_key 
------------------
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent', key_name => 'parent_id_p');
+ drop_unique_key_by_name 
+-------------------------
  
 (1 row)
 
@@ -187,7 +187,101 @@ TABLE sql_saga.unique_keys;
 -----------------+--------------+------------+--------------+----------+-------------------+--------------------
 (0 rows)
 
+-- Test symmetrical add_era/drop_era with column management
+CREATE TABLE era_symmetry_test(id int);
+\d era_symmetry_test
+         Table "public.era_symmetry_test"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ id     | integer |           |          | 
+
+-- 1. Create era and columns together
+SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v', create_columns => true);
+ add_era 
+---------
+ t
+(1 row)
+
+\d era_symmetry_test
+                  Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable | Default 
+---------+--------------------------+-----------+----------+---------
+ id      | integer                  |           |          | 
+ v_from  | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 
+Check constraints:
+    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+
+-- 2. Drop era and columns together
+SELECT sql_saga.drop_era('era_symmetry_test', 'v', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+\d era_symmetry_test
+         Table "public.era_symmetry_test"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ id     | integer |           |          | 
+
+-- 3. Verify add_era fails without create_columns => true
+SAVEPOINT before_fail;
+SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v');
+ERROR:  column "v_from" not found in table "era_symmetry_test"
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,boolean) line 141 at RAISE
+ROLLBACK TO SAVEPOINT before_fail;
+-- 4. Create columns manually, then add era
+ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
+SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v');
+ add_era 
+---------
+ t
+(1 row)
+
+\d era_symmetry_test
+                  Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable | Default 
+---------+--------------------------+-----------+----------+---------
+ id      | integer                  |           |          | 
+ v_from  | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 
+Check constraints:
+    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+
+-- 5. Drop era but leave columns (default behavior)
+SELECT sql_saga.drop_era('era_symmetry_test', 'v');
+ drop_era 
+----------
+ t
+(1 row)
+
+\d era_symmetry_test
+                  Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable | Default 
+---------+--------------------------+-----------+----------+---------
+ id      | integer                  |           |          | 
+ v_from  | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 
+Check constraints:
+    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+
+DROP TABLE era_symmetry_test;
+-- Note: The FK and UK were already dropped in the earlier parts of this test.
+-- We only need to drop the eras and tables.
+SELECT sql_saga.drop_era('child', 'q');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE child;
+SELECT sql_saga.drop_era('parent', 'p');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE parent;
 ROLLBACK;
 \i sql/include/test_teardown.sql
@@ -203,7 +297,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

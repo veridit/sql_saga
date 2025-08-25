@@ -386,7 +386,8 @@ CREATE FUNCTION sql_saga.add_era(
     valid_until_column_name name,
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
-    bounds_check_constraint name DEFAULT NULL)
+    bounds_check_constraint name DEFAULT NULL,
+    create_columns boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -400,15 +401,15 @@ DECLARE
     persistence "char";
     alter_commands text[] DEFAULT '{}';
 
-    start_attnum smallint;
-    start_type oid;
-    start_collation oid;
-    start_notnull boolean;
+    valid_from_attnum smallint;
+    valid_from_type oid;
+    valid_from_collation oid;
+    valid_from_notnull boolean;
 
-    end_attnum smallint;
-    end_type oid;
-    end_collation oid;
-    end_notnull boolean;
+    valid_until_attnum smallint;
+    valid_until_type oid;
+    valid_until_collation oid;
+    valid_until_notnull boolean;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -458,6 +459,41 @@ BEGIN
         RAISE EXCEPTION 'table "%" must be persistent', table_oid;
     END IF;
 
+    /* If requested, create the period columns if they are missing */
+    IF create_columns THEN
+        DECLARE
+            from_exists boolean;
+            until_exists boolean;
+            column_type_name text;
+            add_sql text;
+        BEGIN
+            from_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_from_column_name AND NOT a.attisdropped);
+            until_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_until_column_name AND NOT a.attisdropped);
+
+            IF from_exists AND until_exists THEN
+                -- Do nothing, columns are already there.
+            ELSIF NOT from_exists AND NOT until_exists THEN
+                -- Both are missing, create them.
+                IF range_type IS NULL THEN
+                    column_type_name := 'timestamp with time zone';
+                ELSE
+                    SELECT format_type(r.rngsubtype, NULL) INTO column_type_name FROM pg_catalog.pg_range r WHERE r.rngtypid = range_type;
+                    IF column_type_name IS NULL THEN
+                        RAISE EXCEPTION 'range type % not found', range_type;
+                    END IF;
+                END IF;
+                add_sql := format('ALTER TABLE %s ADD COLUMN %I %s, ADD COLUMN %I %s',
+                    table_oid,
+                    valid_from_column_name, column_type_name,
+                    valid_until_column_name, column_type_name);
+                EXECUTE add_sql;
+            ELSE
+                -- One exists but not the other. This is an error.
+                RAISE EXCEPTION 'cannot create columns: one of "%", "%" exists, but not both', valid_from_column_name, valid_until_column_name;
+            END IF;
+        END;
+    END IF;
+
     /*
      * Check if era already exists.  Actually no other application time
      * eras are allowed per spec, but we don't obey that.  We can have as
@@ -491,7 +527,7 @@ BEGIN
 
     /* Get start column information */
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
-    INTO start_attnum, start_type, start_collation, start_notnull
+    INTO valid_from_attnum, valid_from_type, valid_from_collation, valid_from_notnull
     FROM pg_catalog.pg_attribute AS a
     WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
 
@@ -499,13 +535,13 @@ BEGIN
         RAISE EXCEPTION 'column "%" not found in table "%"', valid_from_column_name, table_oid;
     END IF;
 
-    IF start_attnum < 0 THEN
+    IF valid_from_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
     /* Get end column information */
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
-    INTO end_attnum, end_type, end_collation, end_notnull
+    INTO valid_until_attnum, valid_until_type, valid_until_collation, valid_until_notnull
     FROM pg_catalog.pg_attribute AS a
     WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
 
@@ -513,7 +549,7 @@ BEGIN
         RAISE EXCEPTION 'column "%" not found in table "%"', valid_until_column_name, table_oid;
     END IF;
 
-    IF end_attnum < 0 THEN
+    IF valid_until_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
@@ -524,11 +560,11 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.g
      */
-    IF start_type <> end_type THEN
+    IF valid_from_type <> valid_until_type THEN
         RAISE EXCEPTION 'start and end columns must be of same type';
     END IF;
 
-    IF start_collation <> end_collation THEN
+    IF valid_from_collation <> valid_until_collation THEN
         RAISE EXCEPTION 'start and end columns must be of same collation';
     END IF;
 
@@ -536,20 +572,20 @@ BEGIN
     IF range_type IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT FROM pg_catalog.pg_range AS r
-            WHERE (r.rngtypid, r.rngsubtype, r.rngcollation) = (range_type, start_type, start_collation))
+            WHERE (r.rngtypid, r.rngsubtype, r.rngcollation) = (range_type, valid_from_type, valid_from_collation))
         THEN
-            RAISE EXCEPTION 'range "%" does not match data type "%"', range_type, start_type;
+            RAISE EXCEPTION 'range "%" does not match data type "%"', range_type, valid_from_type;
         END IF;
     ELSE
         SELECT r.rngtypid
         INTO range_type
         FROM pg_catalog.pg_range AS r
         JOIN pg_catalog.pg_opclass AS c ON c.oid = r.rngsubopc
-        WHERE (r.rngsubtype, r.rngcollation) = (start_type, start_collation)
+        WHERE (r.rngsubtype, r.rngcollation) = (valid_from_type, valid_from_collation)
           AND c.opcdefault;
 
         IF NOT FOUND THEN
-            RAISE EXCEPTION 'no default range type for %', start_type::regtype;
+            RAISE EXCEPTION 'no default range type for %', valid_from_type::regtype;
         END IF;
     END IF;
 
@@ -558,10 +594,10 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.h
      */
-    IF NOT start_notnull THEN
+    IF NOT valid_from_notnull THEN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
     END IF;
-    IF NOT end_notnull THEN
+    IF NOT valid_until_notnull THEN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
     END IF;
 
@@ -710,7 +746,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -801,38 +837,38 @@ BEGIN
 --            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_oid;
 --        END IF;
 
-        /* Delete bounds check constraint if purging */
-        IF NOT is_dropped AND cleanup THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-                table_oid, era_row.bounds_check_constraint);
-        END IF;
-
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+        /* Delete bounds check constraint and columns if purging */
+        IF NOT is_dropped AND cleanup THEN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
+                table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+        END IF;
 
         RETURN true;
     END IF;
 
     /* We must be in CASCADE mode now */
 
-    PERFORM sql_saga.drop_foreign_key(table_oid, fk.foreign_key_name)
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
     FROM sql_saga.foreign_keys AS fk
     WHERE (fk.table_schema, fk.table_name, fk.era_name) = (table_schema, table_name, era_name);
 
-    PERFORM sql_saga.drop_unique_key(table_oid, uk.unique_key_name, drop_behavior, cleanup)
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, uk.unique_key_name, drop_behavior, cleanup)
     FROM sql_saga.unique_keys AS uk
     WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name);
-
-    /* Delete bounds check constraint if purging */
-    IF NOT is_dropped AND cleanup THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-            table_oid, era_row.bounds_check_constraint);
-    END IF;
 
     /* Remove from catalog */
     DELETE FROM sql_saga.era AS p
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    /* Delete bounds check constraint and columns if purging */
+    IF NOT is_dropped AND cleanup THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
+            table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    END IF;
 
     RETURN true;
 END;
@@ -1565,7 +1601,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_unique_key(
+CREATE FUNCTION sql_saga.drop_unique_key_by_name(
     table_oid regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
@@ -1612,7 +1648,7 @@ BEGIN
                     unique_key_row.unique_key_name, foreign_key_row.foreign_key_name, format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;
             END IF;
 
-            PERFORM sql_saga.drop_foreign_key(NULL, foreign_key_row.foreign_key_name);
+            PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);
         END LOOP;
 
         DELETE FROM sql_saga.unique_keys AS uk
@@ -1665,7 +1701,7 @@ BEGIN
         RAISE EXCEPTION 'unique key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
     END IF;
 
-    PERFORM sql_saga.drop_unique_key(table_oid, key_name_found, drop_behavior, cleanup);
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, key_name_found, drop_behavior, cleanup);
 END;
 $function$;
 
@@ -1702,7 +1738,7 @@ BEGIN
         RAISE EXCEPTION 'foreign key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
     END IF;
 
-    PERFORM sql_saga.drop_foreign_key(table_oid, key_name_found);
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, key_name_found);
 END;
 $function$;
 
@@ -2120,7 +2156,7 @@ END;
 $function$;
 
 
-CREATE FUNCTION sql_saga.drop_foreign_key(
+CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
     table_oid regclass,
     key_name name)
  RETURNS boolean
@@ -2206,8 +2242,8 @@ $function$;
 
 CREATE FUNCTION sql_saga.__internal_add_system_time_era(
     table_oid regclass,
-    start_column_name name DEFAULT 'system_time_start',
-    end_column_name name DEFAULT 'system_time_end',
+    valid_from_column_name name DEFAULT 'system_time_start',
+    valid_until_column_name name DEFAULT 'system_time_end',
     bounds_check_constraint name DEFAULT NULL,
     infinity_check_constraint name DEFAULT NULL,
     generated_always_trigger name DEFAULT NULL,
@@ -2227,12 +2263,12 @@ DECLARE
     kind "char";
     persistence "char";
     alter_commands text[] DEFAULT '{}';
-    start_attnum smallint;
-    start_type oid;
-    start_notnull boolean;
-    end_attnum smallint;
-    end_type oid;
-    end_notnull boolean;
+    valid_from_attnum smallint;
+    valid_from_type oid;
+    valid_from_notnull boolean;
+    valid_until_attnum smallint;
+    valid_until_type oid;
+    valid_until_notnull boolean;
     excluded_column_name name;
     DATE_OID CONSTANT integer := 1082;
     TIMESTAMP_OID CONSTANT integer := 1114;
@@ -2271,64 +2307,64 @@ BEGIN
     END IF;
 
     SELECT a.attnum, a.atttypid, a.attnotnull
-    INTO start_attnum, start_type, start_notnull
+    INTO valid_from_attnum, valid_from_type, valid_from_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, start_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
 
     IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', start_column_name);
-        start_attnum := 0;
-        start_type := 'timestamp with time zone'::regtype;
-        start_notnull := true;
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', valid_from_column_name);
+        valid_from_attnum := 0;
+        valid_from_type := 'timestamp with time zone'::regtype;
+        valid_from_notnull := true;
     END IF;
-    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', start_column_name);
+    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', valid_from_column_name);
 
-    IF start_attnum < 0 THEN
+    IF valid_from_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
     SELECT a.attnum, a.atttypid, a.attnotnull
-    INTO end_attnum, end_type, end_notnull
+    INTO valid_until_attnum, valid_until_type, valid_until_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, end_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
 
     IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', end_column_name);
-        end_attnum := 0;
-        end_type := 'timestamp with time zone'::regtype;
-        end_notnull := true;
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', valid_until_column_name);
+        valid_until_attnum := 0;
+        valid_until_type := 'timestamp with time zone'::regtype;
+        valid_until_notnull := true;
     ELSE
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', end_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
     END IF;
 
-    IF end_attnum < 0 THEN
+    IF valid_until_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
-    IF start_type::regtype NOT IN ('date', 'timestamp without time zone', 'timestamp with time zone') THEN
+    IF valid_from_type::regtype NOT IN ('date', 'timestamp without time zone', 'timestamp with time zone') THEN
         RAISE EXCEPTION 'SYSTEM_TIME eras must be of type "date", "timestamp without time zone", or "timestamp with time zone"';
     END IF;
-    IF start_type <> end_type THEN
+    IF valid_from_type <> valid_until_type THEN
         RAISE EXCEPTION 'start and end columns must be of same type';
     END IF;
 
-    CASE start_type
+    CASE valid_from_type
         WHEN DATE_OID THEN range_type := 'daterange';
         WHEN TIMESTAMP_OID THEN range_type := 'tsrange';
         WHEN TIMESTAMPTZ_OID THEN range_type := 'tstzrange';
     ELSE
-        RAISE EXCEPTION 'unexpected data type: "%"', start_type::regtype;
+        RAISE EXCEPTION 'unexpected data type: "%"', valid_from_type::regtype;
     END CASE;
 
-    IF NOT start_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', start_column_name);
+    IF NOT valid_from_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
     END IF;
-    IF NOT end_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', end_column_name);
+    IF NOT valid_until_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
     END IF;
 
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I < %I))', start_column_name, end_column_name);
+        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
     BEGIN
         IF bounds_check_constraint IS NULL THEN
             bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
@@ -2337,10 +2373,10 @@ BEGIN
     END;
 
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', end_column_name);
+        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
     BEGIN
         IF infinity_check_constraint IS NULL THEN
-            infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, end_column_name], 'infinity_check');
+            infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
         END IF;
         alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
     END;
@@ -2359,7 +2395,7 @@ BEGIN
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger, table_oid);
 
     INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint)
-    VALUES (table_schema, table_name, era_name, start_column_name, end_column_name, range_type, bounds_check_constraint);
+    VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint);
 
     INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
     VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);
@@ -2634,7 +2670,7 @@ BEGIN
 
         -- 1. For FKs that reference the dropped table, drop them completely.
         -- We can call drop_foreign_key because it can look up the FK table by name and drop its triggers.
-        PERFORM sql_saga.drop_foreign_key(
+        PERFORM sql_saga.drop_foreign_key_by_name(
             format('%I.%I', fk.table_schema, fk.table_name)::regclass,
             fk.foreign_key_name
         )

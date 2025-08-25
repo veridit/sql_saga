@@ -69,8 +69,15 @@ SAVEPOINT s5;
 INSERT INTO uk(id, f, u)        VALUES    (4, 1, 4),
                                           (4, 3, 5);
 ROLLBACK TO SAVEPOINT s5;
-DROP TABLE uk;
+
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
+SELECT sql_saga.drop_unique_key('fk', ARRAY['id'], 'q');
+SELECT sql_saga.drop_era('fk', 'q');
 DROP TABLE fk;
+
+SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
+SELECT sql_saga.drop_era('uk', 'p');
+DROP TABLE uk;
 
 -- Test case for bug with infinite parent validity
 CREATE TABLE legal_unit_bug (
@@ -108,7 +115,13 @@ INSERT INTO establishment_bug (id, legal_unit_id, valid_from, valid_until, name)
 -- Verify insert
 SELECT * FROM establishment_bug;
 
+SELECT sql_saga.drop_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid');
+SELECT sql_saga.drop_unique_key('establishment_bug', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('establishment_bug', 'valid');
 DROP TABLE establishment_bug;
+
+SELECT sql_saga.drop_unique_key('legal_unit_bug', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('legal_unit_bug', 'valid');
 DROP TABLE legal_unit_bug;
 
 ROLLBACK;

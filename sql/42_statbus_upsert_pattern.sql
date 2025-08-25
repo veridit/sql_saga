@@ -95,11 +95,11 @@ TABLE location;
 
 -- Teardown
 
-SELECT sql_saga.drop_foreign_key('location', 'location_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key('location', ARRAY['legal_unit_id'], 'valid');
 TABLE sql_saga.foreign_keys;
 
-SELECT sql_saga.drop_unique_key('legal_unit', 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key('location','location_id_valid');
+SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_unique_key('location',ARRAY['id'], 'valid');
 TABLE sql_saga.unique_keys;
 
 SELECT sql_saga.drop_era('legal_unit');

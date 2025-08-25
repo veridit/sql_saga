@@ -27,7 +27,7 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     uk_update_trigger => 'uku',
     uk_delete_trigger => 'ukd');
 TABLE sql_saga.foreign_keys;
-SELECT sql_saga.drop_foreign_key('fk', 'fk_uk_id_q');
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
 SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
 TABLE sql_saga.foreign_keys;
 
@@ -60,7 +60,12 @@ DELETE FROM uk WHERE (id, valid_from, valid_until) = (100, 4, 5); -- fail
 ROLLBACK TO SAVEPOINT delete_test;
 DELETE FROM uk WHERE (id, valid_from, valid_until) = (200, 4, 6); -- success
 
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
+SELECT sql_saga.drop_era('fk', 'q');
 DROP TABLE fk;
+
+SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
+SELECT sql_saga.drop_era('uk', 'p');
 DROP TABLE uk;
 
 ROLLBACK;

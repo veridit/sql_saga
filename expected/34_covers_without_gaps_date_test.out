@@ -280,7 +280,7 @@ WHERE   job_id = 1;
 -- TODO: handle an empty target range? e.g. [5, 5)
 -- Or maybe since that is a self-contradiction maybe ignore that case?
 DELETE FROM date_shifts;
-SELECT sql_saga.drop_unique_key('date_shifts', 'date_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('date_shifts', ARRAY['job_id', 'worker_id'], 'valid');
  drop_unique_key 
 -----------------
  
@@ -307,7 +307,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;
