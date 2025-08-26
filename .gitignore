@@ -8,6 +8,7 @@ periods.o
 periods.bc
 sql_saga.bc
 sql_saga.dylib
+sql_saga--*.sql
 regression.diffs
 regression.out
 results/

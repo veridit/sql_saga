@@ -34,8 +34,6 @@ The entity identifier is the column (or set of columns) that holds the same valu
 
 The primary key of the temporal table is typically a composite key that includes the entity identifier and a temporal column (e.g., `(id, valid_from)`) to uniquely identify each historical version of the entity.
 
-`sql_saga` formalizes the concept of the entity identifier through a **primary temporal unique key**. This is a temporal unique key that is flagged as the primary one for a given table. This allows functions like `temporal_merge` to automatically identify the correct columns for tracking entity history, simplifying the API and reducing the risk of errors.
-
 The currently valid row has `infinity` in the `valid_until` column.
 
 ### Temporal Table with Valid Time
@@ -244,7 +242,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### Unique Keys
-- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', is_primary boolean DEFAULT false, unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
 - `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 

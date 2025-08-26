@@ -47,9 +47,9 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
 PROCEDURE sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
+    p_id_columns text[],
     p_mode sql_saga.temporal_merge_mode,
     p_ephemeral_columns text[] DEFAULT '{}',
-    p_id_columns text[] DEFAULT NULL,
     p_era_name name DEFAULT NULL
 );
 ```
@@ -58,23 +58,16 @@ PROCEDURE sql_saga.temporal_merge(
 **Required Parameters:**
 *   `p_target_table regclass`: The target temporal table.
 *   `p_source_table regclass`: A source table, view, or temporary table containing the new data.
+*   `p_id_columns text[]`: An array of column names that form the conceptual entity identifier.
 *   `p_mode sql_saga.temporal_merge_mode`: The operational mode, as defined above.
 
 **Optional Parameters:**
 *   `p_ephemeral_columns text[] DEFAULT '{}'`: Columns to exclude from data-equivalence checks for coalescing (e.g., audit columns like `edit_comment`). This is conceptually similar to the "excluded columns" in system versioning, but is provided as a parameter because its use is specific to a data loading operation, not a persistent table property.
-*   `p_id_columns text[] DEFAULT NULL`: An array of column names that form the conceptual entity identifier. If omitted, the function will automatically use the columns from the registered **primary temporal unique key** for the target table and specified era.
 *   `p_era_name name DEFAULT NULL`: The name of the era to operate on. If omitted, the function will proceed if the target table has only one era. If the table has multiple eras, this parameter is required.
 
 ### 3.4. Feedback and Result Reporting
 For a general-purpose `sql_saga` procedure, row-level feedback is not required. The procedure will succeed or fail atomically for the entire batch, which is simpler and aligns with standard DML commands. More complex systems (like Statbus) can build a wrapper function that provides detailed row-level feedback if necessary.
 
-### 3.5. Primary Temporal Unique Key (Entity Identifier)
-A core concept in `sql_saga` is the **entity identifier**: the set of columns that uniquely identifies a conceptual entity across its entire history. To formalize this, `sql_saga` will support flagging one temporal unique key per table/era as the **primary** one.
-
-This is accomplished by adding an `is_primary` flag to the `add_unique_key` function:
-`add_unique_key(..., is_primary boolean DEFAULT false, ...)`
-
-This metadata allows `temporal_merge` to automatically discover the entity identifier, simplifying its API and making it more robust. The `p_id_columns` parameter becomes optional; if it is not provided, the function will look for a registered primary temporal key for the target table and era.
 
 ## 4. Low-Level Implementation Details (The Planner)
 
@@ -132,7 +125,7 @@ This section provides a critical review of the proposed API and architecture.
 
 3.  **Reliance on Correct Entity Identifier Definition:**
     *   **Weakness:** The function's correctness depends on the entity identifier being correctly defined, either via a primary temporal key or the `p_id_columns` parameter. An incorrect definition will lead to logical data corruption.
-    *   **Mitigation:** The introduction of a **primary temporal unique key** significantly mitigates this weakness. It transforms the definition of the entity identifier from a repeated, per-call action (passing a parameter) into a single, deliberate, one-time metadata registration (`add_unique_key(..., is_primary => true)`). This makes the process far less error-prone. The documentation must still be exceptionally clear on the importance of defining this key correctly.
+    *   **Mitigation:** This is an inherent risk in a powerful API. The documentation must be exceptionally clear on the importance of defining the entity identifier correctly. The client application is responsible for providing the correct `p_id_columns`.
 
 ## 8. Relationship to `add_api` and `FOR PORTION OF` Views
 
@@ -157,7 +150,7 @@ This table details the source of information for each parameter and for the impl
 | `p_source_table`          | **User-provided.** The function will introspect this table's structure using PostgreSQL's system catalogs to determine the set of data columns.                                                                                                                                                                                                                               |
 | `p_mode`                  | **User-provided.** This is fundamental to the function's logic.                                                                                                                                                                                                                                                                                                             |
 | `p_era_name`              | **User-provided (optional).** Used to select the correct era from `sql_saga.era` if a table has multiple eras. If omitted, it's inferred if only one era exists for the table.                                                                                                                                                                                                  |
-| `p_id_columns`            | **`sql_saga.unique_keys` metadata (preferred) or User-provided.** If `NULL`, the function queries `sql_saga.unique_keys` for the `p_target_table` and `p_era_name` to find the key where `is_primary = true`.                                                                                                                                                           |
+| `p_id_columns`            | **User-provided.** This is a required parameter that defines the conceptual entity identifier.                                                                                                                                                                                                                                             |
 | `p_ephemeral_columns`     | **User-provided.** This is specific to a data-loading operation (e.g., ignoring `edit_comment` for coalescing) and is not suitable for persistent metadata.                                                                                                                                                                                                                   |
 | Period Columns            | **`sql_saga.era` metadata.** The function queries `sql_saga.era` using `p_target_table` and `p_era_name` to get the `valid_from_column_name` and `valid_until_column_name`.                                                                                                                                                                                                |
 | Data Columns              | **Introspection of `pg_attribute`.** The function finds the intersection of column names between `p_source_table` and `p_target_table`, excluding period columns and the entity identifier.                                                                                                                                                                                    |
