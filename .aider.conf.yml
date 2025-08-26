@@ -1,3 +1,6 @@
+# Allow editing of tmp files that are ignored by git.
+add-gitignore-files: true
+
 read: [README.md,CONVENTIONS.md]
 #read: [CONVENTIONS.md, anotherfile.txt]
 

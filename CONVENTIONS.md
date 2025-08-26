@@ -66,7 +66,7 @@ All development work is an iterative process of forming hypotheses and verifying
 All development work, especially bug fixing, must follow this iterative cycle. Do not mark tasks as complete or "done" until the final step of the cycle has been successfully executed.
 
 ### 1. Formulate and State a Hypothesis
-- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem. You must also explicitly document the outcome of every hypothesis in the project's `todo.md` file, whether it is verified or falsified. This creates a permanent record of the debugging process and prevents repeating failed strategies. This is not optional; it is the most critical part of the process for complex bugs.
+- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem in `tmp/journal.md`. This creates a locally persistent log of your thought process. You must also explicitly document the outcome of every hypothesis in the project's `todo.md` file, whether it is verified or falsified. This creates a permanent record of the debugging process and prevents repeating failed strategies. This is not optional; it is the most critical part of the process for complex bugs.
 - **Example:** "Hypothesis: The server crash is caused by a memory leak in `covers_without_gaps.c`, where pass-by-reference datums are not being freed before new ones are allocated in the aggregate's state."
 
 ### 2. Create a Minimal Reproducing Test
@@ -132,7 +132,7 @@ When a task is complex or has a history of regressions (e.g., the `rename_follow
 This protocol transforms debugging from a cycle of "guess-and-check" into a methodical, scientific process of data gathering and verification, dramatically reducing the number of failed attempts.
 
 ### Development Journaling
-For complex, multi-step tasks like major refactoring, a detailed plan should be maintained in `journal.md`. This file outlines the sequence of steps, the actions required for each step, and the expected outcome. It serves as a roadmap for the task, ensuring a systematic approach. The journal should be cleared when you begin on a new major todo item. This hels for bug fixing and iterative development by logging hypotheses and outcomes, providing a low-level history of the debugging process.
+For complex, multi-step tasks like major refactoring, a detailed plan should be maintained in `tmp/journal.md`. This file outlines the sequence of steps, the actions required for each step, and the expected outcome. It serves as a roadmap for the task, ensuring a systematic approach. The journal should be cleared when you begin on a new major todo item. This hels for bug fixing and iterative development by logging hypotheses and outcomes, providing a low-level history of the debugging process.
 
 ## Known Pitfalls and Falsified Assumptions
 This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.
