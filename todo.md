@@ -34,7 +34,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
   - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
-  - **Status:** **Implementation Phase**. The design is complete. The first step is to refactor the existing SQL source code into a modular structure.
+  - **Status:** **Implementation Phase**. The SQL source code has been refactored into a modular structure. The next step is to implement the PL/pgSQL prototype.
   - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
@@ -48,11 +48,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
   - **File:** `sql_saga--1.0.sql`
   - **Issue:** The current implementation only supports foreign keys between two temporal tables.
   - **Action:** Adapt `sql_saga.add_foreign_key` to allow a non-temporal table to reference a temporal table. This would require a check function to validate the key's existence at the time of insert/update.
-
-- [ ] **Prototype a combined UPSERT/UPDATE API:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The current API for updating data is complex.
-  - **Action:** Prototype a new `sql_saga.add_api` function or a new function that provides a simpler interface for handling both `INSERT` and `UPDATE` (UPSERT) operations on temporal data.
 
 - [ ] **Ensure `infinity` is the default for `valid_to` columns:**
   - **File:** `sql_saga--1.0.sql`
