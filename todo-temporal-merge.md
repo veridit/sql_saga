@@ -33,15 +33,44 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
 
 **Semantic Definitions:**
 
-| Mode                 | Use Case            | If Entity Exists...                                      | If Entity Doesn't Exist... | `NULL`s in Source Data...                  |
-| :------------------- | :------------------ | :------------------------------------------------------- | :------------------------- | :----------------------------------------- |
-| **`upsert_patch`**   | Standard Import     | **Patches** timeline, preserving non-overlapping history. | **Inserts** new timeline.  | Are **ignored** (existing values preserved). |
-| **`upsert_replace`** | Idempotent Import   | **Replaces** timeline portions, preserving history.      | **Inserts** new timeline.  | **Overwrite** existing values.             |
-| **`patch_only`**     | User Edits          | **Patches** timeline, preserving history.                | Is a **NOOP**.             | Are **ignored**.                           |
-| **`replace_only`**   | Data Correction     | **Replaces** timeline portions, preserving history.      | Is a **NOOP**.             | **Overwrite** existing values.             |
-| **`insert_only`**    | Append-Only Data    | Is a **NOOP**.                                           | **Inserts** new timeline.  | N/A (always inserts).                      |
+| Mode                 | `UPDATE` Behavior (Source overlaps Target)                                                                | `INSERT` Behavior (Source has no Target) |
+| :------------------- | :-------------------------------------------------------------------------------------------------------- | :--------------------------------------- |
+| **`upsert_patch`**   | **Patches** target data. `NULL` values in the source **do not** overwrite existing non-`NULL` values.        | **Inserts** the new entity timeline.     |
+| **`upsert_replace`** | **Replaces** target data. `NULL` values in the source **will** overwrite existing non-`NULL` values.        | **Inserts** the new entity timeline.     |
+| **`patch_only`**     | Same as `upsert_patch`.                                                                                   | **Ignores** the source record (NOOP).    |
+| **`replace_only`**   | Same as `upsert_replace`.                                                                                 | **Ignores** the source record (NOOP).    |
+| **`insert_only`**    | **Ignores** the source record (NOOP).                                                                       | **Inserts** the new entity timeline.     |
 
-### 3.2. Procedure Signature
+### 3.2. Use Case Scenarios
+
+The five modes are designed to provide precise, predictable control for common data management tasks. They are built around two key distinctions:
+- **`upsert_` vs. `_only`:** Determines what happens if a source entity does not already exist in the target table. `upsert_` will create it; `_only` will ignore it.
+- **`_patch` vs. `_replace`:** Determines how `NULL` values in the source data are treated during an update. `_patch` ignores them, while `_replace` uses them to overwrite existing data.
+
+Here are the typical real-world use cases for each mode:
+
+- **`upsert_patch` (The Idempotent Workhorse):**
+  - **Scenario:** A nightly batch job synchronizes data from an external system. The source data is often incomplete (e.g., an address update record may have `NULL` for the company name).
+  - **Why it's useful:** This mode makes the job robust and idempotent. It safely inserts new companies, and for existing ones, it only updates the fields that are non-`NULL` in the source, preventing accidental data loss from incomplete records.
+
+- **`upsert_replace` (The Full Corrector):**
+  - **Scenario:** A data steward provides a correction file to fully replace data for a set of entities. One correction involves clearing out an old, incorrect "regional_code" by setting it to `NULL`.
+  - **Why it's useful:** This mode allows for explicit data correction, including the intentional nullification of fields. The `upsert` behavior ensures that if the correction file also contains new entities, they will be created.
+
+- **`patch_only` (The Safe UI Edit):**
+  - **Scenario:** A user edits an *existing* company's details through a web interface. The application submits only the changed fields.
+  - **Why it's useful:** This mode provides a critical safety rail. It guarantees that if the user accidentally mistypes the company ID, a new, erroneous record will **not** be created. It only modifies existing entities.
+
+- **`replace_only` (The Targeted Correction):**
+  - **Scenario:** A script is run to apply a specific data quality fix to a known list of existing entities, which may involve setting some fields to `NULL`.
+  - **Why it's useful:** This is a precision tool for data surgery. It ensures that only the targeted existing records are modified and provides protection against accidentally creating new records if the input list is flawed.
+
+- **`insert_only` (The Safe UI Create / Bulk Load):**
+  - **Scenario 1 (UI):** A user creates a new entity through a web form. The application needs to guarantee that this operation can only create a new record, never modify an existing one.
+  - **Scenario 2 (Bulk Load):** The initial population of a temporal table from a legacy data source, or adding a batch of entirely new entities.
+  - **Why it's useful:** This mode provides a critical safety rail for creation operations. It guarantees that existing data will not be touched. If a user accidentally tries to create an entity that already exists, or if an import script is run twice, it will do nothing, preventing accidental data corruption or duplication.
+
+### 3.3. Procedure Signature
 
 ```sql
 PROCEDURE sql_saga.temporal_merge(
@@ -100,13 +129,30 @@ This suggests that the `update_portion_of` trigger function could be refactored 
 3.  **Performance:** While the PL/pgSQL prototype is expected to be highly performant due to its set-based nature, should the final version be ported to C for maximum efficiency? (Recommendation: Start with PL/pgSQL, port to C if benchmarks show it's a bottleneck).
 4.  **Row-Level Feedback:** Confirm that atomic, batch-level success/failure is sufficient for the core `sql_saga` extension.
 
-## 7. Strengths and Weaknesses Analysis
+## 7. Implementation Plan
+
+The implementation will proceed as follows:
+
+1.  **Create New Files:**
+    -   A new SQL file for the function definition: `src/27_temporal_merge.sql`.
+    -   A new test suite: `sql/44_temporal_merge.sql`.
+
+2.  **Port Existing Logic:**
+    -   The core "Planner" logic, which is the most complex part of the implementation, will be ported from the mature `temporal_merge` function in the `statbus_speed` project. This provides a robust and well-tested foundation.
+
+3.  **Develop Test Suite:**
+    -   The `sql/42_statbus_upsert_pattern.sql` test, which validates the existing `upsert` pattern, will serve as the initial template for the new test suite. The new suite will be expanded to cover all modes defined in the `temporal_merge_mode` ENUM.
+
+4.  **Update Build System:**
+    -   The `Makefile` will be updated to include the new source and test files in the build process and test runs.
+
+## 8. Strengths and Weaknesses Analysis
 
 This section provides a critical review of the proposed API and architecture.
 
 ### Strengths
 
-1.  **Architecturally Sound:** The "Plan and Execute" pattern is the definitive solution to the MVCC visibility problem for complex, multi-row temporal modifications. It guarantees that `sql_saga`'s deferred triggers validate a consistent final state, which is impossible with client-side, multi-statement logic.
+1.  **Architecturally Sound:** The "Plan and Execute" pattern is the definitive solution to the MVCC visibility problem for complex, multi-row temporal modifications. It guarantees that `sql_saga`'s deferred triggers validate a consistent final state, which is impossible with client-side, multi-statement logic. Furthermore, by being a procedure, it can support `OUT` parameters or other mechanisms for returning data (e.g., via temporary tables), which is not reliably possible with `INSTEAD OF INSERT` triggers on views that need to return auto-generated primary keys.
 2.  **Semantically Clear API:** The `mode` ENUM is the core of the design's strength. It forces the caller to be explicit about their intent (e.g., `patch` vs. `replace`), which prevents ambiguity and makes behavior predictable and easy to reason about.
 3.  **Powerful and Flexible:** The API is highly adaptable. It handles composite and surrogate keys, defaulted columns (`p_exclude_from_insert`), and ephemeral columns for coalescing (`p_ephemeral_columns`). The use of `regclass` for the source table allows it to work seamlessly with permanent tables, views, and temporary tables.
 4.  **High Performance:** The entire operation is set-based, leveraging PostgreSQL's strengths for data processing. The logic to coalesce adjacent, identical periods is a critical optimization that significantly reduces the number of final DML operations.
@@ -127,7 +173,7 @@ This section provides a critical review of the proposed API and architecture.
     *   **Weakness:** The function's correctness depends on the entity identifier being correctly defined, either via a primary temporal key or the `p_id_columns` parameter. An incorrect definition will lead to logical data corruption.
     *   **Mitigation:** This is an inherent risk in a powerful API. The documentation must be exceptionally clear on the importance of defining the entity identifier correctly. The client application is responsible for providing the correct `p_id_columns`.
 
-## 8. Relationship to `add_api` and `FOR PORTION OF` Views
+## 9. Relationship to `add_api` and `FOR PORTION OF` Views
 
 The `add_api` function serves a dual purpose, creating two distinct types of views to support two different use cases:
 
@@ -140,7 +186,7 @@ The relationship to `temporal_merge` is now clearer:
 -   `temporal_merge` is a **strict superset of the `FOR PORTION OF` view's functionality**. An `UPDATE` on the `...__for_portion_of_...` view is semantically equivalent to a `'patch_only'` call to `temporal_merge` with a single source row. This confirms the plan to refactor the `update_portion_of` trigger to use `temporal_merge` internally is correct.
 -   `temporal_merge` is **not a superset of the current-state view's functionality**, specifically its "logical delete" behavior. They are complementary: `temporal_merge` is for bulk/historical data management, while the `add_api` current-state view is for interactive, single-entity, current-state management.
 
-## 9. Parameter-to-Metadata Mapping
+## 10. Parameter-to-Metadata Mapping
 
 This table details the source of information for each parameter and for the implicit data required by the `temporal_merge` function.
 

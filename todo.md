@@ -6,6 +6,11 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
+- [ ] **(In Progress) Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
+  - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
+  - **Status:** The PL/pgSQL prototype is the next step.
+  - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
+
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
 
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
@@ -41,11 +46,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor build system and fix all regressions:** Overhauled the `Makefile` to ensure reliable, incremental builds. Refactored the SQL source into a modular structure and resolved all test failures that were exposed by the new build process.
 
 - [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
-
-- [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
-  - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
-  - **Status:** **On Hold**. The SQL source code has been refactored. The PL/pgSQL prototype is the next step.
-  - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
   - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.
