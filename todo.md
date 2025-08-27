@@ -6,18 +6,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
-- [ ] **Implement System Versioning (with C triggers):** `periods` contains a complete implementation of `SYSTEM VERSIONING`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`) for populating them, and helper functions (`_as_of`, `_between`, etc.). This is a major feature that `sql_saga` currently has commented-out stubs for.
-  - **Comparison to Audit Frameworks (`pgaudit`):** System Versioning (as implemented in `periods`) and audit logging (`pgaudit`) are complementary, can be used together without conflict, and solve different problems.
-    - **System Versioning** tracks the *state of the data* over time. It creates a complete, queryable history of every row, answering the question: "What did this record look like last year?" Its purpose is historical data analysis and reconstruction.
-    - **Audit Frameworks (`pgaudit`)** track the *actions performed on the data*. They log the `INSERT`, `UPDATE`, `DELETE` statements themselves, answering the question: "Who deleted a record from this table yesterday?" Their purpose is security, compliance, and forensics.
-    - **Combined Use Case:** For NSOs, using both provides a complete picture: `pgaudit` supplies the mandatory, unalterable log of *who made a change*, while System Versioning provides the queryable history of *what the data looked like* as a result of that change.
-  - **Action:** Port the entire system versioning feature from `periods`. The existing (and currently failing) test `61_system_versioning_excluded_columns.sql` should be used to verify this functionality once implemented. This includes:
-    1.  The `system_versioning` and `system_time_periods` metadata tables.
-    2.  The `add_system_versioning` and `drop_system_versioning` API functions.
-    3.  The C trigger functions from `periods.c` for high-performance history tracking.
-  - **Design Constraints to Preserve:**
-    - **History Tables are Not Temporal:** The `periods` implementation correctly prevents a history table from being a temporal table itself. This is a critical design choice that separates concerns: the main table handles "application time," while the history table tracks "system time" (the audit trail). This prevents circular dependencies and preserves the integrity of the history log.
-
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
 
 - [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
@@ -25,7 +13,12 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor core to use `(schema, table)` instead of `oid`:** Made event triggers robust against `DROP`.
 - [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
+- [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
+
 ## Medium Priority - Refactoring & API Improvements
+
+- [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
+- [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
 
 - [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
 
@@ -33,13 +26,12 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
 
-- [ ] **Implement High-Performance, Set-Based Upsert API (The "Plan and Execute" Pattern):**
-  - **Goal:** Provide official, high-performance, set-based functions for performing `INSERT OR UPDATE` and `INSERT OR REPLACE` operations on temporal tables. This should be the primary API for complex data loading.
-  - **Problem:** Multi-statement transactions that perform complex temporal changes cannot be reliably validated by `sql_saga`'s `CONSTRAINT TRIGGER`s due to PostgreSQL's MVCC snapshot rules.
-  - **Validated Solution (The "Statbus Pattern"):** An external project (`statbus_speed`) has validated the definitive "Plan and Execute" solution. This pattern must be implemented inside a single procedural function (ideally in C for performance) that:
-    1.  **Plans (Read-Only):** Reads all source and target data and calculates a complete DML plan (`DELETE`s, `UPDATE`s, `INSERT`s) that is guaranteed to result in a consistent final timeline.
-    2.  **Executes (Write-Only):** Executes the pre-calculated plan using a specific **"add-then-modify" order**. It must perform `INSERT`s of new data before `UPDATE`ing or `DELETE`ing the old data that is being replaced. This ensures `sql_saga`'s triggers can validate the final state correctly.
-  - **Benefit:** A call to this function is a single top-level statement. `sql_saga`'s deferred triggers fire only at the end, validating a state that the planner has already guaranteed is correct. This is the architecturally sound solution to the multi-statement update problem and provides a path to re-enabling the tests in `28_with_exclusion_constraints.sql` by having them use this new API.
+- [x] **Refactor `add_api` to not require a primary key:** Refactored `add_api` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
+
+- [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
+  - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
+  - **Status:** **Design Phase**. A detailed design document (`todo-temporal-merge.md`) is being created based on the validated "Plan and Execute" pattern from the `statbus_speed` project. The API will be finalized before implementation begins.
+  - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
   - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.

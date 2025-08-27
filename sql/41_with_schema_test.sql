@@ -98,11 +98,11 @@ UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
 
 -- Teardown
 
-SELECT sql_saga.drop_foreign_key('hidden.staff', 'staff_employee_id_valid');
+SELECT sql_saga.drop_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid');
 TABLE sql_saga.foreign_keys;
 
-SELECT sql_saga.drop_unique_key('exposed.employees', 'employees_id_valid');
-SELECT sql_saga.drop_unique_key('hidden.staff','staff_id_valid');
+SELECT sql_saga.drop_unique_key('exposed.employees', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_unique_key('hidden.staff',ARRAY['id'], 'valid');
 TABLE sql_saga.unique_keys;
 
 SELECT sql_saga.drop_era('exposed.employees');

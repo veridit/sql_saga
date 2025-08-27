@@ -72,7 +72,7 @@ FROM int_shifts
 WHERE job_id = 1;
 
 
-SELECT sql_saga.drop_unique_key('int_shifts', 'int_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('int_shifts', ARRAY['job_id', 'worker_id'], 'valid');
 SELECT sql_saga.drop_era('int_shifts');
 
 DROP TABLE int_shifts;

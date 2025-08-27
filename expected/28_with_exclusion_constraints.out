@@ -532,8 +532,50 @@ COMMIT;
 --
 -- COMMIT;
 -- Manual Cleanup
+SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('rooms', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('rooms');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE rooms;
+SELECT sql_saga.drop_unique_key('houses', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('houses');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE houses;
+SELECT sql_saga.drop_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('shifts');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE shifts;
 \i sql/include/test_teardown.sql
 --
@@ -548,7 +590,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

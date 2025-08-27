@@ -22,16 +22,14 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
-BEGIN;
-/*
- * Test creating a table, dropping a column, and then dropping the whole thing;
- * without any periods.  This is to make sure the health checks don't try to do
- * anything.
- */
-CREATE TABLE beeswax (col1 text, col2 date);
-ALTER TABLE beeswax DROP COLUMN col1;
-DROP TABLE beeswax;
-ROLLBACK;
+SELECT extversion
+FROM pg_extension
+WHERE extname = 'sql_saga';
+ extversion 
+------------
+ 1.0
+(1 row)
+
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql

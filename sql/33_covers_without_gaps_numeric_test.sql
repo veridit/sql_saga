@@ -76,7 +76,7 @@ WHERE job_id = 1;
 
 SET client_min_messages TO NOTICE;
 
-SELECT sql_saga.drop_unique_key('numeric_shifts', 'numeric_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('numeric_shifts', ARRAY['job_id', 'worker_id'], 'valid');
 SELECT sql_saga.drop_era('numeric_shifts');
 
 DROP TABLE numeric_shifts;

@@ -76,9 +76,11 @@ ROLLBACK TO SAVEPOINT s12;
 SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ROLLBACK TO SAVEPOINT s13;
-SELECT sql_saga.drop_foreign_key('dp_ref', 'f');
+SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
 DROP TABLE dp_ref;
 
+SELECT sql_saga.drop_unique_key('dp', ARRAY['id'], 'p');
+SELECT sql_saga.drop_era('dp', 'p');
 DROP TABLE dp;
 DROP TYPE integerrange;
 

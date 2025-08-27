@@ -35,7 +35,7 @@ CREATE UNLOGGED TABLE log (id bigint, valid_from date, valid_until date);
 SAVEPOINT s1;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- fails
 ERROR:  table "log" must be persistent
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name) line 65 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,boolean) line 65 at RAISE
 ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes
@@ -64,7 +64,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

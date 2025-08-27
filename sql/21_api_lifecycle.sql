@@ -36,12 +36,12 @@ TABLE sql_saga.foreign_keys;
 \d shifts
 
 -- Remove sql_saga
-SELECT sql_saga.drop_foreign_key(table_oid => 'rooms', key_name => 'rooms_house_id_valid');
+SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
 TABLE sql_saga.foreign_keys;
 
-SELECT sql_saga.drop_unique_key(table_oid => 'rooms', key_name => 'rooms_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'houses', key_name => 'houses_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'shifts', key_name => 'shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('rooms', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_unique_key('houses', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_unique_key('shifts', ARRAY['job_id','worker_id'], 'valid');
 SELECT * FROM sql_saga.unique_keys ORDER BY unique_key_name;
 
 SELECT sql_saga.drop_era('rooms');

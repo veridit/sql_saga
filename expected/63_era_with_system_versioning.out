@@ -1,0 +1,155 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Test that a table can have both a standard era and system versioning.
+-- 1. Create a table
+CREATE TABLE temporal_and_versioned (
+    id int,
+    name text,
+    valid_from date,
+    valid_until date
+);
+-- 2. Add 'valid' era and a unique key
+SELECT sql_saga.add_era('temporal_and_versioned', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('temporal_and_versioned', '{id}');
+         add_unique_key          
+---------------------------------
+ temporal_and_versioned_id_valid
+(1 row)
+
+-- 3. Add system versioning
+SELECT sql_saga.add_system_versioning('temporal_and_versioned');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+-- Verify that all columns, constraints, and triggers are present
+\d temporal_and_versioned
+                                    Table "public.temporal_and_versioned"
+       Column       |           Type           | Collation | Nullable |               Default                
+--------------------+--------------------------+-----------+----------+--------------------------------------
+ id                 | integer                  |           |          | 
+ name               | text                     |           |          | 
+ valid_from         | date                     |           | not null | 
+ valid_until        | date                     |           | not null | 
+ system_valid_from  | timestamp with time zone |           | not null | transaction_timestamp()
+ system_valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+Indexes:
+    "temporal_and_versioned_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "temporal_and_versioned_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+Check constraints:
+    "temporal_and_versioned_system_time_check" CHECK (system_valid_from < system_valid_until)
+    "temporal_and_versioned_system_valid_until_infinity_check" CHECK (system_valid_until = 'infinity'::timestamp with time zone)
+    "temporal_and_versioned_valid_check" CHECK (valid_from < valid_until)
+Triggers:
+    temporal_and_versioned_system_time_generated_always BEFORE INSERT OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end()
+    temporal_and_versioned_system_time_write_history AFTER INSERT OR DELETE OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history()
+    temporal_and_versioned_truncate AFTER TRUNCATE ON temporal_and_versioned FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning()
+
+-- 4. Perform some DML
+INSERT INTO temporal_and_versioned (id, name, valid_from, valid_until)
+VALUES (1, 'Initial Name', '2023-01-01', 'infinity');
+-- Update a non-key, non-temporal column.
+-- This should create a history row, but not affect the temporal aspect.
+UPDATE temporal_and_versioned
+SET name = 'First Update'
+WHERE id = 1 AND valid_from = '2023-01-01';
+-- Check the current and history tables
+SELECT id, name, valid_from, valid_until FROM temporal_and_versioned;
+ id |     name     | valid_from | valid_until 
+----+--------------+------------+-------------
+  1 | First Update | 01-01-2023 | infinity
+(1 row)
+
+SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_from;
+ id |     name     | valid_from | valid_until 
+----+--------------+------------+-------------
+  1 | Initial Name | 01-01-2023 | infinity
+(1 row)
+
+-- 5. Drop system versioning and check that the era is still intact
+SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true);
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+\d temporal_and_versioned
+         Table "public.temporal_and_versioned"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ name        | text    |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 
+Indexes:
+    "temporal_and_versioned_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "temporal_and_versioned_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+Check constraints:
+    "temporal_and_versioned_valid_check" CHECK (valid_from < valid_until)
+
+-- 6. Drop the unique key and the era to return table to original state
+SELECT sql_saga.drop_unique_key('temporal_and_versioned', ARRAY['id'], 'valid', cleanup => true);
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('temporal_and_versioned', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+\d temporal_and_versioned
+       Table "public.temporal_and_versioned"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ id     | integer |           |          | 
+ name   | text    |           |          | 
+
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

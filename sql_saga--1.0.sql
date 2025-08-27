@@ -40,12 +40,29 @@ CREATE TABLE sql_saga.era (
 
     PRIMARY KEY (table_schema, table_name, era_name),
 
-    CHECK (valid_from_column_name <> valid_until_column_name),
-    CHECK (era_name <> 'system_time')
+    CHECK (valid_from_column_name <> valid_until_column_name)
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
 GRANT SELECT ON TABLE sql_saga.era TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.era', '');
+
+CREATE TABLE sql_saga.system_time_era (
+    table_schema name NOT NULL,
+    table_name name NOT NULL,
+    era_name name NOT NULL,
+    infinity_check_constraint name NOT NULL,
+    generated_always_trigger name NOT NULL,
+    write_history_trigger name NOT NULL,
+    truncate_trigger name NOT NULL,
+    excluded_column_names name[] NOT NULL DEFAULT '{}',
+
+    PRIMARY KEY (table_schema, table_name, era_name),
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name),
+
+    CHECK (era_name = 'system_time')
+);
+GRANT SELECT ON TABLE sql_saga.system_time_era TO PUBLIC;
+SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_time_era', '');
 
 CREATE TABLE sql_saga.unique_keys (
     unique_key_name name NOT NULL,
@@ -92,6 +109,38 @@ GRANT SELECT ON TABLE sql_saga.foreign_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.foreign_keys', '');
 
 COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys using era WITHOUT OVERLAPS';
+
+CREATE TABLE sql_saga.system_versioning (
+    table_schema name NOT NULL,
+    table_name name NOT NULL,
+    era_name name NOT NULL,
+    history_schema_name name NOT NULL,
+    history_table_name name NOT NULL,
+    view_schema_name name NOT NULL,
+    view_table_name name NOT NULL,
+
+    -- These functions should be of type regprocedure, but that blocks pg_upgrade.
+    func_as_of text NOT NULL,
+    func_between text NOT NULL,
+    func_between_symmetric text NOT NULL,
+    func_from_to text NOT NULL,
+
+    PRIMARY KEY (table_schema, table_name),
+
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name),
+
+    CHECK (era_name = 'system_time'),
+
+    UNIQUE (history_schema_name, history_table_name),
+    UNIQUE (view_schema_name, view_table_name),
+    UNIQUE (func_as_of),
+    UNIQUE (func_between),
+    UNIQUE (func_between_symmetric),
+    UNIQUE (func_from_to)
+);
+GRANT SELECT ON TABLE sql_saga.system_versioning TO PUBLIC;
+SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_versioning', '');
+COMMENT ON TABLE sql_saga.system_versioning IS 'A registry of tables with SYSTEM VERSIONING';
 
 
 CREATE VIEW sql_saga.information_schema__era AS
@@ -149,6 +198,16 @@ CREATE OR REPLACE FUNCTION sql_saga.uk_update_check_c()
 RETURNS trigger
 AS 'sql_saga', 'uk_update_check_c'
 LANGUAGE c;
+
+CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
+RETURNS trigger
+AS 'sql_saga', 'generated_always_as_row_start_end'
+LANGUAGE c STRICT SECURITY DEFINER;
+
+CREATE OR REPLACE FUNCTION sql_saga.write_history()
+RETURNS trigger
+AS 'sql_saga', 'write_history'
+LANGUAGE c STRICT SECURITY DEFINER;
 
 CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_finalfn(internal, anyrange, anyrange)
 RETURNS boolean
@@ -327,7 +386,8 @@ CREATE FUNCTION sql_saga.add_era(
     valid_until_column_name name,
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
-    bounds_check_constraint name DEFAULT NULL)
+    bounds_check_constraint name DEFAULT NULL,
+    create_columns boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -341,15 +401,15 @@ DECLARE
     persistence "char";
     alter_commands text[] DEFAULT '{}';
 
-    start_attnum smallint;
-    start_type oid;
-    start_collation oid;
-    start_notnull boolean;
+    valid_from_attnum smallint;
+    valid_from_type oid;
+    valid_from_collation oid;
+    valid_from_notnull boolean;
 
-    end_attnum smallint;
-    end_type oid;
-    end_collation oid;
-    end_notnull boolean;
+    valid_until_attnum smallint;
+    valid_until_type oid;
+    valid_until_collation oid;
+    valid_until_notnull boolean;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -399,6 +459,41 @@ BEGIN
         RAISE EXCEPTION 'table "%" must be persistent', table_oid;
     END IF;
 
+    /* If requested, create the period columns if they are missing */
+    IF create_columns THEN
+        DECLARE
+            from_exists boolean;
+            until_exists boolean;
+            column_type_name text;
+            add_sql text;
+        BEGIN
+            from_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_from_column_name AND NOT a.attisdropped);
+            until_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_until_column_name AND NOT a.attisdropped);
+
+            IF from_exists AND until_exists THEN
+                -- Do nothing, columns are already there.
+            ELSIF NOT from_exists AND NOT until_exists THEN
+                -- Both are missing, create them.
+                IF range_type IS NULL THEN
+                    column_type_name := 'timestamp with time zone';
+                ELSE
+                    SELECT format_type(r.rngsubtype, NULL) INTO column_type_name FROM pg_catalog.pg_range r WHERE r.rngtypid = range_type;
+                    IF column_type_name IS NULL THEN
+                        RAISE EXCEPTION 'range type % not found', range_type;
+                    END IF;
+                END IF;
+                add_sql := format('ALTER TABLE %s ADD COLUMN %I %s, ADD COLUMN %I %s',
+                    table_oid,
+                    valid_from_column_name, column_type_name,
+                    valid_until_column_name, column_type_name);
+                EXECUTE add_sql;
+            ELSE
+                -- One exists but not the other. This is an error.
+                RAISE EXCEPTION 'cannot create columns: one of "%", "%" exists, but not both', valid_from_column_name, valid_until_column_name;
+            END IF;
+        END;
+    END IF;
+
     /*
      * Check if era already exists.  Actually no other application time
      * eras are allowed per spec, but we don't obey that.  We can have as
@@ -432,7 +527,7 @@ BEGIN
 
     /* Get start column information */
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
-    INTO start_attnum, start_type, start_collation, start_notnull
+    INTO valid_from_attnum, valid_from_type, valid_from_collation, valid_from_notnull
     FROM pg_catalog.pg_attribute AS a
     WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
 
@@ -440,13 +535,13 @@ BEGIN
         RAISE EXCEPTION 'column "%" not found in table "%"', valid_from_column_name, table_oid;
     END IF;
 
-    IF start_attnum < 0 THEN
+    IF valid_from_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
     /* Get end column information */
     SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
-    INTO end_attnum, end_type, end_collation, end_notnull
+    INTO valid_until_attnum, valid_until_type, valid_until_collation, valid_until_notnull
     FROM pg_catalog.pg_attribute AS a
     WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
 
@@ -454,7 +549,7 @@ BEGIN
         RAISE EXCEPTION 'column "%" not found in table "%"', valid_until_column_name, table_oid;
     END IF;
 
-    IF end_attnum < 0 THEN
+    IF valid_until_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
     END IF;
 
@@ -465,11 +560,11 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.g
      */
-    IF start_type <> end_type THEN
+    IF valid_from_type <> valid_until_type THEN
         RAISE EXCEPTION 'start and end columns must be of same type';
     END IF;
 
-    IF start_collation <> end_collation THEN
+    IF valid_from_collation <> valid_until_collation THEN
         RAISE EXCEPTION 'start and end columns must be of same collation';
     END IF;
 
@@ -477,20 +572,20 @@ BEGIN
     IF range_type IS NOT NULL THEN
         IF NOT EXISTS (
             SELECT FROM pg_catalog.pg_range AS r
-            WHERE (r.rngtypid, r.rngsubtype, r.rngcollation) = (range_type, start_type, start_collation))
+            WHERE (r.rngtypid, r.rngsubtype, r.rngcollation) = (range_type, valid_from_type, valid_from_collation))
         THEN
-            RAISE EXCEPTION 'range "%" does not match data type "%"', range_type, start_type;
+            RAISE EXCEPTION 'range "%" does not match data type "%"', range_type, valid_from_type;
         END IF;
     ELSE
         SELECT r.rngtypid
         INTO range_type
         FROM pg_catalog.pg_range AS r
         JOIN pg_catalog.pg_opclass AS c ON c.oid = r.rngsubopc
-        WHERE (r.rngsubtype, r.rngcollation) = (start_type, start_collation)
+        WHERE (r.rngsubtype, r.rngcollation) = (valid_from_type, valid_from_collation)
           AND c.opcdefault;
 
         IF NOT FOUND THEN
-            RAISE EXCEPTION 'no default range type for %', start_type::regtype;
+            RAISE EXCEPTION 'no default range type for %', valid_from_type::regtype;
         END IF;
     END IF;
 
@@ -499,10 +594,10 @@ BEGIN
      *
      * SQL:2016 11.27 SR 5.h
      */
-    IF NOT start_notnull THEN
+    IF NOT valid_from_notnull THEN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
     END IF;
-    IF NOT end_notnull THEN
+    IF NOT valid_until_notnull THEN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
     END IF;
 
@@ -651,7 +746,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -701,17 +796,21 @@ BEGIN
     /* Drop the "for portion" view if it hasn't been dropped already */
     PERFORM sql_saga.drop_api(table_oid, era_name, drop_behavior, cleanup);
 
-    /* If this is a system_time period, get rid of the triggers */
-    --    DELETE FROM sql_saga.system_time_periods AS stp
-    --    WHERE stp.table_oid = table_oid
-    --    RETURNING stp.* INTO system_time_era_row;
-    --
-    --    IF FOUND AND NOT is_dropped THEN
-    --        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid);
-    --        EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid);
-    --    END IF;
+    /* If this is a system_time era, get rid of the triggers */
+    DECLARE
+        system_time_era_row sql_saga.system_time_era;
+    BEGIN
+        DELETE FROM sql_saga.system_time_era AS ste
+        WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)
+        RETURNING * INTO system_time_era_row;
+
+        IF FOUND AND NOT is_dropped THEN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid);
+        END IF;
+    END;
 
     IF drop_behavior = 'RESTRICT' THEN
         /* Check for UNIQUE or PRIMARY KEYs */
@@ -738,38 +837,38 @@ BEGIN
 --            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_oid;
 --        END IF;
 
-        /* Delete bounds check constraint if purging */
-        IF NOT is_dropped AND cleanup THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-                table_oid, era_row.bounds_check_constraint);
-        END IF;
-
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+        /* Delete bounds check constraint and columns if purging */
+        IF NOT is_dropped AND cleanup THEN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
+                table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+        END IF;
 
         RETURN true;
     END IF;
 
     /* We must be in CASCADE mode now */
 
-    PERFORM sql_saga.drop_foreign_key(table_oid, fk.foreign_key_name)
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
     FROM sql_saga.foreign_keys AS fk
     WHERE (fk.table_schema, fk.table_name, fk.era_name) = (table_schema, table_name, era_name);
 
-    PERFORM sql_saga.drop_unique_key(table_oid, uk.unique_key_name, drop_behavior, cleanup)
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, uk.unique_key_name, drop_behavior, cleanup)
     FROM sql_saga.unique_keys AS uk
     WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name);
-
-    /* Delete bounds check constraint if purging */
-    IF NOT is_dropped AND cleanup THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',
-            table_oid, era_row.bounds_check_constraint);
-    END IF;
 
     /* Remove from catalog */
     DELETE FROM sql_saga.era AS p
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    /* Delete bounds check constraint and columns if purging */
+    IF NOT is_dropped AND cleanup THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
+            table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    END IF;
 
     RETURN true;
 END;
@@ -820,7 +919,7 @@ $function$;
 --$function$;
 
 
-CREATE FUNCTION sql_saga.truncate_era()
+CREATE FUNCTION sql_saga.truncate_system_versioning()
  RETURNS trigger
  LANGUAGE plpgsql
  STRICT
@@ -829,23 +928,24 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    audit_schema_name name;
-    audit_table_name name;
+    history_schema name;
+    history_table name;
     table_schema name;
     table_name name;
 BEGIN
     SELECT n.nspname, c.relname
     INTO table_schema, table_name
-    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
     WHERE c.oid = TG_RELID;
 
-    SELECT e.audit_schema_name, e.audit_table_name
-    INTO audit_schema_name, audit_table_name
-    FROM sql_saga.era AS e
-    WHERE (e.table_schema, e.table_name) = (table_schema, table_name);
+    SELECT sv.history_schema_name, sv.history_table_name
+    INTO history_schema, history_table
+    FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name);
 
-    IF FOUND AND audit_table_name IS NOT NULL THEN
-        EXECUTE format('TRUNCATE %I.%I', audit_schema_name, audit_table_name);
+    IF FOUND THEN
+        EXECUTE format('TRUNCATE %I.%I', history_schema, history_table);
     END IF;
 
     RETURN NULL;
@@ -880,21 +980,6 @@ BEGIN
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
 
-    /*
-     * We require the table to have a primary key, so check to see if there is
-     * one.  This requires a lock on the table so no one removes it after we
-     * check and before we commit.
-     */
-    EXECUTE format('LOCK TABLE %s IN ACCESS SHARE MODE', table_oid);
-
-    /* Now check for the primary key */
-    IF NOT EXISTS (
-        SELECT FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_oid, 'p'))
-    THEN
-        RAISE EXCEPTION 'table "%" must have a primary key', table_oid;
-    END IF;
-
     DECLARE
         target_schema_name name;
         target_table_name name;
@@ -906,7 +991,7 @@ BEGIN
         END IF;
 
         FOR r IN
-            SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name
+            SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid
             FROM sql_saga.era AS p
             JOIN pg_catalog.pg_class AS c ON c.relname = p.table_name
             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = p.table_schema
@@ -917,14 +1002,42 @@ BEGIN
                     SELECT FROM sql_saga.api_view AS _fpv
                     WHERE (_fpv.table_schema, _fpv.table_name, _fpv.era_name) = (p.table_schema, p.table_name, p.era_name))
         LOOP
-            view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
-            trigger_name := 'for_portion_of_' || r.era_name;
-            EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
-            EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
-            EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of()',
-                trigger_name, r.schema_name, view_name);
-            INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
-                VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
+            DECLARE
+                identifier_columns name[];
+                identifier_columns_quoted text;
+            BEGIN
+                -- Prefer a single-column temporal unique key as the identifier
+                SELECT uk.column_names INTO identifier_columns
+                FROM sql_saga.unique_keys uk
+                WHERE (uk.table_schema, uk.table_name, uk.era_name) = (r.schema_name, r.table_name, r.era_name)
+                  AND array_length(uk.column_names, 1) = 1;
+
+                IF identifier_columns IS NULL THEN
+                    -- Fallback to primary key
+                    SELECT array_agg(a.attname ORDER BY u.ordinality)
+                    INTO identifier_columns
+                    FROM pg_catalog.pg_constraint c
+                    JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ordinality) ON true
+                    JOIN pg_catalog.pg_attribute a ON (a.attrelid, a.attnum) = (c.conrelid, u.attnum)
+                    WHERE (c.conrelid, c.contype) = (r.table_oid, 'p');
+                END IF;
+
+                IF identifier_columns IS NULL THEN
+                    RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key for era "%" to support updatable views',
+                        format('%I.%I', r.schema_name, r.table_name)::regclass, r.era_name;
+                END IF;
+
+                SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
+
+                view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
+                trigger_name := 'for_portion_of_' || r.era_name;
+                EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
+                EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
+                EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of(%s)',
+                    trigger_name, r.schema_name, view_name, identifier_columns_quoted);
+                INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
+                    VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
+            END;
         END LOOP;
     END;
 
@@ -1005,6 +1118,8 @@ DECLARE
     bstartval jsonb;
     bendval jsonb;
 
+    identifier_columns name[];
+
     pre_row jsonb;
     new_row jsonb;
     post_row jsonb;
@@ -1020,14 +1135,12 @@ DECLARE
     GENERATED_COLUMNS_SQL_PRE_10 CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1037,15 +1150,13 @@ DECLARE
     GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR a.attidentity <> '''' '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1055,16 +1166,14 @@ DECLARE
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text :=
         'SELECT array_agg(a.attname) '
         'FROM pg_catalog.pg_attribute AS a '
+        'LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum '
         'WHERE a.attrelid = $1 '
         '  AND a.attnum > 0 '
         '  AND NOT a.attisdropped '
         '  AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL '
+        '    OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') '
         '    OR a.attidentity <> '''' '
         '    OR a.attgenerated <> '''' '
-        '    OR EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c '
-        '               WHERE _c.conrelid = a.attrelid '
-        '                 AND _c.contype = ''p'' '
-        '                 AND _c.conkey @> ARRAY[a.attnum]) '
         '    OR EXISTS (SELECT 1 FROM sql_saga.era AS _p '
         '               JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name '
         '               JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema '
@@ -1076,6 +1185,12 @@ BEGIN
      * REFERENCES:
      *     SQL:2016 15.13 GR 10
      */
+
+    -- The identifier columns are passed as arguments to the trigger.
+    IF TG_NARGS = 0 THEN
+        RAISE EXCEPTION 'update_portion_of trigger must be created with identifier columns as arguments';
+    END IF;
+    identifier_columns := TG_ARGV;
 
     SELECT n.nspname, c.relname
     INTO view_schema_name, view_table_name
@@ -1106,6 +1221,30 @@ BEGIN
     jold := to_jsonb(OLD);
     bstartval := jold->info.valid_from_column_name;
     bendval := jold->info.valid_until_column_name;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)',
+        fromval, info.datatype, bendval, info.datatype, bstartval, info.datatype, toval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)',
+        fromval, info.datatype, bendval, info.datatype, bstartval, info.datatype, toval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
+
+    -- If the new period does not overlap with the old period, do nothing.
+    EXECUTE format('SELECT %L::%s < %L::%s AND %L::%s < %L::%s',
+        bstartval, info.datatype, toval, info.datatype, fromval, info.datatype, bendval, info.datatype)
+    INTO test;
+    IF NOT test THEN
+        RETURN NULL;
+    END IF;
 
     pre_row := jold;
     new_row := jnew;
@@ -1150,8 +1289,13 @@ BEGIN
          *
          * Columns belonging to a SYSTEM_TIME period are also removed.
          *
-         * In addition to what the standard calls for, we also remove any
-         * columns belonging to primary keys.
+         * Note: Primary key columns are not implicitly treated as generated.
+         * Columns are considered generated if they are `serial`, `IDENTITY`, a
+         * generated expression, part of the `system_time` period, or have a
+         * `DEFAULT` expression that calls `nextval()`. Other columns, including
+         * non-generated primary keys that often serve as entity identifiers, are
+         * preserved. This is crucial for maintaining historical integrity when
+         * splitting rows.
          */
         -- Create a cache table for generated columns if it doesn't exist for this session.
         -- Using to_regclass is a clean way to check for a temp table's existence.
@@ -1200,6 +1344,7 @@ BEGIN
                 post_row := post_row - generated_columns;
             END IF;
         END IF;
+
     END IF;
 
     IF pre_assigned THEN
@@ -1210,7 +1355,7 @@ BEGIN
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)));
     END IF;
 
-    EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I > %L AND %I < %L',
+    EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I = %s AND %I = %s',
                    info.table_schema,
                    info.table_name,
                    (SELECT string_agg(format('%I = %L', j.key, j.value), ', ')
@@ -1219,17 +1364,14 @@ BEGIN
                           SELECT key, value FROM jsonb_each_text(jold)
                          ) AS j
                    ),
-                   (SELECT string_agg(format('%I = %L', key, value), ' AND ')
-                    FROM pg_catalog.jsonb_each_text(jold) AS j
-                    JOIN pg_catalog.pg_attribute AS a ON a.attname = j.key
-                    JOIN pg_catalog.pg_constraint AS c ON c.conkey @> ARRAY[a.attnum]
-                    WHERE a.attrelid = info.table_oid
-                      AND c.conrelid = info.table_oid
+                   (SELECT string_agg(format('%I = %L', j.key, j.value), ' AND ')
+                    FROM jsonb_each_text(jold) j
+                    WHERE j.key = ANY(identifier_columns)
                    ),
-                   info.valid_until_column_name,
-                   fromval,
                    info.valid_from_column_name,
-                   toval
+                   quote_literal(bstartval::text),
+                   info.valid_until_column_name,
+                   quote_literal(bendval::text)
                   );
 
     IF post_assigned THEN
@@ -1238,6 +1380,10 @@ BEGIN
             info.table_name,
             (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)),
             (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row)));
+    END IF;
+
+    IF pre_assigned OR post_assigned THEN
+        SET CONSTRAINTS ALL IMMEDIATE;
     END IF;
 
     RETURN NEW;
@@ -1501,7 +1647,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.drop_unique_key(
+CREATE FUNCTION sql_saga.drop_unique_key_by_name(
     table_oid regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
@@ -1548,7 +1694,7 @@ BEGIN
                     unique_key_row.unique_key_name, foreign_key_row.foreign_key_name, format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;
             END IF;
 
-            PERFORM sql_saga.drop_foreign_key(NULL, foreign_key_row.foreign_key_name);
+            PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);
         END LOOP;
 
         DELETE FROM sql_saga.unique_keys AS uk
@@ -1601,7 +1747,7 @@ BEGIN
         RAISE EXCEPTION 'unique key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
     END IF;
 
-    PERFORM sql_saga.drop_unique_key(table_oid, key_name_found, drop_behavior, cleanup);
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, key_name_found, drop_behavior, cleanup);
 END;
 $function$;
 
@@ -1638,7 +1784,7 @@ BEGIN
         RAISE EXCEPTION 'foreign key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
     END IF;
 
-    PERFORM sql_saga.drop_foreign_key(table_oid, key_name_found);
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, key_name_found);
 END;
 $function$;
 
@@ -2056,7 +2202,7 @@ END;
 $function$;
 
 
-CREATE FUNCTION sql_saga.drop_foreign_key(
+CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
     table_oid regclass,
     key_name name)
  RETURNS boolean
@@ -2140,391 +2286,400 @@ $function$;
 
 
 
---TODO: Pick relevant parts of creating functions for views
--- to make the API for the `era` table.
---
--- CREATE FUNCTION sql_saga.add_system_versioning(
---     table_class regclass,
---     audit_table_name name DEFAULT NULL,
---     view_oid name DEFAULT NULL,
---     function_as_of_name name DEFAULT NULL,
---     function_between_name name DEFAULT NULL,
---     function_between_symmetric_name name DEFAULT NULL,
---     function_from_to_name name DEFAULT NULL)
---  RETURNS void
---  LANGUAGE plpgsql
---  SECURITY DEFINER
--- AS
--- $function$
--- #variable_conflict use_variable
--- DECLARE
---     schema_name name;
---     table_name name;
---     table_owner regrole;
---     persistence "char";
---     kind "char";
---     era_row sql_saga.era;
---     history_table_id oid;
---     sql text;
---     grantees text;
--- BEGIN
---     IF table_class IS NULL THEN
---         RAISE EXCEPTION 'no table name specified';
---     END IF;
---
---     /* Always serialize operations on our catalogs */
---     PERFORM sql_saga._serialize(table_class);
---
---     /*
---      * REFERENCES:
---      *     SQL:2016 4.15.2.2
---      *     SQL:2016 11.3 SR 2.3
---      *     SQL:2016 11.3 GR 1.c
---      *     SQL:2016 11.29
---      */
---
---     /* Already registered? SQL:2016 11.29 SR 5 */
---     IF EXISTS (SELECT FROM sql_saga.system_versioning AS r WHERE r.table_oid = table_class) THEN
---         RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
---     END IF;
---
---     /* Must be a regular persistent base table. SQL:2016 11.29 SR 2 */
---
---     SELECT n.nspname, c.relname, c.relowner, c.relpersistence, c.relkind
---     INTO schema_name, table_name, table_owner, persistence, kind
---     FROM pg_catalog.pg_class AS c
---     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
---     WHERE c.oid = table_class;
---
---     IF kind <> 'r' THEN
---         /*
---          * The main reason partitioned tables aren't supported yet is simply
---          * because I haven't put any thought into it.
---          * Maybe it's trivial, maybe not.
---          */
---         IF kind = 'p' THEN
---             RAISE EXCEPTION 'partitioned tables are not supported yet';
---         END IF;
---
---         RAISE EXCEPTION 'relation % is not a table', $1;
---     END IF;
---
---     IF persistence <> 'p' THEN
---         /*
---          * We could probably accept unlogged tables if the history table is
---          * also unlogged, but what's the point?
---          */
---         RAISE EXCEPTION 'table "%" must be persistent', table_class;
---     END IF;
---
---     /* We need a SYSTEM_TIME period. SQL:2016 11.29 SR 4 */
---     SELECT p.*
---     INTO era_row
---     FROM sql_saga.era AS p
---     WHERE (p.table_name, p.era_name) = (table_class, 'system_time');
---
---     IF NOT FOUND THEN
---         RAISE EXCEPTION 'no period for SYSTEM_TIME found for table %', table_class;
---     END IF;
---
---     /* Get all of our "fake" infrastructure ready */
---     audit_table_name := coalesce(audit_table_name, sql_saga._make_name(ARRAY[table_name], 'history'));
---     view_oid := coalesce(view_oid, sql_saga._make_name(ARRAY[table_name], 'with_history'));
---     function_as_of_name := coalesce(function_as_of_name, sql_saga._make_name(ARRAY[table_name], '_as_of'));
---     function_between_name := coalesce(function_between_name, sql_saga._make_name(ARRAY[table_name], '_between'));
---     function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga._make_name(ARRAY[table_name], '_between_symmetric'));
---     function_from_to_name := coalesce(function_from_to_name, sql_saga._make_name(ARRAY[table_name], '_from_to'));
---
---     /*
---      * Create the history table.  If it already exists we check that all the
---      * columns match but otherwise we trust the user.  Perhaps the history
---      * table was disconnected in order to change the schema (a case which is
---      * not defined by the SQL standard).  Or perhaps the user wanted to
---      * partition the history table.
---      *
---      * There shouldn't be any concurrency issues here because our main catalog
---      * is locked.
---      */
---     SELECT c.oid
---     INTO history_table_id
---     FROM pg_catalog.pg_class AS c
---     JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
---     WHERE (n.nspname, c.relname) = (schema_name, audit_table_name);
---
---     IF FOUND THEN
---         /* Don't allow any periods on the history table (this might be relaxed later) */
---         IF EXISTS (SELECT FROM sql_saga.era AS p WHERE p.table_name = history_table_id) THEN
---             RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have periods';
---         END IF;
---
---         /*
---          * The query to the attributes is harder than one would think because
---          * we need to account for dropped columns.  Basically what we're
---          * looking for is that all columns have the same name, type, and
---          * collation.
---          */
---         IF EXISTS (
---             WITH
---             L (attname, atttypid, atttypmod, attcollation) AS (
---                 SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation
---                 FROM pg_catalog.pg_attribute AS a
---                 WHERE a.attrelid = table_class
---                   AND NOT a.attisdropped
---             ),
---             R (attname, atttypid, atttypmod, attcollation) AS (
---                 SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation
---                 FROM pg_catalog.pg_attribute AS a
---                 WHERE a.attrelid = history_table_id
---                   AND NOT a.attisdropped
---             )
---             SELECT FROM L NATURAL FULL JOIN R
---             WHERE L.attname IS NULL OR R.attname IS NULL)
---         THEN
---             RAISE EXCEPTION 'base table "%" and history table "%" are not compatible',
---                 table_class, history_table_id::regclass;
---         END IF;
---
---         /* Make sure the owner is correct */
---         EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass, table_owner);
---
---         /*
---          * Remove all privileges other than SELECT from everyone on the history
---          * table.  We do this without error because some privileges may have
---          * been added in order to do maintenance while we were disconnected.
---          *
---          * We start by doing the table owner because that will make sure we
---          * don't have NULL in pg_class.relacl.
---          */
---         --EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE %s FROM %I',
---             --history_table_id::regclass, table_owner);
---     ELSE
---         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', schema_name, audit_table_name, table_name);
---         history_table_id := format('%I.%I', schema_name, audit_table_name)::regclass;
---
---         EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', schema_name, audit_table_name, table_owner);
---
---         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly',
---             history_table_id::regclass, table_class;
---     END IF;
---
---     /* Create the "with history" view.  This one we do want to error out on if it exists. */
---     EXECUTE format(
---         /*
---          * The query we really want here is
---          *
---          *     CREATE VIEW view_oid AS
---          *         TABLE table_name
---          *         UNION ALL CORRESPONDING
---          *         TABLE audit_table_name
---          *
---          * but PostgreSQL doesn't support that syntax (yet), so we have to do
---          * it manually.
---          */
---         'CREATE VIEW %1$I.%2$I AS SELECT %5$s FROM %1$I.%3$I UNION ALL SELECT %5$s FROM %1$I.%4$I',
---         schema_name, view_oid, table_name, audit_table_name,
---         (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum)
---          FROM pg_attribute AS a
---          WHERE a.attrelid = table_class
---            AND a.attnum > 0
---            AND NOT a.attisdropped
---         ));
---     EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', schema_name, view_oid, table_owner);
---
---     /*
---      * Create functions to simulate the system versioned grammar.  These must
---      * be inlinable for any kind of performance.
---      */
---     EXECUTE format(
---         $$
---         CREATE FUNCTION %1$I.%2$I(timestamp with time zone)
---          RETURNS SETOF %1$I.%3$I
---          LANGUAGE sql
---          STABLE
---         AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1'
---         $$, schema_name, function_as_of_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
---     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I',
---         schema_name, function_as_of_name, table_owner);
---
---     EXECUTE format(
---         $$
---         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
---          RETURNS SETOF %1$I.%3$I
---          LANGUAGE sql
---          STABLE
---         AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2'
---         $$, schema_name, function_between_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
---     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
---         schema_name, function_between_name, table_owner);
---
---     EXECUTE format(
---         $$
---         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
---          RETURNS SETOF %1$I.%3$I
---          LANGUAGE sql
---          STABLE
---         AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)'
---         $$, schema_name, function_between_symmetric_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
---     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
---         schema_name, function_between_symmetric_name, table_owner);
---
---     EXECUTE format(
---         $$
---         CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone)
---          RETURNS SETOF %1$I.%3$I
---          LANGUAGE sql
---          STABLE
---         AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2'
---         $$, schema_name, function_from_to_name, view_oid, era_row.start_after_column_name, era_row.stop_on_column_name);
---     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I',
---         schema_name, function_from_to_name, table_owner);
---
---     /* Set privileges on history objects */
---     FOR sql IN
---         SELECT format('REVOKE ALL ON %s %s FROM %s',
---                       CASE object_type
---                           WHEN 'r' THEN 'TABLE'
---                           WHEN 'p' THEN 'TABLE'
---                           WHEN 'v' THEN 'TABLE'
---                           WHEN 'f' THEN 'FUNCTION'
---                       ELSE 'ERROR'
---                       END,
---                       string_agg(DISTINCT object_name, ', '),
---                       string_agg(DISTINCT quote_ident(COALESCE(a.rolname, 'public')), ', '))
---         FROM (
---             SELECT c.relkind AS object_type,
---                    c.oid::regclass::text AS object_name,
---                    acl.grantee AS grantee
---             FROM pg_class AS c
---             JOIN pg_namespace AS n ON n.oid = c.relnamespace
---             CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
---             WHERE n.nspname = schema_name
---               AND c.relname IN (audit_table_name, view_oid)
---
---             UNION ALL
---
---             SELECT 'f',
---                    p.oid::regprocedure::text,
---                    acl.grantee
---             FROM pg_proc AS p
---             CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) AS acl
---             WHERE p.oid = ANY (ARRAY[
---                     format('%I.%I(timestamp with time zone)', schema_name, function_as_of_name)::regprocedure,
---                     format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_name)::regprocedure,
---                     format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_symmetric_name)::regprocedure,
---                     format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_from_to_name)::regprocedure
---                 ])
---         ) AS objects
---         LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
---         GROUP BY objects.object_type
---     LOOP
---         EXECUTE sql;
---     END LOOP;
---
---     FOR grantees IN
---         SELECT string_agg(acl.grantee::regrole::text, ', ')
---         FROM pg_class AS c
---         CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
---         WHERE c.oid = table_class
---           AND acl.privilege_type = 'SELECT'
---     LOOP
---         EXECUTE format('GRANT SELECT ON TABLE %1$I.%2$I, %1$I.%3$I TO %4$s',
---                        schema_name, audit_table_name, view_oid, grantees);
---         EXECUTE format('GRANT EXECUTE ON FUNCTION %s, %s, %s, %s TO %s',
---                        format('%I.%I(timestamp with time zone)', schema_name, function_as_of_name)::regprocedure,
---                        format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_name)::regprocedure,
---                        format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_symmetric_name)::regprocedure,
---                        format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_from_to_name)::regprocedure,
---                        grantees);
---     END LOOP;
---
---     /* Register it */
---     INSERT INTO sql_saga.system_versioning (table_name, era_name, audit_table_name, view_oid,
---                                            func_as_of, func_between, func_between_symmetric, func_from_to)
---     VALUES (
---         table_class,
---         'system_time',
---         format('%I.%I', schema_name, audit_table_name),
---         format('%I.%I', schema_name, view_oid),
---         format('%I.%I(timestamp with time zone)', schema_name, function_as_of_name),
---         format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_name),
---         format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_between_symmetric_name),
---         format('%I.%I(timestamp with time zone,timestamp with time zone)', schema_name, function_from_to_name)
---     );
--- END;
--- $function$;
---
--- CREATE FUNCTION sql_saga.drop_system_versioning(table_name regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
---  RETURNS boolean
---  LANGUAGE plpgsql
---  SECURITY DEFINER
--- AS $function$
--- #variable_conflict use_variable
--- DECLARE
---     system_versioning_row sql_saga.system_versioning;
---     is_dropped boolean;
--- BEGIN
---     IF table_name IS NULL THEN
---         RAISE EXCEPTION 'no table name specified';
---     END IF;
---
---     /* Always serialize operations on our catalogs */
---     PERFORM sql_saga._serialize(table_name);
---
---     /*
---      * REFERENCES:
---      *     SQL:2016 4.15.2.2
---      *     SQL:2016 11.3 SR 2.3
---      *     SQL:2016 11.3 GR 1.c
---      *     SQL:2016 11.30
---      */
---
---     /*
---      * We need to delete our row first so that the DROP protection doesn't
---      * block us.
---      */
---     DELETE FROM sql_saga.system_versioning AS sv
---     WHERE sv.table_name = table_name
---     RETURNING * INTO system_versioning_row;
---
---     IF NOT FOUND THEN
---         RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_name;
---         RETURN false;
---     END IF;
---
---     /*
---      * Has the table been dropped?  If so, everything else is also dropped
---      * except for the history table.
---      */
---     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_name);
---
---     IF NOT is_dropped THEN
---         /* Drop the functions. */
---         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure, drop_behavior);
---         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure, drop_behavior);
---         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure, drop_behavior);
---         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure, drop_behavior);
---
---         /* Drop the "with_history" view. */
---         EXECUTE format('DROP VIEW %s %s', system_versioning_row.view_oid, drop_behavior);
---     END IF;
---
---     /*
---      * SQL:2016 11.30 GR 2 says "Every row of T that corresponds to a
---      * historical system row is effectively deleted at the end of the SQL-
---      * statement." but we leave the history table intact in case the user
---      * merely wants to make some DDL changes and hook things back up again.
---      *
---      * The cleanup parameter tells us that the user really wants to get rid of it
---      * all.
---      */
---     IF NOT is_dropped AND cleanup THEN
---         PERFORM sql_saga.drop_era(table_name, 'system_time', drop_behavior, cleanup);
---         EXECUTE format('DROP TABLE %s %s', system_versioning_row.audit_table_name, drop_behavior);
---     END IF;
---
---     RETURN true;
--- END;
--- $function$;
+CREATE FUNCTION sql_saga.__internal_add_system_time_era(
+    table_oid regclass,
+    valid_from_column_name name DEFAULT 'system_valid_from',
+    valid_until_column_name name DEFAULT 'system_valid_until',
+    bounds_check_constraint name DEFAULT NULL,
+    infinity_check_constraint name DEFAULT NULL,
+    generated_always_trigger name DEFAULT NULL,
+    write_history_trigger name DEFAULT NULL,
+    truncate_trigger name DEFAULT NULL,
+    excluded_column_names name[] DEFAULT '{}')
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    era_name CONSTANT name := 'system_time';
+    table_schema name;
+    table_name name;
+    kind "char";
+    persistence "char";
+    alter_commands text[] DEFAULT '{}';
+    valid_from_attnum smallint;
+    valid_from_type oid;
+    valid_from_notnull boolean;
+    valid_until_attnum smallint;
+    valid_until_type oid;
+    valid_until_notnull boolean;
+    excluded_column_name name;
+    DATE_OID CONSTANT integer := 1082;
+    TIMESTAMP_OID CONSTANT integer := 1114;
+    TIMESTAMPTZ_OID CONSTANT integer := 1184;
+    range_type regtype;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname, c.relpersistence, c.relkind
+    INTO table_schema, table_name, persistence, kind
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    IF kind <> 'r' THEN
+        IF kind = 'p' THEN
+            RAISE EXCEPTION 'partitioned tables are not supported yet';
+        END IF;
+        RAISE EXCEPTION 'relation % is not a table', table_oid;
+    END IF;
+
+    IF persistence <> 'p' THEN
+        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
+    END IF;
+
+    IF EXISTS (SELECT FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, era_name)) THEN
+        RAISE EXCEPTION 'era for SYSTEM_TIME already exists on table "%"', table_oid;
+    END IF;
+
+    IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_name)) THEN
+        RAISE EXCEPTION 'a column named system_time already exists for table "%"', table_oid;
+    END IF;
+
+    SELECT a.attnum, a.atttypid, a.attnotnull
+    INTO valid_from_attnum, valid_from_type, valid_from_notnull
+    FROM pg_catalog.pg_attribute AS a
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
+
+    IF NOT FOUND THEN
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', valid_from_column_name);
+        valid_from_attnum := 0;
+        valid_from_type := 'timestamp with time zone'::regtype;
+        valid_from_notnull := true;
+    END IF;
+    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', valid_from_column_name);
+
+    IF valid_from_attnum < 0 THEN
+        RAISE EXCEPTION 'system columns cannot be used in an era';
+    END IF;
+
+    SELECT a.attnum, a.atttypid, a.attnotnull
+    INTO valid_until_attnum, valid_until_type, valid_until_notnull
+    FROM pg_catalog.pg_attribute AS a
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
+
+    IF NOT FOUND THEN
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', valid_until_column_name);
+        valid_until_attnum := 0;
+        valid_until_type := 'timestamp with time zone'::regtype;
+        valid_until_notnull := true;
+    ELSE
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
+    END IF;
+
+    IF valid_until_attnum < 0 THEN
+        RAISE EXCEPTION 'system columns cannot be used in an era';
+    END IF;
+
+    IF valid_from_type::regtype NOT IN ('date', 'timestamp without time zone', 'timestamp with time zone') THEN
+        RAISE EXCEPTION 'SYSTEM_TIME eras must be of type "date", "timestamp without time zone", or "timestamp with time zone"';
+    END IF;
+    IF valid_from_type <> valid_until_type THEN
+        RAISE EXCEPTION 'start and end columns must be of same type';
+    END IF;
+
+    CASE valid_from_type
+        WHEN DATE_OID THEN range_type := 'daterange';
+        WHEN TIMESTAMP_OID THEN range_type := 'tsrange';
+        WHEN TIMESTAMPTZ_OID THEN range_type := 'tstzrange';
+    ELSE
+        RAISE EXCEPTION 'unexpected data type: "%"', valid_from_type::regtype;
+    END CASE;
+
+    IF NOT valid_from_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
+    END IF;
+    IF NOT valid_until_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
+    END IF;
+
+    DECLARE
+        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+    BEGIN
+        IF bounds_check_constraint IS NULL THEN
+            bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
+        END IF;
+        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+    END;
+
+    DECLARE
+        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
+    BEGIN
+        IF infinity_check_constraint IS NULL THEN
+            infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
+        END IF;
+        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+    END;
+
+    IF alter_commands <> '{}' THEN
+        EXECUTE format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(alter_commands, ', '));
+    END IF;
+
+    generated_always_trigger := coalesce(generated_always_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_generated_always'));
+    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger, table_oid);
+
+    write_history_trigger := coalesce(write_history_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_write_history'));
+    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger, table_oid);
+
+    truncate_trigger := coalesce(truncate_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'truncate'));
+    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger, table_oid);
+
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint)
+    VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint);
+
+    INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
+    VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);
+
+    RETURN true;
+END;
+$function$;
+
+CREATE FUNCTION sql_saga.add_system_versioning(
+    table_oid regclass,
+    history_table_name name DEFAULT NULL,
+    view_name name DEFAULT NULL,
+    function_as_of_name name DEFAULT NULL,
+    function_between_name name DEFAULT NULL,
+    function_between_symmetric_name name DEFAULT NULL,
+    function_from_to_name name DEFAULT NULL)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    table_owner regrole;
+    persistence "char";
+    kind "char";
+    era_row sql_saga.era;
+    history_table_id oid;
+    sql text;
+    grantees text;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname, c.relowner, c.relpersistence, c.relkind
+    INTO table_schema, table_name, table_owner, persistence, kind
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    IF EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)) THEN
+        RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
+    END IF;
+
+    IF kind <> 'r' THEN
+        IF kind = 'p' THEN
+            RAISE EXCEPTION 'partitioned tables are not supported yet';
+        END IF;
+        RAISE EXCEPTION 'relation % is not a table', table_oid;
+    END IF;
+
+    IF persistence <> 'p' THEN
+        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
+    END IF;
+
+    SELECT e.*
+    INTO era_row
+    FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
+
+    IF NOT FOUND THEN
+        PERFORM sql_saga.__internal_add_system_time_era(table_oid);
+        -- Re-fetch era row
+        SELECT e.* INTO era_row FROM sql_saga.era e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
+    END IF;
+
+    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
+    view_name := coalesce(view_name, sql_saga.__internal_make_name(ARRAY[table_name], 'with_history'));
+    function_as_of_name := coalesce(function_as_of_name, sql_saga.__internal_make_name(ARRAY[table_name], '_as_of'));
+    function_between_name := coalesce(function_between_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between'));
+    function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between_symmetric'));
+    function_from_to_name := coalesce(function_from_to_name, sql_saga.__internal_make_name(ARRAY[table_name], '_from_to'));
+
+    SELECT c.oid INTO history_table_id FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
+
+    IF FOUND THEN
+        IF EXISTS (SELECT 1 FROM sql_saga.era p JOIN pg_class c ON p.table_name = c.relname JOIN pg_namespace n ON c.relnamespace = n.oid AND p.table_schema = n.nspname WHERE c.oid = history_table_id) THEN
+            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
+        END IF;
+        IF EXISTS (
+            WITH
+            L (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped),
+            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
+            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
+        THEN
+            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', table_oid, history_table_id::regclass;
+        END IF;
+        EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass, table_owner);
+    ELSE
+        EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema, history_table_name, table_name);
+        history_table_id := format('%I.%I', table_schema, history_table_name)::regclass;
+        EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema, history_table_name, table_owner);
+        RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
+    END IF;
+
+    EXECUTE format('CREATE VIEW %1$I.%2$I AS SELECT %5$s FROM %1$I.%3$I UNION ALL SELECT %5$s FROM %1$I.%4$I',
+        table_schema, view_name, table_name, history_table_name,
+        (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped));
+    EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', table_schema, view_name, table_owner);
+
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1' $$, table_schema, function_as_of_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I', table_schema, function_as_of_name, table_owner);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2' $$, table_schema, function_between_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_between_name, table_owner);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)' $$, table_schema, function_between_symmetric_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_between_symmetric_name, table_owner);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2' $$, table_schema, function_from_to_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_from_to_name, table_owner);
+
+    -- TODO: Set privileges on history objects
+
+    INSERT INTO sql_saga.system_versioning (table_schema, table_name, era_name, history_schema_name, history_table_name, view_schema_name, view_table_name, func_as_of, func_between, func_between_symmetric, func_from_to)
+    VALUES (
+        table_schema, table_name, 'system_time',
+        table_schema, history_table_name,
+        table_schema, view_name,
+        format('%I.%I(timestamp with time zone)', table_schema, function_as_of_name),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_between_name),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_between_symmetric_name),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_from_to_name)
+    );
+END;
+$function$;
+
+CREATE FUNCTION sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    system_versioning_row sql_saga.system_versioning;
+    is_dropped boolean;
+    table_schema name;
+    table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    DELETE FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)
+    RETURNING * INTO system_versioning_row;
+
+    IF NOT FOUND THEN
+        RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_oid;
+        RETURN false;
+    END IF;
+
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+
+    IF NOT is_dropped THEN
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure, drop_behavior);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure, drop_behavior);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure, drop_behavior);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure, drop_behavior);
+        EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+    END IF;
+
+    IF NOT is_dropped AND cleanup THEN
+        PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
+        EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+    END IF;
+
+    RETURN true;
+END;
+$function$;
+
+CREATE FUNCTION sql_saga.drop_system_time_era(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE sql
+ SECURITY DEFINER
+AS
+$function$
+SELECT sql_saga.drop_era(table_oid, 'system_time', drop_behavior, cleanup);
+$function$;
+
+CREATE FUNCTION sql_saga.set_system_time_era_excluded_columns(
+    table_oid regclass,
+    excluded_column_names name[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    excluded_column_name name;
+    table_schema name;
+    table_name name;
+BEGIN
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    /* Make sure all the excluded columns exist */
+    FOR excluded_column_name IN
+        SELECT u.name
+        FROM unnest(excluded_column_names) AS u (name)
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_attribute AS a
+            WHERE (a.attrelid, a.attname) = (table_oid, u.name))
+    LOOP
+        RAISE EXCEPTION 'column "%" does not exist in table %', excluded_column_name, table_oid;
+    END LOOP;
+
+    /* Don't allow system columns to be excluded either */
+    FOR excluded_column_name IN
+        SELECT u.name
+        FROM unnest(excluded_column_names) AS u (name)
+        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_oid, u.name)
+        WHERE a.attnum < 0
+    LOOP
+        RAISE EXCEPTION 'cannot exclude system column "%"', excluded_column_name;
+    END LOOP;
+
+    /* Do it. */
+    UPDATE sql_saga.system_time_era AS ste SET
+        excluded_column_names = $2
+    WHERE (ste.table_schema, ste.table_name) = (table_schema, table_name);
+END;
+$function$;
 
 
 CREATE FUNCTION sql_saga.drop_protection()
@@ -2561,7 +2716,7 @@ BEGIN
 
         -- 1. For FKs that reference the dropped table, drop them completely.
         -- We can call drop_foreign_key because it can look up the FK table by name and drop its triggers.
-        PERFORM sql_saga.drop_foreign_key(
+        PERFORM sql_saga.drop_foreign_key_by_name(
             format('%I.%I', fk.table_schema, fk.table_name)::regclass,
             fk.foreign_key_name
         )

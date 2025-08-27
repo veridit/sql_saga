@@ -180,16 +180,22 @@ TABLE sql_saga.foreign_keys;
  rename_test_ref_col2_COLUMN1_col3_q | public       | rename_test_ref | {col2,COLUMN1,col3} | q        | rename_test_col2_col1_col3_p | SIMPLE     | NO ACTION     | NO ACTION     | rename_test_ref_col2_COLUMN1_col3_q_fk_insert | rename_test_ref_col2_COLUMN1_col3_q_fk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_update | rename_test_ref_col2_COLUMN1_col3_q_uk_delete
 (1 row)
 
-SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1_col3_q');
+SELECT sql_saga.drop_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q');
  drop_foreign_key 
 ------------------
- t
+ 
 (1 row)
 
-SELECT sql_saga.drop_unique_key('rename_test', 'rename_test_col2_col1_col3_p');
+SELECT sql_saga.drop_unique_key('rename_test', ARRAY['col2', 'COLUMN1', 'col3'], 'p');
  drop_unique_key 
 -----------------
  
+(1 row)
+
+SELECT sql_saga.drop_era('rename_test', 'p');
+ drop_era 
+----------
+ t
 (1 row)
 
 DROP TABLE rename_test;
@@ -214,7 +220,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

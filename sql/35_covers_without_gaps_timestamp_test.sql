@@ -161,7 +161,7 @@ WHERE   job_id = 1;
 
 DELETE FROM timestamp_shifts;
 
-SELECT sql_saga.drop_unique_key('timestamp_shifts', 'timestamp_shifts_job_id_worker_id_valid');
+SELECT sql_saga.drop_unique_key('timestamp_shifts', ARRAY['job_id', 'worker_id'], 'valid');
 SELECT sql_saga.drop_era('timestamp_shifts');
 
 DROP TABLE timestamp_shifts;

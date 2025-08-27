@@ -168,8 +168,38 @@ INSERT INTO uk(id, f, u)        VALUES    (4, 1, 4),
 ERROR:  conflicting key value violates exclusion constraint "uk_id_int4range_excl"
 DETAIL:  Key (id, int4range(f, u))=(4, [3,5)) conflicts with existing key (id, int4range(f, u))=(4, [1,4)).
 ROLLBACK TO SAVEPOINT s5;
-DROP TABLE uk;
+SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('fk', ARRAY['id'], 'q');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('fk', 'q');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE fk;
+SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('uk', 'p');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE uk;
 -- Test case for bug with infinite parent validity
 CREATE TABLE legal_unit_bug (
     id INT NOT NULL,
@@ -230,7 +260,37 @@ SELECT * FROM establishment_bug;
  101 |             1 | 01-01-2024 | 01-01-2025  | Child EST
 (1 row)
 
+SELECT sql_saga.drop_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('establishment_bug', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('establishment_bug', 'valid');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE establishment_bug;
+SELECT sql_saga.drop_unique_key('legal_unit_bug', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('legal_unit_bug', 'valid');
+ drop_era 
+----------
+ t
+(1 row)
+
 DROP TABLE legal_unit_bug;
 ROLLBACK;
 \i sql/include/test_teardown.sql
@@ -246,7 +306,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-DROP EXTENSION IF EXISTS btree_gist;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;

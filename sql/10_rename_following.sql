@@ -66,8 +66,9 @@ ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test REN
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
 
-SELECT sql_saga.drop_foreign_key('rename_test_ref','rename_test_ref_col2_COLUMN1_col3_q');
-SELECT sql_saga.drop_unique_key('rename_test', 'rename_test_col2_col1_col3_p');
+SELECT sql_saga.drop_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q');
+SELECT sql_saga.drop_unique_key('rename_test', ARRAY['col2', 'COLUMN1', 'col3'], 'p');
+SELECT sql_saga.drop_era('rename_test', 'p');
 DROP TABLE rename_test;
 
 SELECT sql_saga.drop_era('rename_test_ref','q');

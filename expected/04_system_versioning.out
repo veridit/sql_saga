@@ -25,7 +25,7 @@ SELECT periods.add_system_time_period('sysver', excluded_column_names => ARRAY['
 TABLE periods.system_time_periods;
  table_name | period_name |       infinity_check_constraint       |      generated_always_trigger       |      write_history_trigger       | truncate_trigger | excluded_column_names 
 ------------+-------------+---------------------------------------+-------------------------------------+----------------------------------+------------------+-----------------------
- sysver     | system_time | sysver_system_time_end_infinity_check | sysver_system_time_generated_always | sysver_system_time_write_history | sysver_truncate  | {flap}
+ sysver     | system_time | sysver_system_valid_until_infinity_check | sysver_system_time_generated_always | sysver_system_time_write_history | sysver_truncate  | {flap}
 (1 row)
 
 TABLE periods.system_versioning;
@@ -79,7 +79,7 @@ SELECT val FROM sysver;
  hello
 (1 row)
 
-SELECT val FROM sysver_history ORDER BY system_time_start;
+SELECT val FROM sysver_history ORDER BY system_valid_from;
  val 
 -----
 (0 rows)
@@ -92,7 +92,7 @@ SELECT val FROM sysver;
  world
 (1 row)
 
-SELECT val FROM sysver_history ORDER BY system_time_start;
+SELECT val FROM sysver_history ORDER BY system_valid_from;
   val  
 -------
  hello
@@ -109,7 +109,7 @@ SELECT val FROM sysver;
  world
 (1 row)
 
-SELECT val FROM sysver_history ORDER BY system_time_start;
+SELECT val FROM sysver_history ORDER BY system_valid_from;
   val  
 -------
  hello
@@ -122,7 +122,7 @@ SELECT val FROM sysver;
 -----
 (0 rows)
 
-SELECT val FROM sysver_history ORDER BY system_time_start;
+SELECT val FROM sysver_history ORDER BY system_valid_from;
   val  
 -------
  hello
@@ -130,50 +130,50 @@ SELECT val FROM sysver_history ORDER BY system_time_start;
 (2 rows)
 
 /* temporal queries */
-SELECT val FROM sysver__as_of(:'ts1') ORDER BY system_time_start;
+SELECT val FROM sysver__as_of(:'ts1') ORDER BY system_valid_from;
   val  
 -------
  hello
 (1 row)
 
-SELECT val FROM sysver__as_of(:'ts2') ORDER BY system_time_start;
+SELECT val FROM sysver__as_of(:'ts2') ORDER BY system_valid_from;
   val  
 -------
  world
 (1 row)
 
-SELECT val FROM sysver__from_to(:'ts1', :'ts2') ORDER BY system_time_start;
+SELECT val FROM sysver__from_to(:'ts1', :'ts2') ORDER BY system_valid_from;
   val  
 -------
  hello
  world
 (2 rows)
 
-SELECT val FROM sysver__from_to(:'ts2', :'ts1') ORDER BY system_time_start;
+SELECT val FROM sysver__from_to(:'ts2', :'ts1') ORDER BY system_valid_from;
  val 
 -----
 (0 rows)
 
-SELECT val FROM sysver__between(:'ts1', :'ts2') ORDER BY system_time_start;
+SELECT val FROM sysver__between(:'ts1', :'ts2') ORDER BY system_valid_from;
   val  
 -------
  hello
  world
 (2 rows)
 
-SELECT val FROM sysver__between(:'ts2', :'ts1') ORDER BY system_time_start;
+SELECT val FROM sysver__between(:'ts2', :'ts1') ORDER BY system_valid_from;
  val 
 -----
 (0 rows)
 
-SELECT val FROM sysver__between_symmetric(:'ts1', :'ts2') ORDER BY system_time_start;
+SELECT val FROM sysver__between_symmetric(:'ts1', :'ts2') ORDER BY system_valid_from;
   val  
 -------
  hello
  world
 (2 rows)
 
-SELECT val FROM sysver__between_symmetric(:'ts2', :'ts1') ORDER BY system_time_start;
+SELECT val FROM sysver__between_symmetric(:'ts2', :'ts1') ORDER BY system_valid_from;
   val  
 -------
  hello
@@ -188,9 +188,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM sysver__as_of('2000-01-01');
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on sysver
-         Filter: ((system_time_start <= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_end > '2000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_from <= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_until > '2000-01-01 00:00:00+00'::timestamp with time zone))
    ->  Seq Scan on sysver_history
-         Filter: ((system_time_start <= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_end > '2000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_from <= '2000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_until > '2000-01-01 00:00:00+00'::timestamp with time zone))
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM sysver__from_to('1000-01-01', '3000-01-01');
@@ -198,9 +198,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM sysver__from_to('1000-01-01', '3000-01-01');
 -----------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on sysver
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start < '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from < '3000-01-01 00:00:00+00'::timestamp with time zone))
    ->  Seq Scan on sysver_history
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start < '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from < '3000-01-01 00:00:00+00'::timestamp with time zone))
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM sysver__between('1000-01-01', '3000-01-01');
@@ -208,9 +208,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM sysver__between('1000-01-01', '3000-01-01');
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on sysver
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start <= '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from <= '3000-01-01 00:00:00+00'::timestamp with time zone))
    ->  Seq Scan on sysver_history
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start <= '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from <= '3000-01-01 00:00:00+00'::timestamp with time zone))
 (5 rows)
 
 EXPLAIN (COSTS OFF) SELECT * FROM sysver__between_symmetric('3000-01-01', '1000-01-01');
@@ -218,9 +218,9 @@ EXPLAIN (COSTS OFF) SELECT * FROM sysver__between_symmetric('3000-01-01', '1000-
 ------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Append
    ->  Seq Scan on sysver
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start <= '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from <= '3000-01-01 00:00:00+00'::timestamp with time zone))
    ->  Seq Scan on sysver_history
-         Filter: ((system_time_end > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_time_start <= '3000-01-01 00:00:00+00'::timestamp with time zone))
+         Filter: ((system_valid_until > '1000-01-01 00:00:00+00'::timestamp with time zone) AND (system_valid_from <= '3000-01-01 00:00:00+00'::timestamp with time zone))
 (5 rows)
 
 /* TRUNCATE should delete the history, too */
