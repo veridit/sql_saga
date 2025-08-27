@@ -70,6 +70,7 @@ CREATE TABLE sql_saga.unique_keys (
     era_name name NOT NULL,
     unique_constraint name NOT NULL,
     exclude_constraint name NOT NULL,
+    predicate text,
 
     PRIMARY KEY (unique_key_name),
 

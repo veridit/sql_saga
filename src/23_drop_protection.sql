@@ -212,29 +212,47 @@ BEGIN
      * the indexes.  PostgreSQL will make sure they stick around.
      */
 
-    /* Complain if the indexes implementing our unique indexes are missing. */
+    /* Complain if the objects implementing our unique keys are missing. */
     FOR r IN
-        SELECT uk.unique_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, uk.unique_constraint
+        SELECT uk.*, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid
         FROM sql_saga.unique_keys AS uk
+        -- Only check tables that still exist.
         WHERE pg_catalog.to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
-          AND NOT EXISTS (
-            SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), uk.unique_constraint))
     LOOP
-        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-            r.unique_constraint, r.table_oid, r.unique_key_name;
-    END LOOP;
+        -- If the table this key belongs to is being dropped, skip protection checks.
+        IF EXISTS (
+            SELECT 1 FROM pg_event_trigger_dropped_objects() dobj
+            WHERE dobj.object_type = 'table'
+              AND (dobj.schema_name, dobj.object_name) = (r.table_schema, r.table_name)
+        ) THEN
+            CONTINUE;
+        END IF;
 
-    FOR r IN
-        SELECT uk.unique_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, uk.exclude_constraint
-        FROM sql_saga.unique_keys AS uk
-        WHERE pg_catalog.to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
-          AND NOT EXISTS (
+        -- Check unique constraint (for non-predicated keys) or unique index (for predicated keys)
+        IF r.predicate IS NULL THEN
+            IF NOT EXISTS (
+                SELECT FROM pg_catalog.pg_constraint AS c
+                WHERE (c.conrelid, c.conname) = (r.table_oid, r.unique_constraint)
+            ) THEN
+                RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
+                    r.unique_constraint, r.table_oid, r.unique_key_name;
+            END IF;
+        ELSE
+            -- Predicated keys use a unique index, not a constraint.
+            IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
+                 RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
+                    r.unique_constraint, r.table_oid, r.unique_key_name;
+            END IF;
+        END IF;
+
+        -- Check exclude constraint
+        IF NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), uk.exclude_constraint))
-    LOOP
-        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-            r.exclude_constraint, r.table_oid, r.unique_key_name;
+            WHERE (c.conrelid, c.conname) = (r.table_oid, r.exclude_constraint)
+        ) THEN
+            RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
+                r.exclude_constraint, r.table_oid, r.unique_key_name;
+        END IF;
     END LOOP;
 
     ---

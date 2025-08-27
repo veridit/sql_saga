@@ -24,7 +24,7 @@ In the context of this extension, a **Saga** represents the complete history of 
 ## Temporal Tables with Foreign Keys example
 
 A simplified example to illustrate the concept.
-A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end), aligning with PostgreSQL's native range types.
+A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end), aligning with PostgreSQL's native range types. While `DATE` is used in these examples for simplicity, any data type that can form a range is supported, including `TIMESTAMPTZ`, `TIMESTAMP`, `INTEGER`, `BIGINT`, and `NUMERIC`.
 
 ### Entity Identifiers
 
@@ -178,8 +178,9 @@ CREATE TABLE legal_unit (
   id SERIAL NOT NULL,
   legal_ident VARCHAR NOT NULL,
   name VARCHAR NOT NULL,
-  valid_from TIMESTAMPTZ,
-  valid_until TIMESTAMPTZ,
+  status TEXT, -- e.g., 'active', 'inactive'
+  valid_from DATE,
+  valid_until DATE,
   valid_to DATE -- Optional: for human-readable inclusive end dates
   -- Note: A primary key on temporal tables is often not on the temporal columns
 );
@@ -193,8 +194,14 @@ CREATE TRIGGER legal_unit_synchronize_validity
 SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['name'], unique_key_name => 'legal_unit_name_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+-- Add a predicated unique key (e.g., only active units must have a unique name).
+SELECT sql_saga.add_unique_key(
+    table_oid => 'legal_unit',
+    column_names => ARRAY['name'],
+    predicate => 'status = ''active''',
+    unique_key_name => 'legal_unit_active_name_valid'
+);
 
 
 CREATE TABLE establishment (
@@ -202,8 +209,8 @@ CREATE TABLE establishment (
   name VARCHAR NOT NULL,
   address TEXT NOT NULL,
   legal_unit_id INTEGER NOT NULL,
-  valid_from TIMESTAMPTZ,
-  valid_until TIMESTAMPTZ
+  valid_from DATE,
+  valid_until DATE
 );
 
 SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
@@ -237,14 +244,14 @@ SELECT sql_saga.drop_foreign_key(
     era_name => 'valid'
 );
 
-SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_name_valid');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'establishment', key_name => 'establishment_id_valid');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'establishment', key_name => 'establishment_name_valid');
 SELECT sql_saga.drop_era('establishment');
 
 
-SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_name_valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'legal_unit', key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_active_name_valid');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_legal_ident_valid');
 SELECT sql_saga.drop_era('legal_unit');
 ```
 
@@ -279,7 +286,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### Unique Keys
-- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL) RETURNS name`
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL, predicate text DEFAULT NULL) RETURNS name`
 - `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 

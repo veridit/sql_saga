@@ -166,7 +166,7 @@ ROLLBACK TO SAVEPOINT s4;
 SAVEPOINT s5;
 INSERT INTO uk(id, f, u)        VALUES    (4, 1, 4),
                                           (4, 3, 5);
-ERROR:  conflicting key value violates exclusion constraint "uk_id_int4range_excl"
+ERROR:  conflicting key value violates exclusion constraint "uk_id_p_excl"
 DETAIL:  Key (id, int4range(f, u))=(4, [3,5)) conflicts with existing key (id, int4range(f, u))=(4, [1,4)).
 ROLLBACK TO SAVEPOINT s5;
 SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');

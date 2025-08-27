@@ -42,16 +42,16 @@ SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint |  exclude_constraint  
------------------+--------------+------------+--------------+----------+-------------------+----------------------
- uk_id_p         | public       | uk         | {id}         | p        | uk_pkey           | uk_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
+ uk_id_p         | public       | uk         | {id}         | p        | uk_pkey           | uk_id_p_excl       | 
 (1 row)
 
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
 INSERT INTO uk (id, valid_from, valid_until) VALUES (200, 2, 4), (200, 4, 5), (200, 6, 11); -- success
 SAVEPOINT pristine;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (300, 2, 4), (300, 4, 6), (300, 5, 11); -- fail
-ERROR:  conflicting key value violates exclusion constraint "uk_id_int4range_excl"
+ERROR:  conflicting key value violates exclusion constraint "uk_id_p_excl"
 DETAIL:  Key (id, int4range(valid_from, valid_until))=(300, [5,11)) conflicts with existing key (id, int4range(valid_from, valid_until))=(300, [4,6)).
 ROLLBACK TO SAVEPOINT pristine;
 CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id));
