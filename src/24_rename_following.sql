@@ -11,7 +11,16 @@ DECLARE
     r record;
     sql text;
     v_is_alter_trigger boolean := false;
+    is_alter_table boolean := false;
+    cmd record;
 BEGIN
+    FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
+        IF cmd.command_tag = 'ALTER TABLE' THEN
+            is_alter_table := true;
+            EXIT;
+        END IF;
+    END LOOP;
+
     FOR r IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
         IF r.command_tag = 'ALTER TRIGGER' THEN
             v_is_alter_trigger := true;
@@ -231,56 +240,171 @@ BEGIN
     --- foreign_keys
     ---
 
-    /*
-     * We can't reliably find out what a column was renamed to, so just error
-     * out in this case.
-     */
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) as table_oid, u.column_name
-        FROM sql_saga.foreign_keys AS fk
-        CROSS JOIN LATERAL unnest(fk.column_names) AS u (column_name)
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_attribute AS a
-            WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), u.column_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is used in era foreign key "%"',
-            r.column_name, r.table_oid, r.foreign_key_name;
-    END LOOP;
+    DECLARE
+        fk_table RECORD;
+        current_columns name[];
+        removed_columns name[];
+        added_columns name[];
+        old_col_name name;
+        new_col_name name;
+        fk_table_oid oid;
+    BEGIN
+        FOR fk_table IN
+            SELECT DISTINCT table_schema, table_name
+            FROM sql_saga.foreign_keys
+        LOOP
+            fk_table_oid := to_regclass(format('%I.%I', fk_table.table_schema, fk_table.table_name));
+
+            -- If table was dropped, skip it. drop_protection will handle FK violations.
+            IF fk_table_oid IS NULL THEN
+                CONTINUE;
+            END IF;
+
+            -- Get current columns for this table
+            SELECT array_agg(a.attname ORDER BY a.attnum) INTO current_columns
+            FROM pg_catalog.pg_attribute AS a
+            WHERE a.attrelid = fk_table_oid
+              AND a.attnum > 0 AND NOT a.attisdropped;
+
+            -- Find if a rename occurred by comparing current columns with the last known snapshot for this table
+            DECLARE
+                snapshot name[];
+            BEGIN
+                -- Get a snapshot from any of the FKs on this table (they are all identical for a given table)
+                SELECT fk_table_columns_snapshot INTO snapshot FROM sql_saga.foreign_keys
+                WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name)
+                LIMIT 1;
+
+                -- If columns are unchanged, we are done with this table
+                IF snapshot = current_columns THEN
+                    CONTINUE;
+                END IF;
+
+                -- Find columns that were in the snapshot but are not in the current table state
+                SELECT array_agg(c) INTO removed_columns
+                FROM unnest(snapshot) AS u(c)
+                WHERE NOT (u.c = ANY(current_columns));
+
+                -- Find columns that are in the current table state but were not in the snapshot
+                SELECT array_agg(c) INTO added_columns
+                FROM unnest(current_columns) AS u(c)
+                WHERE NOT (u.c = ANY(snapshot));
+
+                -- If exactly one column was removed and one was added, we have a rename.
+                IF array_length(removed_columns, 1) = 1 AND array_length(added_columns, 1) = 1 THEN
+                    old_col_name := removed_columns[1];
+                    new_col_name := added_columns[1];
+
+                    -- We have a rename. Find all affected FKs, rename their triggers and update their metadata.
+                    DECLARE
+                        fk_rec RECORD;
+                        uk_rec RECORD;
+                        new_column_names name[];
+                        new_foreign_key_name name;
+                        new_fk_insert_trigger name;
+                        new_fk_update_trigger name;
+                        new_uk_update_trigger name;
+                        new_uk_delete_trigger name;
+                    BEGIN
+                        FOR fk_rec IN
+                            SELECT * FROM sql_saga.foreign_keys
+                            WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name)
+                              AND old_col_name = ANY(column_names)
+                        LOOP
+                            -- Get UK info for uk-side trigger renames
+                            SELECT * INTO uk_rec FROM sql_saga.unique_keys WHERE unique_key_name = fk_rec.unique_key_name;
+
+                            -- 1. Calculate all the new names
+                            DECLARE
+                                old_base_foreign_key_name name;
+                                new_base_foreign_key_name name;
+                                name_suffix text;
+                            BEGIN
+                                new_column_names := array_replace(fk_rec.column_names, old_col_name, new_col_name);
+
+                                -- To correctly rename, we must preserve any suffix that was added
+                                -- to the original foreign key name to ensure uniqueness.
+                                old_base_foreign_key_name := sql_saga.__internal_make_name(
+                                    ARRAY[fk_rec.table_name] || fk_rec.column_names || ARRAY[fk_rec.fk_era_name]
+                                );
+                                name_suffix := regexp_replace(fk_rec.foreign_key_name, '^' || old_base_foreign_key_name, '');
+
+                                new_base_foreign_key_name := sql_saga.__internal_make_name(
+                                    ARRAY[fk_rec.table_name] || new_column_names || ARRAY[fk_rec.fk_era_name]
+                                );
+                                new_foreign_key_name := new_base_foreign_key_name || name_suffix;
+
+                                -- Regenerate trigger names with the full new name
+                                new_fk_insert_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'fk_insert');
+                                new_fk_update_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'fk_update');
+                                new_uk_update_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'uk_update');
+                                new_uk_delete_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'uk_delete');
+                            END;
+
+                            -- It appears that Postgres automatically renames triggers when a column that is part
+                            -- of the trigger's name is renamed. Therefore, we do not need to rename them
+                            -- manually; we only need to update our metadata to reflect the new names.
+                            UPDATE sql_saga.foreign_keys
+                            SET
+                                foreign_key_name = new_foreign_key_name,
+                                column_names = new_column_names,
+                                fk_insert_trigger = new_fk_insert_trigger,
+                                fk_update_trigger = new_fk_update_trigger,
+                                uk_update_trigger = new_uk_update_trigger,
+                                uk_delete_trigger = new_uk_delete_trigger
+                            WHERE foreign_key_name = fk_rec.foreign_key_name;
+                        END LOOP;
+                    END;
+                END IF;
+
+                -- Regardless of the operation (RENAME, ADD, DROP), update the snapshot
+                -- to reflect the new state of the table for all FKs on that table.
+                -- For DROP, drop_protection will have already fired if the column was part of an FK.
+                UPDATE sql_saga.foreign_keys
+                SET fk_table_columns_snapshot = current_columns
+                WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name);
+            END;
+        END LOOP;
+    END;
 
     /*
-     * Since there can be multiple foreign keys, there is no reliable way to
-     * know which trigger might belong to what, so just error out.
+     * Protection logic: Prevent manual renaming or dropping of managed triggers.
+     * This logic is disabled for ALTER TABLE commands because any trigger changes
+     * are side-effects of a column rename, which is handled above. This avoids
+     * false positives caused by MVCC visibility issues within the event trigger.
      */
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger AS trigger_name
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
-        UNION ALL
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger AS trigger_name
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
-        UNION ALL
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger AS trigger_name
-        FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
-        UNION ALL
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger AS trigger_name
-        FROM sql_saga.foreign_keys AS fk
-        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
-    LOOP
-        RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
-            r.trigger_name, r.table_oid, r.foreign_key_name;
-    END LOOP;
+    IF NOT is_alter_table THEN
+        FOR r IN
+            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger AS trigger_name
+            FROM sql_saga.foreign_keys AS fk
+            WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
+            UNION ALL
+            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger AS trigger_name
+            FROM sql_saga.foreign_keys AS fk
+            WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
+            UNION ALL
+            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger AS trigger_name
+            FROM sql_saga.foreign_keys AS fk
+            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+            WHERE NOT EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
+            UNION ALL
+            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger AS trigger_name
+            FROM sql_saga.foreign_keys AS fk
+            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+            WHERE NOT EXISTS (
+                SELECT FROM pg_catalog.pg_trigger AS t
+                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
+        LOOP
+            RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
+                r.trigger_name, r.table_oid, r.foreign_key_name;
+        END LOOP;
+    END IF;
 
 END;
 $function$;

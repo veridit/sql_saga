@@ -126,9 +126,9 @@ SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', '
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |  unique_key_name   | match_type | update_action | delete_action |         fk_insert_trigger         |         fk_update_trigger         | fk_check_constraint | fk_helper_function |         uk_update_trigger         |         uk_delete_trigger         
--------------------------+----------------------+--------------+------------+---------------+-------------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+---------------------+--------------------+-----------------------------------+-----------------------------------
- staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update |                     |                    | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete
+    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |                fk_table_columns_snapshot                |  unique_key_name   | match_type | update_action | delete_action |         fk_insert_trigger         |         fk_update_trigger         | fk_check_constraint | fk_helper_function |         uk_update_trigger         |         uk_delete_trigger         
+-------------------------+----------------------+--------------+------------+---------------+-------------+---------------------------------------------------------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+---------------------+--------------------+-----------------------------------+-----------------------------------
+ staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | {id,valid_from,valid_to,valid_until,salary,employee_id} | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update |                     |                    | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete
 (1 row)
 
 -- While sql_saga is active
@@ -221,8 +221,8 @@ SELECT sql_saga.drop_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('exposed.employees', ARRAY['id'], 'valid');
