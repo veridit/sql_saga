@@ -5,6 +5,7 @@
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -257,7 +258,7 @@ INSERT INTO establishment_bug (id, legal_unit_id, valid_from, valid_until, name)
 SELECT * FROM establishment_bug;
  id  | legal_unit_id | valid_from | valid_until |   name    
 -----+---------------+------------+-------------+-----------
- 101 |             1 | 01-01-2024 | 01-01-2025  | Child EST
+ 101 |             1 | 2024-01-01 | 2025-01-01  | Child EST
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid');

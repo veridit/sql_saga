@@ -5,6 +5,7 @@
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -65,7 +66,7 @@ INSERT INTO temporal_table (description, valid_from, valid_until) VALUES ('Test 
 SELECT * FROM show_table(); -- Expected: valid_to = 2024-12-31
  id | description | valid_from | valid_until |  valid_to  
 ----+-------------+------------+-------------+------------
-  1 | Test 1      | 01-01-2024 | 01-01-2025  | 12-31-2024
+  1 | Test 1      | 2024-01-01 | 2025-01-01  | 2024-12-31
 (1 row)
 
 -- 2. INSERT with only valid_to
@@ -75,8 +76,8 @@ INSERT INTO temporal_table (description, valid_from, valid_to) VALUES ('Test 2',
 SELECT * FROM show_table(); -- Expected: valid_until = 2024-12-01
  id | description | valid_from | valid_until |  valid_to  
 ----+-------------+------------+-------------+------------
-  1 | Test 1      | 01-01-2024 | 01-01-2025  | 12-31-2024
-  2 | Test 2      | 01-16-2024 | 12-01-2024  | 11-30-2024
+  1 | Test 1      | 2024-01-01 | 2025-01-01  | 2024-12-31
+  2 | Test 2      | 2024-01-16 | 2024-12-01  | 2024-11-30
 (2 rows)
 
 -- 3. INSERT with both valid_until and valid_to (consistent)
@@ -86,9 +87,9 @@ INSERT INTO temporal_table (description, valid_from, valid_until, valid_to) VALU
 SELECT * FROM show_table(); -- Expected: No error, values as inserted
  id | description | valid_from | valid_until |  valid_to  
 ----+-------------+------------+-------------+------------
-  1 | Test 1      | 01-01-2024 | 01-01-2025  | 12-31-2024
-  2 | Test 2      | 01-16-2024 | 12-01-2024  | 11-30-2024
-  3 | Test 3      | 02-01-2024 | 11-01-2024  | 10-31-2024
+  1 | Test 1      | 2024-01-01 | 2025-01-01  | 2024-12-31
+  2 | Test 2      | 2024-01-16 | 2024-12-01  | 2024-11-30
+  3 | Test 3      | 2024-02-01 | 2024-11-01  | 2024-10-31
 (3 rows)
 
 -- 4. INSERT with both (inconsistent) - Expect error
@@ -100,13 +101,13 @@ BEGIN
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Test 4 Caught expected error: %', SQLERRM;
 END $$;
-NOTICE:  Test 4 Caught expected error: On INSERT, valid_to and valid_until are inconsistent. Expected valid_to = valid_until - 1 day. Got valid_to=10-01-2024, valid_until=10-01-2024
+NOTICE:  Test 4 Caught expected error: On INSERT, valid_to and valid_until are inconsistent. Expected valid_to = valid_until - 1 day. Got valid_to=2024-10-01, valid_until=2024-10-01
 SELECT * FROM show_table(); -- Should not contain 'Test 4 Fail'
  id | description | valid_from | valid_until |  valid_to  
 ----+-------------+------------+-------------+------------
-  1 | Test 1      | 01-01-2024 | 01-01-2025  | 12-31-2024
-  2 | Test 2      | 01-16-2024 | 12-01-2024  | 11-30-2024
-  3 | Test 3      | 02-01-2024 | 11-01-2024  | 10-31-2024
+  1 | Test 1      | 2024-01-01 | 2025-01-01  | 2024-12-31
+  2 | Test 2      | 2024-01-16 | 2024-12-01  | 2024-11-30
+  3 | Test 3      | 2024-02-01 | 2024-11-01  | 2024-10-31
 (3 rows)
 
 -- 5. INSERT with only valid_to (missing valid_from) - Expect error from CHECK
@@ -122,9 +123,9 @@ NOTICE:  Test 5 Caught expected error: null value in column "valid_from" of rela
 SELECT * FROM show_table(); -- Should not contain 'Test 5 Fails'
  id | description | valid_from | valid_until |  valid_to  
 ----+-------------+------------+-------------+------------
-  1 | Test 1      | 01-01-2024 | 01-01-2025  | 12-31-2024
-  2 | Test 2      | 01-16-2024 | 12-01-2024  | 11-30-2024
-  3 | Test 3      | 02-01-2024 | 11-01-2024  | 10-31-2024
+  1 | Test 1      | 2024-01-01 | 2025-01-01  | 2024-12-31
+  2 | Test 2      | 2024-01-16 | 2024-12-01  | 2024-11-30
+  3 | Test 3      | 2024-02-01 | 2024-11-01  | 2024-10-31
 (3 rows)
 
 -- Test UPDATE scenarios
@@ -139,7 +140,7 @@ UPDATE temporal_table SET valid_until = '2026-02-01' WHERE id = 6;
 SELECT * FROM show_table() WHERE id = 6; -- Expected: valid_to = 2026-01-31
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 02-01-2026  | 01-31-2026
+  6 | Base Update Row | 2025-01-01 | 2026-02-01  | 2026-01-31
 (1 row)
 
 -- 7. UPDATE changing valid_to
@@ -149,7 +150,7 @@ UPDATE temporal_table SET valid_to = '2026-02-28' WHERE id = 6;
 SELECT * FROM show_table() WHERE id = 6; -- Expected: valid_until = 2026-03-01
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 03-01-2026  | 02-28-2026
+  6 | Base Update Row | 2025-01-01 | 2026-03-01  | 2026-02-28
 (1 row)
 
 -- 8. UPDATE changing valid_until and valid_to consistently
@@ -159,7 +160,7 @@ UPDATE temporal_table SET valid_until = '2026-04-01', valid_to = '2026-03-31' WH
 SELECT * FROM show_table() WHERE id = 6; -- Expected: No error, values as updated
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 04-01-2026  | 03-31-2026
+  6 | Base Update Row | 2025-01-01 | 2026-04-01  | 2026-03-31
 (1 row)
 
 -- 9. UPDATE changing both inconsistently - Expect error
@@ -171,11 +172,11 @@ BEGIN
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Test 9 Caught expected error: %', SQLERRM;
 END $$;
-NOTICE:  Test 9 Caught expected error: On UPDATE, conflicting explicit values for valid_to and valid_until. With valid_until=05-01-2026, expected valid_to=Thu Apr 30 00:00:00 2026. Got valid_to=05-01-2026
+NOTICE:  Test 9 Caught expected error: On UPDATE, conflicting explicit values for valid_to and valid_until. With valid_until=2026-05-01, expected valid_to=2026-04-30 00:00:00. Got valid_to=2026-05-01
 SELECT * FROM show_table() WHERE id = 6; -- Should reflect state from Test 8
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 04-01-2026  | 03-31-2026
+  6 | Base Update Row | 2025-01-01 | 2026-04-01  | 2026-03-31
 (1 row)
 
 -- 10. UPDATE setting valid_until to NULL - Expect error
@@ -191,7 +192,7 @@ NOTICE:  Test 10 Caught expected error: On UPDATE, valid_until cannot be set to 
 SELECT * FROM show_table() WHERE id = 6; -- Should reflect state from Test 8
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 04-01-2026  | 03-31-2026
+  6 | Base Update Row | 2025-01-01 | 2026-04-01  | 2026-03-31
 (1 row)
 
 -- 11. UPDATE setting valid_to to NULL - Expect error
@@ -207,7 +208,7 @@ NOTICE:  Test 11 Caught expected error: On UPDATE, valid_to cannot be set to NUL
 SELECT * FROM show_table() WHERE id = 6; -- Should reflect state from Test 8
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-01-2025 | 04-01-2026  | 03-31-2026
+  6 | Base Update Row | 2025-01-01 | 2026-04-01  | 2026-03-31
 (1 row)
 
 -- 12. UPDATE changing only valid_from (should not affect valid_to/valid_until)
@@ -217,7 +218,7 @@ UPDATE temporal_table SET valid_from = '2026-01-31' WHERE id = 6;
 SELECT * FROM show_table() WHERE id = 6; -- Expected: valid_to/until as per Test 8, valid_from updated
  id |   description   | valid_from | valid_until |  valid_to  
 ----+-----------------+------------+-------------+------------
-  6 | Base Update Row | 01-31-2026 | 04-01-2026  | 03-31-2026
+  6 | Base Update Row | 2026-01-31 | 2026-04-01  | 2026-03-31
 (1 row)
 
 -- Cleanup

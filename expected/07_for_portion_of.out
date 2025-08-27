@@ -5,6 +5,7 @@
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -235,6 +236,7 @@ DROP ROLE IF EXISTS sql_saga_unprivileged_user;
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -282,16 +284,16 @@ INSERT INTO no_pk_test (id, value, valid_from, valid_until) VALUES (1, 'initial'
 TABLE no_pk_test;
  id |  value  | valid_from | valid_until 
 ----+---------+------------+-------------
-  1 | initial | 01-01-2020 | 01-01-2021
+  1 | initial | 2020-01-01 | 2021-01-01
 (1 row)
 
 UPDATE no_pk_test__for_portion_of_valid SET value = 'updated', valid_from = '2020-06-01', valid_until = '2020-09-01';
 TABLE no_pk_test ORDER BY valid_from;
  id |  value  | valid_from | valid_until 
 ----+---------+------------+-------------
-  1 | initial | 01-01-2020 | 06-01-2020
-  1 | updated | 06-01-2020 | 09-01-2020
-  1 | initial | 09-01-2020 | 01-01-2021
+  1 | initial | 2020-01-01 | 2020-06-01
+  1 | updated | 2020-06-01 | 2020-09-01
+  1 | initial | 2020-09-01 | 2021-01-01
 (3 rows)
 
 SELECT sql_saga.drop_api('no_pk_test', 'valid');

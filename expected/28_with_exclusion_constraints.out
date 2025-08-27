@@ -5,6 +5,7 @@
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -149,7 +150,7 @@ SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,06-01-2016)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2016,01-01-2017)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-06-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2016-01-01,2017-01-01)).
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -166,7 +167,7 @@ SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,06-01-2016)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2016,01-01-2017)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-06-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2016-01-01,2017-01-01)).
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -216,7 +217,7 @@ SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,06-01-2016)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2016,01-01-2017)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-06-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2016-01-01,2017-01-01)).
 --
 -- 1.3.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
@@ -296,7 +297,7 @@ SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [06-01-2015,01-01-2017)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,01-01-2016)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-06-01,2017-01-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-01-01)).
 --
 -- 2.2.2. When the exclusion constraint is checked immediately,
 --        you can move the time in one transaction with two statements.
@@ -347,7 +348,7 @@ SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [06-01-2015,01-01-2017)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,01-01-2016)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-06-01,2017-01-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-01-01)).
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -364,7 +365,7 @@ SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 ERROR:  conflicting key value violates exclusion constraint "houses_id_daterange_excl"
-DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [06-01-2015,01-01-2017)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [01-01-2015,01-01-2016)).
+DETAIL:  Key (id, daterange(valid_from, valid_until))=(1, [2015-06-01,2017-01-01)) conflicts with existing key (id, daterange(valid_from, valid_until))=(1, [2015-01-01,2016-01-01)).
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'

@@ -5,6 +5,7 @@
 -- Common setup for regression tests that need to be self-contained.
 -- This script creates the extension, a user role, and grants permissions.
 --
+SET datestyle = 'ISO, YMD';
 CREATE EXTENSION IF NOT EXISTS btree_gist;
 CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
 DO $$
@@ -86,13 +87,13 @@ WHERE id = 1 AND valid_from = '2023-01-01';
 SELECT id, name, valid_from, valid_until FROM temporal_and_versioned;
  id |     name     | valid_from | valid_until 
 ----+--------------+------------+-------------
-  1 | First Update | 01-01-2023 | infinity
+  1 | First Update | 2023-01-01 | infinity
 (1 row)
 
 SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_from;
  id |     name     | valid_from | valid_until 
 ----+--------------+------------+-------------
-  1 | Initial Name | 01-01-2023 | infinity
+  1 | Initial Name | 2023-01-01 | infinity
 (1 row)
 
 -- 5. Drop system versioning and check that the era is still intact
