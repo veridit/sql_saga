@@ -1,5 +1,5 @@
 comment = 'Sql Saga - Valid Time Temporal Tables - API for working with valid time with support for foreign keys.'
-default_version = 1.0
+default_version = '1.0'
 module_pathname = '$libdir/sql_saga'
 relocatable = false
 requires = 'btree_gist'

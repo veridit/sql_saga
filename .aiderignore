@@ -1,3 +1,4 @@
+#####################################  BEGIN Copy of .gitignore
 sql_saga.o
 sql_saga.so
 completely_covers.o
@@ -16,3 +17,8 @@ results/
 .aider*
 !.aider.conf.yml
 !.aiderignore
+#####################################  END Copy of .gitignore
+
+# Aider-specific rules
+# Un-ignore the tmp directory so aider can use journal.md etc.
+!tmp/

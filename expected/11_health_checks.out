@@ -47,7 +47,7 @@ SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes
 SAVEPOINT s2;
 ALTER TABLE log SET UNLOGGED; -- fails
 ERROR:  table "log" must remain persistent because it has an era
-CONTEXT:  PL/pgSQL function sql_saga.health_checks() line 36 at RAISE
+CONTEXT:  PL/pgSQL function health_checks() line 20 at RAISE
 ROLLBACK TO SAVEPOINT s2;
 DROP TABLE log;
 ROLLBACK;

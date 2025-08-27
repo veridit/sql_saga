@@ -1,6 +1,13 @@
 MODULE_big = sql_saga
 EXTENSION = sql_saga
-DATA = sql_saga--1.0.sql
+EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
+
+# The main extension script, built from the source files.
+# It is listed in DATA so that `make install` will copy it.
+DATA = $(EXTENSION)--$(EXTVERSION).sql
+
+# Add the generated script to EXTRA_CLEAN so it's removed on `make clean`.
+EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql
 
 DOCS = README.md
 #README.html: README.md
@@ -9,7 +16,8 @@ DOCS = README.md
 SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
 
 REGRESS_ALL = $(patsubst sql/%.sql,%,$(SQL_FILES))
-REGRESS_FAST_LIST = $(filter-out 43_benchmark,$(REGRESS_ALL))
+BENCHMARK_TESTS = $(foreach test,$(REGRESS_ALL),$(if $(findstring benchmark,$(test)),$(test)))
+REGRESS_FAST_LIST = $(filter-out $(BENCHMARK_TESTS),$(REGRESS_ALL))
 
 # By default, run all tests. If 'fast' is a command line goal, run the fast subset.
 REGRESS_TO_RUN = $(REGRESS_ALL)
@@ -20,15 +28,30 @@ endif
 REGRESS = $(if $(TESTS),$(TESTS),$(REGRESS_TO_RUN))
 REGRESS_OPTS := --create-role=sql_saga_regress --dbname=sql_saga_regress
 
-# New target for benchmark regression test
-benchmark:
-	$(MAKE) installcheck REGRESS="43_benchmark"
-
-OBJS = sql_saga.o covers_without_gaps.o $(WIN32RES)
+OBJS = src/sql_saga.o src/covers_without_gaps.o $(WIN32RES)
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
+
+# Redefine the `all` target to build both the C library (SHLIB) and our
+# generated SQL script. PGXS provides the rule to build SHLIB.
+all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql
+
+# Add the generated SQL file as a direct dependency of the `install` target.
+# This ensures it is always rebuilt if its source files have changed before
+# tests are run.
+install: $(EXTENSION)--$(EXTVERSION).sql
+
+# Build the main extension script from component files.
+# The source files are numbered to ensure correct concatenation order.
+$(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
+	cat $^ > $@
+
+# New target for benchmark regression test. It depends on `install` to ensure
+# the extension is built and installed before the test is run.
+benchmark: install
+	@$(MAKE) installcheck REGRESS="43_benchmark"
 
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`
@@ -36,7 +59,7 @@ include $(PGXS)
 # To run a single test: `make test TESTS=21_init`
 # To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
 .PHONY: test setup_test_files
-test: setup_test_files installcheck
+test: installcheck
 
 # Create empty expected files for new tests if they don't exist.
 setup_test_files:

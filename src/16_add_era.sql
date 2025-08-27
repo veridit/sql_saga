@@ -1,0 +1,365 @@
+CREATE FUNCTION sql_saga.add_era(
+    table_oid regclass,
+    valid_from_column_name name,
+    valid_until_column_name name,
+    era_name name DEFAULT 'valid',
+    range_type regtype DEFAULT NULL,
+    bounds_check_constraint name DEFAULT NULL,
+    create_columns boolean DEFAULT false)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    kind "char";
+    persistence "char";
+    alter_commands text[] DEFAULT '{}';
+
+    valid_from_attnum smallint;
+    valid_from_type oid;
+    valid_from_collation oid;
+    valid_from_notnull boolean;
+
+    valid_until_attnum smallint;
+    valid_until_type oid;
+    valid_until_collation oid;
+    valid_until_notnull boolean;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c
+    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    IF era_name IS NULL THEN
+        RAISE EXCEPTION 'no era name specified';
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    /* Period names are limited to lowercase alphanumeric characters for now */
+    era_name := lower(era_name);
+    IF era_name !~ '^[a-z_][0-9a-z_]*$' THEN
+        RAISE EXCEPTION 'only alphanumeric characters are currently allowed';
+    END IF;
+
+    /* Must be a regular persistent base table. SQL:2016 11.27 SR 2 */
+
+    SELECT c.relpersistence, c.relkind
+    INTO persistence, kind
+    FROM pg_catalog.pg_class AS c
+    WHERE c.oid = table_oid;
+
+    IF kind <> 'r' THEN
+        /*
+         * The main reason partitioned tables aren't supported yet is simply
+         * because I haven't put any thought into it.
+         * Maybe it's trivial, maybe not.
+         */
+        IF kind = 'p' THEN
+            RAISE EXCEPTION 'partitioned tables are not supported yet';
+        END IF;
+
+        RAISE EXCEPTION 'relation % is not a table', $1;
+    END IF;
+
+    IF persistence <> 'p' THEN
+        /* We could probably accept unlogged tables but what's the point? */
+        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
+    END IF;
+
+    /* If requested, create the period columns if they are missing */
+    IF create_columns THEN
+        DECLARE
+            from_exists boolean;
+            until_exists boolean;
+            column_type_name text;
+            add_sql text;
+        BEGIN
+            from_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_from_column_name AND NOT a.attisdropped);
+            until_exists := EXISTS(SELECT 1 FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attname = valid_until_column_name AND NOT a.attisdropped);
+
+            IF from_exists AND until_exists THEN
+                -- Do nothing, columns are already there.
+            ELSIF NOT from_exists AND NOT until_exists THEN
+                -- Both are missing, create them.
+                IF range_type IS NULL THEN
+                    column_type_name := 'timestamp with time zone';
+                ELSE
+                    SELECT format_type(r.rngsubtype, NULL) INTO column_type_name FROM pg_catalog.pg_range r WHERE r.rngtypid = range_type;
+                    IF column_type_name IS NULL THEN
+                        RAISE EXCEPTION 'range type % not found', range_type;
+                    END IF;
+                END IF;
+                add_sql := format('ALTER TABLE %s ADD COLUMN %I %s, ADD COLUMN %I %s',
+                    table_oid,
+                    valid_from_column_name, column_type_name,
+                    valid_until_column_name, column_type_name);
+                EXECUTE add_sql;
+            ELSE
+                -- One exists but not the other. This is an error.
+                RAISE EXCEPTION 'cannot create columns: one of "%", "%" exists, but not both', valid_from_column_name, valid_until_column_name;
+            END IF;
+        END;
+    END IF;
+
+    /*
+     * Check if era already exists.  Actually no other application time
+     * eras are allowed per spec, but we don't obey that.  We can have as
+     * many application time eras as we want.
+     *
+     * SQL:2016 11.27 SR 5.b
+     */
+    IF EXISTS (SELECT FROM sql_saga.era AS p WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name)) THEN
+        RAISE EXCEPTION 'era for "%" already exists on table "%"', era_name, table_oid;
+    END IF;
+
+    /*
+     * Although we are not creating a new object, the SQL standard says that
+     * periods are in the same namespace as columns, so prevent that.
+     *
+     * SQL:2016 11.27 SR 5.c
+     */
+    IF EXISTS (
+        SELECT FROM pg_catalog.pg_attribute AS a
+        WHERE (a.attrelid, a.attname) = (table_oid, era_name))
+    THEN
+        RAISE EXCEPTION 'a column named "%" already exists for table "%"', era_name, table_oid;
+    END IF;
+
+    /*
+     * Contrary to SYSTEM_TIME periods, the columns must exist already for
+     * application time sql_saga.
+     *
+     * SQL:2016 11.27 SR 5.d
+     */
+
+    /* Get start column information */
+    SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
+    INTO valid_from_attnum, valid_from_type, valid_from_collation, valid_from_notnull
+    FROM pg_catalog.pg_attribute AS a
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'column "%" not found in table "%"', valid_from_column_name, table_oid;
+    END IF;
+
+    IF valid_from_attnum < 0 THEN
+        RAISE EXCEPTION 'system columns cannot be used in an era';
+    END IF;
+
+    /* Get end column information */
+    SELECT a.attnum, a.atttypid, a.attcollation, a.attnotnull
+    INTO valid_until_attnum, valid_until_type, valid_until_collation, valid_until_notnull
+    FROM pg_catalog.pg_attribute AS a
+    WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'column "%" not found in table "%"', valid_until_column_name, table_oid;
+    END IF;
+
+    IF valid_until_attnum < 0 THEN
+        RAISE EXCEPTION 'system columns cannot be used in an era';
+    END IF;
+
+    /*
+     * Verify compatibility of start/end columns.  The standard says these must
+     * be either date or timestamp, but we allow anything with a corresponding
+     * range type because why not.
+     *
+     * SQL:2016 11.27 SR 5.g
+     */
+    IF valid_from_type <> valid_until_type THEN
+        RAISE EXCEPTION 'start and end columns must be of same type';
+    END IF;
+
+    IF valid_from_collation <> valid_until_collation THEN
+        RAISE EXCEPTION 'start and end columns must be of same collation';
+    END IF;
+
+    /* Get the range type that goes with these columns */
+    IF range_type IS NOT NULL THEN
+        IF NOT EXISTS (
+            SELECT FROM pg_catalog.pg_range AS r
+            WHERE (r.rngtypid, r.rngsubtype, r.rngcollation) = (range_type, valid_from_type, valid_from_collation))
+        THEN
+            RAISE EXCEPTION 'range "%" does not match data type "%"', range_type, valid_from_type;
+        END IF;
+    ELSE
+        SELECT r.rngtypid
+        INTO range_type
+        FROM pg_catalog.pg_range AS r
+        JOIN pg_catalog.pg_opclass AS c ON c.oid = r.rngsubopc
+        WHERE (r.rngsubtype, r.rngcollation) = (valid_from_type, valid_from_collation)
+          AND c.opcdefault;
+
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'no default range type for %', valid_from_type::regtype;
+        END IF;
+    END IF;
+
+    /*
+     * Period columns must not be nullable.
+     *
+     * SQL:2016 11.27 SR 5.h
+     */
+    IF NOT valid_from_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
+    END IF;
+    IF NOT valid_until_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
+    END IF;
+
+    /*
+     * Find and appropriate a CHECK constraint to make sure that start < end.
+     * Create one if necessary.
+     *
+     * SQL:2016 11.27 GR 2.b
+     */
+    DECLARE
+        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+        context text;
+    BEGIN
+        IF bounds_check_constraint IS NOT NULL THEN
+            /* We were given a name, does it exist? */
+            SELECT pg_catalog.pg_get_constraintdef(c.oid)
+            INTO context
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (table_oid, bounds_check_constraint)
+              AND c.contype = 'c';
+
+            IF FOUND THEN
+                /* Does it match? */
+                IF context <> condef THEN
+                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', bounds_check_constraint, table_oid;
+                END IF;
+            ELSE
+                /* If it doesn't exist, we'll use the name for the one we create. */
+                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+            END IF;
+        ELSE
+            /* No name given, can we appropriate one? */
+            SELECT c.conname
+            INTO bounds_check_constraint
+            FROM pg_catalog.pg_constraint AS c
+            WHERE c.conrelid = table_oid
+              AND c.contype = 'c'
+              AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
+
+            /* Make our own then */
+            IF NOT FOUND THEN
+                bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
+                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+            END IF;
+        END IF;
+    END;
+
+-- TODO: Ensure that infinity is the default.
+--    /*
+--     * Find and appropriate a CHECK constraint to make sure that end = 'infinity'.
+--     * Create one if necessary.
+--     *
+--     * SQL:2016 4.15.2.2
+--     */
+--    DECLARE
+--        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
+--        context text;
+--    BEGIN
+--        IF infinity_check_constraint IS NOT NULL THEN
+--            /* We were given a name, does it exist? */
+--            SELECT pg_catalog.pg_get_constraintdef(c.oid)
+--            INTO context
+--            FROM pg_catalog.pg_constraint AS c
+--            WHERE (c.conrelid, c.conname) = (table_class, infinity_check_constraint)
+--              AND c.contype = 'c';
+--
+--            IF FOUND THEN
+--                /* Does it match? */
+--                IF context <> condef THEN
+--                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', infinity_check_constraint, table_class;
+--                END IF;
+--            ELSE
+--                /* If it doesn't exist, we'll use the name for the one we create. */
+--                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+--            END IF;
+--        ELSE
+--            /* No name given, can we appropriate one? */
+--            SELECT c.conname
+--            INTO infinity_check_constraint
+--            FROM pg_catalog.pg_constraint AS c
+--            WHERE c.conrelid = table_class
+--              AND c.contype = 'c'
+--              AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
+--
+--            /* Make our own then */
+--            IF NOT FOUND THEN
+--                SELECT c.relname
+--                INTO table_name
+--                FROM pg_catalog.pg_class AS c
+--                WHERE c.oid = table_class;
+--
+--                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
+--                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+--            END IF;
+--        END IF;
+--    END;
+
+
+    /* If we've created any work for ourselves, do it now */
+    IF alter_commands <> '{}' THEN
+        EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(alter_commands, ', '));
+    END IF;
+
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint)
+    VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint);
+
+    -- Code for creation of triggers, when extending the era api
+    --        /* Make sure all the excluded columns exist */
+    --    FOR excluded_column_name IN
+    --        SELECT u.name
+    --        FROM unnest(excluded_column_names) AS u (name)
+    --        WHERE NOT EXISTS (
+    --            SELECT FROM pg_catalog.pg_attribute AS a
+    --            WHERE (a.attrelid, a.attname) = (table_class, u.name))
+    --    LOOP
+    --        RAISE EXCEPTION 'column "%" does not exist', excluded_column_name;
+    --    END LOOP;
+    --
+    --    /* Don't allow system columns to be excluded either */
+    --    FOR excluded_column_name IN
+    --        SELECT u.name
+    --        FROM unnest(excluded_column_names) AS u (name)
+    --        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_class, u.name)
+    --        WHERE a.attnum < 0
+    --    LOOP
+    --        RAISE EXCEPTION 'cannot exclude system column "%"', excluded_column_name;
+    --    END LOOP;
+    --
+    --    generated_always_trigger := coalesce(
+    --        generated_always_trigger,
+    --        sql_saga._make_name(ARRAY[table_name], 'system_time_generated_always'));
+    --    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger, table_class);
+    --
+    --    write_history_trigger := coalesce(
+    --        write_history_trigger,
+    --        sql_saga._make_name(ARRAY[table_name], 'system_time_write_history'));
+    --    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger, table_class);
+    --
+    --    truncate_trigger := coalesce(
+    --        truncate_trigger,
+    --        sql_saga._make_name(ARRAY[table_name], 'truncate'));
+    --    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_era()', truncate_trigger, table_class);
+
+
+    RETURN true;
+END;
+$function$;
