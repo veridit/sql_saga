@@ -32,9 +32,13 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Refactor build system and fix all regressions:** Overhauled the `Makefile` to ensure reliable, incremental builds. Refactored the SQL source into a modular structure and resolved all test failures that were exposed by the new build process.
 
+- [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
+
+- [ ] **Improve `rename_following` to support column renames:** The event trigger now correctly prevents renaming a column that is part of a temporal foreign key. A future enhancement would be to allow such renames and automatically update the `sql_saga.foreign_keys` metadata.
+
 - [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
   - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
-  - **Status:** **Implementation Phase**. The SQL source code has been refactored into a modular structure. The next step is to implement the PL/pgSQL prototype.
+  - **Status:** **On Hold**. The SQL source code has been refactored. The PL/pgSQL prototype is the next step.
   - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
@@ -43,11 +47,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
   - **Limitation:** This would not solve the problem of multi-statement transactions that are only valid at commit time (e.g., two separate `UPDATE` statements swapping periods), as statement-level triggers are not deferrable to the end of the transaction. This limitation should be documented.
 
 ## Low Priority - Future Work & New Features
-
-- [ ] **Support foreign keys from non-temporal tables:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The current implementation only supports foreign keys between two temporal tables.
-  - **Action:** Adapt `sql_saga.add_foreign_key` to allow a non-temporal table to reference a temporal table. This would require a check function to validate the key's existence at the time of insert/update.
 
 - [ ] **Ensure `infinity` is the default for `valid_to` columns:**
   - **File:** `sql_saga--1.0.sql`

@@ -5,6 +5,7 @@ GRANT USAGE ON SCHEMA sql_saga TO PUBLIC;
 CREATE TYPE sql_saga.drop_behavior AS ENUM ('CASCADE', 'RESTRICT');
 CREATE TYPE sql_saga.fk_actions AS ENUM ('CASCADE', 'SET NULL', 'SET DEFAULT', 'RESTRICT', 'NO ACTION');
 CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
+CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'standard_to_temporal');
 
 /*
  * All referencing columns must be either name or regsomething in order for
@@ -81,31 +82,53 @@ COMMENT ON TABLE sql_saga.unique_keys IS 'A registry of UNIQUE/PRIMARY keys usin
 
 CREATE TABLE sql_saga.foreign_keys (
     foreign_key_name name NOT NULL,
+    type sql_saga.fg_type NOT NULL,
     table_schema name NOT NULL,
     table_name name NOT NULL,
     column_names name[] NOT NULL,
-    era_name name NOT NULL,
+    fk_era_name name, -- Null for non-temporal tables
     unique_key_name name NOT NULL,
     match_type sql_saga.fk_match_types NOT NULL DEFAULT 'SIMPLE',
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
-    fk_insert_trigger name NOT NULL,
-    fk_update_trigger name NOT NULL,
+
+    -- For temporal FKs
+    fk_insert_trigger name,
+    fk_update_trigger name,
+
+    -- For standard FKs
+    fk_check_constraint name,
+    fk_helper_function text, -- regprocedure signature
+
+    -- These are always on the unique key's table
     uk_update_trigger name NOT NULL,
     uk_delete_trigger name NOT NULL,
 
     PRIMARY KEY (foreign_key_name),
 
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name),
+    -- No longer possible to have a direct FK to sql_saga.era
     FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys,
 
     CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
-    CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT'))
+    CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
+
+    CHECK (
+        CASE type
+            WHEN 'temporal_to_temporal' THEN
+                fk_era_name IS NOT NULL
+                AND fk_insert_trigger IS NOT NULL AND fk_update_trigger IS NOT NULL
+                AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
+            WHEN 'standard_to_temporal' THEN
+                fk_era_name IS NULL
+                AND fk_insert_trigger IS NULL AND fk_update_trigger IS NULL
+                AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
+        END
+    )
 );
 GRANT SELECT ON TABLE sql_saga.foreign_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.foreign_keys', '');
 
-COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys using era WITHOUT OVERLAPS';
+COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and standard-to-temporal relationships.';
 
 CREATE TABLE sql_saga.system_versioning (
     table_schema name NOT NULL,

@@ -13,7 +13,7 @@ In the context of this extension, a **Saga** represents the complete history of 
 ## Features
 
 - Temporal Table Design Suggestions
-- Support for foreign keys between temporal tables.
+- Support for foreign keys between temporal tables, and from standard (non-temporal) tables to temporal tables.
 - High-performance, set-based API for bulk temporal data loading (`temporal_merge`).
 - Intuitive API for seamless integration with existing NSO systems.
 - Intuitive fetching of current data.
@@ -134,6 +134,31 @@ is covered by these two contiguous lines in `establishment` for periods `[2022-0
 02    | ... | 2022-07-01 | 2023-01-01 |  Gasoline and Diesel Refinement LLC
 ```
 
+### Foreign Keys from Standard (Non-Temporal) Tables
+
+`sql_saga` also supports foreign keys from a standard (non-temporal) table to a temporal table. This is useful for ensuring that a reference in a standard table points to an entity that exists (or existed at some point) in a temporal table.
+
+For example, a standard `projects` table might reference a lead employee from a temporal `employees` table:
+
+```
+TABLE projects (
+    id int,
+    name text,
+    lead_employee_id int
+)
+
+TABLE employees (
+    id int,
+    valid_from date,
+    valid_until date,
+    name text
+)
+```
+
+A foreign key from `projects.lead_employee_id` to `employees.id` ensures that any `lead_employee_id` in the `projects` table corresponds to a valid employee in the `employees` table's history. Unlike temporal-to-temporal foreign keys which check for coverage over a period, this type of foreign key simply checks for the *existence* of the key in the referenced temporal table at any point in its history.
+
+This validation is implemented using a `CHECK` constraint on the standard table, which calls a high-performance helper function created by `sql_saga`.
+
 ## Installation
 
 TODO: Build a docker image with postgres and the sql_saga extension.
@@ -192,13 +217,25 @@ SELECT sql_saga.add_foreign_key(
     unique_key_name => 'legal_unit_id_valid'
 );
 
+-- Add a foreign key from a standard table to a temporal table.
+-- Note that fk_era_name is omitted for the standard table.
+CREATE TABLE projects (id serial primary key, name text, legal_unit_id int);
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'projects',
+    fk_column_names => ARRAY['legal_unit_id'],
+    unique_key_name => 'legal_unit_id_valid'
+);
 ```
 
 ### Deactivate
 
 ```
 -- Foreign keys must be dropped before the unique keys they reference.
-SELECT sql_saga.drop_foreign_key(table_oid => 'establishment', key_name => 'establishment_legal_unit_id_valid');
+SELECT sql_saga.drop_foreign_key(
+    table_oid => 'establishment',
+    column_names => ARRAY['legal_unit_id'],
+    era_name => 'valid'
+);
 
 SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_id_valid');
 SELECT sql_saga.drop_unique_key(table_oid => 'establishment', key_name => 'establishment_name_valid');
@@ -247,9 +284,13 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 
 ### Foreign Keys
-- `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
-- `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`
-- `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`
+- **For temporal-to-temporal foreign keys:**
+  - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
+- **For standard-to-temporal foreign keys:**
+  - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_check_constraint name DEFAULT NULL, fk_helper_function text DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
+- **Dropping foreign keys:**
+  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`: Drops a temporal-to-temporal foreign key by specifying the columns and era.
+  - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
 The `add_api` function creates views to simplify interaction with temporal tables. This includes a view that only shows the *current* state of data (ideal for PostgREST) and a view that emulates the `FOR PORTION OF` syntax for updating historical records.

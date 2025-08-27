@@ -24,7 +24,7 @@ BEGIN
     FROM sql_saga.foreign_keys AS fk
     WHERE (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name)
       AND fk.column_names = column_names
-      AND fk.era_name = era_name;
+      AND fk.fk_era_name = era_name;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'foreign key on table % for columns % with era % does not exist', table_oid, column_names, era_name;

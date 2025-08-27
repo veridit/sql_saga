@@ -53,9 +53,9 @@ SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p')
 
 -- Test overloaded drop_foreign_key
 TABLE sql_saga.foreign_keys;
- foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
--------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
- child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+----------------------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
@@ -65,8 +65,8 @@ SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
 -- Test original drop_foreign_key (with positional and named arguments)
@@ -77,9 +77,9 @@ SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p')
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
--------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
- child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+----------------------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
 -- by name (positional)
@@ -90,8 +90,8 @@ SELECT sql_saga.drop_foreign_key_by_name('child', 'child_parent_id_q');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
 -- Re-create to test named arguments
@@ -102,9 +102,9 @@ SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p')
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      |      uk_update_trigger      |      uk_delete_trigger      
--------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+-----------------------------+-----------------------------
- child_parent_id_q | public       | child      | {parent_id}  | q        | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
+-------------------+----------------------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
 -- by name (named)
@@ -115,8 +115,8 @@ SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child', key_name => 'chil
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
 -- Test overloaded drop_unique_key
