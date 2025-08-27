@@ -19,6 +19,10 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [ ] **Refactor `add_api` to `add_updatable_views` for clarity:** The name `add_api` is too generic. Rename `add_api` to `add_updatable_views` and `drop_api` to `drop_updatable_views` to make it clear that these functions create and manage the specialized updatable views for interacting with temporal data.
+
+- [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
+
 - [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
 - [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
 
