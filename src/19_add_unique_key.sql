@@ -247,8 +247,43 @@ BEGIN
         LIMIT 1;
     END IF;
 
+
     INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, column_names, era_name, unique_constraint, exclude_constraint)
     VALUES (unique_key_name, table_schema, table_name, column_names, era_name, unique_constraint, exclude_constraint);
+
+    -- Create a standard B-Tree index on the unique key columns to support
+    -- fast lookups for foreign key checks (both temporal and standard).
+    -- This is only created if a suitable index doesn't already exist.
+    DECLARE
+        index_name name;
+        index_sql text;
+        existing_index_oid oid;
+    BEGIN
+        -- Find an existing B-Tree index on exactly these columns in this order
+        SELECT i.indexrelid INTO existing_index_oid
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+        JOIN pg_catalog.pg_am am ON am.oid = c.relam
+        WHERE i.indrelid = table_oid
+          AND i.indisvalid
+          AND i.indnkeyatts = array_length(column_names, 1)
+          AND i.indkey::text = array_to_string(column_attnums, ' ')
+          AND am.amname = 'btree'
+        LIMIT 1;
+
+        IF existing_index_oid IS NULL THEN
+            index_name := sql_saga.__internal_make_name(
+                ARRAY[table_name] || column_names || ARRAY['idx']
+            );
+            index_sql := format('CREATE INDEX %I ON %I.%I USING btree (%s)',
+                index_name,
+                table_schema,
+                table_name,
+                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names) AS u(c))
+            );
+            EXECUTE index_sql;
+        END IF;
+    END;
 
     RETURN unique_key_name;
 END;

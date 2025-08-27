@@ -101,12 +101,12 @@ SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 218 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 219 at RAISE
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s8;
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
 ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 229 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 231 at RAISE
 ROLLBACK TO SAVEPOINT s8;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
@@ -128,22 +128,22 @@ SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_nam
 SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 245 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 247 at RAISE
 ROLLBACK TO SAVEPOINT s10;
 SAVEPOINT s11;
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 256 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 258 at RAISE
 ROLLBACK TO SAVEPOINT s11;
 SAVEPOINT s12;
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 268 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 270 at RAISE
 ROLLBACK TO SAVEPOINT s12;
 SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 280 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 282 at RAISE
 ROLLBACK TO SAVEPOINT s13;
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
  drop_foreign_key 

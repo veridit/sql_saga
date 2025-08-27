@@ -216,7 +216,8 @@ BEGIN
     FOR r IN
         SELECT uk.unique_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, uk.unique_constraint
         FROM sql_saga.unique_keys AS uk
-        WHERE NOT EXISTS (
+        WHERE pg_catalog.to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
+          AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), uk.unique_constraint))
     LOOP
@@ -227,7 +228,8 @@ BEGIN
     FOR r IN
         SELECT uk.unique_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, uk.exclude_constraint
         FROM sql_saga.unique_keys AS uk
-        WHERE NOT EXISTS (
+        WHERE pg_catalog.to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
+          AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), uk.exclude_constraint))
     LOOP
@@ -243,7 +245,7 @@ BEGIN
     FOR r IN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger
         FROM sql_saga.foreign_keys AS fk
-        WHERE NOT EXISTS (
+        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
     LOOP
@@ -254,7 +256,7 @@ BEGIN
     FOR r IN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger
         FROM sql_saga.foreign_keys AS fk
-        WHERE NOT EXISTS (
+        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
     LOOP

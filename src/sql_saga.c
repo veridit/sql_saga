@@ -1176,6 +1176,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	char *uk_era_name;
 	char *uk_valid_from_column_name;
 	char *uk_valid_until_column_name;
+	char *fk_type;
 
 	FkValidationPlan *plan_entry;
 	bool found;
@@ -1191,8 +1192,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	tupdesc = rel->rd_att;
 	old_row = trigdata->tg_trigtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 16)
-		elog(ERROR, "uk_delete_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "uk_delete_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -1209,6 +1210,8 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 	uk_era_name = tgargs[10];
 	uk_valid_from_column_name = tgargs[11];
 	uk_valid_until_column_name = tgargs[12];
+	/* args 13, 14, 15 are match_type, update_action, delete_action */
+	fk_type = tgargs[16];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -1218,153 +1221,133 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 
 	if (!found)
 	{
-		char *fk_range_constructor;
-		char *uk_range_constructor;
-		char *query;
-		Datum get_range_type_values[3];
-		StringInfoData join_buf, where_buf, exclude_buf;
-		int i;
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;
 		int num_uk_cols, num_fk_cols;
 		Datum *uk_col_datums, *fk_col_datums;
-		int param_idx = 0;
+		StringInfoData where_buf;
+		char *query;
+		int i;
 
-		/* Get range constructor types from sql_saga.era */
-		if (get_range_type_plan == NULL)
-		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
-			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
-			if (get_range_type_plan == NULL)
-				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
-			ret = SPI_keepplan(get_range_type_plan);
-			if (ret != 0)
-				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
-		}
-
-		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(fk_table_name);
-		get_range_type_values[2] = CStringGetDatum(fk_era_name);
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
-		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(uk_table_name);
-		get_range_type_values[2] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s era %s", quote_identifier(RelationGetRelationName(rel)), uk_era_name);
-		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-		/* Build clauses and collect param info */
-		initStringInfo(&join_buf);
-		initStringInfo(&where_buf);
-		initStringInfo(&exclude_buf);
-
+		/* Get column name arrays */
 		if (namearray_input_func_oid == InvalidOid)
 		{
-			/*
-			 * We only need the input function and ioparam for NAMEARRAYOID,
-			 * so we cache them in static variables to avoid repeated catalog
-			 * lookups. Other type data is not needed.
-			 */
-			int16	typlen;
-			bool	typbyval;
-			char	typalign;
-			char	typdelim;
+			int16 typlen; bool typbyval; char typalign, typdelim;
 			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
 		}
-
 		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-
 		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
 		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
 		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
 
 		if (num_fk_cols > MAX_FK_COLS)
 			elog(ERROR, "Number of foreign key columns (%d) exceeds MAX_FK_COLS (%d)", num_fk_cols, MAX_FK_COLS);
-		plan_entry->nargs = num_uk_cols + 2;
 
-		appendStringInfoString(&exclude_buf, " AND NOT (");
-		for (i = 0; i < num_uk_cols; i++)
+		initStringInfo(&where_buf);
+
+		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
 		{
-			char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
-			char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
-			int attnum = SPI_fnumber(tupdesc, ukc);
-			if (attnum <= 0)
-				elog(ERROR, "column \"%s\" does not exist in table \"%s\"", ukc, RelationGetRelationName(rel));
-			if (i > 0)
+			StringInfoData join_buf, exclude_buf;
+			char *fk_range_constructor, *uk_range_constructor;
+			Datum get_range_type_values[3];
+			int param_idx = 0;
+
+			/* Get range constructors */
+			if (get_range_type_plan == NULL)
 			{
-				appendStringInfoString(&join_buf, " AND ");
-				appendStringInfoString(&where_buf, " AND ");
-				appendStringInfoString(&exclude_buf, " AND ");
+				const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+				Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+				get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
+				if (get_range_type_plan == NULL) elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
+				if (SPI_keepplan(get_range_type_plan) != 0) elog(ERROR, "SPI_keepplan for get_range_type failed");
 			}
-			appendStringInfo(&join_buf, "fk.%s = uk.%s", quote_identifier(fkc), quote_identifier(ukc));
-			appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
-			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(ukc), param_idx + 1);
-			plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
-			plan_entry->param_attnums[param_idx] = attnum;
-			param_idx++;
+			get_range_type_values[0] = CStringGetDatum(fk_schema_name); get_range_type_values[1] = CStringGetDatum(fk_table_name); get_range_type_values[2] = CStringGetDatum(fk_era_name);
+			ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
+			if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for fk table");
+			fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+			get_range_type_values[0] = CStringGetDatum(uk_schema_name); get_range_type_values[1] = CStringGetDatum(uk_table_name); get_range_type_values[2] = CStringGetDatum(uk_era_name);
+			ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
+			if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for uk table");
+			uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+
+			initStringInfo(&join_buf); initStringInfo(&exclude_buf);
+			plan_entry->nargs = num_uk_cols + 2;
+
+			appendStringInfoString(&exclude_buf, " AND NOT (");
+			for (i = 0; i < num_uk_cols; i++)
+			{
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+				int attnum = SPI_fnumber(tupdesc, ukc);
+				if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
+				if (i > 0) { appendStringInfoString(&join_buf, " AND "); appendStringInfoString(&where_buf, " AND "); appendStringInfoString(&exclude_buf, " AND "); }
+				appendStringInfo(&join_buf, "fk.%s = uk.%s", quote_identifier(fkc), quote_identifier(ukc));
+				appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
+				appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(ukc), param_idx + 1);
+				plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
+				plan_entry->param_attnums[param_idx] = attnum;
+				param_idx++;
+			}
+			
+			if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
+			plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_from_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
+			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1); param_idx++;
+			appendStringInfoString(&exclude_buf, " AND ");
+			plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_until_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
+			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1);
+			appendStringInfoChar(&exclude_buf, ')');
+
+			query = psprintf(
+				"SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s AND COALESCE(NOT ("
+				"SELECT sql_saga.covers_without_gaps("
+				"%s(uk.%s, uk.%s), %s(fk.%s, fk.%s) ORDER BY uk.%s"
+				") FROM %s.%s AS uk WHERE %s%s), true))",
+				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data,
+				uk_range_constructor, quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
+				fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
+				quote_identifier(uk_valid_from_column_name), quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
+				join_buf.data, exclude_buf.data
+			);
+			pfree(join_buf.data); pfree(exclude_buf.data);
+			if (fk_range_constructor) pfree(fk_range_constructor); if (uk_range_constructor) pfree(uk_range_constructor);
+		}
+		else /* Standard FK */
+		{
+			int param_idx = 0;
+			plan_entry->nargs = num_uk_cols;
+			for (i = 0; i < num_uk_cols; i++)
+			{
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
+				char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+				int attnum = SPI_fnumber(tupdesc, ukc);
+				if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
+				if (i > 0) appendStringInfoString(&where_buf, " AND ");
+				appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
+				plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
+				plan_entry->param_attnums[param_idx] = attnum;
+				param_idx++;
+			}
+
+			query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s)",
+				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data);
 		}
 		
-		/* Add era columns to exclude clause and params */
-		if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1);
-		param_idx++;
-		appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1);
-		appendStringInfoChar(&exclude_buf, ')');
-		
-		pfree(DatumGetPointer(uk_column_names_datum));
-		if (num_uk_cols > 0) pfree(uk_col_datums);
-		pfree(DatumGetPointer(fk_column_names_datum));
-		if (num_fk_cols > 0) pfree(fk_col_datums);
-
-		query = psprintf(
-			"SELECT EXISTS ("
-			"  SELECT 1"
-			"  FROM %s.%s AS fk"
-			"  WHERE %s AND COALESCE(NOT ("
-			"    SELECT sql_saga.covers_without_gaps("
-			"      %s(uk.%s, uk.%s),"
-			"      %s(fk.%s, fk.%s)"
-			"      ORDER BY uk.%s"
-			"    )"
-			"    FROM %s.%s AS uk"
-			"    WHERE %s%s"
-			"  ), true)"
-			")",
-			quote_identifier(fk_schema_name), quote_identifier(fk_table_name),
-			where_buf.data,
-			uk_range_constructor, quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
-			fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
-			quote_identifier(uk_valid_from_column_name),
-			quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
-			join_buf.data, exclude_buf.data
-		);
 		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
-		if (plan_entry->plan == NULL)
-			elog(ERROR, "SPI_prepare for validation query failed: %s", SPI_result_code_string(SPI_result));
-		if (SPI_keepplan(plan_entry->plan))
-			elog(ERROR, "SPI_keepplan for validation query failed");
-		pfree(query);
-		pfree(join_buf.data); pfree(where_buf.data); pfree(exclude_buf.data);
-		if(fk_range_constructor) pfree(fk_range_constructor); if(uk_range_constructor) pfree(uk_range_constructor);
+		if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
+			elog(ERROR, "SPI_prepare/keepplan for validation query failed");
+
+		pfree(query); pfree(where_buf.data);
+		pfree(DatumGetPointer(uk_column_names_datum)); if (num_uk_cols > 0) pfree(uk_col_datums);
+		pfree(DatumGetPointer(fk_column_names_datum)); if (num_fk_cols > 0) pfree(fk_col_datums);
 	}
 
 	/* Check for NULLs in UK columns of old_row using cached attnums */
 	{
 		int i;
-		for (i = 0; i < plan_entry->nargs - 2; i++)
+		int num_uk_cols = (strcmp(fk_type, "temporal_to_temporal") == 0) ? plan_entry->nargs - 2 : plan_entry->nargs;
+
+		for (i = 0; i < num_uk_cols; i++)
 		{
 			(void) heap_getattr(old_row, plan_entry->param_attnums[i], tupdesc, &isnull);
 			if (isnull)
@@ -1435,6 +1418,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	char *uk_era_name;
 	char *uk_valid_from_column_name;
 	char *uk_valid_until_column_name;
+	char *fk_type;
 
 	UkUpdateValidationPlan *plan_entry;
 	bool found;
@@ -1451,8 +1435,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	old_row = trigdata->tg_trigtuple;
 	new_row = trigdata->tg_newtuple;
 
-	if (trigdata->tg_trigger->tgnargs != 16)
-		elog(ERROR, "uk_update_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
+	if (trigdata->tg_trigger->tgnargs != 17)
+		elog(ERROR, "uk_update_check_c: expected 17 arguments, got %d", trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -1469,6 +1453,8 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 	uk_era_name = tgargs[10];
 	uk_valid_from_column_name = tgargs[11];
 	uk_valid_until_column_name = tgargs[12];
+	/* args 13, 14, 15 are match_type, update_action, delete_action */
+	fk_type = tgargs[16];
 
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
@@ -1478,62 +1464,20 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 
 	if (!found)
 	{
-		char *fk_range_constructor;
-		char *uk_range_constructor;
-		char *query;
-		Datum get_range_type_values[3];
-		StringInfoData where_buf, exclude_buf, union_buf, select_list_buf, alias_buf, join_buf;
-		int i;
 		Datum uk_column_names_datum, fk_column_names_datum;
 		ArrayType *uk_column_names_array, *fk_column_names_array;
 		int num_uk_cols, num_fk_cols;
 		Datum *uk_col_datums, *fk_col_datums;
-		char *inner_alias = "sub_uk";
-		int param_idx = 0;
+		StringInfoData where_buf;
+		char *query;
+		int i;
 
-		/* Get range constructors */
-		if (get_range_type_plan == NULL)
-		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
-			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
-			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
-			if (get_range_type_plan == NULL)
-				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
-			ret = SPI_keepplan(get_range_type_plan);
-			if (ret != 0)
-				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
-		}
-		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(fk_table_name);
-		get_range_type_values[2] = CStringGetDatum(fk_era_name);
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for fk table");
-		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(uk_table_name);
-		get_range_type_values[2] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for uk table");
-		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-		/* Build clauses and collect param info */
-		initStringInfo(&where_buf); initStringInfo(&exclude_buf); initStringInfo(&union_buf);
-		initStringInfo(&select_list_buf); initStringInfo(&alias_buf); initStringInfo(&join_buf);
-
+		/* Get column name arrays */
 		if (namearray_input_func_oid == InvalidOid)
 		{
-			/*
-			 * We only need the input function and ioparam for NAMEARRAYOID,
-			 * so we cache them in static variables to avoid repeated catalog
-			 * lookups. Other type data is not needed.
-			 */
-			int16	typlen;
-			bool	typbyval;
-			char	typalign;
-			char	typdelim;
+			int16 typlen; bool typbyval; char typalign, typdelim;
 			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
 		}
-
 		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
 		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
 		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
@@ -1543,88 +1487,120 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 
 		if (num_uk_cols > MAX_FK_COLS) elog(ERROR, "Number of uk columns (%d) exceeds MAX_FK_COLS (%d)", num_uk_cols, MAX_FK_COLS);
 		plan_entry->num_uk_cols = num_uk_cols;
-		plan_entry->nargs = 2 * num_uk_cols + 4;
-
-		/* Params for old_row */
-		appendStringInfoString(&exclude_buf, " AND NOT (");
-		for (i = 0; i < num_uk_cols; i++) {
-			char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
-			int attnum = SPI_fnumber(tupdesc, ukc);
-			if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
-			if (i > 0) { appendStringInfoString(&where_buf, " AND "); appendStringInfoString(&exclude_buf, " AND "); }
-			appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
-			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(ukc), param_idx + 1);
-			plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
-			plan_entry->param_attnums_old[i] = attnum;
-			param_idx++;
-		}
-		if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums_old[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1);
-		param_idx++;
-		appendStringInfoString(&exclude_buf, " AND ");
-		plan_entry->param_attnums_old[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols+1]);
-		appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1);
-		param_idx++;
-		appendStringInfoChar(&exclude_buf, ')');
 		
-		/* Params for new_row */
-		appendStringInfoString(&union_buf, " UNION ALL SELECT ");
-		for (i = 0; i < num_uk_cols; i++) {
-			char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
-			int attnum = SPI_fnumber(tupdesc, ukc);
-			if (i > 0) appendStringInfoString(&union_buf, ", ");
+		initStringInfo(&where_buf);
+
+		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
+		{
+			StringInfoData exclude_buf, union_buf, select_list_buf, alias_buf, join_buf;
+			char *fk_range_constructor, *uk_range_constructor;
+			Datum get_range_type_values[3];
+			char *inner_alias = "sub_uk";
+			int param_idx = 0;
+			plan_entry->nargs = 2 * num_uk_cols + 4;
+
+			if (get_range_type_plan == NULL)
+			{
+				const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
+				Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
+				get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
+				if (get_range_type_plan == NULL) elog(ERROR, "SPI_prepare failed: %s", SPI_result_code_string(SPI_result));
+				if (SPI_keepplan(get_range_type_plan) != 0) elog(ERROR, "SPI_keepplan failed");
+			}
+			get_range_type_values[0] = CStringGetDatum(fk_schema_name); get_range_type_values[1] = CStringGetDatum(fk_table_name); get_range_type_values[2] = CStringGetDatum(fk_era_name);
+			ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
+			if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for fk table");
+			fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+			get_range_type_values[0] = CStringGetDatum(uk_schema_name); get_range_type_values[1] = CStringGetDatum(uk_table_name); get_range_type_values[2] = CStringGetDatum(uk_era_name);
+			ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
+			if (ret != SPI_OK_SELECT || SPI_processed == 0) elog(ERROR, "could not get range type for uk table");
+			uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
+
+			initStringInfo(&exclude_buf); initStringInfo(&union_buf); initStringInfo(&select_list_buf); initStringInfo(&alias_buf); initStringInfo(&join_buf);
+			
+			appendStringInfoString(&exclude_buf, " AND NOT (");
+			for (i = 0; i < num_uk_cols; i++) {
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+				int attnum = SPI_fnumber(tupdesc, ukc);
+				if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
+				if (i > 0) { appendStringInfoString(&where_buf, " AND "); appendStringInfoString(&exclude_buf, " AND "); }
+				appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
+				appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(ukc), param_idx + 1);
+				plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
+				plan_entry->param_attnums_old[i] = attnum; param_idx++;
+			}
+			if (num_uk_cols > 0) appendStringInfoString(&exclude_buf, " AND ");
+			plan_entry->param_attnums_old[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols]);
+			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_from_column_name), param_idx + 1); param_idx++;
+			appendStringInfoString(&exclude_buf, " AND ");
+			plan_entry->param_attnums_old[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_old[num_uk_cols+1]);
+			appendStringInfo(&exclude_buf, "uk.%s = $%d", quote_identifier(uk_valid_until_column_name), param_idx + 1); param_idx++;
+			appendStringInfoChar(&exclude_buf, ')');
+			
+			appendStringInfoString(&union_buf, " UNION ALL SELECT ");
+			for (i = 0; i < num_uk_cols; i++) {
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); int attnum = SPI_fnumber(tupdesc, ukc);
+				if (i > 0) appendStringInfoString(&union_buf, ", ");
+				appendStringInfo(&union_buf, "$%d", param_idx + 1);
+				plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
+				plan_entry->param_attnums_new[i] = attnum; param_idx++;
+			}
+			appendStringInfoString(&union_buf, ", ");
+			plan_entry->param_attnums_new[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols]);
+			appendStringInfo(&union_buf, "$%d", param_idx + 1); param_idx++;
+			appendStringInfoString(&union_buf, ", ");
+			plan_entry->param_attnums_new[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name); plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols+1]);
 			appendStringInfo(&union_buf, "$%d", param_idx + 1);
-			plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
-			plan_entry->param_attnums_new[i] = attnum;
-			param_idx++;
-		}
-		appendStringInfoString(&union_buf, ", ");
-		plan_entry->param_attnums_new[num_uk_cols] = SPI_fnumber(tupdesc, uk_valid_from_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols]);
-		appendStringInfo(&union_buf, "$%d", param_idx + 1);
-		param_idx++;
-		appendStringInfoString(&union_buf, ", ");
-		plan_entry->param_attnums_new[num_uk_cols+1] = SPI_fnumber(tupdesc, uk_valid_until_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums_new[num_uk_cols+1]);
-		appendStringInfo(&union_buf, "$%d", param_idx + 1);
 
-		/* Clauses without params */
-		appendStringInfo(&alias_buf, " AS %s(", inner_alias);
-		for (i = 0; i < num_uk_cols; i++) {
-			char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
-			if (i > 0) { appendStringInfoString(&select_list_buf, ", "); appendStringInfoString(&alias_buf, ", "); appendStringInfoString(&join_buf, " AND "); }
-			appendStringInfo(&select_list_buf, "%s", quote_identifier(ukc));
-			appendStringInfo(&alias_buf, "%s", quote_identifier(ukc));
-			appendStringInfo(&join_buf, "fk.%s = %s.%s", quote_identifier(fkc), inner_alias, quote_identifier(ukc));
-		}
-		appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
-		appendStringInfo(&alias_buf, ", %s, %s)", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
+			appendStringInfo(&alias_buf, " AS %s(", inner_alias);
+			for (i = 0; i < num_uk_cols; i++) {
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i])); char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+				if (i > 0) { appendStringInfoString(&select_list_buf, ", "); appendStringInfoString(&alias_buf, ", "); appendStringInfoString(&join_buf, " AND "); }
+				appendStringInfo(&select_list_buf, "%s", quote_identifier(ukc)); appendStringInfo(&alias_buf, "%s", quote_identifier(ukc));
+				appendStringInfo(&join_buf, "fk.%s = %s.%s", quote_identifier(fkc), inner_alias, quote_identifier(ukc));
+			}
+			appendStringInfo(&select_list_buf, ", %s, %s", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
+			appendStringInfo(&alias_buf, ", %s, %s)", quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name));
 
-		query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s AND COALESCE(NOT ("
-			"SELECT sql_saga.covers_without_gaps("
-			"%s(%s.%s, %s.%s), "
-			"%s(fk.%s, fk.%s) "
-			"ORDER BY %s.%s"
-			") FROM (SELECT %s FROM %s.%s AS uk WHERE TRUE %s %s) %s WHERE %s), true))",
-			quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data,
-			uk_range_constructor, inner_alias, quote_identifier(uk_valid_from_column_name), inner_alias, quote_identifier(uk_valid_until_column_name),
-			fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
-			inner_alias, quote_identifier(uk_valid_from_column_name),
-			select_list_buf.data, quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
-			exclude_buf.data, union_buf.data, alias_buf.data,
-			join_buf.data
-		);
+			query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s AND COALESCE(NOT ("
+				"SELECT sql_saga.covers_without_gaps("
+				"%s(%s.%s, %s.%s), %s(fk.%s, fk.%s) ORDER BY %s.%s"
+				") FROM (SELECT %s FROM %s.%s AS uk WHERE TRUE %s %s) %s WHERE %s), true))",
+				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data,
+				uk_range_constructor, inner_alias, quote_identifier(uk_valid_from_column_name), inner_alias, quote_identifier(uk_valid_until_column_name),
+				fk_range_constructor, quote_identifier(fk_valid_from_column_name), quote_identifier(fk_valid_until_column_name),
+				inner_alias, quote_identifier(uk_valid_from_column_name),
+				select_list_buf.data, quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
+				exclude_buf.data, union_buf.data, alias_buf.data, join_buf.data
+			);
+			pfree(exclude_buf.data); pfree(union_buf.data); pfree(select_list_buf.data); pfree(alias_buf.data); pfree(join_buf.data);
+			if(fk_range_constructor) pfree(fk_range_constructor); if(uk_range_constructor) pfree(uk_range_constructor);
+		}
+		else /* Standard FK */
+		{
+			int param_idx = 0;
+			plan_entry->nargs = num_uk_cols;
+			for (i = 0; i < num_uk_cols; i++)
+			{
+				char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
+				char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
+				int attnum = SPI_fnumber(tupdesc, ukc);
+				if (attnum <= 0) elog(ERROR, "column \"%s\" does not exist", ukc);
+				if (i > 0) appendStringInfoString(&where_buf, " AND ");
+				appendStringInfo(&where_buf, "fk.%s = $%d", quote_identifier(fkc), param_idx + 1);
+				plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
+				plan_entry->param_attnums_old[i] = attnum;
+				param_idx++;
+			}
+			query = psprintf("SELECT EXISTS (SELECT 1 FROM %s.%s AS fk WHERE %s)",
+				quote_identifier(fk_schema_name), quote_identifier(fk_table_name), where_buf.data);
+		}
 
 		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
 		if (!plan_entry->plan || SPI_keepplan(plan_entry->plan))
 			elog(ERROR, "SPI_prepare/keepplan for validation query failed");
 		
-		pfree(query); pfree(where_buf.data); pfree(exclude_buf.data); pfree(union_buf.data);
-		pfree(select_list_buf.data); pfree(alias_buf.data); pfree(join_buf.data);
-		if(fk_range_constructor) pfree(fk_range_constructor); if(uk_range_constructor) pfree(uk_range_constructor);
+		pfree(query); pfree(where_buf.data);
 		pfree(DatumGetPointer(uk_column_names_datum)); if (num_uk_cols > 0) pfree(uk_col_datums);
 		pfree(DatumGetPointer(fk_column_names_datum)); if (num_fk_cols > 0) pfree(fk_col_datums);
 	}
@@ -1648,18 +1624,45 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		Datum values[MAX_UK_UPDATE_PLAN_ARGS];
 		char nulls[MAX_UK_UPDATE_PLAN_ARGS];
 		int i, param_idx = 0;
+		bool keys_are_equal = true;
 
-		for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
-			values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
-			nulls[param_idx] = isnull ? 'n' : ' ';
-			param_idx++;
+		/* Check if key columns changed. If not, no violation is possible. */
+		for (i = 0; i < plan_entry->num_uk_cols; i++)
+		{
+			Datum old_val, new_val;
+			bool old_isnull, new_isnull;
+			old_val = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &old_isnull);
+			new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
+
+			if (old_isnull != new_isnull ||
+				(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attlen)))
+			{
+				keys_are_equal = false;
+				break;
+			}
 		}
-		for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
-			values[param_idx] = heap_getattr(new_row, plan_entry->param_attnums_new[i], tupdesc, &isnull);
-			nulls[param_idx] = isnull ? 'n' : ' ';
-			param_idx++;
+
+		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
+		{
+			for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
+				values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
+				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+			}
+			for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
+				values[param_idx] = heap_getattr(new_row, plan_entry->param_attnums_new[i], tupdesc, &isnull);
+				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+			}
 		}
-		
+		else /* Standard FK */
+		{
+			if (keys_are_equal) { SPI_finish(); return PointerGetDatum(rettuple); }
+
+			for (i = 0; i < plan_entry->num_uk_cols; i++) {
+				values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
+				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+			}
+		}
+
 		ret = SPI_execute_plan(plan_entry->plan, values, nulls, true, 1);
 		if (ret != SPI_OK_SELECT) elog(ERROR, "SPI_execute_plan failed");
 		

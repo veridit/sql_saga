@@ -34,44 +34,48 @@ BEGIN
         WHERE (table_oid IS NULL OR (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name))
           AND (fk.foreign_key_name = key_name OR key_name IS NULL)
     LOOP
+        -- Delete the metadata record first, so the drop_protection trigger doesn't fire.
         DELETE FROM sql_saga.foreign_keys AS fk
         WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
 
         /*
-         * Make sure the table hasn't been dropped and that the triggers exist
-         * before doing these.  We could use the IF EXISTS clause but we don't
-         * in order to avoid the NOTICE.
+         * Now that the metadata is gone, we can safely drop the database objects.
          */
         fk_table_oid := format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;
-        IF EXISTS (
-                SELECT FROM pg_catalog.pg_class AS c
-                WHERE c.oid = fk_table_oid)
-            AND EXISTS (
-                SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE t.tgrelid = fk_table_oid
-                  AND t.tgname IN (foreign_key_row.fk_insert_trigger, foreign_key_row.fk_update_trigger))
-        THEN
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger, fk_table_oid);
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, fk_table_oid);
-        END IF;
+
+        CASE foreign_key_row.type
+            WHEN 'temporal_to_temporal' THEN
+                IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_insert_trigger) THEN
+                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger, fk_table_oid);
+                END IF;
+                IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_update_trigger) THEN
+                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, fk_table_oid);
+                END IF;
+            WHEN 'standard_to_temporal' THEN
+                IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
+                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid, foreign_key_row.fk_check_constraint);
+                END IF;
+                -- If no other foreign keys use the helper function, drop it.
+                IF NOT EXISTS (
+                    SELECT 1 FROM sql_saga.foreign_keys
+                    WHERE fk_helper_function = foreign_key_row.fk_helper_function
+                ) THEN
+                    EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function);
+                END IF;
+        END CASE;
 
         SELECT to_regclass(format('%I.%I', uk.table_schema, uk.table_name))
         INTO unique_table_oid
         FROM sql_saga.unique_keys AS uk
         WHERE uk.unique_key_name = foreign_key_row.unique_key_name;
 
-        /* Ditto for the UNIQUE side. */
-        IF FOUND
-            AND EXISTS (
-                SELECT FROM pg_catalog.pg_class AS c
-                WHERE c.oid = unique_table_oid)
-            AND EXISTS (
-                SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE t.tgrelid = unique_table_oid
-                  AND t.tgname IN (foreign_key_row.uk_update_trigger, foreign_key_row.uk_delete_trigger))
-        THEN
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger, unique_table_oid);
-            EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger, unique_table_oid);
+        IF FOUND AND pg_catalog.to_regclass(unique_table_oid::text) IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_update_trigger) THEN
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger, unique_table_oid);
+            END IF;
+            IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_delete_trigger) THEN
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger, unique_table_oid);
+            END IF;
         END IF;
     END LOOP;
 

@@ -63,6 +63,7 @@ SELECT sql_saga.add_system_versioning('temporal_and_versioned');
  system_valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Indexes:
     "temporal_and_versioned_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "temporal_and_versioned_id_idx" btree (id)
     "temporal_and_versioned_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "temporal_and_versioned_system_time_check" CHECK (system_valid_from < system_valid_until)
@@ -111,6 +112,7 @@ SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true
  valid_until | date    |           | not null | 
 Indexes:
     "temporal_and_versioned_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "temporal_and_versioned_id_idx" btree (id)
     "temporal_and_versioned_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "temporal_and_versioned_valid_check" CHECK (valid_from < valid_until)
@@ -134,6 +136,8 @@ SELECT sql_saga.drop_era('temporal_and_versioned', cleanup => true);
 --------+---------+-----------+----------+---------
  id     | integer |           |          | 
  name   | text    |           |          | 
+Indexes:
+    "temporal_and_versioned_id_idx" btree (id)
 
 \i sql/include/test_teardown.sql
 --

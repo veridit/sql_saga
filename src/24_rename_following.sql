@@ -254,13 +254,13 @@ BEGIN
     FOR r IN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
-        WHERE NOT EXISTS (
+        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
         UNION ALL
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger AS trigger_name
         FROM sql_saga.foreign_keys AS fk
-        WHERE NOT EXISTS (
+        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
         UNION ALL

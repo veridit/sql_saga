@@ -76,7 +76,7 @@ BEGIN
         /* Check for FOREIGN KEYs */
         IF EXISTS (
             SELECT FROM sql_saga.foreign_keys AS fk
-            WHERE (fk.table_schema, fk.table_name, fk.era_name) = (table_schema, table_name, era_name))
+            WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name))
         THEN
             RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
         END IF;
@@ -106,7 +106,7 @@ BEGIN
 
     PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
     FROM sql_saga.foreign_keys AS fk
-    WHERE (fk.table_schema, fk.table_name, fk.era_name) = (table_schema, table_name, era_name);
+    WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name);
 
     PERFORM sql_saga.drop_unique_key_by_name(table_oid, uk.unique_key_name, drop_behavior, cleanup)
     FROM sql_saga.unique_keys AS uk

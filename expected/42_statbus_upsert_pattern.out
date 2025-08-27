@@ -102,9 +102,9 @@ SELECT sql_saga.add_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'le
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-       foreign_key_name       | table_schema | table_name |  column_names   | era_name |   unique_key_name   | match_type | update_action | delete_action |           fk_insert_trigger            |           fk_update_trigger            |           uk_update_trigger            |           uk_delete_trigger            
-------------------------------+--------------+------------+-----------------+----------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+----------------------------------------+----------------------------------------
- location_legal_unit_id_valid | public       | location   | {legal_unit_id} | valid    | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete
+       foreign_key_name       |         type         | table_schema | table_name |  column_names   | fk_era_name |   unique_key_name   | match_type | update_action | delete_action |           fk_insert_trigger            |           fk_update_trigger            | fk_check_constraint | fk_helper_function |           uk_update_trigger            |           uk_delete_trigger            
+------------------------------+----------------------+--------------+------------+-----------------+-------------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+---------------------+--------------------+----------------------------------------+----------------------------------------
+ location_legal_unit_id_valid | temporal_to_temporal | public       | location   | {legal_unit_id} | valid       | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update |                     |                    | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete
 (1 row)
 
 -- While sql_saga is active
@@ -118,12 +118,13 @@ TABLE sql_saga.foreign_keys;
  name        | character varying |           | not null | 
 Indexes:
     "legal_unit_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "legal_unit_id_idx" btree (id)
     "legal_unit_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "legal_unit_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('location_legal_unit_id_valid', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
+    location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
 
 \d location
                  Table "public.location"
@@ -136,12 +137,13 @@ Triggers:
  postal_place  | text    |           | not null | 
 Indexes:
     "location_id_daterange_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    "location_id_idx" btree (id)
     "location_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "location_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('location_legal_unit_id_valid', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_from, valid_until ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{{legal_unit_id}}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{{id}}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_from, valid_until ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
 
 -- Initial Import
 INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
@@ -236,8 +238,8 @@ SELECT sql_saga.drop_foreign_key('location', ARRAY['legal_unit_id'], 'valid');
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | table_schema | table_name | column_names | era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | uk_update_trigger | uk_delete_trigger 
-------------------+--------------+------------+--------------+----------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -283,6 +285,8 @@ TABLE sql_saga.era;
  valid_from  | date              |           | not null | 
  valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
+Indexes:
+    "legal_unit_id_idx" btree (id)
 Check constraints:
     "legal_unit_valid_check" CHECK (valid_from < valid_until)
 
@@ -295,6 +299,8 @@ Check constraints:
  valid_until   | date    |           | not null | 
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
+Indexes:
+    "location_id_idx" btree (id)
 Check constraints:
     "location_valid_check" CHECK (valid_from < valid_until)
 
