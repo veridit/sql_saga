@@ -87,6 +87,7 @@ CREATE TABLE sql_saga.foreign_keys (
     table_name name NOT NULL,
     column_names name[] NOT NULL,
     fk_era_name name, -- Null for non-temporal tables
+    fk_table_columns_snapshot name[] NOT NULL,
     unique_key_name name NOT NULL,
     match_type sql_saga.fk_match_types NOT NULL DEFAULT 'SIMPLE',
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
@@ -129,6 +130,7 @@ GRANT SELECT ON TABLE sql_saga.foreign_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.foreign_keys', '');
 
 COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and standard-to-temporal relationships.';
+COMMENT ON COLUMN sql_saga.foreign_keys.fk_table_columns_snapshot IS 'A snapshot of all columns on the fk table, used by the rename_following event trigger to detect column renames.';
 
 CREATE TABLE sql_saga.system_versioning (
     table_schema name NOT NULL,

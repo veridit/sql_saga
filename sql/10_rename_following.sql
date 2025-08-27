@@ -54,7 +54,8 @@ TABLE sql_saga.era;
 SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
 SAVEPOINT pristine;
-ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1; -- fails
+ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1;
+TABLE sql_saga.foreign_keys; -- The column name should be updated here
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ROLLBACK TO SAVEPOINT pristine;

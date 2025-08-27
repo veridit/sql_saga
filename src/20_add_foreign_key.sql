@@ -22,6 +22,7 @@ DECLARE
     uk_row sql_saga.unique_keys;
     fk_schema_name name;
     fk_table_name name;
+    fk_table_columns_snapshot name[];
     uk_table_oid regclass;
     uk_schema_name name;
     uk_table_name name;
@@ -40,6 +41,10 @@ BEGIN
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
     WHERE c.oid = fk_table_oid;
+
+    SELECT array_agg(a.attname ORDER BY a.attnum) INTO fk_table_columns_snapshot
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = fk_table_oid AND a.attnum > 0 AND NOT a.attisdropped;
 
     -- Verify that the referencing table is NOT temporal.
     IF EXISTS (
@@ -224,9 +229,9 @@ BEGIN
     END;
 
     INSERT INTO sql_saga.foreign_keys
-        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger)
+        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger)
     VALUES
-        ( foreign_key_name, 'standard_to_temporal', fk_schema_name, fk_table_name, fk_column_names, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger);
+        ( foreign_key_name, 'standard_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger);
 
 
     /* Validate the constraint on existing data. */
@@ -294,6 +299,7 @@ DECLARE
     uk_row sql_saga.unique_keys;
     fk_schema_name name;
     fk_table_name name;
+    fk_table_columns_snapshot name[];
     uk_table_oid regclass;
     uk_schema_name name;
     uk_table_name name;
@@ -316,6 +322,10 @@ BEGIN
     FROM pg_catalog.pg_class c
     JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
     WHERE c.oid = fk_table_oid;
+
+    SELECT array_agg(a.attname ORDER BY a.attnum) INTO fk_table_columns_snapshot
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = fk_table_oid AND a.attnum > 0 AND NOT a.attisdropped;
 
     /* Get the period involved */
     SELECT e.*
@@ -563,9 +573,9 @@ BEGIN
         );
 
         INSERT INTO sql_saga.foreign_keys
-            ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
+            ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
         VALUES
-            ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, uk_row.unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
+            ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
 
         /* Validate the constraint on existing data. */
         DECLARE

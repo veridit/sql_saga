@@ -6,6 +6,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
+- [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
+
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
 
 - [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
@@ -33,8 +35,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor build system and fix all regressions:** Overhauled the `Makefile` to ensure reliable, incremental builds. Refactored the SQL source into a modular structure and resolved all test failures that were exposed by the new build process.
 
 - [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
-
-- [ ] **Improve `rename_following` to support column renames:** The event trigger now correctly prevents renaming a column that is part of a temporal foreign key. A future enhancement would be to allow such renames and automatically update the `sql_saga.foreign_keys` metadata.
 
 - [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
   - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
