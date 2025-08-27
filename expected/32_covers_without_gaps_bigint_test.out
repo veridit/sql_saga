@@ -52,9 +52,9 @@ TABLE sql_saga.era;
 (1 row)
 
 TABLE sql_saga.unique_keys;
-           unique_key_name            | table_schema |  table_name   |    column_names    | era_name |                     unique_constraint                     |              exclude_constraint               
---------------------------------------+--------------+---------------+--------------------+----------+-----------------------------------------------------------+-----------------------------------------------
- bigint_shifts_job_id_worker_id_valid | public       | bigint_shifts | {job_id,worker_id} | valid    | bigint_shifts_job_id_worker_id_valid_from_valid_until_key | bigint_shifts_job_id_worker_id_int8range_excl
+           unique_key_name            | table_schema |  table_name   |    column_names    | era_name |                     unique_constraint                     |            exclude_constraint             | predicate 
+--------------------------------------+--------------+---------------+--------------------+----------+-----------------------------------------------------------+-------------------------------------------+-----------
+ bigint_shifts_job_id_worker_id_valid | public       | bigint_shifts | {job_id,worker_id} | valid    | bigint_shifts_job_id_worker_id_valid_from_valid_until_key | bigint_shifts_job_id_worker_id_valid_excl | 
 (1 row)
 
 INSERT INTO bigint_shifts(job_id, worker_id, valid_from, valid_until) VALUES

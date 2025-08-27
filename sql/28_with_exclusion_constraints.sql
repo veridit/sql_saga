@@ -79,7 +79,7 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
@@ -97,7 +97,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
+SET CONSTRAINTS houses_id_valid_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -149,7 +149,7 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -169,7 +169,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
+SET CONSTRAINTS houses_id_valid_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -245,7 +245,7 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -265,7 +265,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
+SET CONSTRAINTS houses_id_valid_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses
@@ -312,7 +312,7 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl IMMEDIATE;
+SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -330,7 +330,7 @@ COMMIT;
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_daterange_excl DEFERRED;
+SET CONSTRAINTS houses_id_valid_excl DEFERRED;
 SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
 
 UPDATE  houses

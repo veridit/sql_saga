@@ -122,9 +122,9 @@ TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
------------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
@@ -134,8 +134,8 @@ SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
------------------+--------------+------------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
 (0 rows)
 
 -- Test original drop_unique_key (with positional and named arguments)
@@ -146,9 +146,9 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
------------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
 (1 row)
 
 -- by name (positional)
@@ -159,8 +159,8 @@ SELECT sql_saga.drop_unique_key_by_name('parent', 'parent_id_p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
------------------+--------------+------------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
 (0 rows)
 
 -- Re-create to test named arguments
@@ -171,9 +171,9 @@ SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           |    exclude_constraint    
------------------+--------------+------------+--------------+----------+--------------------------------------+--------------------------
- parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_int4range_excl
+ unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+--------------------------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
 (1 row)
 
 -- by name (named)
@@ -184,8 +184,8 @@ SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent', key_name => 'pare
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint 
------------------+--------------+------------+--------------+----------+-------------------+--------------------
+ unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
 (0 rows)
 
 -- Test symmetrical add_era/drop_era with column management
