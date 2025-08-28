@@ -1,41 +1,9 @@
-CREATE OR REPLACE FUNCTION sql_saga.allen_get_relation(
-    x_from anycompatible, x_until anycompatible,
-    y_from anycompatible, y_until anycompatible
-) RETURNS sql_saga.allen_interval_relation
-LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
-BEGIN
-    IF x_from IS NULL OR x_until IS NULL OR y_from IS NULL OR y_until IS NULL THEN
-        RETURN NULL;
-    END IF;
-
-    IF x_until < y_from THEN RETURN 'precedes'; END IF;
-    IF x_until = y_from THEN RETURN 'meets'; END IF;
-    IF x_from < y_from AND y_from < x_until AND x_until < y_until THEN RETURN 'overlaps'; END IF;
-    IF x_from = y_from AND x_until < y_until THEN RETURN 'starts'; END IF;
-    IF x_from > y_from AND x_until < y_until THEN RETURN 'during'; END IF;
-    IF x_from > y_from AND x_until = y_until THEN RETURN 'finishes'; END IF;
-    IF x_from = y_from AND x_until = y_until THEN RETURN 'equals'; END IF;
-
-    -- Inverse relations
-    IF y_until < x_from THEN RETURN 'preceded by'; END IF;
-    IF y_until = x_from THEN RETURN 'met by'; END IF;
-    IF y_from < x_from AND x_from < y_until AND y_until < x_until THEN RETURN 'overlapped by'; END IF;
-    IF x_from = y_from AND x_until > y_until THEN RETURN 'started by'; END IF;
-    IF x_from < y_from AND x_until > y_until THEN RETURN 'contains'; END IF;
-    IF x_from < y_from AND x_until = y_until THEN RETURN 'finished by'; END IF;
-
-    RETURN NULL; -- Should be unreachable
-END;
-$$;
-
-
 -- Unified Planning Function
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_target_table regclass,
     p_source_table regclass,
     p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
-    p_insert_defaulted_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name
 ) RETURNS SETOF sql_saga.temporal_plan_op
@@ -449,7 +417,6 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge(
     p_source_table regclass,
     p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
-    p_insert_defaulted_columns TEXT[] DEFAULT '{}',
     p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch',
     p_era_name name DEFAULT 'valid'
 )
@@ -469,7 +436,17 @@ DECLARE
     v_target_table_name_only name;
     v_valid_from_col name;
     v_valid_until_col name;
+    v_insert_defaulted_columns TEXT[];
 BEGIN
+    -- Auto-detect columns with default values or identity columns
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_insert_defaulted_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = p_target_table
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+      AND (a.atthasdef OR a.attidentity IN ('a', 'd'));
+
     -- Introspect era information to get the correct column names
     SELECT n.nspname, c.relname
     INTO v_target_schema_name, v_target_table_name_only
@@ -509,7 +486,6 @@ BEGIN
             p_source_table             => p_source_table,
             p_id_columns               => p_id_columns,
             p_ephemeral_columns        => p_ephemeral_columns,
-            p_insert_defaulted_columns => p_insert_defaulted_columns,
             p_mode                     => p_mode,
             p_era_name                 => p_era_name
         );
@@ -540,8 +516,8 @@ BEGIN
             string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
             string_agg(format('jpr_data.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
             string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
-            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns)),
-            string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns))
+            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
+            string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns))
         INTO
             v_data_cols_ident,
             v_data_cols_select,

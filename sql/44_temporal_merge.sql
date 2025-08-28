@@ -137,7 +137,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_1',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -632,7 +631,6 @@ INSERT INTO actual_feedback_12 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_12',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -675,7 +673,6 @@ INSERT INTO actual_feedback_13 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_13',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -718,7 +715,6 @@ INSERT INTO actual_feedback_14 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_14',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -763,7 +759,6 @@ INSERT INTO actual_feedback_15 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_15',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -806,7 +801,6 @@ INSERT INTO actual_feedback_16 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_16',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -848,7 +842,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_17',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -895,7 +888,6 @@ INSERT INTO actual_feedback_18 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_18',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
@@ -932,7 +924,6 @@ INSERT INTO actual_feedback_19 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_19',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'replace_only',
     p_era_name                 => 'valid'
 );
@@ -972,7 +963,6 @@ INSERT INTO actual_feedback_20 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_20',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1014,7 +1004,6 @@ INSERT INTO actual_feedback_21 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_21',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
@@ -1058,7 +1047,6 @@ INSERT INTO actual_feedback_22 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_22',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1100,7 +1088,6 @@ INSERT INTO actual_feedback_23 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_23',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1144,7 +1131,6 @@ INSERT INTO actual_feedback_24 SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_24',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1197,7 +1183,6 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
@@ -1216,7 +1201,6 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1229,7 +1213,6 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
@@ -1276,7 +1259,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_36',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1328,7 +1310,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_37',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1379,7 +1360,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_38',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1538,7 +1518,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_40',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['created_at', 'updated_at'],
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
@@ -1922,7 +1901,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_44',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id'],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
@@ -1995,7 +1973,6 @@ SELECT * FROM sql_saga.temporal_merge(
     p_source_table             => 'temp_source_45',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => '{}'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id'],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid'
 );
