@@ -8,7 +8,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [ ] **(In Progress) Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
   - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
-  - **Status:** The PL/pgSQL prototype is the next step.
+  - **Design Doc:** See `todo-temporal-merge.md` for the detailed architecture and API design.
+  - **Status:** The direct port of the logic and the full test suite from `statbus_speed` is complete and all ported tests are passing. This establishes a verified baseline of correct functionality. The next step is to refactor the function signature to the final, simpler `sql_saga` API as documented in the `README.md`.
   - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.

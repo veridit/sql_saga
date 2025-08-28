@@ -51,11 +51,14 @@ This is the main procedure users will call. Its first action is to perform a dyn
 
 **Signature:**
 ```sql
-PROCEDURE sql_saga.temporal_merge(
+FUNCTION sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
-    p_mode sql_saga.temporal_merge_mode
-);
+    p_mode sql_saga.temporal_merge_mode,
+    p_source_row_ids INTEGER[] DEFAULT NULL,
+    p_source_row_id_column_name TEXT DEFAULT 'row_id',
+    p_era_name name DEFAULT 'valid'
+) RETURNS SETOF sql_saga.temporal_merge_result;
 ```
 **Dynamic Type Check:**
 Before executing the merge logic, the procedure will:
@@ -65,9 +68,12 @@ Before executing the merge logic, the procedure will:
 4.  If they are not compatible, it will raise a clear, informative error and abort.
 
 **Parameters:**
-*   `p_target_table regclass`: The target temporal table, which must have been configured.
+*   `p_target_table regclass`: The target temporal table, which must have been configured via `add_temporal_merge_setup`.
 *   `p_source_table regclass`: A source table, view, or temp table containing the new data. Its structure must be compatible with the registered `TYPE`.
 *   `p_mode sql_saga.temporal_merge_mode`: The operational mode.
+*   `p_source_row_ids INTEGER[]`: An optional array of row identifiers from the source table. If provided, only these rows will be processed. If `NULL`, all rows are processed.
+*   `p_source_row_id_column_name TEXT`: The name of the column in the source table that uniquely identifies each row (e.g., 'row_id'), used to link results back to the source.
+*   `p_era_name name`: The name of the era being modified. Must match the era used in the setup.
 
 ### 3.3. The `mode` ENUM: Defining Intent
 
@@ -104,7 +110,37 @@ The five modes provide precise control for common data management tasks:
 - **`insert_only` (The Safe UI Create / Bulk Load):** For UI "create" forms or initial data loads. Guarantees that existing data will not be touched, preventing accidental modification or duplication.
 
 ### 3.5. Feedback and Result Reporting
-For a general-purpose `sql_saga` procedure, row-level feedback is not required. The procedure will succeed or fail atomically for the entire batch, which is simpler and aligns with standard DML commands. More complex systems (like Statbus) can build a wrapper function that provides detailed row-level feedback if necessary.
+To support complex workflows like those in Statbus, which require detailed feedback (especially auto-generated IDs for new entities), the function provides comprehensive, row-level results by returning a `SETOF sql_saga.temporal_merge_result`.
+
+This provides a highly ergonomic API that aligns with the `statbus_speed` reference implementation.
+
+**Result Types:**
+```sql
+CREATE TYPE sql_saga.set_result_status AS ENUM ('SUCCESS', 'MISSING_TARGET', 'ERROR');
+
+CREATE TYPE sql_saga.temporal_merge_result AS (
+    source_row_id INTEGER,
+    target_entity_ids JSONB,
+    status sql_saga.set_result_status,
+    error_message TEXT
+);
+```
+
+**Caller's Responsibility:**
+```sql
+-- Call the function and optionally store results for analysis.
+CREATE TEMP TABLE my_merge_results AS
+SELECT * FROM sql_saga.temporal_merge(
+    p_target_table         => 'public.my_target',
+    p_source_table         => 'public.my_source',
+    p_mode                 => 'upsert_patch'
+);
+
+-- Query the results for feedback.
+SELECT * FROM my_merge_results;
+```
+
+This approach is chosen for its ease of use, despite the trade-off that a `SELECT` function with significant side-effects can be surprising. This is a known and accepted trade-off, as documented in the `statbus_speed` project's architecture documents, which discuss the ambiguity of a `VOLATILE` function but ultimately implement one for its ergonomic benefits.
 
 
 ## 4. Low-Level Implementation Details (The Planner)
@@ -172,9 +208,9 @@ This section provides a critical review of the proposed API and architecture.
     *   **Weakness:** The planner's logic, based on Allen's Interval Algebra and dynamic SQL, is inherently complex and can be challenging to debug and maintain.
     *   **Mitigation:** This complexity is a necessary trade-off for the power and correctness the function provides. A comprehensive, well-documented test suite (ported from `statbus_speed`) will be critical for ensuring correctness and preventing regressions.
 
-2.  **No Granular Feedback (By Design):**
-    *   **Weakness:** The core procedure provides atomic, batch-level success/failure. It does not return detailed, row-level status information.
-    *   **Mitigation:** This is a deliberate and correct design choice for a general-purpose library function. Systems requiring granular feedback (like the Statbus import system) can implement a wrapper function that calls `temporal_merge` and then generates the necessary detailed results, keeping the core API clean and focused.
+2.  **"Magic" Side Effects (A Deliberate Trade-Off):**
+    *   **Weakness:** The function is invoked with `SELECT`, but its primary purpose is to mutate data (a side effect). This can violate the "Principle of Least Surprise," as developers are conditioned to expect `SELECT` statements to be read-only. This is the main drawback noted in the `statbus` architecture documents for a `VOLATILE` function.
+    *   **Mitigation:** This is a conscious design choice that prioritizes an ergonomic `RETURNS SETOF` API over the stricter, but more verbose, `PROCEDURE` pattern. We accept this trade-off, following the precedent of the `statbus_speed` reference implementation. The function name `temporal_merge` clearly signals a mutating operation, which helps mitigate the surprise.
 
 3.  **Reliance on Correct Entity Identifier Definition:**
     *   **Weakness:** The function's correctness depends on the entity identifier being correctly defined in the `add_temporal_merge_setup` call. An incorrect definition will lead to logical data corruption.
