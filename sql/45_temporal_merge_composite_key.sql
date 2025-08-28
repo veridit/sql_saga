@@ -124,7 +124,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
-    p_mode                     => 'upsert_replace'
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -175,7 +176,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
-    p_mode                     => 'upsert_patch'
+    p_mode                     => 'upsert_patch',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -226,7 +228,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
-    p_mode                     => 'upsert_replace'
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -273,7 +276,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
-    p_mode                     => 'upsert_replace'
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -316,7 +320,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
-    p_mode                     => 'upsert_replace'
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -358,7 +363,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
-    p_mode                     => 'upsert_patch'
+    p_mode                     => 'upsert_patch',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -400,7 +406,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
-    p_mode                     => 'upsert_patch'
+    p_mode                     => 'upsert_patch',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -443,7 +450,8 @@ SELECT * FROM sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
-    p_mode                     => 'upsert_replace'
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'

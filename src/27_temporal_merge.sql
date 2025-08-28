@@ -35,8 +35,9 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_source_table regclass,
     p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
-    p_insert_defaulted_columns TEXT[] DEFAULT '{}',
-    p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch'
+    p_insert_defaulted_columns TEXT[],
+    p_mode sql_saga.temporal_merge_mode,
+    p_era_name name
 ) RETURNS SETOF sql_saga.temporal_plan_op
 LANGUAGE plpgsql STABLE AS $temporal_merge_plan$
 DECLARE
@@ -54,7 +55,29 @@ DECLARE
     v_diff_join_condition TEXT;
     v_plan_source_row_ids_expr TEXT;
     v_entity_id_check_is_null_expr TEXT;
+    v_target_schema_name name;
+    v_target_table_name_only name;
+    v_valid_from_col name;
+    v_valid_until_col name;
 BEGIN
+    -- Introspect era information to get the correct column names
+    SELECT n.nspname, c.relname
+    INTO v_target_schema_name, v_target_table_name_only
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = p_target_table;
+
+    SELECT e.valid_from_column_name, e.valid_until_column_name
+    INTO v_valid_from_col, v_valid_until_col
+    FROM sql_saga.era e
+    WHERE e.table_schema = v_target_schema_name
+      AND e.table_name = v_target_table_name_only
+      AND e.era_name = p_era_name;
+
+    IF v_valid_from_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    END IF;
+
     -- Resolve table identifiers to be correctly quoted and schema-qualified.
     v_target_table_ident := p_target_table::TEXT;
 
@@ -91,7 +114,7 @@ BEGIN
     common_data_cols AS (
         SELECT s.attname
         FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-        WHERE s.attname NOT IN ('row_id', 'valid_from', 'valid_until', 'era_id', 'era_name')
+        WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
           AND s.attname <> ALL(p_id_columns)
     )
     SELECT
@@ -189,18 +212,18 @@ source_initial AS (
     SELECT
         t.row_id,
         %1$s as entity_id,
-        t.valid_from,
-        t.valid_until,
+        t.%14$I as valid_from,
+        t.%15$I as valid_until,
         %2$s AS data_payload,
         %13$s as is_new_entity
     FROM %3$s t
-    WHERE t.valid_from < t.valid_until
+    WHERE t.%14$I < t.%15$I
 ),
 target_rows AS (
     SELECT
         %1$s as entity_id,
-        t.valid_from,
-        t.valid_until,
+        t.%14$I as valid_from,
+        t.%15$I as valid_until,
         %6$s AS data_payload
     FROM %4$s t
     WHERE (%1$s) IN (SELECT DISTINCT entity_id FROM source_initial)
@@ -410,7 +433,9 @@ $SQL$,
         v_resolver_from,                -- 10
         v_diff_join_condition,          -- 11
         v_plan_source_row_ids_expr,     -- 12
-        v_entity_id_check_is_null_expr  -- 13
+        v_entity_id_check_is_null_expr, -- 13
+        v_valid_from_col,               -- 14
+        v_valid_until_col               -- 15
     );
 
     RETURN QUERY EXECUTE v_sql;
@@ -425,7 +450,8 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge(
     p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
     p_insert_defaulted_columns TEXT[] DEFAULT '{}',
-    p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch'
+    p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch',
+    p_era_name name DEFAULT 'valid'
 )
 RETURNS SETOF sql_saga.temporal_merge_result
 LANGUAGE plpgsql VOLATILE AS $temporal_merge$
@@ -439,8 +465,30 @@ DECLARE
     v_entity_key_join_clause TEXT;
     v_all_source_row_ids INTEGER[];
     v_feedback sql_saga.temporal_merge_result;
+    v_target_schema_name name;
+    v_target_table_name_only name;
+    v_valid_from_col name;
+    v_valid_until_col name;
 BEGIN
-        EXECUTE format('SELECT array_agg(row_id) FROM %s', p_source_table::TEXT) INTO v_all_source_row_ids;
+    -- Introspect era information to get the correct column names
+    SELECT n.nspname, c.relname
+    INTO v_target_schema_name, v_target_table_name_only
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = p_target_table;
+
+    SELECT e.valid_from_column_name, e.valid_until_column_name
+    INTO v_valid_from_col, v_valid_until_col
+    FROM sql_saga.era e
+    WHERE e.table_schema = v_target_schema_name
+      AND e.table_name = v_target_table_name_only
+      AND e.era_name = p_era_name;
+
+    IF v_valid_from_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    END IF;
+
+    EXECUTE format('SELECT array_agg(row_id) FROM %s', p_source_table::TEXT) INTO v_all_source_row_ids;
 
         -- Dynamically construct join clause for composite entity key.
         SELECT
@@ -457,12 +505,13 @@ BEGIN
 
         INSERT INTO __temp_last_sql_saga_temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
-            p_target_table,
-            p_source_table,
-            p_id_columns,
-            p_ephemeral_columns,
-            p_insert_defaulted_columns,
-            p_mode
+            p_target_table             => p_target_table,
+            p_source_table             => p_source_table,
+            p_id_columns               => p_id_columns,
+            p_ephemeral_columns        => p_ephemeral_columns,
+            p_insert_defaulted_columns => p_insert_defaulted_columns,
+            p_mode                     => p_mode,
+            p_era_name                 => p_era_name
         );
 
         -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
@@ -479,7 +528,7 @@ BEGIN
         common_data_cols AS (
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN ('row_id', 'valid_from', 'valid_until', 'era_id', 'era_name')
+            WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(p_id_columns)
         ),
         all_available_cols AS (
@@ -543,7 +592,7 @@ BEGIN
                         WHERE p.operation = 'INSERT'
                     ),
                     inserted_rows AS (
-                        INSERT INTO %1$s (%2$s, valid_from, valid_until)
+                        INSERT INTO %1$s (%2$s, %5$I, %6$I)
                         SELECT %3$s, i.new_valid_from, i.new_valid_until
                         FROM inserts_with_rn i, LATERAL jsonb_populate_record(null::%1$s, i.full_data) as jpr_all
                         ORDER BY i.rn
@@ -562,7 +611,9 @@ BEGIN
                     v_target_table_ident,
                     v_all_cols_ident,
                     v_all_cols_select,
-                    v_entity_id_update_jsonb_build
+                    v_entity_id_update_jsonb_build,
+                    v_valid_from_col,
+                    v_valid_until_col
                 );
              END;
         ELSE
@@ -603,7 +654,7 @@ BEGIN
                         WHERE p.operation = 'INSERT'
                     ),
                     inserted_rows AS (
-                        INSERT INTO %1$s (valid_from, valid_until)
+                        INSERT INTO %1$s (%3$I, %4$I)
                         SELECT i.new_valid_from, i.new_valid_until
                         FROM inserts_with_rn i
                         ORDER BY i.rn
@@ -620,31 +671,33 @@ BEGIN
                     WHERE p.plan_op_seq = i.plan_op_seq;
                 $$,
                     v_target_table_ident,
-                    v_entity_id_update_jsonb_build
+                    v_entity_id_update_jsonb_build,
+                    v_valid_from_col,
+                    v_valid_until_col
                 );
              END;
         END IF;
 
         -- 2. Execute UPDATE operations
         IF v_update_set_clause IS NOT NULL THEN
-            EXECUTE format($$ UPDATE %1$s t SET valid_from = p.new_valid_from, valid_until = p.new_valid_until, %2$s
+            EXECUTE format($$ UPDATE %1$s t SET %4$I = p.new_valid_from, %5$I = p.new_valid_until, %2$s
                 FROM __temp_last_sql_saga_temporal_merge_plan p,
                      LATERAL jsonb_populate_record(null::%1$s, p.data) AS jpr_data,
                      LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE p.operation = 'UPDATE' AND %3$s AND t.valid_from = p.old_valid_from;
-            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause);
+                WHERE p.operation = 'UPDATE' AND %3$s AND t.%4$I = p.old_valid_from;
+            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col);
         ELSE
-            EXECUTE format($$ UPDATE %1$s t SET valid_from = p.new_valid_from, valid_until = p.new_valid_until
+            EXECUTE format($$ UPDATE %1$s t SET %3$I = p.new_valid_from, %4$I = p.new_valid_until
                 FROM __temp_last_sql_saga_temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE p.operation = 'UPDATE' AND %2$s AND t.valid_from = p.old_valid_from;
-            $$, v_target_table_ident, v_entity_key_join_clause);
+                WHERE p.operation = 'UPDATE' AND %2$s AND t.%3$I = p.old_valid_from;
+            $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col);
         END IF;
 
         -- 3. Execute DELETE operations
         EXECUTE format($$ DELETE FROM %1$s t
             USING __temp_last_sql_saga_temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-            WHERE p.operation = 'DELETE' AND %2$s AND t.valid_from = p.old_valid_from;
-        $$, v_target_table_ident, v_entity_key_join_clause);
+            WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_from;
+        $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col);
 
         SET CONSTRAINTS ALL IMMEDIATE;
 
