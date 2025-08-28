@@ -210,6 +210,71 @@ SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_versioning', '');
 COMMENT ON TABLE sql_saga.system_versioning IS 'A registry of tables with SYSTEM VERSIONING';
 
 
+-- Types for temporal_merge
+DROP TYPE IF EXISTS sql_saga.temporal_merge_mode CASCADE;
+CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
+    'upsert_patch',
+    'upsert_replace',
+    'patch_only',
+    'replace_only',
+    'insert_only'
+);
+
+DO $$ BEGIN
+    CREATE TYPE sql_saga.set_result_status AS ENUM ('SUCCESS', 'MISSING_TARGET', 'ERROR');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+COMMENT ON TYPE sql_saga.set_result_status IS
+'Defines the possible return statuses for a row processed by a set-based temporal function.
+- SUCCESS: The operation was successfully planned and executed, resulting in a change to the target table.
+- MISSING_TARGET: A successful but non-operative outcome. The function executed correctly, but no DML was performed for this row because the target entity for an UPDATE or REPLACE did not exist. This is an expected outcome and a key "semantic hint" for the calling procedure.
+- ERROR: A catastrophic failure occurred during the processing of the batch for this row. The transaction was rolled back, and the `error_message` column will be populated.';
+
+DO $$ BEGIN
+    CREATE TYPE sql_saga.plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- An internal-only enum that includes the NOOP marker for the planner's internal logic.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.internal_plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'NOOP');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Defines the structure for a single operation in a temporal execution plan.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_plan_op AS (
+        plan_op_seq BIGINT,
+        source_row_ids INTEGER[],
+        operation sql_saga.plan_operation_type,
+        entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
+        old_valid_from DATE,
+        new_valid_from DATE,
+        new_valid_until DATE,
+        data JSONB,
+        relation sql_saga.allen_interval_relation
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Defines the structure for a temporal merge operation result.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_merge_result AS (
+        source_row_id INTEGER,
+        target_entity_ids JSONB,
+        status sql_saga.set_result_status,
+        error_message TEXT
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+
 CREATE VIEW sql_saga.information_schema__era AS
     SELECT current_catalog AS table_catalog,
            e.table_schema,

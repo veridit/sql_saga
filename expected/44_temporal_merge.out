@@ -121,7 +121,7 @@ END;
 $$;
 -- psql variables for the test
 \set target_schema 'temporal_merge_test'
-\set target_table 'establishment'
+\set target_table 'temporal_merge_test.establishment'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{edit_comment}'
@@ -149,12 +149,9 @@ INSERT INTO temp_source_1 VALUES (101, 1, nextval('temporal_merge_test.establish
 CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_1
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_1',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_1',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -224,12 +221,9 @@ INSERT INTO temp_source_2 VALUES (102, 2, 1, '2024-01-01', '2025-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_2
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_2',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_2',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -304,12 +298,9 @@ INSERT INTO temp_source_3 VALUES (103, 3, 1, '2025-01-01', '2026-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_3 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_3
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_3',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_3',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -384,12 +375,9 @@ INSERT INTO temp_source_4 VALUES (104, 4, 1, '2024-07-01', '2025-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_4 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_4
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_4',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_4',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -470,12 +458,9 @@ INSERT INTO temp_source_5 VALUES (105, 5, 1, '2024-07-01', '2025-07-01', 'Patche
 CREATE TEMP TABLE actual_feedback_5 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_5
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_5',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_5',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -550,12 +535,9 @@ INSERT INTO temp_source_6 VALUES (106, 6, 1, '2024-01-01', '2025-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_6 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_6
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_6',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_6',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -630,12 +612,9 @@ INSERT INTO temp_source_7 VALUES (107, 7, 1, '2024-01-01', '2025-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_7 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_7
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_7',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_7',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -707,12 +686,9 @@ INSERT INTO temp_source_8 VALUES (108, 8, 1, '2025-01-01', '2026-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_8 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_8
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_8',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_8',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -784,12 +760,9 @@ INSERT INTO temp_source_9 VALUES (109, 9, 1, '2024-01-01', '2025-01-01', 'Patche
 CREATE TEMP TABLE actual_feedback_9 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_9
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_9',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_9',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -861,12 +834,9 @@ INSERT INTO temp_source_10 VALUES (110, 10, 1, '2025-01-02', '2026-01-01', 'Patc
 CREATE TEMP TABLE actual_feedback_10 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_10
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_10',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_10',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -938,12 +908,9 @@ INSERT INTO temp_source_11 VALUES (111, 11, 1, '2024-01-01', '2025-01-01', 'Patc
 CREATE TEMP TABLE actual_feedback_11 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_11
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_11',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_11',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -1021,12 +988,9 @@ INSERT INTO temp_source_12 VALUES (112, 12, 1, '2024-01-01', '2025-01-01', 'Repl
 -- Run merge
 CREATE TEMP TABLE actual_feedback_12 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_12 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_12',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_12',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1107,12 +1071,9 @@ INSERT INTO temp_source_13 VALUES (113, 13, 1, '2025-01-01', '2026-01-01', 'Repl
 -- Run merge
 CREATE TEMP TABLE actual_feedback_13 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_13 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_13',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_13',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1193,12 +1154,9 @@ INSERT INTO temp_source_14 VALUES (114, 14, 1, '2024-07-01', '2025-01-01', 'Repl
 -- Run merge
 CREATE TEMP TABLE actual_feedback_14 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_14 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_14',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_14',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1285,12 +1243,9 @@ INSERT INTO temp_source_15 VALUES (115, 15, 1, '2024-07-01', '2025-07-01', 'Repl
 -- Run merge
 CREATE TEMP TABLE actual_feedback_15 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_15 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_15',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_15',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1371,12 +1326,9 @@ INSERT INTO temp_source_16 VALUES (116, 16, 1, '2024-01-01', '2025-01-01', 'Repl
 -- Run merge
 CREATE TEMP TABLE actual_feedback_16 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_16 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_16',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_16',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1450,12 +1402,9 @@ INSERT INTO temp_source_17 VALUES (117, 17, 1, '2024-01-01', '2025-01-01', NULL,
 CREATE TEMP TABLE actual_feedback_17 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_17
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_17',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_17',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_replace'
@@ -1530,12 +1479,9 @@ INSERT INTO temp_source_18 VALUES (118, 18, 1, '2024-01-01', '2025-01-01', 'Shou
 -- Run merge
 CREATE TEMP TABLE actual_feedback_18 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_18 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_18',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_18',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only'
@@ -1606,12 +1552,9 @@ INSERT INTO temp_source_19 VALUES (119, 19, 1, '2024-01-01', '2025-01-01', 'Shou
 -- Run merge
 CREATE TEMP TABLE actual_feedback_19 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_19 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_19',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_19',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'replace_only'
@@ -1686,12 +1629,9 @@ INSERT INTO temp_source_20 VALUES (120, 20, 1, '2024-01-01', '2025-01-01', NULL,
 -- Run merge
 CREATE TEMP TABLE actual_feedback_20 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_20 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_20',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_20',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -1767,12 +1707,9 @@ INSERT INTO temp_source_21 VALUES (121, 21, 1, '2024-01-01', '2025-01-01', NULL,
 -- Run merge
 CREATE TEMP TABLE actual_feedback_21 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_21 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_21',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_21',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only'
@@ -1851,12 +1788,9 @@ INSERT INTO temp_source_22 VALUES (122, 22, 1, '2024-01-01', '2025-01-01', 'Same
 -- Run merge
 CREATE TEMP TABLE actual_feedback_22 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_22 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_22',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_22',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -1932,12 +1866,9 @@ INSERT INTO temp_source_23 VALUES (123, 23, 1, '2024-01-01', '2025-01-01', 'Same
 -- Run merge
 CREATE TEMP TABLE actual_feedback_23 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_23 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_23',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_23',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2016,12 +1947,9 @@ INSERT INTO temp_source_24 VALUES
 -- Run merge
 CREATE TEMP TABLE actual_feedback_24 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_24 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_24',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_24',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2128,12 +2056,9 @@ SELECT * FROM (VALUES (301, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_s
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_35',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_35',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only'
@@ -2167,12 +2092,9 @@ ROLLBACK TO SAVEPOINT before_wrong_order;
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (301, 1, 3, '2021-01-01', '2022-01-01', 'NewCo INSERT', 10, 'Initial Insert');
 SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_35',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_35',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2187,12 +2109,9 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (302, 1, 3, '2022-01-01', '2023-01-01', NULL, 15, 'Successful Update');
 SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_35',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_35',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'patch_only'
@@ -2266,12 +2185,9 @@ INSERT INTO temp_source_36 VALUES
 CREATE TEMP TABLE actual_feedback_36 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_36
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_36',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_36',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2350,12 +2266,9 @@ INSERT INTO temp_source_37 VALUES
 CREATE TEMP TABLE actual_feedback_37 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_37
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_37',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_37',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2436,12 +2349,9 @@ INSERT INTO temp_source_38 VALUES
 CREATE TEMP TABLE actual_feedback_38 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_38
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_38',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_38',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => '{}'::TEXT[],
     p_mode                     => 'upsert_patch'
@@ -2525,12 +2435,9 @@ INSERT INTO temp_source_39 VALUES (701, 1, 7, '2023-07-01', '2024-01-01', 'Exist
 CREATE TEMP TABLE actual_feedback_39 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_39
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_39',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_39',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -2634,7 +2541,7 @@ END;
 $$;
 -- psql variables for the test
 \set target_schema 'temporal_merge_test'
-\set target_table 'establishment'
+\set target_table 'temporal_merge_test.establishment'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{edit_comment}'
@@ -2651,12 +2558,9 @@ INSERT INTO temp_source_40 VALUES (801, 1, 40, '2024-01-01', '2025-01-01', 'Defa
 CREATE TEMP TABLE actual_feedback_40 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_40
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_40',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_40',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => ARRAY['created_at', 'updated_at'],
     p_mode                     => 'upsert_patch'
@@ -2753,7 +2657,7 @@ END;
 $$;
 -- psql variables
 \set target_schema 'temporal_merge_test_vt'
-\set target_table 'test_target'
+\set target_table 'temporal_merge_test_vt.test_target'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{}'
@@ -2773,12 +2677,9 @@ INSERT INTO temp_source_41 VALUES (901, 1, '2024-01-01', '2025-01-01', '2024-12-
 CREATE TEMP TABLE actual_feedback_41 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_41
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_41',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_41',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -2867,7 +2768,7 @@ END;
 $$;
 -- psql variables
 \set target_schema 'temporal_merge_test_me'
-\set target_table 'test_target'
+\set target_table 'temporal_merge_test_me.test_target'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{}'
@@ -2888,12 +2789,9 @@ CALL temporal_merge_test_me.reset_target();
 CREATE TEMP TABLE actual_feedback_42 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_42
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_42',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_42',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace'
 );
@@ -3010,7 +2908,7 @@ END;
 $$;
 -- psql variables for the test
 \set target_schema 'temporal_merge_test'
-\set target_table 'establishment'
+\set target_table 'temporal_merge_test.establishment'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{edit_comment}'
@@ -3031,12 +2929,9 @@ INSERT INTO temp_source_43 VALUES (1003, 20, 1, '2011-01-01', 'infinity',   'Cha
 CREATE TEMP TABLE actual_feedback_43 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_43
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_43',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_43',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch'
 );
@@ -3137,7 +3032,7 @@ CREATE TABLE temporal_merge_test_serial.test_target (
 );
 -- psql variables for the test
 \set target_schema 'temporal_merge_test_serial'
-\set target_table 'test_target'
+\set target_table 'temporal_merge_test_serial.test_target'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 \set ephemeral_cols '{}'
@@ -3154,12 +3049,9 @@ INSERT INTO temp_source_44 VALUES (1001, NULL, '2024-01-01', '2025-01-01', 'Seri
 CREATE TEMP TABLE actual_feedback_44 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_44
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_44',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_44',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
     p_mode                     => 'upsert_replace'
@@ -3233,7 +3125,7 @@ CREATE TABLE temporal_merge_test_multi_insert.test_target (
     valid_until DATE NOT NULL
 );
 \set target_schema 'temporal_merge_test_multi_insert'
-\set target_table 'test_target'
+\set target_table 'temporal_merge_test_multi_insert.test_target'
 \set source_schema 'pg_temp'
 \set entity_id_cols '{id}'
 --------------------------------------------------------------------------------
@@ -3251,12 +3143,9 @@ INSERT INTO temp_source_45 VALUES
 CREATE TEMP TABLE actual_feedback_45 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_45
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => :'target_schema',
-    p_target_table_name        => :'target_table',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_45',
-    p_entity_id_column_names   => :'entity_id_cols'::TEXT[],
-    p_source_row_ids           => NULL,
+    p_target_table             => :'target_table'::regclass,
+    p_source_table             => 'temp_source_45',
+    p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => '{}'::TEXT[],
     p_insert_defaulted_columns => ARRAY['id'],
     p_mode                     => 'upsert_replace'

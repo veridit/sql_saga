@@ -29,94 +29,14 @@ END;
 $$;
 
 
--- Migration: create_temporal_merge_functions
---
--- This migration consolidates the logic from the separate `_update` and `_replace`
--- functions into a single, unified, and more robust implementation. The new
--- functions, `temporal_merge_plan` and `temporal_merge`, use an explicit `p_mode`
--- parameter to control the operational semantics (e.g., `upsert_patch` vs.
--- `replace_only`), providing a clear and maintainable API.
---
--- This consolidation reduces code duplication and aligns the implementation with
--- the final vision for the `sql_saga.temporal_merge` procedure.
-
--- This type is dropped and recreated to ensure the new values and order are correct.
--- In a production environment, this would be an ALTER TYPE statement.
-DROP TYPE IF EXISTS sql_saga.set_operation_mode CASCADE;
-CREATE TYPE sql_saga.set_operation_mode AS ENUM (
-    'upsert_patch',
-    'upsert_replace',
-    'patch_only',
-    'replace_only',
-    'insert_only'
-);
-
-DO $$ BEGIN
-    CREATE TYPE sql_saga.set_result_status AS ENUM ('SUCCESS', 'MISSING_TARGET', 'ERROR');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-COMMENT ON TYPE sql_saga.set_result_status IS
-'Defines the possible return statuses for a row processed by a set-based temporal function.
-- SUCCESS: The operation was successfully planned and executed, resulting in a change to the target table.
-- MISSING_TARGET: A successful but non-operative outcome. The function executed correctly, but no DML was performed for this row because the target entity for an UPDATE or REPLACE did not exist. This is an expected outcome and a key "semantic hint" for the calling procedure.
-- ERROR: A catastrophic failure occurred during the processing of the batch for this row. The transaction was rolled back, and the `error_message` column will be populated.';
-
-DO $$ BEGIN
-    CREATE TYPE sql_saga.plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- An internal-only enum that includes the NOOP marker for the planner's internal logic.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.internal_plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'NOOP');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Defines the structure for a single operation in a temporal execution plan.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_plan_op AS (
-        plan_op_seq BIGINT,
-        source_row_ids INTEGER[],
-        operation sql_saga.plan_operation_type,
-        entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
-        old_valid_from DATE,
-        new_valid_from DATE,
-        new_valid_until DATE,
-        data JSONB,
-        relation sql_saga.allen_interval_relation
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
--- Defines the structure for a temporal merge operation result.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_result AS (
-        source_row_id INTEGER,
-        target_entity_ids JSONB,
-        status sql_saga.set_result_status,
-        error_message TEXT
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
-
-
 -- Unified Planning Function
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
-    p_target_schema_name TEXT,
-    p_target_table_name TEXT,
-    p_source_schema_name TEXT,
-    p_source_table_name TEXT,
-    p_entity_id_column_names TEXT[],
-    p_source_row_ids INTEGER[],
+    p_target_table regclass,
+    p_source_table regclass,
+    p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
     p_insert_defaulted_columns TEXT[] DEFAULT '{}',
-    p_mode sql_saga.set_operation_mode DEFAULT 'upsert_patch'
+    p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch'
 ) RETURNS SETOF sql_saga.temporal_plan_op
 LANGUAGE plpgsql STABLE AS $temporal_merge_plan$
 DECLARE
@@ -124,7 +44,7 @@ DECLARE
     v_source_data_cols_jsonb_build TEXT;
     v_target_data_cols_jsonb_build TEXT;
     v_entity_id_as_jsonb TEXT;
-    v_source_table_regclass REGCLASS;
+    v_source_schema_name TEXT;
     v_source_table_ident TEXT;
     v_target_table_ident TEXT;
     v_source_data_payload_expr TEXT;
@@ -136,15 +56,16 @@ DECLARE
     v_entity_id_check_is_null_expr TEXT;
 BEGIN
     -- Resolve table identifiers to be correctly quoted and schema-qualified.
-    v_target_table_ident := format('%I.%I', p_target_schema_name, p_target_table_name);
-    IF p_source_schema_name = 'pg_temp' THEN
-        -- For temp tables, regclass::text will produce a correctly quoted name without a schema,
-        -- which is what we need for it to be found on the search_path.
-        v_source_table_regclass := to_regclass(p_source_table_name);
-        v_source_table_ident := v_source_table_regclass::TEXT;
+    v_target_table_ident := p_target_table::TEXT;
+
+    SELECT n.nspname INTO v_source_schema_name
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = p_source_table;
+
+    IF v_source_schema_name = 'pg_temp' THEN
+        v_source_table_ident := p_source_table::regclass::TEXT;
     ELSE
-        v_source_table_regclass := to_regclass(format('%I.%I', p_source_schema_name, p_source_table_name));
-        v_source_table_ident := format('%I.%I', p_source_schema_name, p_source_table_name);
+        v_source_table_ident := p_source_table::regclass::TEXT;
     END IF;
 
     -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
@@ -152,26 +73,26 @@ BEGIN
         format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
     INTO
         v_entity_id_as_jsonb
-    FROM unnest(p_entity_id_column_names) AS col;
+    FROM unnest(p_id_columns) AS col;
 
     -- 1. Dynamically get the list of common data columns from SOURCE and TARGET tables.
     WITH source_cols AS (
         SELECT pa.attname
         FROM pg_catalog.pg_attribute pa
-        WHERE pa.attrelid = v_source_table_regclass
+        WHERE pa.attrelid = p_source_table
           AND pa.attnum > 0 AND NOT pa.attisdropped
     ),
     target_cols AS (
         SELECT pa.attname
         FROM pg_catalog.pg_attribute pa
-        WHERE pa.attrelid = to_regclass(format('%I.%I', p_target_schema_name, p_target_table_name))
+        WHERE pa.attrelid = p_target_table
           AND pa.attnum > 0 AND NOT pa.attisdropped
     ),
     common_data_cols AS (
         SELECT s.attname
         FROM source_cols s JOIN target_cols t ON s.attname = t.attname
         WHERE s.attname NOT IN ('row_id', 'valid_from', 'valid_until', 'era_id', 'era_name')
-          AND s.attname <> ALL(p_entity_id_column_names)
+          AND s.attname <> ALL(p_id_columns)
     )
     SELECT
         format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
@@ -189,7 +110,7 @@ BEGIN
         string_agg(format('t.%I IS NULL', col), ' AND ')
     INTO
         v_entity_id_check_is_null_expr
-    FROM unnest(p_entity_id_column_names) AS col;
+    FROM unnest(p_id_columns) AS col;
 
     -- 2. Construct expressions and resolver CTEs based on the mode.
     IF p_mode IN ('upsert_patch', 'patch_only') THEN
@@ -271,18 +192,17 @@ source_initial AS (
         t.valid_from,
         t.valid_until,
         %2$s AS data_payload,
-        %14$s as is_new_entity
+        %13$s as is_new_entity
     FROM %3$s t
-    WHERE (%4$L IS NULL OR t.row_id = ANY(%4$L))
-      AND t.valid_from < t.valid_until
+    WHERE t.valid_from < t.valid_until
 ),
 target_rows AS (
     SELECT
         %1$s as entity_id,
         t.valid_from,
         t.valid_until,
-        %7$s AS data_payload
-    FROM %5$s t
+        %6$s AS data_payload
+    FROM %4$s t
     WHERE (%1$s) IN (SELECT DISTINCT entity_id FROM source_initial)
 ),
 source_rows AS (
@@ -300,7 +220,7 @@ source_rows AS (
         si.valid_until,
         si.data_payload
     FROM source_initial si
-    WHERE CASE %8$L::sql_saga.set_operation_mode
+    WHERE CASE %7$L::sql_saga.temporal_merge_mode
         -- For upsert modes, include all initial source rows.
         WHEN 'upsert_patch' THEN true
         WHEN 'upsert_replace' THEN true
@@ -368,7 +288,7 @@ resolved_atomic_segments_with_payloads AS (
     WHERE seg.valid_from < seg.valid_until
       AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
 )
-%10$s,
+%9$s,
 resolved_atomic_segments AS (
     SELECT
         entity_id,
@@ -376,9 +296,9 @@ resolved_atomic_segments AS (
         valid_until,
         t_valid_from,
         source_row_id,
-        %9$s as data_payload,
+        %8$s as data_payload,
         CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
-    FROM %11$s
+    FROM %10$s
 ),
 coalesced_final_segments AS (
     SELECT
@@ -402,7 +322,7 @@ coalesced_final_segments AS (
                     -- or if the data payload changes. For [) intervals,
                     -- contiguity is defined as the previous `valid_until` being equal to the current `valid_from`.
                     WHEN LAG(ras.valid_until) OVER (PARTITION BY ras.entity_id ORDER BY ras.valid_from) = ras.valid_from
-                     AND LAG(ras.data_payload - %6$L::text[]) OVER (PARTITION BY ras.entity_id ORDER BY ras.valid_from) IS NOT DISTINCT FROM (ras.data_payload - %6$L::text[])
+                     AND LAG(ras.data_payload - %5$L::text[]) OVER (PARTITION BY ras.entity_id ORDER BY ras.valid_from) IS NOT DISTINCT FROM (ras.data_payload - %5$L::text[])
                     THEN 0 -- Not a new group (contiguous and same data)
                     ELSE 1 -- Is a new group (time gap or different data)
                 END as is_new_segment
@@ -443,11 +363,11 @@ diff AS (
             data_payload as t_data
         FROM target_rows
     ) t
-    ON f.f_entity_id = t.t_entity_id AND (%12$s)
+    ON f.f_entity_id = t.t_entity_id AND (%11$s)
 ),
 plan AS (
     SELECT
-        %13$s as source_row_ids,
+        %12$s as source_row_ids,
         CASE
             WHEN d.f_data IS NULL THEN 'DELETE'::sql_saga.internal_plan_operation_type
             WHEN d.t_data IS NULL THEN 'INSERT'::sql_saga.internal_plan_operation_type
@@ -481,17 +401,16 @@ $SQL$,
         v_entity_id_as_jsonb,           -- 1
         v_source_data_payload_expr,     -- 2
         v_source_table_ident,           -- 3
-        p_source_row_ids,               -- 4
-        v_target_table_ident,           -- 5
-        p_ephemeral_columns,            -- 6
-        v_target_data_cols_jsonb_build, -- 7
-        p_mode,                         -- 8
-        v_final_data_payload_expr,      -- 9
-        v_resolver_ctes,                -- 10
-        v_resolver_from,                -- 11
-        v_diff_join_condition,          -- 12
-        v_plan_source_row_ids_expr,     -- 13
-        v_entity_id_check_is_null_expr  -- 14
+        v_target_table_ident,           -- 4
+        p_ephemeral_columns,            -- 5
+        v_target_data_cols_jsonb_build, -- 6
+        p_mode,                         -- 7
+        v_final_data_payload_expr,      -- 8
+        v_resolver_ctes,                -- 9
+        v_resolver_from,                -- 10
+        v_diff_join_condition,          -- 11
+        v_plan_source_row_ids_expr,     -- 12
+        v_entity_id_check_is_null_expr  -- 13
     );
 
     RETURN QUERY EXECUTE v_sql;
@@ -501,20 +420,17 @@ $temporal_merge_plan$;
 
 -- Unified Orchestrator Function
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge(
-    p_target_schema_name TEXT,
-    p_target_table_name TEXT,
-    p_source_schema_name TEXT,
-    p_source_table_name TEXT,
-    p_entity_id_column_names TEXT[],
-    p_source_row_ids INTEGER[],
+    p_target_table regclass,
+    p_source_table regclass,
+    p_id_columns TEXT[],
     p_ephemeral_columns TEXT[],
     p_insert_defaulted_columns TEXT[] DEFAULT '{}',
-    p_mode sql_saga.set_operation_mode DEFAULT 'upsert_patch'
+    p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch'
 )
 RETURNS SETOF sql_saga.temporal_merge_result
 LANGUAGE plpgsql VOLATILE AS $temporal_merge$
 DECLARE
-    v_target_table_ident TEXT := format('%I.%I', p_target_schema_name, p_target_table_name);
+    v_target_table_ident TEXT := p_target_table::TEXT;
     v_data_cols_ident TEXT;
     v_data_cols_select TEXT;
     v_update_set_clause TEXT;
@@ -524,29 +440,14 @@ DECLARE
     v_all_source_row_ids INTEGER[];
     v_feedback sql_saga.temporal_merge_result;
 BEGIN
-        -- If p_source_row_ids is NULL, it means "all rows from source". We must fetch them
-        -- to provide correct feedback for MISSING_TARGET or ERROR states.
-        IF p_source_row_ids IS NULL THEN
-            DECLARE
-                v_source_table_regclass REGCLASS;
-            BEGIN
-                IF p_source_schema_name = 'pg_temp' THEN
-                    v_source_table_regclass := to_regclass(p_source_table_name);
-                ELSE
-                    v_source_table_regclass := to_regclass(format('%I.%I', p_source_schema_name, p_source_table_name));
-                END IF;
-                EXECUTE format('SELECT array_agg(row_id) FROM %s', v_source_table_regclass) INTO v_all_source_row_ids;
-            END;
-        ELSE
-            v_all_source_row_ids := p_source_row_ids;
-        END IF;
+        EXECUTE format('SELECT array_agg(row_id) FROM %s', p_source_table::TEXT) INTO v_all_source_row_ids;
 
         -- Dynamically construct join clause for composite entity key.
         SELECT
             string_agg(format('t.%I = jpr_entity.%I', col, col), ' AND ')
         INTO
             v_entity_key_join_clause
-        FROM unnest(p_entity_id_column_names) AS col;
+        FROM unnest(p_id_columns) AS col;
 
         IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge_plan') IS NOT NULL THEN
             DROP TABLE __temp_last_sql_saga_temporal_merge_plan;
@@ -556,57 +457,49 @@ BEGIN
 
         INSERT INTO __temp_last_sql_saga_temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
-            p_target_schema_name, p_target_table_name,
-            p_source_schema_name, p_source_table_name,
-            p_entity_id_column_names, p_source_row_ids, p_ephemeral_columns,
-            p_insert_defaulted_columns, p_mode
+            p_target_table,
+            p_source_table,
+            p_id_columns,
+            p_ephemeral_columns,
+            p_insert_defaulted_columns,
+            p_mode
         );
 
         -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
-        DECLARE
-            v_source_table_regclass REGCLASS;
-        BEGIN
-            IF p_source_schema_name = 'pg_temp' THEN
-                v_source_table_regclass := to_regclass(p_source_table_name);
-            ELSE
-                v_source_table_regclass := to_regclass(format('%I.%I', p_source_schema_name, p_source_table_name));
-            END IF;
-
-            WITH source_cols AS (
-                SELECT pa.attname
-                FROM pg_catalog.pg_attribute pa
-                WHERE pa.attrelid = v_source_table_regclass AND pa.attnum > 0 AND NOT pa.attisdropped
-            ),
-            target_cols AS (
-                SELECT pa.attname
-                FROM pg_catalog.pg_attribute pa
-                WHERE pa.attrelid = v_target_table_ident::regclass AND pa.attnum > 0 AND NOT pa.attisdropped
-            ),
-            common_data_cols AS (
-                SELECT s.attname
-                FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-                WHERE s.attname NOT IN ('row_id', 'valid_from', 'valid_until', 'era_id', 'era_name')
-                  AND s.attname <> ALL(p_entity_id_column_names)
-            ),
-            all_available_cols AS (
-                SELECT attname FROM common_data_cols
-                UNION ALL
-                SELECT unnest(p_entity_id_column_names)
-            )
-            SELECT
-                string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_entity_id_column_names)),
-                string_agg(format('jpr_data.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_entity_id_column_names)),
-                string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_entity_id_column_names)),
-                string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns)),
-                string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns))
-            INTO
-                v_data_cols_ident,
-                v_data_cols_select,
-                v_update_set_clause,
-                v_all_cols_ident,
-                v_all_cols_select
-            FROM all_available_cols;
-        END;
+        WITH source_cols AS (
+            SELECT pa.attname
+            FROM pg_catalog.pg_attribute pa
+            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
+        ),
+        target_cols AS (
+            SELECT pa.attname
+            FROM pg_catalog.pg_attribute pa
+            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
+        ),
+        common_data_cols AS (
+            SELECT s.attname
+            FROM source_cols s JOIN target_cols t ON s.attname = t.attname
+            WHERE s.attname NOT IN ('row_id', 'valid_from', 'valid_until', 'era_id', 'era_name')
+              AND s.attname <> ALL(p_id_columns)
+        ),
+        all_available_cols AS (
+            SELECT attname FROM common_data_cols
+            UNION ALL
+            SELECT unnest(p_id_columns)
+        )
+        SELECT
+            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
+            string_agg(format('jpr_data.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
+            string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
+            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns)),
+            string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_insert_defaulted_columns))
+        INTO
+            v_data_cols_ident,
+            v_data_cols_select,
+            v_update_set_clause,
+            v_all_cols_ident,
+            v_all_cols_select
+        FROM all_available_cols;
 
         SET CONSTRAINTS ALL DEFERRED;
 
@@ -626,7 +519,7 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT unnest(p_entity_id_column_names) as col
+                    SELECT unnest(p_id_columns) as col
                     UNION
                     SELECT 'id'
                     WHERE 'id' IN (SELECT attname FROM target_cols)
@@ -687,7 +580,7 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT unnest(p_entity_id_column_names) as col
+                    SELECT unnest(p_id_columns) as col
                     UNION
                     SELECT 'id'
                     WHERE 'id' IN (SELECT attname FROM target_cols)

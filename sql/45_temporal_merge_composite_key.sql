@@ -119,15 +119,12 @@ INSERT INTO temp_source_1 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'C
 CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_1
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_1',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_replace',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit',
+    p_source_table             => 'temp_source_1',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[]
+    p_insert_defaulted_columns => '{}'::TEXT[],
+    p_mode                     => 'upsert_replace'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -173,15 +170,12 @@ INSERT INTO temp_source_2 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, NU
 CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_2
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_2',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_patch',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit',
+    p_source_table             => 'temp_source_2',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[]
+    p_insert_defaulted_columns => '{}'::TEXT[],
+    p_mode                     => 'upsert_patch'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -227,15 +221,12 @@ INSERT INTO temp_source_3 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'C
 CREATE TEMP TABLE actual_feedback_3 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_3
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_3',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_replace',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit',
+    p_source_table             => 'temp_source_3',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => '{}'::TEXT[]
+    p_insert_defaulted_columns => '{}'::TEXT[],
+    p_mode                     => 'upsert_replace'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -277,15 +268,12 @@ INSERT INTO temp_source_4 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, '
 CREATE TEMP TABLE actual_feedback_4 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_4
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit_id_pk',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_4',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_replace',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit_id_pk',
+    p_source_table             => 'temp_source_4',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id']
+    p_insert_defaulted_columns => ARRAY['id'],
+    p_mode                     => 'upsert_replace'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -323,15 +311,12 @@ INSERT INTO temp_source_5 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, '
 CREATE TEMP TABLE actual_feedback_5 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_5
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit_id_gen',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_5',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_replace',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit_id_gen',
+    p_source_table             => 'temp_source_5',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id']
+    p_insert_defaulted_columns => ARRAY['id'],
+    p_mode                     => 'upsert_replace'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -368,15 +353,12 @@ INSERT INTO temp_source_6 VALUES (104, 10, 100, '2024-01-01', '2025-01-01', 100,
 CREATE TEMP TABLE actual_feedback_6 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_6
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit_id_pk',
-    p_source_schema_name       => 'pg_temp',
-    p_source_table_name        => 'temp_source_6',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_patch',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit_id_pk',
+    p_source_table             => 'temp_source_6',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id']
+    p_insert_defaulted_columns => ARRAY['id'],
+    p_mode                     => 'upsert_patch'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -413,15 +395,12 @@ INSERT INTO temp_source_7 VALUES (105, 10, 100, '2024-01-01', '2025-01-01', 100,
 CREATE TEMP TABLE actual_feedback_7 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_7
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit_id_gen',
-    p_source_schema_name       => 'pg_temp',
-    p_source_table_name        => 'temp_source_7',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_patch',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit_id_gen',
+    p_source_table             => 'temp_source_7',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id']
+    p_insert_defaulted_columns => ARRAY['id'],
+    p_mode                     => 'upsert_patch'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -459,15 +438,12 @@ INSERT INTO temp_source_8 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, '
 CREATE TEMP TABLE actual_feedback_8 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_8
 SELECT * FROM sql_saga.temporal_merge(
-    p_target_schema_name       => 'tmtc',
-    p_target_table_name        => 'stat_for_unit_no_pk',
-    p_source_schema_name       => :'source_schema',
-    p_source_table_name        => 'temp_source_8',
-    p_entity_id_column_names   => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_mode                     => 'upsert_replace',
-    p_source_row_ids           => NULL,
+    p_target_table             => 'tmtc.stat_for_unit_no_pk',
+    p_source_table             => 'temp_source_8',
+    p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_insert_defaulted_columns => ARRAY['id']
+    p_insert_defaulted_columns => ARRAY['id'],
+    p_mode                     => 'upsert_replace'
 );
 
 \echo '--- Planner: Expected Plan ---'
