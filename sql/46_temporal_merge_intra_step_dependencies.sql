@@ -183,6 +183,96 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 DROP TABLE temp_source_2;
 
 
+\echo '--- Scenario 3: founding_id set split across two separate temporal_merge calls ---'
+\echo '--- This demonstrates that founding_id only resolves dependencies within a single batch. ---'
+\echo '--- Splitting a founding set across calls will result in multiple distinct entities. ---'
+
+-- A single source table for both calls. Note: ON COMMIT DROP is omitted so we
+-- can inspect the final state. The table is dropped manually.
+CREATE TEMP TABLE temp_source_3 (
+    row_id INT,
+    founding_id INT,
+    id INT,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    name TEXT,
+    edit_comment TEXT
+);
+
+-- Two updatable views, each representing a separate batch for temporal_merge
+CREATE TEMP VIEW v_source_3a AS SELECT * FROM temp_source_3 WHERE row_id = 301;
+CREATE TEMP VIEW v_source_3b AS SELECT * FROM temp_source_3 WHERE row_id = 302;
+
+INSERT INTO temp_source_3 VALUES
+(301, 30, NULL, '2026-01-01', '2026-12-31', 'Entity 30 Original', 'E30-S1'),
+(302, 30, NULL, '2026-06-01', '2026-09-01', 'Entity 30 Update',   'E30-S2');
+
+\echo '--- Source: Initial state before any calls ---'
+SELECT * FROM temp_source_3 ORDER BY row_id;
+
+\echo '--- Source for call 1 (via view v_source_3a): ---'
+SELECT * FROM v_source_3a ORDER BY row_id;
+\echo '--- Source for call 2 (via view v_source_3b): ---'
+SELECT * FROM v_source_3b ORDER BY row_id;
+
+\echo '--- First call: processing only the first part of the founding set (row_id=301) via v_source_3a ---'
+CALL sql_saga.temporal_merge(
+    p_target_table             => 'tmisd.establishment',
+    p_source_table             => 'v_source_3a',
+    p_id_columns               => '{id}'::TEXT[],
+    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid',
+    p_founding_id_column       => 'founding_id',
+    p_update_source_with_assigned_entity_ids => true
+);
+
+\echo '--- Target: State after first call (one new entity created) ---'
+-- Look for entities created after the first two scenarios
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 3 ORDER BY id, valid_from;
+
+\echo '--- Source: State after first call (id back-filled for row_id=301) ---'
+SELECT * FROM temp_source_3 ORDER BY row_id;
+
+\echo '--- Second call: processing the second part of the founding set (row_id=302) via v_source_3b ---'
+-- In the second call, founding_id=30 is seen again. Since the context is a new
+-- source view, temporal_merge treats it as the founding of a new entity. It
+-- does not know that founding_id=30 was used in a previous call.
+CALL sql_saga.temporal_merge(
+    p_target_table             => 'tmisd.establishment',
+    p_source_table             => 'v_source_3b',
+    p_id_columns               => '{id}'::TEXT[],
+    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
+    p_mode                     => 'upsert_replace',
+    p_era_name                 => 'valid',
+    p_founding_id_column       => 'founding_id',
+    p_update_source_with_assigned_entity_ids => true
+);
+
+\echo '--- Orchestrator: Expected Final State (Two separate entities created) ---'
+-- Entity with id=4 from the first call
+-- Entity with id=5 from the second call (treated as a new founding event)
+SELECT * FROM (VALUES
+    (4, 'Entity 30 Original', '2026-01-01'::DATE, '2026-12-31'::DATE, 'E30-S1'::TEXT),
+    (5, 'Entity 30 Update', '2026-06-01'::DATE, '2026-09-01'::DATE, 'E30-S2'::TEXT)
+) AS t (id, name, valid_from, valid_until, edit_comment) ORDER BY id, valid_from;
+
+\echo '--- Orchestrator: Actual Final State ---'
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 3 ORDER BY id, valid_from;
+
+\echo '--- Source Table: Expected state after both calls ---'
+SELECT * FROM (VALUES
+    (301, 30, 4, '2026-01-01'::date, '2026-12-31'::date, 'Entity 30 Original', 'E30-S1'),
+    (302, 30, 5, '2026-06-01'::date, '2026-09-01'::date, 'Entity 30 Update',   'E30-S2')
+) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
+\echo '--- Source Table: Actual state after both calls ---'
+SELECT * FROM temp_source_3 ORDER BY row_id;
+
+-- Cleanup for this scenario
+DROP VIEW v_source_3a;
+DROP VIEW v_source_3b;
+DROP TABLE temp_source_3;
+
 -- Final Cleanup
 DROP TABLE tmisd.establishment;
 DROP SCHEMA tmisd CASCADE;

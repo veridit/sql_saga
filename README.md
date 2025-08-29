@@ -343,6 +343,7 @@ The `add_api` function creates views to simplify interaction with temporal table
     - `'patch_only'` / `'replace_only'`: Only affects entities that already exist in the target table.
     - `'insert_only'`: Only inserts new entities.
   - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call).
+    - **Important:** The scope of a `founding_id` is limited to a single `temporal_merge` call. All rows belonging to a single founding event *must* be processed within the same source table in a single call. Splitting a `founding_id` set across multiple `temporal_merge` calls will result in the creation of multiple, distinct entities, as the procedure has no memory of `founding_id` values used in previous calls.
   - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
 
 ### System Versioning (History Tables)
