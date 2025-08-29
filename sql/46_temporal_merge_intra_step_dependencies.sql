@@ -45,6 +45,11 @@ INSERT INTO temp_source_1 VALUES
 (1, 1, NULL, '2023-01-01', '2023-12-31', 'Initial Name', 'First slice'),
 (2, 1, NULL, '2023-06-01', '2023-12-31', 'Corrected Name', 'Second slice, replaces part of first');
 
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_1 ORDER BY row_id;
+
 -- Run the orchestrator. This call will fail until the API is updated.
 CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_1
@@ -106,6 +111,11 @@ INSERT INTO temp_source_2 VALUES
 -- Entity 2 (founding_id=20) has a `finishes` split
 (201, 20, NULL, '2025-01-01', '2025-12-31', 'Entity 20 Initial', 'E20-S1'),
 (202, 20, NULL, '2025-07-01', '2025-12-31', 'Entity 20 New End', 'E20-S2');
+
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator
 CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;

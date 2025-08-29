@@ -115,6 +115,11 @@ CREATE TEMP TABLE temp_source_1 (
 ) ON COMMIT DROP;
 INSERT INTO temp_source_1 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'Corrected value for mid-year');
 
+\echo '--- Target: Initial State (before merge) ---'
+SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_1 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_1
@@ -165,6 +170,11 @@ CREATE TEMP TABLE temp_source_2 (
 ) ON COMMIT DROP;
 -- Source has a NULL value for 'edit_comment'. In patch mode, this should NOT overwrite the existing value.
 INSERT INTO temp_source_2 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, NULL);
+
+\echo '--- Target: Initial State (before merge) ---'
+SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
@@ -217,6 +227,11 @@ CREATE TEMP TABLE temp_source_3 (
 ) ON COMMIT DROP;
 INSERT INTO temp_source_3 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'Corrected value for mid-year', 'some extra data');
 
+\echo '--- Target: Initial State (before merge) ---'
+SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_3 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_3 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_3
@@ -264,6 +279,11 @@ CREATE TEMP TABLE temp_source_4 (
 ) ON COMMIT DROP;
 INSERT INTO temp_source_4 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
 
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_4 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_4 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_4
@@ -307,6 +327,11 @@ CREATE TEMP TABLE temp_source_5 (
 ) ON COMMIT DROP;
 INSERT INTO temp_source_5 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
 
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_5 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_5 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_5
@@ -349,6 +374,12 @@ CREATE TEMP TABLE temp_source_6 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_6 VALUES (104, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_6 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_6 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_6
@@ -391,6 +422,12 @@ CREATE TEMP TABLE temp_source_7 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_7 VALUES (105, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_7 ORDER BY row_id;
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_7 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_7
@@ -433,6 +470,11 @@ CREATE TEMP TABLE temp_source_8 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_8 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+
+\echo '--- Target: Initial State (before merge) ---'
+SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_no_pk ORDER BY id, valid_from;
+\echo '--- Source: Data to be merged ---'
+SELECT * FROM temp_source_8 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_8 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;

@@ -151,6 +151,21 @@ CREATE TEMP TABLE temp_source_1 (
     row_id INT, legal_unit_id INT, id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_1 VALUES (101, 1, nextval('temporal_merge_test.establishment_id_seq'), '2024-01-01', '2025-01-01', 'New EST', 10, 'Initial Insert');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_1 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |  name   | employees |  edit_comment  
+--------+---------------+----+------------+-------------+---------+-----------+----------------
+    101 |             1 |  1 | 2024-01-01 | 2025-01-01  | New EST |        10 | Initial Insert
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_1
@@ -223,6 +238,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (2, 1, '2024-01-01', '2026-01-01', 'Original', 20, 'Original slice');
 CREATE TEMP TABLE temp_source_2 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_2 VALUES (102, 2, 1, '2024-01-01', '2025-01-01', 'Patched', 25, 'Starts patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  2 |             1 | 2024-01-01 | 2026-01-01  | Original |        20 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_2 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    102 |  2 |             1 | 2024-01-01 | 2025-01-01  | Patched |        25 | Starts patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_2
@@ -301,6 +332,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (3, 1, '2024-01-01', '2026-01-01', 'Original', 30, 'Original slice');
 CREATE TEMP TABLE temp_source_3 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_3 VALUES (103, 3, 1, '2025-01-01', '2026-01-01', 'Patched', 35, 'Finishes patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  3 |             1 | 2024-01-01 | 2026-01-01  | Original |        30 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_3 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees |  edit_comment  
+--------+----+---------------+------------+-------------+---------+-----------+----------------
+    103 |  3 |             1 | 2025-01-01 | 2026-01-01  | Patched |        35 | Finishes patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_3 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_3
@@ -379,6 +426,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (4, 1, '2024-01-01', '2026-01-01', 'Original', 40, 'Original slice');
 CREATE TEMP TABLE temp_source_4 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_4 VALUES (104, 4, 1, '2024-07-01', '2025-01-01', 'Patched', 45, 'During patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  4 |             1 | 2024-01-01 | 2026-01-01  | Original |        40 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_4 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    104 |  4 |             1 | 2024-07-01 | 2025-01-01  | Patched |        45 | During patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_4 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_4
@@ -463,6 +526,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (5, 1, '2024-01-01', '2025-01-01', 'Original', 50, 'Original slice');
 CREATE TEMP TABLE temp_source_5 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_5 VALUES (105, 5, 1, '2024-07-01', '2025-07-01', 'Patched', 55, 'Overlaps patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  5 |             1 | 2024-01-01 | 2025-01-01  | Original |        50 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_5 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees |  edit_comment  
+--------+----+---------------+------------+-------------+---------+-----------+----------------
+    105 |  5 |             1 | 2024-07-01 | 2025-07-01  | Patched |        55 | Overlaps patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_5 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_5
@@ -541,6 +620,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (6, 1, '2024-07-01', '2025-07-01', 'Original', 60, 'Original slice');
 CREATE TEMP TABLE temp_source_6 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_6 VALUES (106, 6, 1, '2024-01-01', '2025-01-01', 'Patched', 65, 'Overlapped by patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  6 |             1 | 2024-07-01 | 2025-07-01  | Original |        60 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_6 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees |    edit_comment     
+--------+----+---------------+------------+-------------+---------+-----------+---------------------
+    106 |  6 |             1 | 2024-01-01 | 2025-01-01  | Patched |        65 | Overlapped by patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_6 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_6
@@ -619,6 +714,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (7, 1, '2025-01-01', '2026-01-01', 'Original', 70, 'Original slice');
 CREATE TEMP TABLE temp_source_7 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_7 VALUES (107, 7, 1, '2024-01-01', '2025-01-01', 'Patched', 75, 'Meets patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  7 |             1 | 2025-01-01 | 2026-01-01  | Original |        70 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_7 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    107 |  7 |             1 | 2024-01-01 | 2025-01-01  | Patched |        75 | Meets patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_7 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_7
@@ -694,6 +805,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (8, 1, '2024-01-01', '2025-01-01', 'Original', 80, 'Original slice');
 CREATE TEMP TABLE temp_source_8 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_8 VALUES (108, 8, 1, '2025-01-01', '2026-01-01', 'Patched', 85, 'Met by patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  8 |             1 | 2024-01-01 | 2025-01-01  | Original |        80 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_8 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    108 |  8 |             1 | 2025-01-01 | 2026-01-01  | Patched |        85 | Met by patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_8 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_8
@@ -769,6 +896,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (9, 1, '2026-01-01', '2027-01-01', 'Original', 90, 'Original slice');
 CREATE TEMP TABLE temp_source_9 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_9 VALUES (109, 9, 1, '2024-01-01', '2025-01-01', 'Patched', 95, 'Before patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+  9 |             1 | 2026-01-01 | 2027-01-01  | Original |        90 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_9 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    109 |  9 |             1 | 2024-01-01 | 2025-01-01  | Patched |        95 | Before patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_9 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_9
@@ -844,6 +987,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (10, 1, '2024-01-01', '2025-01-01', 'Original', 100, 'Original slice');
 CREATE TEMP TABLE temp_source_10 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_10 VALUES (110, 10, 1, '2025-01-02', '2026-01-01', 'Patched', 105, 'After patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 10 |             1 | 2024-01-01 | 2025-01-01  | Original |       100 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_10 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    110 | 10 |             1 | 2025-01-02 | 2026-01-01  | Patched |       105 | After patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_10 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_10
@@ -919,6 +1078,22 @@ CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (11, 1, '2024-01-01', '2025-01-01', 'Original', 110, 'Original slice');
 CREATE TEMP TABLE temp_source_11 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT) ON COMMIT DROP;
 INSERT INTO temp_source_11 VALUES (111, 11, 1, '2024-01-01', '2025-01-01', 'Patched', 115, 'Equals patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 11 |             1 | 2024-01-01 | 2025-01-01  | Original |       110 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_11 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    111 | 11 |             1 | 2024-01-01 | 2025-01-01  | Patched |       115 | Equals patch
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_11 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_11
@@ -1001,6 +1176,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_12 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_12 VALUES (112, 12, 1, '2024-01-01', '2025-01-01', 'Replaced', 25, 'Starts replace');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 12 |             1 | 2024-01-01 | 2026-01-01  | Original |        20 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_12 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+--------+----+---------------+------------+-------------+----------+-----------+----------------
+    112 | 12 |             1 | 2024-01-01 | 2025-01-01  | Replaced |        25 | Starts replace
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_12 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_12 SELECT * FROM sql_saga.temporal_merge(
@@ -1084,6 +1275,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_13 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_13 VALUES (113, 13, 1, '2025-01-01', '2026-01-01', 'Replaced', 35, 'Finishes replace');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 13 |             1 | 2024-01-01 | 2026-01-01  | Original |        30 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_13 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |   name   | employees |   edit_comment   
+--------+----+---------------+------------+-------------+----------+-----------+------------------
+    113 | 13 |             1 | 2025-01-01 | 2026-01-01  | Replaced |        35 | Finishes replace
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_13 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_13 SELECT * FROM sql_saga.temporal_merge(
@@ -1167,6 +1374,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_14 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_14 VALUES (114, 14, 1, '2024-07-01', '2025-01-01', 'Replaced', 45, 'During replace');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 14 |             1 | 2024-01-01 | 2026-01-01  | Original |        40 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_14 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+--------+----+---------------+------------+-------------+----------+-----------+----------------
+    114 | 14 |             1 | 2024-07-01 | 2025-01-01  | Replaced |        45 | During replace
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_14 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_14 SELECT * FROM sql_saga.temporal_merge(
@@ -1256,6 +1479,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_15 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_15 VALUES (115, 15, 1, '2024-07-01', '2025-07-01', 'Replaced', 55, 'Overlaps replace');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 15 |             1 | 2024-01-01 | 2025-01-01  | Original |        50 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_15 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |   name   | employees |   edit_comment   
+--------+----+---------------+------------+-------------+----------+-----------+------------------
+    115 | 15 |             1 | 2024-07-01 | 2025-07-01  | Replaced |        55 | Overlaps replace
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_15 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_15 SELECT * FROM sql_saga.temporal_merge(
@@ -1339,6 +1578,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_16 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_16 VALUES (116, 16, 1, '2024-01-01', '2025-01-01', 'Replaced', 115, 'Equals replace');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 16 |             1 | 2024-01-01 | 2025-01-01  | Original |       110 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_16 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+--------+----+---------------+------------+-------------+----------+-----------+----------------
+    116 | 16 |             1 | 2024-01-01 | 2025-01-01  | Replaced |       115 | Equals replace
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_16 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_16 SELECT * FROM sql_saga.temporal_merge(
@@ -1414,6 +1669,22 @@ CREATE TEMP TABLE temp_source_17 (
     row_id INT, id INT, legal_unit_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, edit_comment TEXT, employees INT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_17 VALUES (117, 17, 1, '2024-01-01', '2025-01-01', NULL, 'Replaced with NULL', NULL);
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees | edit_comment 
+----+---------------+------------+-------------+----------+-----------+--------------
+ 17 |             1 | 2024-01-01 | 2025-01-01  | Old Name |        10 | Old Comment
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_17 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until | name |    edit_comment    | employees 
+--------+----+---------------+------------+-------------+------+--------------------+-----------
+    117 | 17 |             1 | 2024-01-01 | 2025-01-01  |      | Replaced with NULL |          
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_17 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_17
@@ -1492,6 +1763,21 @@ CALL temporal_merge_test.reset_target();
 -- Source data
 CREATE TEMP TABLE temp_source_18 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_18 VALUES (118, 18, 1, '2024-01-01', '2025-01-01', 'Should not be inserted', 10, 'Patch only comment');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_18 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |          name          | employees |    edit_comment    
+--------+----+---------------+------------+-------------+------------------------+-----------+--------------------
+    118 | 18 |             1 | 2024-01-01 | 2025-01-01  | Should not be inserted |        10 | Patch only comment
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_18 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_18 SELECT * FROM sql_saga.temporal_merge(
@@ -1565,6 +1851,21 @@ CALL temporal_merge_test.reset_target();
 -- Source data
 CREATE TEMP TABLE temp_source_19 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_19 VALUES (119, 19, 1, '2024-01-01', '2025-01-01', 'Should not be inserted', 10, 'Replace only comment');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_19 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |          name          | employees |     edit_comment     
+--------+----+---------------+------------+-------------+------------------------+-----------+----------------------
+    119 | 19 |             1 | 2024-01-01 | 2025-01-01  | Should not be inserted |        10 | Replace only comment
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_19 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_19 SELECT * FROM sql_saga.temporal_merge(
@@ -1642,6 +1943,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_20 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_20 VALUES (120, 20, 1, '2024-01-01', '2025-01-01', NULL, 15, 'Patch with NULL');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |     name      | employees |   edit_comment   
+----+---------------+------------+-------------+---------------+-----------+------------------
+ 20 |             1 | 2024-01-01 | 2025-01-01  | Original Name |        10 | Original Comment
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_20 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until | name | employees |  edit_comment   
+--------+----+---------------+------------+-------------+------+-----------+-----------------
+    120 | 20 |             1 | 2024-01-01 | 2025-01-01  |      |        15 | Patch with NULL
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_20 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_20 SELECT * FROM sql_saga.temporal_merge(
@@ -1720,6 +2037,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_21 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_21 VALUES (121, 21, 1, '2024-01-01', '2025-01-01', NULL, 15, 'Patch with NULL');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |     name      | employees |   edit_comment   
+----+---------------+------------+-------------+---------------+-----------+------------------
+ 21 |             1 | 2024-01-01 | 2025-01-01  | Original Name |        10 | Original Comment
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_21 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until | name | employees |  edit_comment   
+--------+----+---------------+------------+-------------+------+-----------+-----------------
+    121 | 21 |             1 | 2024-01-01 | 2025-01-01  |      |        15 | Patch with NULL
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_21 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_21 SELECT * FROM sql_saga.temporal_merge(
@@ -1801,6 +2134,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_22 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_22 VALUES (122, 22, 1, '2024-01-01', '2025-01-01', 'Same', 10, 'New Comment');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+ 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | Old Comment
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_22 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+--------+----+---------------+------------+-------------+------+-----------+--------------
+    122 | 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | New Comment
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_22 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_22 SELECT * FROM sql_saga.temporal_merge(
@@ -1879,6 +2228,22 @@ INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, va
 -- Source data
 CREATE TEMP TABLE temp_source_23 ( row_id INT, id INT, legal_unit_id INT, valid_from DATE, valid_until DATE, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 INSERT INTO temp_source_23 VALUES (123, 23, 1, '2024-01-01', '2025-01-01', 'Same', 10, 'Same Comment');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+ 23 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | Same Comment
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_23 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+--------+----+---------------+------------+-------------+------+-----------+--------------
+    123 | 23 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | Same Comment
+(1 row)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_23 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_23 SELECT * FROM sql_saga.temporal_merge(
@@ -1960,6 +2325,23 @@ CREATE TEMP TABLE temp_source_24 ( row_id INT, id INT, legal_unit_id INT, valid_
 INSERT INTO temp_source_24 VALUES
 (124, 24, 1, '2025-01-01', '2026-01-01', 'Patch 1', 15, 'First patch'),
 (125, 24, 1, '2027-01-01', '2028-01-01', 'Patch 2', 20, 'Second patch');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |   name   | employees |  edit_comment  
+----+---------------+------------+-------------+----------+-----------+----------------
+ 24 |             1 | 2024-01-01 | 2028-01-01  | Original |        10 | Original slice
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_24 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |  name   | employees | edit_comment 
+--------+----+---------------+------------+-------------+---------+-----------+--------------
+    124 | 24 |             1 | 2025-01-01 | 2026-01-01  | Patch 1 |        15 | First patch
+    125 | 24 |             1 | 2027-01-01 | 2028-01-01  | Patch 2 |        20 | Second patch
+(2 rows)
+
 -- Run merge
 CREATE TEMP TABLE actual_feedback_24 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_24 SELECT * FROM sql_saga.temporal_merge(
@@ -2059,6 +2441,21 @@ SAVEPOINT before_wrong_order;
 \echo '--- Stage 1: Prove that `patch_only` before `upsert_patch` is a NOOP ---'
 --- Stage 1: Prove that `patch_only` before `upsert_patch` is a NOOP ---
 INSERT INTO temp_source_35 VALUES (301, 1, 3, '2022-01-01', '2023-01-01', 'NewCo UPDATE', 15, 'Should not be inserted');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_35 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |     name     | employees |      edit_comment      
+--------+---------------+----+------------+-------------+--------------+-----------+------------------------
+    301 |             1 |  3 | 2022-01-01 | 2023-01-01  | NewCo UPDATE |        15 | Should not be inserted
+(1 row)
+
 \echo '--- Orchestrator: Calling with `patch_only` on non-existent entity... ---'
 --- Orchestrator: Calling with `patch_only` on non-existent entity... ---
 \echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
@@ -2107,6 +2504,21 @@ ROLLBACK TO SAVEPOINT before_wrong_order;
 --- Orchestrator: Calling with `upsert_patch`... ---
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (301, 1, 3, '2021-01-01', '2022-01-01', 'NewCo INSERT', 10, 'Initial Insert');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_35 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |     name     | employees |  edit_comment  
+--------+---------------+----+------------+-------------+--------------+-----------+----------------
+    301 |             1 |  3 | 2021-01-01 | 2022-01-01  | NewCo INSERT |        10 | Initial Insert
+(1 row)
+
 SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_35',
@@ -2124,6 +2536,22 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
 --- Orchestrator: Calling with `patch_only`... ---
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (302, 1, 3, '2022-01-01', '2023-01-01', NULL, 15, 'Successful Update');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |     name     | employees |  edit_comment  
+----+---------------+------------+-------------+--------------+-----------+----------------
+  3 |             1 | 2021-01-01 | 2022-01-01  | NewCo INSERT |        10 | Initial Insert
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_35 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until | name | employees |   edit_comment    
+--------+---------------+----+------------+-------------+------+-----------+-------------------
+    302 |             1 |  3 | 2022-01-01 | 2023-01-01  |      |        15 | Successful Update
+(1 row)
+
 SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_35',
@@ -2197,6 +2625,22 @@ CREATE TEMP TABLE temp_source_36 (
 INSERT INTO temp_source_36 VALUES
 (401, 1, 4, '2023-01-02', '2023-07-01', 'Continuous Op', 20),
 (402, 1, 4, '2023-07-01', '2024-01-01', 'Continuous Op', 20);
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_36 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |     name      | employees 
+--------+---------------+----+------------+-------------+---------------+-----------
+    401 |             1 |  4 | 2023-01-02 | 2023-07-01  | Continuous Op |        20
+    402 |             1 |  4 | 2023-07-01 | 2024-01-01  | Continuous Op |        20
+(2 rows)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_36 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_36
@@ -2278,6 +2722,23 @@ INSERT INTO temp_source_37 VALUES
 (501, 1, 5, '2023-01-02', '2023-04-01', 'Three-part Op', 30),
 (502, 1, 5, '2023-04-01', '2023-07-01', 'Three-part Op', 30),
 (503, 1, 5, '2023-07-01', '2023-10-01', 'Three-part Op', 30);
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_37 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |     name      | employees 
+--------+---------------+----+------------+-------------+---------------+-----------
+    501 |             1 |  5 | 2023-01-02 | 2023-04-01  | Three-part Op |        30
+    502 |             1 |  5 | 2023-04-01 | 2023-07-01  | Three-part Op |        30
+    503 |             1 |  5 | 2023-07-01 | 2023-10-01  | Three-part Op |        30
+(3 rows)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_37 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_37
@@ -2361,6 +2822,22 @@ CREATE TEMP TABLE temp_source_38 (
 INSERT INTO temp_source_38 VALUES
 (601, 1, 6, '2023-01-02', '2023-07-01', 'First Part', 40),
 (602, 1, 6, '2023-07-01', '2024-01-01', 'Second Part', 50);
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_38 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |    name     | employees 
+--------+---------------+----+------------+-------------+-------------+-----------
+    601 |             1 |  6 | 2023-01-02 | 2023-07-01  | First Part  |        40
+    602 |             1 |  6 | 2023-07-01 | 2024-01-01  | Second Part |        50
+(2 rows)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_38 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_38
@@ -2447,6 +2924,22 @@ CREATE TEMP TABLE temp_source_39 (
 ) ON COMMIT DROP;
 -- This source row meets the existing target row, with identical data.
 INSERT INTO temp_source_39 VALUES (701, 1, 7, '2023-07-01', '2024-01-01', 'Existing Op', 60);
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until |    name     | employees | edit_comment 
+----+---------------+------------+-------------+-------------+-----------+--------------
+  7 |             1 | 2023-01-01 | 2023-07-01  | Existing Op |        60 | 
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_39 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |    name     | employees 
+--------+---------------+----+------------+-------------+-------------+-----------
+    701 |             1 |  7 | 2023-07-01 | 2024-01-01  | Existing Op |        60
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_39 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_39
@@ -2577,6 +3070,21 @@ CREATE TEMP TABLE temp_source_40 (
     row_id INT, legal_unit_id INT, id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT
 ) ON COMMIT DROP;
 INSERT INTO temp_source_40 VALUES (801, 1, 40, '2024-01-01', '2025-01-01', 'Default Test', 10, 'Default Insert');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_40 ORDER BY row_id;
+ row_id | legal_unit_id | id | valid_from | valid_until |     name     | employees |  edit_comment  
+--------+---------------+----+------------+-------------+--------------+-----------+----------------
+    801 |             1 | 40 | 2024-01-01 | 2025-01-01  | Default Test |        10 | Default Insert
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_40 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_40
@@ -2696,6 +3204,22 @@ CREATE TEMP TABLE temp_source_41 (
 ) ON COMMIT DROP;
 -- Source data for the merge. valid_until must be provided to the planner.
 INSERT INTO temp_source_41 VALUES (901, 1, '2024-01-01', '2025-01-01', '2024-12-31', 'Patched');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, valid_from, valid_to, valid_until, name FROM temporal_merge_test_vt.test_target ORDER BY id, valid_from;
+ id | valid_from |  valid_to  | valid_until |   name   
+----+------------+------------+-------------+----------
+  1 | 2024-01-01 | 2025-12-31 | 2026-01-01  | Original
+(1 row)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_41 ORDER BY row_id;
+ row_id | id | valid_from | valid_until |  valid_to  |  name   
+--------+----+------------+-------------+------------+---------
+    901 |  1 | 2024-01-01 | 2025-01-01  | 2024-12-31 | Patched
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_41 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_41
@@ -2816,6 +3340,23 @@ INSERT INTO temp_source_42 VALUES (102, 2, '2010-01-01', '2011-01-01', 'active')
 INSERT INTO temp_source_42 VALUES (103, 2, '2011-01-01', 'infinity', 'passive');
 -- Run the orchestrator and store its feedback
 CALL temporal_merge_test_me.reset_target();
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, valid_from, valid_until, status FROM temporal_merge_test_me.test_target ORDER BY id, valid_from;
+ id | valid_from | valid_until | status 
+----+------------+-------------+--------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_42 ORDER BY row_id;
+ row_id | id | valid_from | valid_until | status  
+--------+----+------------+-------------+---------
+    101 |  1 | 2010-01-01 | infinity    | active
+    102 |  2 | 2010-01-01 | 2011-01-01  | active
+    103 |  2 | 2011-01-01 | infinity    | passive
+(3 rows)
+
 CREATE TEMP TABLE actual_feedback_42 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_42
 SELECT * FROM sql_saga.temporal_merge(
@@ -2962,6 +3503,23 @@ INSERT INTO temp_source_43 VALUES (1001, 10, 1, '2010-01-01', 'infinity', 'Conti
 -- Entity 20 ("Changes"): contiguous records with a data change
 INSERT INTO temp_source_43 VALUES (1002, 20, 1, '2010-01-01', '2011-01-01', 'Changes', 100, 'comment');
 INSERT INTO temp_source_43 VALUES (1003, 20, 1, '2011-01-01', 'infinity',   'Changes', 150, 'comment');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment ORDER BY id, valid_from;
+ id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
+----+---------------+------------+-------------+------+-----------+--------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_43 ORDER BY row_id;
+ row_id | id | legal_unit_id | valid_from | valid_until |    name    | employees | edit_comment 
+--------+----+---------------+------------+-------------+------------+-----------+--------------
+   1001 | 10 |             1 | 2010-01-01 | infinity    | Continuous |        50 | comment
+   1002 | 20 |             1 | 2010-01-01 | 2011-01-01  | Changes    |       100 | comment
+   1003 | 20 |             1 | 2011-01-01 | infinity    | Changes    |       150 | comment
+(3 rows)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_43 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_43
@@ -3089,6 +3647,21 @@ CREATE TEMP TABLE temp_source_44 (
 ) ON COMMIT DROP;
 -- ID is NULL, to be generated by the database
 INSERT INTO temp_source_44 VALUES (1001, NULL, '2024-01-01', '2025-01-01', 'Serial Widget');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, valid_from, valid_until, name FROM temporal_merge_test_serial.test_target ORDER BY id, valid_from;
+ id | valid_from | valid_until | name 
+----+------------+-------------+------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_44 ORDER BY row_id;
+ row_id | id | valid_from | valid_until |     name      
+--------+----+------------+-------------+---------------
+   1001 |    | 2024-01-01 | 2025-01-01  | Serial Widget
+(1 row)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_44 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_44
@@ -3189,6 +3762,22 @@ CREATE TEMP TABLE temp_source_45 (
 INSERT INTO temp_source_45 VALUES
 (2001, NULL, 'Entity One', '2024-01-01', '2025-01-01'),
 (2002, NULL, 'Entity Two', '2024-01-01', '2025-01-01');
+\echo '--- Target: Initial State (before merge) ---'
+--- Target: Initial State (before merge) ---
+SELECT id, name, valid_from, valid_until FROM temporal_merge_test_multi_insert.test_target ORDER BY id;
+ id | name | valid_from | valid_until 
+----+------+------------+-------------
+(0 rows)
+
+\echo '--- Source: Data to be merged ---'
+--- Source: Data to be merged ---
+SELECT * FROM temp_source_45 ORDER BY row_id;
+ row_id | id |    name    | valid_from | valid_until 
+--------+----+------------+------------+-------------
+   2001 |    | Entity One | 2024-01-01 | 2025-01-01
+   2002 |    | Entity Two | 2024-01-01 | 2025-01-01
+(2 rows)
+
 -- Run the orchestrator and store its feedback
 CREATE TEMP TABLE actual_feedback_45 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 INSERT INTO actual_feedback_45
