@@ -20,6 +20,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'department_id IS NOT NULL',
     unique_key_name => 'employees_name_if_department_valid'
 );
+\d employees
 
 -- 1. Inserts that should PASS
 -- Two employees with same name, but NULL department (outside predicate)
@@ -37,6 +38,13 @@ INSERT INTO employees VALUES (5, 'Bob', 101, '2020-06-01', '2021-06-01');
 INSERT INTO employees VALUES (6, 'Charlie', 101, '2021-01-01', 'infinity');
 
 SELECT id, name, department_id, valid_from, valid_until FROM employees ORDER BY id;
+
+
+-- 4. Drop the predicated unique key
+SELECT sql_saga.drop_unique_key('employees'::regclass, ARRAY['name']::name[], 'valid');
+-- Verify that the unique key and its constraints/indexes are gone
+SELECT unique_key_name FROM sql_saga.unique_keys WHERE table_schema = 'public' AND table_name = 'employees';
+\d employees
 
 
 -- Test Scenario 2: Add constraint to a table with existing data.

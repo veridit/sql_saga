@@ -59,7 +59,7 @@ benchmark: install
 # To run a single test: `make test TESTS=21_init`
 # To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
 .PHONY: test setup_test_files
-test: installcheck
+test: setup_test_files installcheck
 
 # Create empty expected files for new tests if they don't exist.
 setup_test_files:

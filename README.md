@@ -243,15 +243,41 @@ SELECT sql_saga.drop_foreign_key(
     column_names => ARRAY['legal_unit_id'],
     era_name => 'valid'
 );
+-- For standard-to-temporal FKs, era_name is omitted.
+SELECT sql_saga.drop_foreign_key(
+    table_oid => 'projects',
+    column_names => ARRAY['legal_unit_id']
+);
 
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'establishment', key_name => 'establishment_id_valid');
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'establishment', key_name => 'establishment_name_valid');
+SELECT sql_saga.drop_unique_key(
+    table_oid => 'establishment',
+    column_names => ARRAY['id'],
+    era_name => 'valid'
+);
+SELECT sql_saga.drop_unique_key(
+    table_oid => 'establishment',
+    column_names => ARRAY['name'],
+    era_name => 'valid'
+);
 SELECT sql_saga.drop_era('establishment');
 
 
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_id_valid');
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_active_name_valid');
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'legal_unit', key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.drop_unique_key(
+    table_oid => 'legal_unit',
+    column_names => ARRAY['id'],
+    era_name => 'valid'
+);
+SELECT sql_saga.drop_unique_key(
+    table_oid => 'legal_unit',
+    column_names => ARRAY['legal_ident'],
+    era_name => 'valid'
+);
+-- For predicated unique keys, the predicate is not needed for dropping.
+SELECT sql_saga.drop_unique_key(
+    table_oid => 'legal_unit',
+    column_names => ARRAY['name'],
+    era_name => 'valid'
+);
 SELECT sql_saga.drop_era('legal_unit');
 ```
 
@@ -276,7 +302,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   ```
 - To quickly review and fix any diffs:
   ```bash
-  make vimdiff-fail-all
+  make diff-fail-all vim
   ```
 
 ## API Reference
@@ -296,7 +322,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - **For standard-to-temporal foreign keys:**
   - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_check_constraint name DEFAULT NULL, fk_helper_function text DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
 - **Dropping foreign keys:**
-  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`: Drops a temporal-to-temporal foreign key by specifying the columns and era.
+  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name DEFAULT NULL, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`: Drops a foreign key. For temporal-to-temporal keys, `era_name` must be provided. For standard-to-temporal keys, `era_name` should be omitted.
   - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
@@ -306,7 +332,18 @@ The `add_api` function creates views to simplify interaction with temporal table
 - `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_mode sql_saga.temporal_merge_mode, p_ephemeral_columns text[] DEFAULT '{}', p_id_columns text[] DEFAULT NULL, p_era_name name DEFAULT NULL)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The `mode` parameter allows for explicit control over the behavior, such as patching (`'upsert_patch'`) versus replacing (`'upsert_replace'`) data.
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
+  - `p_target_table`: The temporal table to merge data into.
+  - `p_source_table`: A table (usually temporary) containing the source data. Must have a `row_id` integer column for feedback.
+  - `p_id_columns`: An array of column names that form the conceptual entity identifier.
+  - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated (e.g., `edit_comment`).
+  - `p_mode`: Controls the merge behavior.
+    - `'upsert_patch'`: Inserts new entities and updates existing ones. `NULL` values in the source are ignored, preserving existing data.
+    - `'upsert_replace'`: Inserts new entities and updates existing ones. `NULL` values in the source will overwrite existing data.
+    - `'patch_only'` / `'replace_only'`: Only affects entities that already exist in the target table.
+    - `'insert_only'`: Only inserts new entities.
+  - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call).
+  - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
 
 ### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.

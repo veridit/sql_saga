@@ -125,7 +125,7 @@ ROLLBACK TO SAVEPOINT before_ddl2;
 -- 8. Drop the foreign key
 \echo
 \echo "--- Drop Foreign Key ---"
-SELECT sql_saga.drop_foreign_key_by_name('standard_fk', 'standard_fk_pk_id_fkey');
+SELECT sql_saga.drop_foreign_key('standard_fk'::regclass, ARRAY['pk_id']);
 
 -- 9. Verify that restrictions are removed.
 \echo

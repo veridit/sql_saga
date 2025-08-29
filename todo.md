@@ -26,6 +26,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
 - [ ] **Refactor `add_api` to `add_updatable_views` for clarity:** The name `add_api` is too generic. Rename `add_api` to `add_updatable_views` and `drop_api` to `drop_updatable_views` to make it clear that these functions create and manage the specialized updatable views for interacting with temporal data.
 
+- [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
+
 - [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
 
 - [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.

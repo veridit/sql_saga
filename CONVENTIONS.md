@@ -82,6 +82,7 @@ All development work, especially bug fixing, must follow this iterative cycle. D
 - **Standard Command Format:** Always use the following command structure to run tests. This ensures the extension is installed before testing and that any failures are immediately diffed for analysis.
   - **Debugging Tip:** For complex SQL or C functions, prefer adding `RAISE DEBUG` statements over `RAISE NOTICE`. In the corresponding test file, temporarily wrap the relevant commands with `SET client_min_messages TO DEBUG;` and `RESET client_min_messages;`. This provides targeted diagnostic output without permanently cluttering the test results.
   - **Command:** `make install && make test ...; make diff-fail-all`
+  - **Test Output Review:** You must **never** propose `SEARCH/REPLACE` blocks for `expected/*.out` files. If a test fails due to intended changes, instruct the user to review and accept the new output interactively by running `make diff-fail-all vim`.
   - **Usage:**
     - To run all tests: `make install && make test; make diff-fail-all`
     - To run fast tests (excluding benchmarks): `make install && make test fast; make diff-fail-all`
