@@ -127,7 +127,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -181,7 +182,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_patch',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -235,7 +237,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -269,9 +272,9 @@ DROP TABLE temp_source_3;
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_4 (
-    row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
+    row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
-INSERT INTO temp_source_4 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+INSERT INTO temp_source_4 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
 
 \echo '--- Target: Initial State (before merge) ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
@@ -285,7 +288,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -308,6 +312,11 @@ SELECT * FROM (VALUES
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_4 ORDER BY row_id;
 DROP TABLE temp_source_4;
 
 --------------------------------------------------------------------------------
@@ -315,9 +324,9 @@ DROP TABLE temp_source_4;
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_5 (
-    row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
+    row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
-INSERT INTO temp_source_5 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+INSERT INTO temp_source_5 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
 
 \echo '--- Target: Initial State (before merge) ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
@@ -331,7 +340,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -354,6 +364,11 @@ SELECT * FROM (VALUES
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_5 ORDER BY row_id;
 DROP TABLE temp_source_5;
 
 --------------------------------------------------------------------------------
@@ -361,9 +376,9 @@ DROP TABLE temp_source_5;
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_6 (
-    row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
+    row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
-INSERT INTO temp_source_6 VALUES (104, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+INSERT INTO temp_source_6 VALUES (104, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
 
 \echo '--- Target: Initial State (before merge) ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
@@ -377,7 +392,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'upsert_patch',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -400,6 +416,11 @@ SELECT * FROM (VALUES
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk WHERE establishment_id = 100 and stat_definition_id = 10 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (104, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_6 ORDER BY row_id;
 DROP TABLE temp_source_6;
 
 --------------------------------------------------------------------------------
@@ -407,9 +428,9 @@ DROP TABLE temp_source_6;
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_7 (
-    row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
+    row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
-INSERT INTO temp_source_7 VALUES (105, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+INSERT INTO temp_source_7 VALUES (105, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
 
 \echo '--- Target: Initial State (before merge) ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
@@ -423,7 +444,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'upsert_patch',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -446,6 +468,11 @@ SELECT * FROM (VALUES
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen WHERE establishment_id = 100 and stat_definition_id = 10 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (105, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_7 ORDER BY row_id;
 DROP TABLE temp_source_7;
 
 --------------------------------------------------------------------------------
@@ -453,9 +480,9 @@ DROP TABLE temp_source_7;
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_8 (
-    row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
+    row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
-INSERT INTO temp_source_8 VALUES (1, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+INSERT INTO temp_source_8 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
 
 \echo '--- Target: Initial State (before merge) ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_no_pk ORDER BY id, valid_from;
@@ -469,7 +496,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -492,6 +520,11 @@ SELECT * FROM (VALUES
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_no_pk WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_8 ORDER BY row_id;
 DROP TABLE temp_source_8;
 
 

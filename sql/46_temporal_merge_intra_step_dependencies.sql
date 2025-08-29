@@ -58,7 +58,8 @@ CALL sql_saga.temporal_merge(
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid',
-    p_founding_id_column       => 'founding_id'
+    p_founding_id_column       => 'founding_id',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -86,6 +87,14 @@ SELECT * FROM (VALUES
 ) AS t (id, name, valid_from, valid_until, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id = 1 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES
+    (1, 1, 1, '2023-01-01'::date, '2023-12-31'::date, 'Initial Name', 'First slice'),
+    (2, 1, 1, '2023-06-01'::date, '2023-12-31'::date, 'Corrected Name', 'Second slice, replaces part of first')
+) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_1 ORDER BY row_id;
 DROP TABLE temp_source_1;
 
 
@@ -123,7 +132,8 @@ CALL sql_saga.temporal_merge(
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'upsert_replace',
     p_era_name                 => 'valid',
-    p_founding_id_column       => 'founding_id'
+    p_founding_id_column       => 'founding_id',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -160,6 +170,16 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 1 ORDER BY id, valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES
+    (101, 10, 2, '2024-01-01'::date, '2024-12-31'::date, 'Entity 10 Original', 'E10-S1'),
+    (102, 10, 2, '2024-06-01'::date, '2024-09-01'::date, 'Entity 10 Update', 'E10-S2'),
+    (201, 20, 3, '2025-01-01'::date, '2025-12-31'::date, 'Entity 20 Initial', 'E20-S1'),
+    (202, 20, 3, '2025-07-01'::date, '2025-12-31'::date, 'Entity 20 New End', 'E20-S2')
+) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_2 ORDER BY row_id;
 DROP TABLE temp_source_2;
 
 

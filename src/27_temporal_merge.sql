@@ -449,7 +449,8 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch',
     p_era_name name DEFAULT 'valid',
-    p_founding_id_column name DEFAULT NULL
+    p_founding_id_column name DEFAULT NULL,
+    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
@@ -816,6 +817,47 @@ BEGIN
              END;
         END IF;
 
+        -- Back-fill source table with generated IDs if requested.
+        IF p_update_source_with_assigned_entity_ids THEN
+            DECLARE
+                v_source_update_set_clause TEXT;
+            BEGIN
+                -- Build a SET clause for all columns that are present in the entity_ids JSONB
+                -- AND exist as columns on the source table. This is robust to surrogate keys
+                -- that are not in p_id_columns.
+                SELECT string_agg(
+                    format('%I = (p.entity_ids->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
+                    ', '
+                )
+                INTO v_source_update_set_clause
+                FROM (
+                    SELECT key FROM jsonb_object_keys(
+                        (SELECT entity_ids FROM __temp_last_sql_saga_temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
+                    ) as key
+                ) j
+                JOIN pg_attribute a ON a.attname = j.key
+                WHERE a.attrelid = p_source_table AND NOT a.attisdropped AND a.attnum > 0;
+
+                IF v_source_update_set_clause IS NOT NULL THEN
+                    EXECUTE format($$
+                        WITH map_row_to_entity AS (
+                            SELECT DISTINCT ON (s.row_id)
+                                s.row_id,
+                                p.entity_ids
+                            FROM (SELECT DISTINCT unnest(source_row_ids) AS row_id FROM __temp_last_sql_saga_temporal_merge_plan WHERE operation = 'INSERT') s
+                            JOIN __temp_last_sql_saga_temporal_merge_plan p ON s.row_id = ANY(p.source_row_ids)
+                            WHERE p.entity_ids IS NOT NULL
+                            ORDER BY s.row_id, p.plan_op_seq
+                        )
+                        UPDATE %1$s s
+                        SET %2$s
+                        FROM map_row_to_entity p
+                        WHERE s.row_id = p.row_id;
+                    $$, p_source_table::text, v_source_update_set_clause);
+                END IF;
+            END;
+        END IF;
+
         -- 2. Execute UPDATE operations
         IF v_update_set_clause IS NOT NULL THEN
             EXECUTE format($$ UPDATE %1$s t SET %4$I = p.new_valid_from, %5$I = p.new_valid_until, %2$s
@@ -863,6 +905,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, boolean) IS
 'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

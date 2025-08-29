@@ -2056,7 +2056,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -2080,6 +2081,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, valid_from, valid_until, name FROM temporal_merge_test_serial.test_target WHERE id = 1 ORDER BY valid_from;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES (1001, 1, '2024-01-01'::DATE, '2025-01-01'::DATE, 'Serial Widget')) t(row_id, id, valid_from, valid_until, name);
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT row_id, id, valid_from, valid_until, name FROM temp_source_44 ORDER BY row_id;
 
 DROP TABLE temp_source_44;
 
@@ -2131,7 +2137,8 @@ CALL sql_saga.temporal_merge(
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => '{}'::TEXT[],
     p_mode                     => 'upsert_replace',
-    p_era_name                 => 'valid'
+    p_era_name                 => 'valid',
+    p_update_source_with_assigned_entity_ids => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -2159,6 +2166,14 @@ SELECT * FROM (VALUES
 ) AS t (id, name, valid_from, valid_until);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, name, valid_from, valid_until FROM temporal_merge_test_multi_insert.test_target ORDER BY id;
+
+\echo '--- Source Table: Expected state after back-fill ---'
+SELECT * FROM (VALUES
+    (2001, 1, 'Entity One', '2024-01-01'::DATE, '2025-01-01'::DATE),
+    (2002, 2, 'Entity Two', '2024-01-01'::DATE, '2025-01-01'::DATE)
+) t(row_id, id, name, valid_from, valid_until) ORDER BY row_id;
+\echo '--- Source Table: Actual state after back-fill ---'
+SELECT * FROM temp_source_45 ORDER BY row_id;
 DROP TABLE temp_source_45;
 
 -- Final Cleanup
