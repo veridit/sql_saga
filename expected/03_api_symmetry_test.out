@@ -120,21 +120,21 @@ TABLE sql_saga.foreign_keys;
 ------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
--- Test overloaded drop_foreign_key for standard-to-temporal
-CREATE TABLE standard_child(id int, parent_id int);
-SELECT sql_saga.add_foreign_key('standard_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
-        add_foreign_key        
--------------------------------
- standard_child_parent_id_fkey
+-- Test overloaded drop_foreign_key for regular-to-temporal
+CREATE TABLE regular_child(id int, parent_id int);
+SELECT sql_saga.add_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
+       add_foreign_key        
+------------------------------
+ regular_child_parent_id_fkey
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-       foreign_key_name        |         type         | table_schema |   table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger |      fk_check_constraint       |        fk_helper_function        |            uk_update_trigger            |            uk_delete_trigger            
--------------------------------+----------------------+--------------+----------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+--------------------------------+----------------------------------+-----------------------------------------+-----------------------------------------
- standard_child_parent_id_fkey | standard_to_temporal | public       | standard_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   | standard_child_parent_id_check | public.parent_id_exists(integer) | standard_child_parent_id_fkey_uk_update | standard_child_parent_id_fkey_uk_delete
+       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger |      fk_check_constraint      |        fk_helper_function        |           uk_update_trigger            |           uk_delete_trigger            
+------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------------------+----------------------------------+----------------------------------------+----------------------------------------
+ regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   | regular_child_parent_id_check | public.parent_id_exists(integer) | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete
 (1 row)
 
-SELECT sql_saga.drop_foreign_key('standard_child'::regclass, ARRAY['parent_id']::name[]);
+SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
  drop_foreign_key 
 ------------------
  
@@ -145,7 +145,7 @@ TABLE sql_saga.foreign_keys;
 ------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
-DROP TABLE standard_child;
+DROP TABLE regular_child;
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
  unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 

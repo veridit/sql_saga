@@ -33,13 +33,13 @@ TABLE sql_saga.foreign_keys;
 SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child'::regclass, key_name => 'child_parent_id_q');
 TABLE sql_saga.foreign_keys;
 
--- Test overloaded drop_foreign_key for standard-to-temporal
-CREATE TABLE standard_child(id int, parent_id int);
-SELECT sql_saga.add_foreign_key('standard_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
+-- Test overloaded drop_foreign_key for regular-to-temporal
+CREATE TABLE regular_child(id int, parent_id int);
+SELECT sql_saga.add_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
 TABLE sql_saga.foreign_keys;
-SELECT sql_saga.drop_foreign_key('standard_child'::regclass, ARRAY['parent_id']::name[]);
+SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
 TABLE sql_saga.foreign_keys;
-DROP TABLE standard_child;
+DROP TABLE regular_child;
 
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;

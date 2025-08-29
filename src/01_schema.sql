@@ -5,7 +5,7 @@ GRANT USAGE ON SCHEMA sql_saga TO PUBLIC;
 CREATE TYPE sql_saga.drop_behavior AS ENUM ('CASCADE', 'RESTRICT');
 CREATE TYPE sql_saga.fk_actions AS ENUM ('CASCADE', 'SET NULL', 'SET DEFAULT', 'RESTRICT', 'NO ACTION');
 CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
-CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'standard_to_temporal');
+CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'regular_to_temporal');
 
 -- This enum represents Allen's Interval Algebra, a set of thirteen mutually
 -- exclusive relations that can hold between two temporal intervals. These
@@ -142,7 +142,7 @@ CREATE TABLE sql_saga.foreign_keys (
     fk_insert_trigger name,
     fk_update_trigger name,
 
-    -- For standard FKs
+    -- For regular FKs
     fk_check_constraint name,
     fk_helper_function text, -- regprocedure signature
 
@@ -164,7 +164,7 @@ CREATE TABLE sql_saga.foreign_keys (
                 fk_era_name IS NOT NULL
                 AND fk_insert_trigger IS NOT NULL AND fk_update_trigger IS NOT NULL
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
-            WHEN 'standard_to_temporal' THEN
+            WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL
                 AND fk_insert_trigger IS NULL AND fk_update_trigger IS NULL
                 AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
@@ -174,7 +174,7 @@ CREATE TABLE sql_saga.foreign_keys (
 GRANT SELECT ON TABLE sql_saga.foreign_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.foreign_keys', '');
 
-COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and standard-to-temporal relationships.';
+COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and regular-to-temporal relationships.';
 COMMENT ON COLUMN sql_saga.foreign_keys.fk_table_columns_snapshot IS 'A snapshot of all columns on the fk table, used by the rename_following event trigger to detect column renames.';
 
 CREATE TABLE sql_saga.system_versioning (

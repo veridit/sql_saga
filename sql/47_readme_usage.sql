@@ -68,8 +68,8 @@ SELECT sql_saga.add_foreign_key(
     unique_key_name => 'legal_unit_id_valid'
 );
 
--- Add a foreign key from a standard table to a temporal table.
--- Note that fk_era_name is omitted for the standard table.
+-- Add a foreign key from a regular table to a temporal table.
+-- Note that fk_era_name is omitted for the regular table.
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.projects',
     fk_column_names => ARRAY['legal_unit_id'],
@@ -165,7 +165,7 @@ SELECT id, name, address, legal_unit_id, valid_from, valid_until FROM readme.est
 
 -- Foreign keys must be dropped before the unique keys they reference.
 SELECT sql_saga.drop_foreign_key('readme.establishment'::regclass, ARRAY['legal_unit_id'], 'valid');
--- For standard-to-temporal FKs, era_name is omitted.
+-- For regular-to-temporal FKs, era_name is omitted.
 SELECT sql_saga.drop_foreign_key('readme.projects'::regclass, ARRAY['legal_unit_id']);
 
 SELECT sql_saga.drop_unique_key('readme.establishment'::regclass, ARRAY['id'], 'valid');

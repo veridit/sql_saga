@@ -269,7 +269,7 @@ BEGIN
     VALUES (unique_key_name, table_schema, table_name, column_names, era_name, unique_constraint, exclude_constraint, predicate);
 
     -- Create a standard B-Tree index on the unique key columns to support
-    -- fast lookups for foreign key checks (both temporal and standard).
+    -- fast lookups for foreign key checks (both temporal and regular).
     -- This is only created if a suitable index doesn't already exist.
     DECLARE
         index_name name;
