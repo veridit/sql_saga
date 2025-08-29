@@ -1139,7 +1139,7 @@ INSERT INTO actual_feedback_24 SELECT * FROM sql_saga.temporal_merge(
 SELECT * FROM (VALUES
     (1, '{124}'::INT[], 'UPDATE'::sql_saga.plan_operation_type, '{"id": 24}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original", "employees": 10, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{124}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": 24}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Patch 1", "employees": 15, "legal_unit_id": 1, "edit_comment": "First patch"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (3, '{125}'::INT[], 'UPDATE'::sql_saga.plan_operation_type, '{"id": 24}'::JSONB, NULL::DATE, '2026-01-01'::DATE, '2027-01-01'::DATE, '{"name": "Original", "employees": 10, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (3, '{125}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": 24}'::JSONB, NULL::DATE, '2026-01-01'::DATE, '2027-01-01'::DATE, '{"name": "Original", "employees": 10, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
     (4, '{125}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": 24}'::JSONB, NULL::DATE, '2027-01-01'::DATE, '2028-01-01'::DATE, '{"name": "Patch 2", "employees": 20, "legal_unit_id": 1, "edit_comment": "Second patch"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'

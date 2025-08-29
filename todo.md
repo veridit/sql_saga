@@ -27,6 +27,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
 
+- [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
+
 - [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
 - [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
 
