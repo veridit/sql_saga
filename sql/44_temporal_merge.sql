@@ -135,9 +135,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_1 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_1
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_1',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -145,6 +143,7 @@ SELECT * FROM sql_saga.temporal_merge(
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
+SELECT source_row_id, target_entity_ids, status, error_message FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
@@ -158,7 +157,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (101, '[{"id": 1}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_1;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -184,9 +183,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_2
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_2',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -208,7 +205,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (102, '[{"id": 2}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_2;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -234,9 +231,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_3 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_3 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_3
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_3',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -258,7 +253,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (103, '[{"id": 3}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_3;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -284,9 +279,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_4 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_4 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_4
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_4',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -309,7 +302,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (104, '[{"id": 4}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_4;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -336,9 +329,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_5 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_5 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_5
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_5',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -360,7 +351,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (105, '[{"id": 5}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_5;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -386,9 +377,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_6 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_6 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_6
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_6',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -410,7 +399,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (106, '[{"id": 6}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_6;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -436,9 +425,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_7 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_7 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_7
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_7',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -459,7 +446,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (107, '[{"id": 7}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_7;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -485,9 +472,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_8 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_8 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_8
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_8',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -508,7 +493,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (108, '[{"id": 8}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_8;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -534,9 +519,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_9 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_9 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_9
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_9',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -557,7 +540,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (109, '[{"id": 9}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_9;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -583,9 +566,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_10 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_10 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_10
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_10',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -606,7 +587,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (110, '[{"id": 10}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_10;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -632,9 +613,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_11 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_11 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_11
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_11',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -655,7 +634,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (111, '[{"id": 11}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_11;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -686,8 +665,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_12 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_12 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_12 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_12',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -707,7 +685,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (112, '[{"id": 12}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_12;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -734,8 +712,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_13 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_13 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_13 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_13',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -755,7 +732,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (113, '[{"id": 13}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_13;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -782,8 +759,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_14 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_14 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_14 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_14',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -804,7 +780,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (114, '[{"id": 14}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_14;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -832,8 +808,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_15 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_15 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_15 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_15',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -853,7 +828,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (115, '[{"id": 15}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_15;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -880,8 +855,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_16 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_16 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_16 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_16',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -900,7 +874,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (116, '[{"id": 16}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_16;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -925,9 +899,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_17 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_17 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_17
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_17',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -948,7 +920,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (117, '[{"id": 17}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_17;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -978,8 +950,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_18 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_18 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_18 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_18',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -987,6 +958,8 @@ INSERT INTO actual_feedback_18 SELECT * FROM sql_saga.temporal_merge(
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
+SELECT source_row_id, target_entity_ids, status, error_message FROM __temp_last_sql_saga_temporal_merge;
+SELECT source_row_id, target_entity_ids, status, error_message FROM __temp_last_sql_saga_temporal_merge;
 -- Verify plan
 \echo '--- Planner: Expected Plan (empty) ---'
 SELECT 0 AS plan_op_count WHERE NOT EXISTS (SELECT 1 FROM __temp_last_sql_saga_temporal_merge_plan);
@@ -996,13 +969,13 @@ SELECT count(*)::INT AS plan_op_count FROM __temp_last_sql_saga_temporal_merge_p
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (118, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_18;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State (empty) ---'
 SELECT 0 AS final_row_count WHERE NOT EXISTS (SELECT 1 FROM temporal_merge_test.establishment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT count(*)::INT AS final_row_count FROM temporal_merge_test.establishment;
-DROP TABLE temp_source_18, actual_feedback_18;
+DROP TABLE temp_source_18;
 
 --------------------------------------------------------------------------------
 \echo 'Scenario 19: replace_only on non-existent entity'
@@ -1020,8 +993,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_19 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_19 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_19 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_19',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1038,13 +1010,13 @@ SELECT count(*)::INT AS plan_op_count FROM __temp_last_sql_saga_temporal_merge_p
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (119, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_19;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State (empty) ---'
 SELECT 0 AS final_row_count WHERE NOT EXISTS (SELECT 1 FROM temporal_merge_test.establishment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT count(*)::INT AS final_row_count FROM temporal_merge_test.establishment;
-DROP TABLE temp_source_19, actual_feedback_19;
+DROP TABLE temp_source_19;
 
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for NULL handling in patch mode'
@@ -1065,8 +1037,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_20 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_20 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_20 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_20',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1085,7 +1056,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (120, '[{"id": 20}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_20;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1093,7 +1064,7 @@ SELECT * FROM (VALUES
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 20 ORDER BY valid_from;
-DROP TABLE temp_source_20, actual_feedback_20;
+DROP TABLE temp_source_20;
 
 --------------------------------------------------------------------------------
 \echo 'Scenario 21: patch_only with NULL source value (should NOT overwrite)'
@@ -1112,8 +1083,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_21 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_21 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_21 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_21',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1132,7 +1102,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (121, '[{"id": 21}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_21;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1140,7 +1110,7 @@ SELECT * FROM (VALUES
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 21 ORDER BY valid_from;
-DROP TABLE temp_source_21, actual_feedback_21;
+DROP TABLE temp_source_21;
 
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for Ephemeral Columns'
@@ -1161,8 +1131,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_22 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_22 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_22 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_22',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1181,7 +1150,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (122, '[{"id": 22}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_22;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1189,7 +1158,7 @@ SELECT * FROM (VALUES
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 22 ORDER BY valid_from;
-DROP TABLE temp_source_22, actual_feedback_22;
+DROP TABLE temp_source_22;
 
 --------------------------------------------------------------------------------
 \echo 'Scenario 23: upsert_patch with identical data including ephemeral (should be NOOP)'
@@ -1208,8 +1177,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_23 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_23 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_23 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_23',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1226,7 +1194,7 @@ SELECT count(*)::INT AS plan_op_count FROM __temp_last_sql_saga_temporal_merge_p
 \echo '--- Orchestrator: Expected Feedback (MISSING_TARGET because no DML was generated) ---'
 SELECT * FROM (VALUES (123, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_23;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State (unchanged) ---'
 SELECT * FROM (VALUES
@@ -1234,7 +1202,7 @@ SELECT * FROM (VALUES
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 23 ORDER BY valid_from;
-DROP TABLE temp_source_23, actual_feedback_23;
+DROP TABLE temp_source_23;
 
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for Multi-Row Source Data'
@@ -1257,8 +1225,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_24 ORDER BY row_id;
 
 -- Run merge
-CREATE TEMP TABLE actual_feedback_24 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_24 SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_24',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1283,7 +1250,7 @@ SELECT * FROM (VALUES
     (125, '[{"id": 24}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_24 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1294,7 +1261,7 @@ SELECT * FROM (VALUES
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 24 ORDER BY valid_from;
-DROP TABLE temp_source_24, actual_feedback_24;
+DROP TABLE temp_source_24;
 
 
 --------------------------------------------------------------------------------
@@ -1313,10 +1280,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_35 ORDER BY row_id;
 
 \echo '--- Orchestrator: Calling with `patch_only` on non-existent entity... ---'
-\echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
-SELECT * FROM (VALUES (301, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
-\echo '--- Orchestrator: Actual Feedback ---'
-SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1324,6 +1288,10 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
+\echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
+SELECT * FROM (VALUES (301, '[]'::JSONB, 'MISSING_TARGET'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
+\echo '--- Orchestrator: Actual Feedback ---'
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 \echo '--- Orchestrator: Final state of target table (expected empty, proving data loss) ---'
 SELECT 0 as row_count WHERE NOT EXISTS (SELECT 1 FROM temporal_merge_test.establishment WHERE id = 3);
 \echo '--- Orchestrator: Actual state of target table ---'
@@ -1340,7 +1308,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 \echo '--- Source: Data to be merged ---'
 SELECT * FROM temp_source_35 ORDER BY row_id;
 
-SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1348,6 +1316,10 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_mode                     => 'upsert_patch',
     p_era_name                 => 'valid'
 );
+\echo '--- Orchestrator: Expected Feedback ---'
+SELECT * FROM (VALUES (301, '[{"id": 3}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
+\echo '--- Orchestrator: Actual Feedback ---'
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Calling with `patch_only`... ---'
 TRUNCATE temp_source_35;
@@ -1358,7 +1330,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 \echo '--- Source: Data to be merged ---'
 SELECT * FROM temp_source_35 ORDER BY row_id;
 
-SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1366,6 +1338,10 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM sql_saga.tem
     p_mode                     => 'patch_only',
     p_era_name                 => 'valid'
 );
+\echo '--- Orchestrator: Expected Feedback ---'
+SELECT * FROM (VALUES (302, '[{"id": 3}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
+\echo '--- Orchestrator: Actual Feedback ---'
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Final state of target table (expected complete history) ---'
 SELECT * FROM (VALUES
@@ -1407,9 +1383,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_36 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_36 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_36
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_36',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1433,7 +1407,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_36 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State (A single merged row) ---'
 SELECT * FROM (VALUES
@@ -1463,9 +1437,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_37 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_37 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_37
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_37',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1490,7 +1462,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_37 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1518,9 +1490,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_38 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_38 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_38
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_38',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1545,7 +1515,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_38 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -1574,9 +1544,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_39 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_39 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_39
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_39',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1597,7 +1565,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (701, '[{"id": 7}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_39;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State (A single merged row) ---'
 SELECT * FROM (VALUES
@@ -1686,9 +1654,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_40 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_40 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_40
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_40',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1710,7 +1676,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (801, '[{"id": 40}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_40;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State (created_at should NOT be null) ---'
 -- We only check that created_at is not null, as the exact time is non-deterministic.
@@ -1787,9 +1753,7 @@ SELECT id, valid_from, valid_to, valid_until, name FROM temporal_merge_test_vt.t
 SELECT * FROM temp_source_41 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_41 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_41
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_41',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1811,7 +1775,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (901, '[{"id": 1}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_41;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State (valid_until should be correct for both segments) ---'
 SELECT * FROM (VALUES
@@ -1883,9 +1847,7 @@ SELECT id, valid_from, valid_until, status FROM temporal_merge_test_me.test_targ
 \echo '--- Source: Data to be merged ---'
 SELECT * FROM temp_source_42 ORDER BY row_id;
 
-CREATE TEMP TABLE actual_feedback_42 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_42
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_42',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -1913,7 +1875,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_42 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State (Entity 1 should NOT be split) ---'
 SELECT * FROM (VALUES
@@ -1997,9 +1959,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_43 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_43 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_43
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_43',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -2027,7 +1987,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_43 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State (Entity 10 should NOT be split) ---'
 SELECT * FROM (VALUES
@@ -2090,9 +2050,7 @@ SELECT id, valid_from, valid_until, name FROM temporal_merge_test_serial.test_ta
 SELECT * FROM temp_source_44 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_44 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_44
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_44',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -2113,7 +2071,7 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 SELECT * FROM (VALUES (1001, '[{"id": 1}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_44;
+SELECT * FROM __temp_last_sql_saga_temporal_merge;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
@@ -2167,9 +2125,7 @@ SELECT id, name, valid_from, valid_until FROM temporal_merge_test_multi_insert.t
 SELECT * FROM temp_source_45 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
-CREATE TEMP TABLE actual_feedback_45 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_45
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => :'target_table'::regclass,
     p_source_table             => 'temp_source_45',
     p_id_columns               => :'entity_id_cols'::TEXT[],
@@ -2194,7 +2150,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_45 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES

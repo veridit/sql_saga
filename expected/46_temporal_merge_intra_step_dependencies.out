@@ -95,10 +95,8 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
       2 |           1 |    | 2023-06-01 | 2023-12-31  | Corrected Name | Second slice, replaces part of first
 (2 rows)
 
--- Run the orchestrator. This call will fail until the API is updated.
-CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_1
-SELECT * FROM sql_saga.temporal_merge(
+-- Run the orchestrator.
+CALL sql_saga.temporal_merge(
     p_target_table             => 'tmisd.establishment',
     p_source_table             => 'temp_source_1',
     p_id_columns               => '{id}'::TEXT[],
@@ -142,7 +140,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT * FROM actual_feedback_1 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
              1 | [{"id": 1}]       | SUCCESS | 
@@ -211,9 +209,7 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 (4 rows)
 
 -- Run the orchestrator
-CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_2
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => 'tmisd.establishment',
     p_source_table             => 'temp_source_2',
     p_id_columns               => '{id}'::TEXT[],
@@ -270,7 +266,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT * FROM actual_feedback_2 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
            101 | [{"id": 2}]       | SUCCESS | 

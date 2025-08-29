@@ -50,10 +50,8 @@ SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment 
 \echo '--- Source: Data to be merged ---'
 SELECT * FROM temp_source_1 ORDER BY row_id;
 
--- Run the orchestrator. This call will fail until the API is updated.
-CREATE TEMP TABLE actual_feedback_1 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_1
-SELECT * FROM sql_saga.temporal_merge(
+-- Run the orchestrator.
+CALL sql_saga.temporal_merge(
     p_target_table             => 'tmisd.establishment',
     p_source_table             => 'temp_source_1',
     p_id_columns               => '{id}'::TEXT[],
@@ -79,7 +77,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_1 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State (A single entity with two historical slices) ---'
 SELECT * FROM (VALUES
@@ -118,9 +116,7 @@ SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment 
 SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator
-CREATE TEMP TABLE actual_feedback_2 (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-INSERT INTO actual_feedback_2
-SELECT * FROM sql_saga.temporal_merge(
+CALL sql_saga.temporal_merge(
     p_target_table             => 'tmisd.establishment',
     p_source_table             => 'temp_source_2',
     p_id_columns               => '{id}'::TEXT[],
@@ -151,7 +147,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM actual_feedback_2 ORDER BY source_row_id;
+SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES

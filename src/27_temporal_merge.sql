@@ -442,7 +442,7 @@ $temporal_merge_plan$;
 
 
 -- Unified Orchestrator Function
-CREATE OR REPLACE FUNCTION sql_saga.temporal_merge(
+CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
     p_id_columns TEXT[],
@@ -451,8 +451,7 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge(
     p_era_name name DEFAULT 'valid',
     p_founding_id_column name DEFAULT NULL
 )
-RETURNS SETOF sql_saga.temporal_merge_result
-LANGUAGE plpgsql VOLATILE AS $temporal_merge$
+LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
     v_target_table_ident TEXT := p_target_table::TEXT;
     v_data_cols_ident TEXT;
@@ -471,6 +470,16 @@ DECLARE
     v_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
 BEGIN
+    v_internal_keys_to_remove := ARRAY['_sql_saga_source_row_id_'];
+    IF p_founding_id_column IS NOT NULL THEN
+        v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
+    END IF;
+
+    IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge') IS NOT NULL THEN
+        DROP TABLE __temp_last_sql_saga_temporal_merge;
+    END IF;
+    CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
+
     v_internal_keys_to_remove := ARRAY['_sql_saga_source_row_id_'];
     IF p_founding_id_column IS NOT NULL THEN
         v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
@@ -830,11 +839,11 @@ BEGIN
 
         SET CONSTRAINTS ALL IMMEDIATE;
 
-        -- 4. Generate and return feedback
-        RETURN QUERY
+        -- 4. Generate and store feedback
+        INSERT INTO __temp_last_sql_saga_temporal_merge
             SELECT
                 s.row_id AS source_row_id,
-                COALESCE(jsonb_agg(DISTINCT (p_unnested.entity_ids - v_internal_keys_to_remove) ) FILTER (WHERE p_unnested.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids,
+                COALESCE(jsonb_agg(DISTINCT (p_unnested.entity_ids - v_internal_keys_to_remove)) FILTER (WHERE p_unnested.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids,
                 CASE
                     WHEN bool_and(p_unnested.plan_op_seq IS NOT NULL) THEN 'SUCCESS'::sql_saga.set_result_status
                     ELSE 'MISSING_TARGET'::sql_saga.set_result_status
@@ -854,6 +863,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name) IS
 'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 
