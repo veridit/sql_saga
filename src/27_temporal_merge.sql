@@ -8,134 +8,158 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_era_name name,
     p_founding_id_column name DEFAULT NULL
 ) RETURNS SETOF sql_saga.temporal_plan_op
-LANGUAGE plpgsql STABLE AS $temporal_merge_plan$
+LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
-    v_sql TEXT;
-    v_source_data_cols_jsonb_build TEXT;
-    v_target_data_cols_jsonb_build TEXT;
-    v_entity_id_as_jsonb TEXT;
-    v_source_schema_name TEXT;
-    v_source_table_ident TEXT;
-    v_target_table_ident TEXT;
-    v_source_data_payload_expr TEXT;
-    v_final_data_payload_expr TEXT;
-    v_resolver_ctes TEXT;
-    v_resolver_from TEXT;
-    v_diff_join_condition TEXT;
-    v_plan_source_row_ids_expr TEXT;
-    v_entity_id_check_is_null_expr TEXT;
-    v_target_schema_name name;
-    v_target_table_name_only name;
-    v_valid_from_col name;
-    v_valid_until_col name;
-    v_founding_id_select_expr TEXT;
-    v_planner_entity_id_expr TEXT;
+    v_plan_key_text TEXT;
+    v_plan_ps_name TEXT;
 BEGIN
-    IF p_founding_id_column IS NOT NULL THEN
-        IF p_founding_id_column = ANY(p_id_columns) THEN
-            RAISE EXCEPTION 'p_founding_id_column (%) cannot be one of the p_id_columns (%)', p_founding_id_column, p_id_columns;
+    -- Generate the cache key first from all relevant arguments. This is fast.
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s',
+        p_target_table::oid,
+        p_source_table::oid,
+        p_id_columns,
+        p_ephemeral_columns,
+        p_mode,
+        p_era_name,
+        COALESCE(p_founding_id_column, '')
+    );
+    v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
+
+    -- If the prepared statement already exists, execute it and exit immediately.
+    IF EXISTS (SELECT 1 FROM pg_prepared_statements WHERE name = v_plan_ps_name) THEN
+        RETURN QUERY EXECUTE format('EXECUTE %I', v_plan_ps_name);
+        RETURN;
+    END IF;
+
+    -- On cache miss, enter a new block to declare variables and do the expensive work.
+    DECLARE
+        v_sql TEXT;
+        v_source_data_cols_jsonb_build TEXT;
+        v_target_data_cols_jsonb_build TEXT;
+        v_entity_id_as_jsonb TEXT;
+        v_source_schema_name TEXT;
+        v_source_table_ident TEXT;
+        v_target_table_ident TEXT;
+        v_source_data_payload_expr TEXT;
+        v_final_data_payload_expr TEXT;
+        v_resolver_ctes TEXT;
+        v_resolver_from TEXT;
+        v_diff_join_condition TEXT;
+        v_plan_source_row_ids_expr TEXT;
+        v_entity_id_check_is_null_expr TEXT;
+        v_target_schema_name name;
+        v_target_table_name_only name;
+        v_valid_from_col name;
+        v_valid_until_col name;
+        v_founding_id_select_expr TEXT;
+        v_planner_entity_id_expr TEXT;
+    BEGIN
+        -- On cache miss, proceed with the expensive introspection and query building.
+        IF p_founding_id_column IS NOT NULL THEN
+            IF p_founding_id_column = ANY(p_id_columns) THEN
+                RAISE EXCEPTION 'p_founding_id_column (%) cannot be one of the p_id_columns (%)', p_founding_id_column, p_id_columns;
+            END IF;
+
+            v_founding_id_select_expr := format('t.%I as founding_id,', p_founding_id_column);
+            v_planner_entity_id_expr := format($$
+                CASE
+                    WHEN si.is_new_entity
+                    THEN si.entity_id || jsonb_build_object(%L, si.founding_id::text)
+                    ELSE si.entity_id
+                END
+            $$, p_founding_id_column);
+        ELSE
+            v_founding_id_select_expr := '';
+            v_planner_entity_id_expr := $$
+                CASE
+                    WHEN si.is_new_entity
+                    THEN si.entity_id || jsonb_build_object('_sql_saga_source_row_id_', si.row_id)
+                    ELSE si.entity_id
+                END
+            $$;
         END IF;
 
-        v_founding_id_select_expr := format('t.%I as founding_id,', p_founding_id_column);
-        v_planner_entity_id_expr := format($$
-            CASE
-                WHEN si.is_new_entity
-                THEN si.entity_id || jsonb_build_object(%L, si.founding_id::text)
-                ELSE si.entity_id
-            END
-        $$, p_founding_id_column);
-    ELSE
-        v_founding_id_select_expr := '';
-        v_planner_entity_id_expr := $$
-            CASE
-                WHEN si.is_new_entity
-                THEN si.entity_id || jsonb_build_object('_sql_saga_source_row_id_', si.row_id)
-                ELSE si.entity_id
-            END
-        $$;
-    END IF;
+        -- Introspect era information to get the correct column names
+        SELECT n.nspname, c.relname
+        INTO v_target_schema_name, v_target_table_name_only
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = p_target_table;
 
-    -- Introspect era information to get the correct column names
-    SELECT n.nspname, c.relname
-    INTO v_target_schema_name, v_target_table_name_only
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = p_target_table;
+        SELECT e.valid_from_column_name, e.valid_until_column_name
+        INTO v_valid_from_col, v_valid_until_col
+        FROM sql_saga.era e
+        WHERE e.table_schema = v_target_schema_name
+          AND e.table_name = v_target_table_name_only
+          AND e.era_name = p_era_name;
 
-    SELECT e.valid_from_column_name, e.valid_until_column_name
-    INTO v_valid_from_col, v_valid_until_col
-    FROM sql_saga.era e
-    WHERE e.table_schema = v_target_schema_name
-      AND e.table_name = v_target_table_name_only
-      AND e.era_name = p_era_name;
+        IF v_valid_from_col IS NULL THEN
+            RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+        END IF;
 
-    IF v_valid_from_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
-    END IF;
+        -- Resolve table identifiers to be correctly quoted and schema-qualified.
+        v_target_table_ident := p_target_table::TEXT;
 
-    -- Resolve table identifiers to be correctly quoted and schema-qualified.
-    v_target_table_ident := p_target_table::TEXT;
+        SELECT n.nspname INTO v_source_schema_name
+        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = p_source_table;
 
-    SELECT n.nspname INTO v_source_schema_name
-    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = p_source_table;
+        IF v_source_schema_name = 'pg_temp' THEN
+            v_source_table_ident := p_source_table::regclass::TEXT;
+        ELSE
+            v_source_table_ident := p_source_table::regclass::TEXT;
+        END IF;
 
-    IF v_source_schema_name = 'pg_temp' THEN
-        v_source_table_ident := p_source_table::regclass::TEXT;
-    ELSE
-        v_source_table_ident := p_source_table::regclass::TEXT;
-    END IF;
+        -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
+        SELECT
+            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
+        INTO
+            v_entity_id_as_jsonb
+        FROM unnest(p_id_columns) AS col;
 
-    -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
-    SELECT
-        format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
-    INTO
-        v_entity_id_as_jsonb
-    FROM unnest(p_id_columns) AS col;
+        -- 1. Dynamically get the list of common data columns from SOURCE and TARGET tables.
+        WITH source_cols AS (
+            SELECT pa.attname
+            FROM pg_catalog.pg_attribute pa
+            WHERE pa.attrelid = p_source_table
+              AND pa.attnum > 0 AND NOT pa.attisdropped
+        ),
+        target_cols AS (
+            SELECT pa.attname
+            FROM pg_catalog.pg_attribute pa
+            WHERE pa.attrelid = p_target_table
+              AND pa.attnum > 0 AND NOT pa.attisdropped
+        ),
+        common_data_cols AS (
+            SELECT s.attname
+            FROM source_cols s JOIN target_cols t ON s.attname = t.attname
+            WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+              AND s.attname <> ALL(p_id_columns)
+        )
+        SELECT
+            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
+        INTO
+            v_source_data_cols_jsonb_build -- Re-use this variable for the common expression
+        FROM
+            common_data_cols;
 
-    -- 1. Dynamically get the list of common data columns from SOURCE and TARGET tables.
-    WITH source_cols AS (
-        SELECT pa.attname
-        FROM pg_catalog.pg_attribute pa
-        WHERE pa.attrelid = p_source_table
-          AND pa.attnum > 0 AND NOT pa.attisdropped
-    ),
-    target_cols AS (
-        SELECT pa.attname
-        FROM pg_catalog.pg_attribute pa
-        WHERE pa.attrelid = p_target_table
-          AND pa.attnum > 0 AND NOT pa.attisdropped
-    ),
-    common_data_cols AS (
-        SELECT s.attname
-        FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-        WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-          AND s.attname <> ALL(p_id_columns)
-    )
-    SELECT
-        format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
-    INTO
-        v_source_data_cols_jsonb_build -- Re-use this variable for the common expression
-    FROM
-        common_data_cols;
+        v_target_data_cols_jsonb_build := v_source_data_cols_jsonb_build; -- Both source and target use the same payload structure
+        v_source_data_cols_jsonb_build := COALESCE(v_source_data_cols_jsonb_build, '''{}''::jsonb');
+        v_target_data_cols_jsonb_build := COALESCE(v_target_data_cols_jsonb_build, '''{}''::jsonb');
 
-    v_target_data_cols_jsonb_build := v_source_data_cols_jsonb_build; -- Both source and target use the same payload structure
-    v_source_data_cols_jsonb_build := COALESCE(v_source_data_cols_jsonb_build, '''{}''::jsonb');
-    v_target_data_cols_jsonb_build := COALESCE(v_target_data_cols_jsonb_build, '''{}''::jsonb');
+        -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
+        SELECT
+            string_agg(format('t.%I IS NULL', col), ' AND ')
+        INTO
+            v_entity_id_check_is_null_expr
+        FROM unnest(p_id_columns) AS col;
 
-    -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
-    SELECT
-        string_agg(format('t.%I IS NULL', col), ' AND ')
-    INTO
-        v_entity_id_check_is_null_expr
-    FROM unnest(p_id_columns) AS col;
-
-    -- 2. Construct expressions and resolver CTEs based on the mode.
-    IF p_mode IN ('upsert_patch', 'patch_only') THEN
-        -- In 'patch' modes, data is merged and NULLs from the source are ignored.
-        -- Historical data from preceding time slices is inherited into gaps.
-        v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
-        v_resolver_ctes := $$,
+        -- 2. Construct expressions and resolver CTEs based on the mode.
+        IF p_mode IN ('upsert_patch', 'patch_only') THEN
+            -- In 'patch' modes, data is merged and NULLs from the source are ignored.
+            -- Historical data from preceding time slices is inherited into gaps.
+            v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
+            v_resolver_ctes := $$,
 segments_with_target_start AS (
     SELECT
         *,
@@ -155,53 +179,53 @@ resolved_atomic_segments_with_inherited_payload AS (
     FROM payload_groups
 )
 $$;
-        v_final_data_payload_expr := $$(CASE
-            WHEN s_data_payload IS NOT NULL THEN (COALESCE(t_data_payload, inherited_t_data_payload, '{}'::jsonb) || s_data_payload)
-            ELSE COALESCE(t_data_payload, inherited_t_data_payload)
-        END)$$;
-        v_resolver_from := 'resolved_atomic_segments_with_inherited_payload';
+            v_final_data_payload_expr := $$(CASE
+                WHEN s_data_payload IS NOT NULL THEN (COALESCE(t_data_payload, inherited_t_data_payload, '{}'::jsonb) || s_data_payload)
+                ELSE COALESCE(t_data_payload, inherited_t_data_payload)
+            END)$$;
+            v_resolver_from := 'resolved_atomic_segments_with_inherited_payload';
 
-    ELSE -- upsert_replace, replace_only
-        -- In 'replace' modes, the source data payload overwrites the target. NULLs are meaningful.
-        v_source_data_payload_expr := v_source_data_cols_jsonb_build;
-        v_resolver_ctes := '';
-        -- In `replace` mode, we prioritize the source data (`s_data_payload`). If there is no
-        -- source data for a given time segment, we preserve the target data (`t_data_payload`).
-        -- This correctly implements the "Temporal Patch" semantic.
-        v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
-        v_resolver_from := 'resolved_atomic_segments_with_payloads';
-    END IF;
+        ELSE -- upsert_replace, replace_only
+            -- In 'replace' modes, the source data payload overwrites the target. NULLs are meaningful.
+            v_source_data_payload_expr := v_source_data_cols_jsonb_build;
+            v_resolver_ctes := '';
+            -- In `replace` mode, we prioritize the source data (`s_data_payload`). If there is no
+            -- source data for a given time segment, we preserve the target data (`t_data_payload`).
+            -- This correctly implements the "Temporal Patch" semantic.
+            v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
+            v_resolver_from := 'resolved_atomic_segments_with_payloads';
+        END IF;
 
 
-    -- 3. Conditionally define planner logic based on mode
-    IF p_mode IN ('upsert_patch', 'patch_only') THEN
-        -- For `patch` mode, we use a complex join condition to find "remainder" slices of
-        -- the original timeline and generate UPDATEs for them, avoiding DELETES.
-        v_diff_join_condition := $$
-           f.f_from = t.t_from
-           OR (
-               f.f_until = t.t_until AND f.f_data IS NOT DISTINCT FROM t.t_data
-               AND NOT EXISTS (
-                   SELECT 1 FROM coalesced_final_segments f_inner
-                   WHERE f_inner.entity_id = t.t_entity_id AND f_inner.valid_from = t.t_from
+        -- 3. Conditionally define planner logic based on mode
+        IF p_mode IN ('upsert_patch', 'patch_only') THEN
+            -- For `patch` mode, we use a complex join condition to find "remainder" slices of
+            -- the original timeline and generate UPDATEs for them, avoiding DELETES.
+            v_diff_join_condition := $$
+               f.f_from = t.t_from
+               OR (
+                   f.f_until = t.t_until AND f.f_data IS NOT DISTINCT FROM t.t_data
+                   AND NOT EXISTS (
+                       SELECT 1 FROM coalesced_final_segments f_inner
+                       WHERE f_inner.entity_id = t.t_entity_id AND f_inner.valid_from = t.t_from
+                   )
                )
-           )
-        $$;
-        -- This expression ensures the source_row_ids from the causal source row are attributed
-        -- to the "remainder" slice, which would otherwise have NULL for its source_row_ids.
-        v_plan_source_row_ids_expr := $$COALESCE(
-            d.f_source_row_ids,
-            MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
-        )$$;
-    ELSE -- replace modes
-        -- For `replace` mode, a simple join is correct. This results in a robust
-        -- DELETE and INSERT plan for any timeline splits.
-        v_diff_join_condition := 'f.f_from = t.t_from';
-        v_plan_source_row_ids_expr := 'd.f_source_row_ids';
-    END IF;
+            $$;
+            -- This expression ensures the source_row_ids from the causal source row are attributed
+            -- to the "remainder" slice, which would otherwise have NULL for its source_row_ids.
+            v_plan_source_row_ids_expr := $$COALESCE(
+                d.f_source_row_ids,
+                MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
+            )$$;
+        ELSE -- replace modes
+            -- For `replace` mode, a simple join is correct. This results in a robust
+            -- DELETE and INSERT plan for any timeline splits.
+            v_diff_join_condition := 'f.f_from = t.t_from';
+            v_plan_source_row_ids_expr := 'd.f_source_row_ids';
+        END IF;
 
-    -- 4. Construct and execute the main query to generate the execution plan.
-    v_sql := format($SQL$
+        -- 4. Construct and execute the main query to generate the execution plan.
+        v_sql := format($SQL$
 WITH
 source_initial AS (
     SELECT
@@ -417,28 +441,34 @@ FROM plan p
 WHERE p.operation::text <> 'NOOP'
 ORDER BY plan_op_seq;
 $SQL$,
-        v_entity_id_as_jsonb,           -- 1
-        v_source_data_payload_expr,     -- 2
-        v_source_table_ident,           -- 3
-        v_target_table_ident,           -- 4
-        p_ephemeral_columns,            -- 5
-        v_target_data_cols_jsonb_build, -- 6
-        p_mode,                         -- 7
-        v_final_data_payload_expr,      -- 8
-        v_resolver_ctes,                -- 9
-        v_resolver_from,                -- 10
-        v_diff_join_condition,          -- 11
-        v_plan_source_row_ids_expr,     -- 12
-        v_entity_id_check_is_null_expr, -- 13
-        v_valid_from_col,               -- 14
-        v_valid_until_col,              -- 15
-        v_founding_id_select_expr,      -- 16
-        v_planner_entity_id_expr        -- 17
-    );
+            v_entity_id_as_jsonb,           -- 1
+            v_source_data_payload_expr,     -- 2
+            v_source_table_ident,           -- 3
+            v_target_table_ident,           -- 4
+            p_ephemeral_columns,            -- 5
+            v_target_data_cols_jsonb_build, -- 6
+            p_mode,                         -- 7
+            v_final_data_payload_expr,      -- 8
+            v_resolver_ctes,                -- 9
+            v_resolver_from,                -- 10
+            v_diff_join_condition,          -- 11
+            v_plan_source_row_ids_expr,     -- 12
+            v_entity_id_check_is_null_expr, -- 13
+            v_valid_from_col,               -- 14
+            v_valid_until_col,              -- 15
+            v_founding_id_select_expr,      -- 16
+            v_planner_entity_id_expr        -- 17
+        );
 
-    RETURN QUERY EXECUTE v_sql;
+        EXECUTE format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
+
+        RETURN QUERY EXECUTE format('EXECUTE %I', v_plan_ps_name);
+    END;
 END;
 $temporal_merge_plan$;
+
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name) IS
+'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
 -- Unified Orchestrator Function
@@ -472,6 +502,7 @@ DECLARE
     v_internal_keys_to_remove TEXT[];
 BEGIN
     v_internal_keys_to_remove := ARRAY['_sql_saga_source_row_id_'];
+
     IF p_founding_id_column IS NOT NULL THEN
         v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
     END IF;
@@ -480,11 +511,6 @@ BEGIN
         DROP TABLE __temp_last_sql_saga_temporal_merge;
     END IF;
     CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
-
-    v_internal_keys_to_remove := ARRAY['_sql_saga_source_row_id_'];
-    IF p_founding_id_column IS NOT NULL THEN
-        v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
-    END IF;
 
     -- Auto-detect columns with default values or identity columns
     SELECT COALESCE(array_agg(a.attname), '{}')

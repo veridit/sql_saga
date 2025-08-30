@@ -28,6 +28,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
+- [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main orchestrator procedure simple and readable.
 - [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
 
 - [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.

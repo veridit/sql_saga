@@ -1,0 +1,238 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+\echo '----------------------------------------------------------------------------'
+----------------------------------------------------------------------------
+\echo 'Test: `temporal_merge_plan` caching and EXPLAIN output'
+Test: `temporal_merge_plan` caching and EXPLAIN output
+\echo 'This test verifies that the planner function correctly caches its prepared'
+This test verifies that the planner function correctly caches its prepared
+\echo 'statement and provides a stable EXPLAIN plan for regression monitoring.'
+statement and provides a stable EXPLAIN plan for regression monitoring.
+\echo '----------------------------------------------------------------------------'
+----------------------------------------------------------------------------
+SET client_min_messages TO WARNING;
+CREATE SCHEMA tmpc;
+CREATE TABLE tmpc.target (id int, valid_from date, valid_until date, value text);
+SELECT sql_saga.add_era('tmpc.target', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+CREATE TEMP TABLE source1 (row_id int, id int, valid_from date, valid_until date, value text);
+CREATE TEMP TABLE source2 (row_id int, id int, valid_from date, valid_until date, value text);
+\echo '--- Call planner for source1 ---'
+--- Call planner for source1 ---
+-- This call will generate and cache the plan.
+SELECT * FROM sql_saga.temporal_merge_plan(
+    p_target_table      => 'tmpc.target'::regclass,
+    p_source_table      => 'source1'::regclass,
+    p_id_columns        => '{id}'::text[],
+    p_ephemeral_columns => '{}'::text[],
+    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_era_name          => 'valid'
+);
+ plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+(0 rows)
+
+\echo '--- Call planner for source2 ---'
+--- Call planner for source2 ---
+-- This call should generate a *different* plan because the source table is different.
+SELECT * FROM sql_saga.temporal_merge_plan(
+    p_target_table      => 'tmpc.target'::regclass,
+    p_source_table      => 'source2'::regclass,
+    p_id_columns        => '{id}'::text[],
+    p_ephemeral_columns => '{}'::text[],
+    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_era_name          => 'valid'
+);
+ plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+(0 rows)
+
+\echo '--- Call planner for source1 again ---'
+--- Call planner for source1 again ---
+-- This call should hit the cache for the first plan.
+SELECT * FROM sql_saga.temporal_merge_plan(
+    p_target_table      => 'tmpc.target'::regclass,
+    p_source_table      => 'source1'::regclass,
+    p_id_columns        => '{id}'::text[],
+    p_ephemeral_columns => '{}'::text[],
+    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_era_name          => 'valid'
+);
+ plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+(0 rows)
+
+\echo '--- Verify that two distinct plans are cached ---'
+--- Verify that two distinct plans are cached ---
+SELECT count(*)::int as num_cached_plans FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%';
+ num_cached_plans 
+------------------
+                2
+(1 row)
+
+\echo '\n--- Performance Monitoring: EXPLAIN the cached planner query for source1 ---'
+
+--- Performance Monitoring: EXPLAIN the cached planner query for source1 ---
+\echo '--- This output is captured to monitor for regressions in the query plan, such as the introduction of inefficient joins. ---'
+--- This output is captured to monitor for regressions in the query plan, such as the introduction of inefficient joins. ---
+-- Use \gset to capture the dynamically generated EXPLAIN command into a variable.
+-- This avoids echoing the command with its unstable MD5 hash.
+SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command
+FROM pg_prepared_statements
+WHERE name = 'tm_plan_' || md5(format('%s:%s:%s:%s:%s:%s:%s',
+    'tmpc.target'::regclass::oid,
+    'source1'::regclass::oid,
+    '{id}',
+    '{}',
+    'upsert_patch',
+    'valid',
+    ''))
+\gset
+-- Now, echo a stable placeholder for the regression test's expected output...
+\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+-- ...and then execute the actual command we captured.
+:explain_command
+                                                                                                                                                                                                    QUERY PLAN                                                                                                                                                                                                    
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (row_number() OVER (?))
+   CTE source_initial
+     ->  Seq Scan on source1 t
+           Filter: (valid_from < valid_until)
+   CTE target_rows
+     ->  Hash Join
+           Hash Cond: (jsonb_build_object('id', t_1.id) = source_initial.entity_id)
+           ->  Seq Scan on target t_1
+           ->  Hash
+                 ->  HashAggregate
+                       Group Key: source_initial.entity_id
+                       ->  CTE Scan on source_initial
+   CTE source_rows
+     ->  CTE Scan on source_initial si
+   CTE all_rows
+     ->  Append
+           ->  CTE Scan on source_rows
+           ->  CTE Scan on target_rows target_rows_1
+   CTE coalesced_final_segments
+     ->  GroupAggregate
+           Group Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.data_payload
+           ->  Incremental Sort
+                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.data_payload, with_segment_group.source_row_id
+                 Presorted Key: with_segment_group.entity_id
+                 ->  Subquery Scan on with_segment_group
+                       ->  WindowAgg
+                             ->  Subquery Scan on with_new_segment_flag
+                                   ->  WindowAgg
+                                         ->  Incremental Sort
+                                               Sort Key: resolved_atomic_segments_with_inherited_payload.entity_id, resolved_atomic_segments_with_inherited_payload.valid_from
+                                               Presorted Key: resolved_atomic_segments_with_inherited_payload.entity_id
+                                               ->  Subquery Scan on resolved_atomic_segments_with_inherited_payload
+                                                     ->  WindowAgg
+                                                           ->  Incremental Sort
+                                                                 Sort Key: payload_groups.entity_id, payload_groups.payload_group, payload_groups.valid_from
+                                                                 Presorted Key: payload_groups.entity_id
+                                                                 ->  Subquery Scan on payload_groups
+                                                                       ->  WindowAgg
+                                                                             ->  Nested Loop Left Join
+                                                                                   Filter: ((sr_1.data_payload IS NOT NULL) OR (tr_1.data_payload IS NOT NULL))
+                                                                                   ->  Merge Left Join
+                                                                                         Merge Cond: (seg.entity_id = tr_1.entity_id)
+                                                                                         Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_1.valid_from, tr_1.valid_until))
+                                                                                         ->  Subquery Scan on seg
+                                                                                               Filter: (seg.valid_from < seg.valid_until)
+                                                                                               ->  WindowAgg
+                                                                                                     ->  Sort
+                                                                                                           Sort Key: all_rows.entity_id, all_rows.valid_from
+                                                                                                           ->  HashAggregate
+                                                                                                                 Group Key: all_rows.entity_id, all_rows.valid_from
+                                                                                                                 ->  Append
+                                                                                                                       ->  CTE Scan on all_rows
+                                                                                                                             Filter: (valid_from IS NOT NULL)
+                                                                                                                       ->  CTE Scan on all_rows all_rows_1
+                                                                                                                             Filter: (valid_until IS NOT NULL)
+                                                                                         ->  Sort
+                                                                                               Sort Key: tr_1.entity_id
+                                                                                               ->  CTE Scan on target_rows tr_1
+                                                                                   ->  Limit
+                                                                                         ->  Sort
+                                                                                               Sort Key: sr_1.source_row_id DESC
+                                                                                               ->  CTE Scan on source_rows sr_1
+                                                                                                     Filter: ((entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+                                                                             SubPlan 6
+                                                                               ->  Limit
+                                                                                     ->  Sort
+                                                                                           Sort Key: sr.source_row_id DESC
+                                                                                           ->  CTE Scan on source_rows sr
+                                                                                                 Filter: ((entity_id = seg.entity_id) AND ((daterange(valid_from, valid_until) && daterange(seg.valid_from, seg.valid_until)) OR ((daterange(valid_from, valid_until) -|- daterange(seg.valid_from, seg.valid_until)) AND EXISTS(SubPlan 5))))
+                                                                                                 SubPlan 5
+                                                                                                   ->  CTE Scan on target_rows tr
+                                                                                                         Filter: ((entity_id = sr.entity_id) AND (daterange(sr.valid_from, sr.valid_until) && daterange(valid_from, valid_until)))
+   ->  WindowAgg
+         ->  Sort
+               Sort Key: (p.source_row_ids[1]), p.operation DESC, p.entity_id, (COALESCE(p.new_valid_from, p.old_valid_from))
+               ->  Subquery Scan on p
+                     Filter: ((p.operation)::text <> 'NOOP'::text)
+                     ->  WindowAgg
+                           ->  Sort
+                                 Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
+                                 ->  Hash Full Join
+                                       Hash Cond: (target_rows.entity_id = coalesced_final_segments.entity_id)
+                                       Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 9).col1) AND (target_rows.valid_from = (hashed SubPlan 9).col2))))))
+                                       Filter: ((coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload) OR (coalesced_final_segments.valid_from IS DISTINCT FROM target_rows.valid_from) OR (coalesced_final_segments.valid_until IS DISTINCT FROM target_rows.valid_until))
+                                       ->  CTE Scan on target_rows
+                                       ->  Hash
+                                             ->  CTE Scan on coalesced_final_segments
+                                                   Filter: (data_payload IS NOT NULL)
+                                       SubPlan 9
+                                         ->  CTE Scan on coalesced_final_segments f_inner
+(91 rows)
+
+SET client_min_messages TO NOTICE;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
