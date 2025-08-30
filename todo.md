@@ -6,6 +6,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
+- [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
+
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
 
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
@@ -21,9 +23,27 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
 
-- [ ] **Refactor `add_api` to `add_updatable_views` for clarity:** The name `add_api` is too generic. Rename `add_api` to `add_updatable_views` and `drop_api` to `drop_updatable_views` to make it clear that these functions create and manage the specialized updatable views for interacting with temporal data.
+- [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
+- [ ] **Rename `add_api` to `add_updatable_views` for clarity:** The name `add_api` is too generic. Rename `add_api` to `add_updatable_views` and `drop_api` to `drop_updatable_views` to make it clear that these functions create and manage the specialized updatable views for interacting with temporal data.
 
+- [ ] **Refactor `temporal_merge` founding ID logic:** Make the source `row_id` column configurable and use it as the default `founding_id` for new entities, eliminating the internal `_sql_saga_source_row_id_` key.
+
+- [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
+
+- [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main orchestrator procedure simple and readable.
 - [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
+
+- [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
+
+- [x] **Clarify `temporal_merge` feedback statuses:** Renamed the feedback status enums for clarity. The public status is now `temporal_merge_status` with values `APPLIED`, `SKIPPED`, `TARGET_NOT_FOUND`, and `ERROR`. The internal planner enum is now `planner_action` with `IDENTICAL` replacing `NOOP`.
+
+- [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
+
+- [x] **Remove obsolete legacy files:** Deleted unused source files (`periods.c`, `time_for_keys.c`, etc.) from the repository to reduce clutter and prevent confusion.
+
+- [x] **Make `temporal_merge` fully dynamic:** Analyzed `temporal_merge` for hardcoded column names. Verified through searches that all user-data columns are handled dynamically. The single identified "hardcoded" string is a private, internal implementation detail for state management, which is a correct design. No changes were needed.
+
+- [x] **Add option to back-fill generated IDs into source table:** Extended `temporal_merge` with a new parameter `p_update_source_with_assigned_entity_ids`. When `true`, the procedure will update the source table with any generated surrogate or composite key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
 
 - [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
 - [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
@@ -41,11 +61,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor build system and fix all regressions:** Overhauled the `Makefile` to ensure reliable, incremental builds. Refactored the SQL source into a modular structure and resolved all test failures that were exposed by the new build process.
 
 - [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
-
-- [ ] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):**
-  - **Goal:** Provide a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables, solving the MVCC visibility problem for complex data loads.
-  - **Status:** **On Hold**. The SQL source code has been refactored. The PL/pgSQL prototype is the next step.
-  - **Benefit:** This function will become the official, architecturally sound solution for bulk data modifications, enabling the re-activation of previously disabled complex tests.
 
 - [ ] **Investigate Statement-Level Triggers:**
   - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.

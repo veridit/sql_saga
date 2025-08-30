@@ -1,28 +1,21 @@
-                      event                      | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
--------------------------------------------------+-----------+-----------------+----------------+------------+-----------------
- BEGIN                                           |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
- Constraints enabled                             |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era INSERTs delayed constraints start           |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era INSERTs delayed constraints end             |     10000 | 0 secs          | 0 secs         | 10000 rows | ~22400 rows/s
- Era INSERTs start                               |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era INSERTs end                                 |     10000 | 1 secs          | 1 secs         | 10000 rows | ~18000 rows/s
- Era Update deferred constraints start           |         0 | 1 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era Update deferred constraints end             |     10000 | 9 secs          | 8 secs         | 10000 rows | ~1300 rows/s
- Era Update non-key start                        |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era Update non-key end                          |     10000 | 9 secs          | 0 secs         | 10000 rows | ~73000 rows/s
- History Only Benchmark                          |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
- History INSERTs start                           |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
- History INSERTs end                             |     10000 | 9 secs          | 0 secs         | 10000 rows | ~50400 rows/s
- History Update start                            |         0 | 9 secs          | 0 secs         | 0 rows     | ~0 rows/s
- History Update end                              |     10000 | 10 secs         | 0 secs         | 10000 rows | ~48100 rows/s
- Era + History Benchmark                         |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Era + History INSERTs start                     |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Era + History INSERTs end                       |     10000 | 10 secs         | 1 secs         | 10000 rows | ~18300 rows/s
- Era + History Update deferred constraints start |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Era + History Update deferred constraints end   |     10000 | 15 secs         | 5 secs         | 10000 rows | ~2100 rows/s
- Era + History Update non-key start              |         0 | 15 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Era + History Update non-key end                |     10000 | 16 secs         | 1 secs         | 10000 rows | ~13800 rows/s
- Constraints disabled                            |         0 | 16 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Tear down complete                              |         0 | 16 secs         | 0 secs         | 0 rows     | ~0 rows/s
-(24 rows)
+                   event                   | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
+-------------------------------------------+-----------+-----------------+----------------+------------+-----------------
+ BEGIN                                     |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
+ Constraints enabled                       |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
+ Era INSERTs delayed constraints           |     10000 | 0 secs          | 0 secs         | 10000 rows | ~24200 rows/s
+ Era INSERTs                               |     10000 | 1 secs          | 1 secs         | 10000 rows | ~19200 rows/s
+ Era Update deferred constraints           |     10000 | 9 secs          | 8 secs         | 10000 rows | ~1200 rows/s
+ Era Update non-key                        |     10000 | 9 secs          | 0 secs         | 10000 rows | ~74400 rows/s
+ Temporal Merge SEED                       |     16000 | 46 secs         | 37 secs        | 16000 rows | ~400 rows/s
+ Temporal Merge 20% INSERT 80% PATCH       |     20000 | 115 secs        | 69 secs        | 20000 rows | ~300 rows/s
+ History Only Benchmark                    |         0 | 115 secs        | 0 secs         | 0 rows     | ~0 rows/s
+ History INSERTs                           |     10000 | 116 secs        | 0 secs         | 10000 rows | ~51200 rows/s
+ History Update                            |     10000 | 116 secs        | 0 secs         | 10000 rows | ~49600 rows/s
+ Era + History Benchmark                   |         0 | 116 secs        | 0 secs         | 0 rows     | ~0 rows/s
+ Era + History INSERTs                     |     10000 | 117 secs        | 1 secs         | 10000 rows | ~12600 rows/s
+ Era + History Update deferred constraints |     10000 | 124 secs        | 7 secs         | 10000 rows | ~1500 rows/s
+ Era + History Update non-key              |     10000 | 124 secs        | 1 secs         | 10000 rows | ~11400 rows/s
+ Constraints disabled                      |         0 | 125 secs        | 0 secs         | 0 rows     | ~0 rows/s
+ Tear down complete                        |         0 | 125 secs        | 0 secs         | 0 rows     | ~0 rows/s
+(17 rows)
 

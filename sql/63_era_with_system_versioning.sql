@@ -1,6 +1,6 @@
 \i sql/include/test_setup.sql
 
--- Test that a table can have both a standard era and system versioning.
+-- Test that a table can have both a regular era and system versioning.
 
 -- 1. Create a table
 CREATE TABLE temporal_and_versioned (

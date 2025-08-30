@@ -1312,7 +1312,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 			pfree(join_buf.data); pfree(exclude_buf.data);
 			if (fk_range_constructor) pfree(fk_range_constructor); if (uk_range_constructor) pfree(uk_range_constructor);
 		}
-		else /* Standard FK */
+		else /* Regular FK */
 		{
 			int param_idx = 0;
 			plan_entry->nargs = num_uk_cols;
@@ -1576,7 +1576,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 			pfree(exclude_buf.data); pfree(union_buf.data); pfree(select_list_buf.data); pfree(alias_buf.data); pfree(join_buf.data);
 			if(fk_range_constructor) pfree(fk_range_constructor); if(uk_range_constructor) pfree(uk_range_constructor);
 		}
-		else /* Standard FK */
+		else /* Regular FK */
 		{
 			int param_idx = 0;
 			plan_entry->nargs = num_uk_cols;
@@ -1653,7 +1653,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
 			}
 		}
-		else /* Standard FK */
+		else /* Regular FK */
 		{
 			if (keys_are_equal) { SPI_finish(); return PointerGetDatum(rettuple); }
 

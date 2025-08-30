@@ -5,7 +5,51 @@ GRANT USAGE ON SCHEMA sql_saga TO PUBLIC;
 CREATE TYPE sql_saga.drop_behavior AS ENUM ('CASCADE', 'RESTRICT');
 CREATE TYPE sql_saga.fk_actions AS ENUM ('CASCADE', 'SET NULL', 'SET DEFAULT', 'RESTRICT', 'NO ACTION');
 CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
-CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'standard_to_temporal');
+CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'regular_to_temporal');
+
+-- This enum represents Allen's Interval Algebra, a set of thirteen mutually
+-- exclusive relations that can hold between two temporal intervals. These
+-- relations are fundamental to the logic of the temporal_merge planner.
+-- See: https://en.wikipedia.org/wiki/Allen%27s_interval_algebra
+--
+-- The relations are defined for two intervals, X and Y, with start and end points
+-- X.start, X.end, Y.start, Y.end. For sql_saga, which uses inclusive-start and
+-- exclusive-end intervals `[)`, the conditions are adapted accordingly.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.allen_interval_relation AS ENUM (
+        -- X [) entirely before Y [)
+        -- Condition: X.end < Y.start
+        'precedes',
+        -- X [) meets Y [) at the boundary
+        -- Condition: X.end = Y.start
+        'meets',
+        -- X [) starts before Y [) and they overlap
+        -- Condition: X.start < Y.start AND X.end > Y.start AND X.end < Y.end
+        'overlaps',
+        -- X [) and Y [) share the same start, but X ends before Y
+        -- Condition: X.start = Y.start AND X.end < Y.end
+        'starts',
+        -- X [) is entirely contained within Y [) but does not share a boundary
+        -- Condition: X.start > Y.start AND X.end < Y.end
+        'during',
+        -- X [) and Y [) share the same end, but X starts after Y
+        -- Condition: X.start > Y.start AND X.end = Y.end
+        'finishes',
+        -- X [) and Y [) are the exact same interval
+        -- Condition: X.start = Y.start AND X.end = Y.end
+        'equals',
+        -- Inverse relations (Y relative to X)
+        'preceded by',   -- Y precedes X
+        'met by',        -- Y meets X
+        'overlapped by', -- Y overlaps X
+        'started by',    -- Y starts X
+        'contains',      -- Y is during X
+        'finished by'    -- Y finishes X
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
 
 /*
  * All referencing columns must be either name or regsomething in order for
@@ -98,7 +142,7 @@ CREATE TABLE sql_saga.foreign_keys (
     fk_insert_trigger name,
     fk_update_trigger name,
 
-    -- For standard FKs
+    -- For regular FKs
     fk_check_constraint name,
     fk_helper_function text, -- regprocedure signature
 
@@ -120,7 +164,7 @@ CREATE TABLE sql_saga.foreign_keys (
                 fk_era_name IS NOT NULL
                 AND fk_insert_trigger IS NOT NULL AND fk_update_trigger IS NOT NULL
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
-            WHEN 'standard_to_temporal' THEN
+            WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL
                 AND fk_insert_trigger IS NULL AND fk_update_trigger IS NULL
                 AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
@@ -130,7 +174,7 @@ CREATE TABLE sql_saga.foreign_keys (
 GRANT SELECT ON TABLE sql_saga.foreign_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.foreign_keys', '');
 
-COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and standard-to-temporal relationships.';
+COMMENT ON TABLE sql_saga.foreign_keys IS 'A registry of foreign keys. Supports both temporal-to-temporal and regular-to-temporal relationships.';
 COMMENT ON COLUMN sql_saga.foreign_keys.fk_table_columns_snapshot IS 'A snapshot of all columns on the fk table, used by the rename_following event trigger to detect column renames.';
 
 CREATE TABLE sql_saga.system_versioning (
@@ -166,6 +210,72 @@ SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_versioning', '');
 COMMENT ON TABLE sql_saga.system_versioning IS 'A registry of tables with SYSTEM VERSIONING';
 
 
+-- Types for temporal_merge
+DROP TYPE IF EXISTS sql_saga.temporal_merge_mode CASCADE;
+CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
+    'upsert_patch',
+    'upsert_replace',
+    'patch_only',
+    'replace_only',
+    'insert_only'
+);
+
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_merge_status AS ENUM ('APPLIED', 'SKIPPED', 'TARGET_NOT_FOUND', 'ERROR');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+COMMENT ON TYPE sql_saga.temporal_merge_status IS
+'Defines the possible return statuses for a row processed by `temporal_merge`.
+- APPLIED: The operation was successfully planned and executed, resulting in a change to the target table.
+- SKIPPED: A successful but non-operative outcome where the row was benignly skipped (e.g., an idempotent update, or an `insert_only` on a pre-existing entity).
+- TARGET_NOT_FOUND: A successful but non-operative outcome where a patch/replace operation could not find its target, signaling a potential data issue.
+- ERROR: A catastrophic failure occurred. The transaction was rolled back, and the `error_message` column will be populated.';
+
+DO $$ BEGIN
+    CREATE TYPE sql_saga.planner_action AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'IDENTICAL');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+COMMENT ON TYPE sql_saga.planner_action IS
+'Represents the type of DML operation to be performed for a given time segment.
+- INSERT: A new historical record will be inserted.
+- UPDATE: An existing historical record will be modified (typically by shortening its period).
+- DELETE: An existing historical record will be deleted.
+- IDENTICAL: An existing historical record is identical to the source data and requires no change. This is used by the planner to identify idempotent operations.';
+
+-- Defines the structure for a single operation in a temporal execution plan.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_plan_op AS (
+        plan_op_seq BIGINT,
+        source_row_ids INTEGER[],
+        operation sql_saga.planner_action,
+        entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
+        old_valid_from TEXT,
+        new_valid_from TEXT,
+        new_valid_until TEXT,
+        data JSONB,
+        relation sql_saga.allen_interval_relation
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Defines the structure for a temporal merge operation result.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_merge_result AS (
+        source_row_id INTEGER,
+        target_entity_ids JSONB,
+        status sql_saga.temporal_merge_status,
+        error_message TEXT
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+
 CREATE VIEW sql_saga.information_schema__era AS
     SELECT current_catalog AS table_catalog,
            e.table_schema,
@@ -194,90 +304,4 @@ CREATE TABLE sql_saga.api_view (
 GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
 
-CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
-    'upsert_patch',
-    'upsert_replace',
-    'patch_only',
-    'replace_only',
-    'insert_only'
-);
 
--- Use Allen's Interval Relation for covering all possible cases of overlap. Ref. https://ics.uci.edu/~alspaugh/cls/shr/allen.html
-CREATE TYPE public.allen_interval_relation AS ENUM (
-    'precedes',      -- X before Y: X.until < Y.from
-                     -- X: [ XXXX )
-                     -- Y:           [ YYYY )
-    'meets',         -- X meets Y: X.until = Y.from
-                     -- X: [ XXXX )
-                     -- Y:         [ YYYY )
-    'overlaps',      -- X overlaps Y
-                     -- X: [ XXXX----)
-                     -- Y:      [----YYYY )
-    'starts',        -- X starts Y
-                     -- X: [ XXXX )
-                     -- Y: [ YYYYYYYY )
-    'during',        -- X during Y (X is contained in Y)
-                     -- X:   [ XXXX )
-                     -- Y: [ YYYYYYYY )
-    'finishes',      -- X finishes Y
-                     -- X:      [ XXXX )
-                     -- Y: [ YYYYYYYY )
-    'equals',        -- X equals Y
-                     -- X: [ XXXX )
-                     -- Y: [ YYYY )
-    'overlapped_by', -- X is overlapped by Y (Y overlaps X)
-                     -- X:      [----XXXX )
-                     -- Y: [ YYYY----)
-    'started_by',    -- X is started by Y (Y starts X)
-                     -- X: [ XXXXXXX )
-                     -- Y: [ YYYY )
-    'contains',      -- X contains Y (Y is during X)
-                     -- X: [ XXXXXXX )
-                     -- Y:   [ YYYY )
-    'finished_by',   -- X is finished by Y (Y finishes X)
-                     -- X: [ XXXXXXX )
-                     -- Y:      [ YYYY )
-    'met_by',        -- X is met by Y (Y meets X)
-                     -- X:         [ XXXX )
-                     -- Y: [ YYYY )
-    'preceded_by'    -- X is preceded by Y (Y precedes X)
-                     -- X:           [ XXXX )
-                     -- Y: [ YYYY )
-);
-
-COMMENT ON TYPE public.allen_interval_relation IS
-'Allen''s interval algebra relations for two intervals X=[X.from, X.until) and Y=[Y.from, Y.until), using [inclusive_start, exclusive_end) semantics.
-The ASCII art illustrates interval X relative to interval Y.';
-
-CREATE FUNCTION public.allen_get_relation(
-    x_from anyelement, x_until anyelement,
-    y_from anyelement, y_until anyelement
-) RETURNS public.allen_interval_relation
-LANGUAGE sql IMMUTABLE PARALLEL SAFE AS
-$BODY$
-    SELECT CASE
-        -- Cases where start points are the same
-        WHEN x_from = y_from AND x_until = y_until THEN 'equals'::public.allen_interval_relation
-        WHEN x_from = y_from AND x_until < y_until THEN 'starts'::public.allen_interval_relation
-        WHEN x_from = y_from AND x_until > y_until THEN 'started_by'::public.allen_interval_relation
-        -- Cases where end points are the same
-        WHEN x_from > y_from AND x_until = y_until THEN 'finishes'::public.allen_interval_relation
-        WHEN x_from < y_from AND x_until = y_until THEN 'finished_by'::public.allen_interval_relation
-        -- Case where one interval is during another
-        WHEN x_from > y_from AND x_until < y_until THEN 'during'::public.allen_interval_relation
-        WHEN x_from < y_from AND x_until > y_until THEN 'contains'::public.allen_interval_relation
-        -- Cases where intervals are adjacent
-        WHEN x_until = y_from THEN 'meets'::public.allen_interval_relation
-        WHEN y_until = x_from THEN 'met_by'::public.allen_interval_relation
-        -- Cases where intervals overlap
-        WHEN x_from < y_from AND x_until > y_from AND x_until < y_until THEN 'overlaps'::public.allen_interval_relation
-        WHEN y_from < x_from AND y_until > x_from AND y_until < x_until THEN 'overlapped_by'::public.allen_interval_relation
-        -- Cases where intervals are disjoint
-        WHEN x_until < y_from THEN 'precedes'::public.allen_interval_relation
-        WHEN y_until < x_from THEN 'preceded_by'::public.allen_interval_relation
-    END;
-$BODY$;
-
-COMMENT ON FUNCTION public.allen_get_relation IS
-'Calculates the Allen Interval Algebra relation between two intervals X and Y,
-assuming [inclusive_start, exclusive_end) semantics.';

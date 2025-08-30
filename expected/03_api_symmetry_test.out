@@ -27,39 +27,39 @@ SET ROLE TO sql_saga_unprivileged_user;
 BEGIN;
 -- Test that the overloaded drop_* functions work as expected.
 CREATE TABLE parent(id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('parent', 'valid_from', 'valid_until', 'p');
+SELECT sql_saga.add_era('parent'::regclass, 'valid_from', 'valid_until', 'p');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
  add_unique_key 
 ----------------
  parent_id_p
 (1 row)
 
 CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('child', 'valid_from', 'valid_until', 'q');
+SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
   add_foreign_key  
 -------------------
  child_parent_id_q
 (1 row)
 
--- Test overloaded drop_foreign_key
+-- Test overloaded drop_foreign_key for temporal-to-temporal
 TABLE sql_saga.foreign_keys;
  foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
 -------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
  child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
 (1 row)
 
-SELECT sql_saga.drop_foreign_key('child', ARRAY['parent_id'], 'q');
+SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q');
  drop_foreign_key 
 ------------------
  
@@ -71,7 +71,7 @@ TABLE sql_saga.foreign_keys;
 (0 rows)
 
 -- Test original drop_foreign_key (with positional and named arguments)
-SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
   add_foreign_key  
 -------------------
  child_parent_id_q
@@ -84,7 +84,7 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 -- by name (positional)
-SELECT sql_saga.drop_foreign_key_by_name('child', 'child_parent_id_q');
+SELECT sql_saga.drop_foreign_key_by_name('child'::regclass, 'child_parent_id_q');
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -96,7 +96,7 @@ TABLE sql_saga.foreign_keys;
 (0 rows)
 
 -- Re-create to test named arguments
-SELECT sql_saga.add_foreign_key('child', ARRAY['parent_id'], 'q', 'parent_id_p');
+SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
   add_foreign_key  
 -------------------
  child_parent_id_q
@@ -109,7 +109,7 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 -- by name (named)
-SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child', key_name => 'child_parent_id_q');
+SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child'::regclass, key_name => 'child_parent_id_q');
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -120,6 +120,32 @@ TABLE sql_saga.foreign_keys;
 ------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
 (0 rows)
 
+-- Test overloaded drop_foreign_key for regular-to-temporal
+CREATE TABLE regular_child(id int, parent_id int);
+SELECT sql_saga.add_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
+       add_foreign_key        
+------------------------------
+ regular_child_parent_id_fkey
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger |      fk_check_constraint      |        fk_helper_function        |           uk_update_trigger            |           uk_delete_trigger            
+------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------------------+----------------------------------+----------------------------------------+----------------------------------------
+ regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   | regular_child_parent_id_check | public.parent_id_exists(integer) | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete
+(1 row)
+
+SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+(0 rows)
+
+DROP TABLE regular_child;
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
  unique_key_name | table_schema | table_name | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
@@ -127,7 +153,7 @@ TABLE sql_saga.unique_keys;
  parent_id_p     | public       | parent     | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
 (1 row)
 
-SELECT sql_saga.drop_unique_key('parent', ARRAY['id'], 'p');
+SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
  drop_unique_key 
 -----------------
  
@@ -139,7 +165,7 @@ TABLE sql_saga.unique_keys;
 (0 rows)
 
 -- Test original drop_unique_key (with positional and named arguments)
-SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
  add_unique_key 
 ----------------
  parent_id_p
@@ -152,7 +178,7 @@ TABLE sql_saga.unique_keys;
 (1 row)
 
 -- by name (positional)
-SELECT sql_saga.drop_unique_key_by_name('parent', 'parent_id_p');
+SELECT sql_saga.drop_unique_key_by_name('parent'::regclass, 'parent_id_p');
  drop_unique_key_by_name 
 -------------------------
  
@@ -164,7 +190,7 @@ TABLE sql_saga.unique_keys;
 (0 rows)
 
 -- Re-create to test named arguments
-SELECT sql_saga.add_unique_key('parent', ARRAY['id'], 'p');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
  add_unique_key 
 ----------------
  parent_id_p
@@ -177,7 +203,7 @@ TABLE sql_saga.unique_keys;
 (1 row)
 
 -- by name (named)
-SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent', key_name => 'parent_id_p');
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent'::regclass, key_name => 'parent_id_p');
  drop_unique_key_by_name 
 -------------------------
  
@@ -197,7 +223,7 @@ CREATE TABLE era_symmetry_test(id int);
  id     | integer |           |          | 
 
 -- 1. Create era and columns together
-SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v', create_columns => true);
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v', create_columns => true);
  add_era 
 ---------
  t
@@ -214,7 +240,7 @@ Check constraints:
     "era_symmetry_test_v_check" CHECK (v_from < v_until)
 
 -- 2. Drop era and columns together
-SELECT sql_saga.drop_era('era_symmetry_test', 'v', cleanup => true);
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
  drop_era 
 ----------
  t
@@ -228,13 +254,13 @@ SELECT sql_saga.drop_era('era_symmetry_test', 'v', cleanup => true);
 
 -- 3. Verify add_era fails without create_columns => true
 SAVEPOINT before_fail;
-SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v');
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
 ERROR:  column "v_from" not found in table "era_symmetry_test"
 CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,boolean) line 141 at RAISE
 ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era
 ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
-SELECT sql_saga.add_era('era_symmetry_test', 'v_from', 'v_until', 'v');
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
  add_era 
 ---------
  t
@@ -251,7 +277,7 @@ Check constraints:
     "era_symmetry_test_v_check" CHECK (v_from < v_until)
 
 -- 5. Drop era but leave columns (default behavior)
-SELECT sql_saga.drop_era('era_symmetry_test', 'v');
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v');
  drop_era 
 ----------
  t
@@ -270,14 +296,14 @@ Check constraints:
 DROP TABLE era_symmetry_test;
 -- Note: The FK and UK were already dropped in the earlier parts of this test.
 -- We only need to drop the eras and tables.
-SELECT sql_saga.drop_era('child', 'q');
+SELECT sql_saga.drop_era('child'::regclass, 'q');
  drop_era 
 ----------
  t
 (1 row)
 
 DROP TABLE child;
-SELECT sql_saga.drop_era('parent', 'p');
+SELECT sql_saga.drop_era('parent'::regclass, 'p');
  drop_era 
 ----------
  t

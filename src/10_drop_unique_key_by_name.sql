@@ -57,8 +57,16 @@ BEGIN
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
         THEN
-            EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I, DROP CONSTRAINT %I',
-                unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
+            IF unique_key_row.predicate IS NOT NULL THEN
+                -- This is a unique index, drop it and the exclusion constraint
+                EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
+                    unique_key_row.table_schema, unique_key_row.unique_constraint,
+                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.exclude_constraint);
+            ELSE
+                -- This is a unique constraint, drop both constraints
+                EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I, DROP CONSTRAINT %I',
+                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
+            END IF;
         END IF;
     END LOOP;
 

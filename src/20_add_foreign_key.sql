@@ -1,4 +1,4 @@
--- Overloaded function for standard (non-temporal) to temporal foreign keys
+-- Overloaded function for regular (non-temporal) to temporal foreign keys
 CREATE FUNCTION sql_saga.add_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
@@ -15,7 +15,7 @@ CREATE FUNCTION sql_saga.add_foreign_key(
  LANGUAGE plpgsql
  SECURITY DEFINER
 AS
-$function_standard_fk$
+$function_regular_fk$
 #variable_conflict use_variable
 DECLARE
     uk_era_row sql_saga.era;
@@ -179,7 +179,7 @@ BEGIN
         uk_update_trigger := coalesce(uk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_update'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %1$I AFTER UPDATE OF %2$s ON %3$I.%4$I FROM %5$I.%6$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_update_check_c(%7$L, %5$L, %6$L, %8$L, %9$L, %10$L, %11$L, %3$L, %4$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, %18$L, 'standard_to_temporal');
+            sql_saga.uk_update_check_c(%7$L, %5$L, %6$L, %8$L, %9$L, %10$L, %11$L, %3$L, %4$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, %18$L, 'regular_to_temporal');
             $$
             , /* %1$I */ uk_update_trigger
             , /* %2$s */ unique_columns_with_era_columns
@@ -205,7 +205,7 @@ BEGIN
         uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_delete'));
         EXECUTE format($$
             CREATE CONSTRAINT TRIGGER %1$I AFTER DELETE ON %2$I.%3$I FROM %4$I.%5$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_delete_check_c(%6$L, %4$L, %5$L, %7$L, %8$L, %9$L, %10$L, %2$L, %3$L, %11$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, 'standard_to_temporal');
+            sql_saga.uk_delete_check_c(%6$L, %4$L, %5$L, %7$L, %8$L, %9$L, %10$L, %2$L, %3$L, %11$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, 'regular_to_temporal');
             $$
             , /* %1$I */ uk_delete_trigger
             , /* %2$I */ uk_schema_name
@@ -231,7 +231,7 @@ BEGIN
     INSERT INTO sql_saga.foreign_keys
         ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger)
     VALUES
-        ( foreign_key_name, 'standard_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger);
+        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger);
 
 
     /* Validate the constraint on existing data. */
@@ -270,7 +270,7 @@ BEGIN
 
     RETURN foreign_key_name;
 END;
-$function_standard_fk$;
+$function_regular_fk$;
 
 
 -- Original function for temporal-to-temporal FKs

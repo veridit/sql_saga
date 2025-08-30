@@ -118,6 +118,75 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 
 --
+-- Benchmark with temporal_merge
+--
+
+CREATE TABLE legal_unit_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  name varchar NOT NULL
+);
+
+CREATE TABLE establishment_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  legal_unit_id INTEGER NOT NULL,
+  postal_place TEXT NOT NULL
+);
+
+-- Enable sql_saga constraints
+SELECT sql_saga.add_era(table_oid => 'legal_unit_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment_tm',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_tm_id_valid'
+);
+
+-- Seed 80% of the data.
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+
+  INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
+
+  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm'::regclass, p_source_table => 'legal_unit_seed_source'::regclass, p_id_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm'::regclass, p_source_table => 'establishment_seed_source'::regclass, p_id_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED end', 16000);
+
+
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+
+  -- Source data for 80% PATCH
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
+
+  -- Source data for 20% INSERT
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
+
+  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm'::regclass, p_source_table => 'legal_unit_source'::regclass, p_id_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm'::regclass, p_source_table => 'establishment_source'::regclass, p_id_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH end', 20000);
+
+SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm
+UNION ALL
+SELECT 'establishment_tm' AS type, COUNT(*) AS count FROM establishment_tm;
+
+
+--
 -- Benchmark with System Versioning ONLY
 --
 
@@ -255,10 +324,19 @@ SELECT sql_saga.drop_unique_key('legal_unit_era_history', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_system_versioning('legal_unit_era_history', cleanup => true);
 SELECT sql_saga.drop_era('legal_unit_era_history', cleanup => true);
 
+-- Teardown for temporal_merge tables
+SELECT sql_saga.drop_foreign_key('establishment_tm', ARRAY['legal_unit_id'], 'valid');
+SELECT sql_saga.drop_unique_key('establishment_tm', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('establishment_tm', cleanup => true);
+SELECT sql_saga.drop_unique_key('legal_unit_tm', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('legal_unit_tm', cleanup => true);
+
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 
 DROP TABLE establishment;
 DROP TABLE legal_unit;
+DROP TABLE establishment_tm;
+DROP TABLE legal_unit_tm;
 DROP TABLE establishment_sv;
 DROP TABLE legal_unit_sv;
 DROP TABLE establishment_era_history;
@@ -282,30 +360,57 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-WITH benchmark_calculated AS (
+WITH benchmark_events AS (
   SELECT
     timestamp,
     event,
     row_count,
-    ROUND(EXTRACT(EPOCH FROM (timestamp - FIRST_VALUE(timestamp) OVER (ORDER BY timestamp)))::NUMERIC, 0) AS time_from_start,
-    ROUND(EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp)))::NUMERIC, 0) AS time_from_prev,
-    CASE
-      WHEN EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))) = 0
-      THEN NULL
-      ELSE round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))))
-    END AS rows_per_second
+    regexp_replace(event, ' (start|end)$', '') AS operation,
+    CASE 
+      WHEN event LIKE '% start' THEN 'start'
+      WHEN event LIKE '% end' THEN 'end'
+      ELSE 'milestone'
+    END AS phase,
+    FIRST_VALUE(timestamp) OVER (ORDER BY timestamp) as benchmark_start_time,
+    LAG(timestamp) OVER (ORDER BY timestamp) as prev_event_time
   FROM
     benchmark
+),
+benchmark_durations AS (
+  SELECT
+    *,
+    LAG(timestamp) OVER (PARTITION BY operation ORDER BY timestamp) AS operation_start_time
+  FROM
+    benchmark_events
 )
 SELECT
-  event,
+  CASE WHEN phase = 'end' THEN operation ELSE event END AS event,
   row_count,
-  time_from_start || ' secs' AS time_from_start,
-  COALESCE(time_from_prev || ' secs', '') AS time_from_prev,
+  ROUND(EXTRACT(EPOCH FROM (timestamp - benchmark_start_time)))::numeric || ' secs' AS time_from_start,
+  COALESCE(
+    CASE 
+      WHEN phase = 'end' THEN
+        ROUND(EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::numeric || ' secs'
+      WHEN phase = 'milestone' THEN
+        ROUND(EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::numeric || ' secs'
+    END,
+    ''
+  ) AS time_from_prev,
   row_count || ' rows' AS row_count,
-  '~' || COALESCE(rows_per_second, 0)::TEXT || ' rows/s' AS rows_per_second
+  '~' || COALESCE(
+    CASE
+      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0 THEN
+        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0 AND row_count > 0 THEN
+        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
+      ELSE
+        '0'
+    END,
+    '0'
+  ) || ' rows/s' AS rows_per_second
 FROM
-  benchmark_calculated
+  benchmark_durations
+WHERE phase <> 'start'
 ORDER BY
   timestamp;
 

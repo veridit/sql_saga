@@ -51,7 +51,7 @@ BEGIN
                 IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_update_trigger) THEN
                     EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, fk_table_oid);
                 END IF;
-            WHEN 'standard_to_temporal' THEN
+            WHEN 'regular_to_temporal' THEN
                 IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
                     EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid, foreign_key_row.fk_check_constraint);
                 END IF;

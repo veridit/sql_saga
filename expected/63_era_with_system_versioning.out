@@ -23,7 +23,7 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
--- Test that a table can have both a standard era and system versioning.
+-- Test that a table can have both a regular era and system versioning.
 -- 1. Create a table
 CREATE TABLE temporal_and_versioned (
     id int,
