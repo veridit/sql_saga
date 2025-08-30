@@ -169,6 +169,92 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 --
+-- Benchmark with temporal_merge
+--
+CREATE TABLE legal_unit_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  name varchar NOT NULL
+);
+CREATE TABLE establishment_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  legal_unit_id INTEGER NOT NULL,
+  postal_place TEXT NOT NULL
+);
+-- Enable sql_saga constraints
+SELECT sql_saga.add_era(table_oid => 'legal_unit_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid');
+     add_unique_key     
+------------------------
+ legal_unit_tm_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
+      add_unique_key       
+---------------------------
+ establishment_tm_id_valid
+(1 row)
+
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'establishment_tm',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_tm_id_valid'
+);
+           add_foreign_key            
+--------------------------------------
+ establishment_tm_legal_unit_id_valid
+(1 row)
+
+-- Seed 80% of the data.
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
+  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm'::regclass, p_source_table => 'legal_unit_seed_source'::regclass, p_id_columns => ARRAY['id']);
+  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm'::regclass, p_source_table => 'establishment_seed_source'::regclass, p_id_columns => ARRAY['id']);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED end', 16000);
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  -- Source data for 80% PATCH
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
+  -- Source data for 20% INSERT
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
+  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm', p_source_table => 'legal_unit_source', p_id_columns => ARRAY['id']);
+  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm', p_source_table => 'establishment_source', p_id_columns => ARRAY['id']);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH end', 20000);
+SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm
+UNION ALL
+SELECT 'establishment_tm' AS type, COUNT(*) AS count FROM establishment_tm;
+       type       | count 
+------------------+-------
+ legal_unit_tm    |     0
+ establishment_tm |     0
+(2 rows)
+
+--
 -- Benchmark with System Versioning ONLY
 --
 CREATE TABLE legal_unit_sv (
@@ -409,9 +495,42 @@ SELECT sql_saga.drop_era('legal_unit_era_history', cleanup => true);
  t
 (1 row)
 
+-- Teardown for temporal_merge tables
+SELECT sql_saga.drop_foreign_key('establishment_tm', ARRAY['legal_unit_id'], 'valid');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('establishment_tm', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('establishment_tm', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('legal_unit_tm', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('legal_unit_tm', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 DROP TABLE establishment;
 DROP TABLE legal_unit;
+DROP TABLE establishment_tm;
+DROP TABLE legal_unit_tm;
 DROP TABLE establishment_sv;
 DROP TABLE legal_unit_sv;
 DROP TABLE establishment_era_history;
@@ -432,6 +551,10 @@ SELECT event, row_count FROM benchmark ORDER BY timestamp;
  Era Update deferred constraints end             |     10000
  Era Update non-key start                        |         0
  Era Update non-key end                          |     10000
+ Temporal Merge SEED start                       |         0
+ Temporal Merge SEED end                         |     16000
+ Temporal Merge 20% INSERT 80% PATCH start       |         0
+ Temporal Merge 20% INSERT 80% PATCH end         |     20000
  History Only Benchmark                          |         0
  History INSERTs start                           |         0
  History INSERTs end                             |     10000
@@ -446,7 +569,7 @@ SELECT event, row_count FROM benchmark ORDER BY timestamp;
  Era + History Update non-key end                |     10000
  Constraints disabled                            |         0
  Tear down complete                              |         0
-(24 rows)
+(28 rows)
 
 -- Capture performance metrics to a separate file for manual review.
 -- This output is not part of the main regression test, so timing variations
