@@ -107,16 +107,7 @@ SELECT count(*)::int as num_cached_plans FROM pg_prepared_statements WHERE name 
 -- This avoids echoing the command with its unstable MD5 hash.
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command
 FROM pg_prepared_statements
-WHERE name = 'tm_plan_' || md5(format('%s:%s:%s:%s:%s:%s:%s:%s',
-    'tmpc.target'::regclass::oid,
-    'source1'::regclass::oid,
-    '{id}'::text[],
-    '{}'::text[],
-    'upsert_patch'::sql_saga.temporal_merge_mode,
-    'valid',
-    'row_id',
-    ''
-))
+WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%'
 \gset
 -- Now, echo a stable placeholder for the regression test's expected output...
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
@@ -199,24 +190,23 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                                                                                    ->  CTE Scan on target_rows tr
                                                                                                          Filter: ((entity_id = sr.entity_id) AND (daterange(sr.valid_from, sr.valid_until) && daterange(valid_from, valid_until)))
    ->  WindowAgg
-         ->  Sort
-               Sort Key: (p.source_row_ids[1]), p.operation DESC, p.entity_id, (COALESCE(p.new_valid_from, p.old_valid_from))
+         ->  Incremental Sort
+               Sort Key: p.entity_id, (COALESCE(p.new_valid_from, p.old_valid_from)), p.operation DESC, (p.source_row_ids[1])
+               Presorted Key: p.entity_id
                ->  Subquery Scan on p
-                     Filter: ((p.operation)::text <> 'NOOP'::text)
                      ->  WindowAgg
                            ->  Sort
                                  Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
                                  ->  Hash Full Join
                                        Hash Cond: (target_rows.entity_id = coalesced_final_segments.entity_id)
                                        Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 9).col1) AND (target_rows.valid_from = (hashed SubPlan 9).col2))))))
-                                       Filter: ((coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload) OR (coalesced_final_segments.valid_from IS DISTINCT FROM target_rows.valid_from) OR (coalesced_final_segments.valid_until IS DISTINCT FROM target_rows.valid_until))
                                        ->  CTE Scan on target_rows
                                        ->  Hash
                                              ->  CTE Scan on coalesced_final_segments
                                                    Filter: (data_payload IS NOT NULL)
                                        SubPlan 9
                                          ->  CTE Scan on coalesced_final_segments f_inner
-(91 rows)
+(90 rows)
 
 SET client_min_messages TO NOTICE;
 ROLLBACK;

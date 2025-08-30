@@ -221,40 +221,41 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
 );
 
 DO $$ BEGIN
-    CREATE TYPE sql_saga.set_result_status AS ENUM ('SUCCESS', 'MISSING_TARGET', 'ERROR');
+    CREATE TYPE sql_saga.temporal_merge_status AS ENUM ('APPLIED', 'SKIPPED', 'TARGET_NOT_FOUND', 'ERROR');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
-COMMENT ON TYPE sql_saga.set_result_status IS
-'Defines the possible return statuses for a row processed by a set-based temporal function.
-- SUCCESS: The operation was successfully planned and executed, resulting in a change to the target table.
-- MISSING_TARGET: A successful but non-operative outcome. The function executed correctly, but no DML was performed for this row because the target entity for an UPDATE or REPLACE did not exist. This is an expected outcome and a key "semantic hint" for the calling procedure.
-- ERROR: A catastrophic failure occurred during the processing of the batch for this row. The transaction was rolled back, and the `error_message` column will be populated.';
+COMMENT ON TYPE sql_saga.temporal_merge_status IS
+'Defines the possible return statuses for a row processed by `temporal_merge`.
+- APPLIED: The operation was successfully planned and executed, resulting in a change to the target table.
+- SKIPPED: A successful but non-operative outcome where the row was benignly skipped (e.g., an idempotent update, or an `insert_only` on a pre-existing entity).
+- TARGET_NOT_FOUND: A successful but non-operative outcome where a patch/replace operation could not find its target, signaling a potential data issue.
+- ERROR: A catastrophic failure occurred. The transaction was rolled back, and the `error_message` column will be populated.';
 
 DO $$ BEGIN
-    CREATE TYPE sql_saga.plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE');
+    CREATE TYPE sql_saga.planner_action AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'IDENTICAL');
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- An internal-only enum that includes the NOOP marker for the planner's internal logic.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.internal_plan_operation_type AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'NOOP');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+COMMENT ON TYPE sql_saga.planner_action IS
+'Represents the type of DML operation to be performed for a given time segment.
+- INSERT: A new historical record will be inserted.
+- UPDATE: An existing historical record will be modified (typically by shortening its period).
+- DELETE: An existing historical record will be deleted.
+- IDENTICAL: An existing historical record is identical to the source data and requires no change. This is used by the planner to identify idempotent operations.';
 
 -- Defines the structure for a single operation in a temporal execution plan.
 DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_plan_op AS (
         plan_op_seq BIGINT,
         source_row_ids INTEGER[],
-        operation sql_saga.plan_operation_type,
+        operation sql_saga.planner_action,
         entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
-        old_valid_from DATE,
-        new_valid_from DATE,
-        new_valid_until DATE,
+        old_valid_from TEXT,
+        new_valid_from TEXT,
+        new_valid_until TEXT,
         data JSONB,
         relation sql_saga.allen_interval_relation
     );
@@ -267,7 +268,7 @@ DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_result AS (
         source_row_id INTEGER,
         target_entity_ids JSONB,
-        status sql_saga.set_result_status,
+        status sql_saga.temporal_merge_status,
         error_message TEXT
     );
 EXCEPTION

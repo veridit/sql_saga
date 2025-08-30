@@ -24,6 +24,22 @@ SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
 -- The conceptual key for the entity
 SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', 'tmisd_establishment_uk');
 
+-- Helper procedure to reset target table state between scenarios
+CREATE PROCEDURE tmisd.reset_target() LANGUAGE plpgsql AS $$
+DECLARE
+    v_seq_name TEXT;
+BEGIN
+    TRUNCATE tmisd.establishment;
+    -- TRUNCATE ... RESTART IDENTITY should work, but seems to behave unexpectedly
+    -- within the transaction block of a pg_regress test. We reset manually
+    -- for robustness.
+    v_seq_name := pg_get_serial_sequence('tmisd.establishment', 'id');
+    IF v_seq_name IS NOT NULL THEN
+        EXECUTE 'ALTER SEQUENCE ' || v_seq_name || ' RESTART WITH 1;';
+    END IF;
+END;
+$$;
+
 -- Source table with the founding_id column
 CREATE TEMP TABLE temp_source_1 (
     row_id INT,
@@ -37,6 +53,7 @@ CREATE TEMP TABLE temp_source_1 (
 
 \echo '--- Scenario 1: INSERT of new entity with a subsequent REPLACE in the same batch ---'
 
+CALL tmisd.reset_target();
 -- Populate source data.
 -- row_id=1 "founds" the new entity.
 -- row_id=2 is a historical correction for the entity founded by row_id=1.
@@ -64,8 +81,8 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
-    (1, '{1}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-01-01'::DATE, '2023-06-01'::DATE, '{"name": "Initial Name", "edit_comment": "First slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (2, '{2}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-06-01'::DATE, '2023-12-31'::DATE, '{"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"}'::JSONB, NULL::sql_saga.allen_interval_relation)
+    (1, '{1}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-01-01'::DATE, '2023-06-01'::DATE, '{"name": "Initial Name", "edit_comment": "First slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (2, '{2}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-06-01'::DATE, '2023-12-31'::DATE, '{"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
@@ -73,8 +90,8 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
-    (1, '[{"id": 1}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT),
-    (2, '[{"id": 1}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)
+    (1, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
+    (2, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT)
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -86,7 +103,7 @@ SELECT * FROM (VALUES
     (1, 'Corrected Name', '2023-06-01'::DATE, '2023-12-31'::DATE, 'Second slice, replaces part of first'::TEXT)
 ) AS t (id, name, valid_from, valid_until, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
-SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id = 1 ORDER BY valid_from;
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
 
 \echo '--- Source Table: Expected state after back-fill ---'
 SELECT * FROM (VALUES
@@ -100,6 +117,7 @@ DROP TABLE temp_source_1;
 
 \echo '--- Scenario 2: Batch with multiple new entities, each with internal dependencies ---'
 
+CALL tmisd.reset_target();
 -- Recreate source table for the new scenario
 CREATE TEMP TABLE temp_source_2 (
     row_id INT,
@@ -138,11 +156,11 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
-    (1, '{101}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2024-06-01'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (2, '{102}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-06-01'::DATE, '2024-09-01'::DATE, '{"name": "Entity 10 Update", "edit_comment": "E10-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (3, '{101}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-09-01'::DATE, '2024-12-31'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (4, '{201}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Entity 20 Initial", "edit_comment": "E20-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (5, '{202}'::INT[], 'INSERT'::sql_saga.plan_operation_type, '{"id": null, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-07-01'::DATE, '2025-12-31'::DATE, '{"name": "Entity 20 New End", "edit_comment": "E20-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation)
+    (1, '{101}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2024-06-01'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (2, '{102}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-06-01'::DATE, '2024-09-01'::DATE, '{"name": "Entity 10 Update", "edit_comment": "E10-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (3, '{101}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-09-01'::DATE, '2024-12-31'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (4, '{201}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Entity 20 Initial", "edit_comment": "E20-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (5, '{202}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-07-01'::DATE, '2025-12-31'::DATE, '{"name": "Entity 20 New End", "edit_comment": "E20-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
@@ -150,10 +168,10 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
-    (101, '[{"id": 2}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT),
-    (102, '[{"id": 2}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT),
-    (201, '[{"id": 3}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT),
-    (202, '[{"id": 3}]'::JSONB, 'SUCCESS'::sql_saga.set_result_status, NULL::TEXT)
+    (101, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
+    (102, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
+    (201, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
+    (202, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT)
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -161,22 +179,22 @@ SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES
-    (2, 'Entity 10 Original', '2024-01-01'::DATE, '2024-06-01'::DATE, 'E10-S1'::TEXT),
-    (2, 'Entity 10 Update', '2024-06-01'::DATE, '2024-09-01'::DATE, 'E10-S2'::TEXT),
-    (2, 'Entity 10 Original', '2024-09-01'::DATE, '2024-12-31'::DATE, 'E10-S1'::TEXT),
-    (3, 'Entity 20 Initial', '2025-01-01'::DATE, '2025-07-01'::DATE, 'E20-S1'::TEXT),
-    (3, 'Entity 20 New End', '2025-07-01'::DATE, '2025-12-31'::DATE, 'E20-S2'::TEXT)
+    (1, 'Entity 10 Original', '2024-01-01'::DATE, '2024-06-01'::DATE, 'E10-S1'::TEXT),
+    (1, 'Entity 10 Update', '2024-06-01'::DATE, '2024-09-01'::DATE, 'E10-S2'::TEXT),
+    (1, 'Entity 10 Original', '2024-09-01'::DATE, '2024-12-31'::DATE, 'E10-S1'::TEXT),
+    (2, 'Entity 20 Initial', '2025-01-01'::DATE, '2025-07-01'::DATE, 'E20-S1'::TEXT),
+    (2, 'Entity 20 New End', '2025-07-01'::DATE, '2025-12-31'::DATE, 'E20-S2'::TEXT)
 ) AS t (id, name, valid_from, valid_until, edit_comment) ORDER BY id, valid_from;
 
 \echo '--- Orchestrator: Actual Final State ---'
-SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 1 ORDER BY id, valid_from;
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
 
 \echo '--- Source Table: Expected state after back-fill ---'
 SELECT * FROM (VALUES
-    (101, 10, 2, '2024-01-01'::date, '2024-12-31'::date, 'Entity 10 Original', 'E10-S1'),
-    (102, 10, 2, '2024-06-01'::date, '2024-09-01'::date, 'Entity 10 Update', 'E10-S2'),
-    (201, 20, 3, '2025-01-01'::date, '2025-12-31'::date, 'Entity 20 Initial', 'E20-S1'),
-    (202, 20, 3, '2025-07-01'::date, '2025-12-31'::date, 'Entity 20 New End', 'E20-S2')
+    (101, 10, 1, '2024-01-01'::date, '2024-12-31'::date, 'Entity 10 Original', 'E10-S1'),
+    (102, 10, 1, '2024-06-01'::date, '2024-09-01'::date, 'Entity 10 Update', 'E10-S2'),
+    (201, 20, 2, '2025-01-01'::date, '2025-12-31'::date, 'Entity 20 Initial', 'E20-S1'),
+    (202, 20, 2, '2025-07-01'::date, '2025-12-31'::date, 'Entity 20 New End', 'E20-S2')
 ) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
 \echo '--- Source Table: Actual state after back-fill ---'
 SELECT * FROM temp_source_2 ORDER BY row_id;
@@ -187,6 +205,7 @@ DROP TABLE temp_source_2;
 \echo '--- This demonstrates that founding_id only resolves dependencies within a single batch. ---'
 \echo '--- Splitting a founding set across calls will result in multiple distinct entities. ---'
 
+CALL tmisd.reset_target();
 -- A single source table for both calls. Note: ON COMMIT DROP is omitted so we
 -- can inspect the final state. The table is dropped manually.
 CREATE TEMP TABLE temp_source_3 (
@@ -229,9 +248,14 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Target: State after first call (one new entity created) ---'
 -- Look for entities created after the first two scenarios
-SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 3 ORDER BY id, valid_from;
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
 
 \echo '--- Source: State after first call (id back-filled for row_id=301) ---'
+SELECT * FROM (VALUES
+    (301, 30, 1, '2026-01-01'::date, '2026-12-31'::date, 'Entity 30 Original', 'E30-S1'),
+    (302, 30, NULL, '2026-06-01'::date, '2026-09-01'::date, 'Entity 30 Update',   'E30-S2')
+) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
+\echo '--- Source: Actual state after first call ---'
 SELECT * FROM temp_source_3 ORDER BY row_id;
 
 \echo '--- Second call: processing the second part of the founding set (row_id=302) via v_source_3b ---'
@@ -250,20 +274,20 @@ CALL sql_saga.temporal_merge(
 );
 
 \echo '--- Orchestrator: Expected Final State (Two separate entities created) ---'
--- Entity with id=4 from the first call
--- Entity with id=5 from the second call (treated as a new founding event)
+-- Entity with id=1 from the first call
+-- Entity with id=2 from the second call (treated as a new founding event)
 SELECT * FROM (VALUES
-    (4, 'Entity 30 Original', '2026-01-01'::DATE, '2026-12-31'::DATE, 'E30-S1'::TEXT),
-    (5, 'Entity 30 Update', '2026-06-01'::DATE, '2026-09-01'::DATE, 'E30-S2'::TEXT)
+    (1, 'Entity 30 Original', '2026-01-01'::DATE, '2026-12-31'::DATE, 'E30-S1'::TEXT),
+    (2, 'Entity 30 Update', '2026-06-01'::DATE, '2026-09-01'::DATE, 'E30-S2'::TEXT)
 ) AS t (id, name, valid_from, valid_until, edit_comment) ORDER BY id, valid_from;
 
 \echo '--- Orchestrator: Actual Final State ---'
-SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment WHERE id > 3 ORDER BY id, valid_from;
+SELECT id, name, valid_from, valid_until, edit_comment FROM tmisd.establishment ORDER BY id, valid_from;
 
 \echo '--- Source Table: Expected state after both calls ---'
 SELECT * FROM (VALUES
-    (301, 30, 4, '2026-01-01'::date, '2026-12-31'::date, 'Entity 30 Original', 'E30-S1'),
-    (302, 30, 5, '2026-06-01'::date, '2026-09-01'::date, 'Entity 30 Update',   'E30-S2')
+    (301, 30, 1, '2026-01-01'::date, '2026-12-31'::date, 'Entity 30 Original', 'E30-S1'),
+    (302, 30, 2, '2026-06-01'::date, '2026-09-01'::date, 'Entity 30 Update',   'E30-S2')
 ) t(row_id, founding_id, id, valid_from, valid_until, name, edit_comment) ORDER BY row_id;
 \echo '--- Source Table: Actual state after both calls ---'
 SELECT * FROM temp_source_3 ORDER BY row_id;
