@@ -332,9 +332,9 @@ The `add_api` function creates views to simplify interaction with temporal table
 - `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
   - `p_target_table`: The temporal table to merge data into.
-  - `p_source_table`: A table (usually temporary) containing the source data. Must have a `row_id` integer column for feedback.
+  - `p_source_table`: A table (usually temporary) containing the source data.
   - `p_id_columns`: An array of column names that form the conceptual entity identifier.
   - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated (e.g., `edit_comment`).
   - `p_mode`: Controls the merge behavior.
@@ -342,7 +342,8 @@ The `add_api` function creates views to simplify interaction with temporal table
     - `'upsert_replace'`: Inserts new entities and updates existing ones. `NULL` values in the source will overwrite existing data.
     - `'patch_only'` / `'replace_only'`: Only affects entities that already exist in the target table.
     - `'insert_only'`: Only inserts new entities.
-  - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call).
+  - `p_source_row_id_column`: The name of the column in the source table that uniquely identifies each row (default: `row_id`). This column is required for providing feedback on a per-row basis.
+  - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If this is `NULL`, the `p_source_row_id_column` is used as the default founding identifier.
     - **Important:** The scope of a `founding_id` is limited to a single `temporal_merge` call. All rows belonging to a single founding event *must* be processed within the same source table in a single call. Splitting a `founding_id` set across multiple `temporal_merge` calls will result in the creation of multiple, distinct entities, as the procedure has no memory of `founding_id` values used in previous calls.
   - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
 

@@ -6,6 +6,7 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name,
+    p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL
 ) RETURNS SETOF sql_saga.temporal_plan_op
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
@@ -14,13 +15,14 @@ DECLARE
     v_plan_ps_name TEXT;
 BEGIN
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_id_columns,
         p_ephemeral_columns,
         p_mode,
         p_era_name,
+        p_source_row_id_column,
         COALESCE(p_founding_id_column, '')
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
@@ -69,14 +71,14 @@ BEGIN
                 END
             $$, p_founding_id_column);
         ELSE
-            v_founding_id_select_expr := '';
-            v_planner_entity_id_expr := $$
+            v_founding_id_select_expr := format('t.%I as founding_id,', p_source_row_id_column);
+            v_planner_entity_id_expr := format($$
                 CASE
                     WHEN si.is_new_entity
-                    THEN si.entity_id || jsonb_build_object('_sql_saga_source_row_id_', si.row_id)
+                    THEN si.entity_id || jsonb_build_object(%L, si.founding_id::text)
                     ELSE si.entity_id
                 END
-            $$;
+            $$, COALESCE(p_founding_id_column, p_source_row_id_column));
         END IF;
 
         -- Introspect era information to get the correct column names
@@ -133,7 +135,7 @@ BEGIN
         common_data_cols AS (
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(p_id_columns)
         )
         SELECT
@@ -229,7 +231,7 @@ $$;
 WITH
 source_initial AS (
     SELECT
-        t.row_id,
+        t.%18$I as source_row_id,
         %16$s
         %1$s as entity_id,
         t.%14$I as valid_from,
@@ -251,9 +253,9 @@ target_rows AS (
 source_rows AS (
     -- Filter the initial source rows based on the operation mode.
     SELECT
-        si.row_id as source_row_id,
-        -- If it's a new entity, synthesize a temporary unique ID by embedding the source_row_id,
-        -- or the founding_id if provided, so the planner can distinguish and group new entities.
+        si.source_row_id as source_row_id,
+        -- If it's a new entity, synthesize a temporary unique ID by embedding the founding_id,
+        -- so the planner can distinguish and group new entities.
         %17$s as entity_id,
         si.valid_from,
         si.valid_until,
@@ -457,7 +459,8 @@ $SQL$,
             v_valid_from_col,               -- 14
             v_valid_until_col,              -- 15
             v_founding_id_select_expr,      -- 16
-            v_planner_entity_id_expr        -- 17
+            v_planner_entity_id_expr,       -- 17
+            p_source_row_id_column          -- 18
         );
 
         EXECUTE format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
@@ -467,7 +470,7 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
@@ -479,6 +482,7 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch',
     p_era_name name DEFAULT 'valid',
+    p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL,
     p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false
 )
@@ -492,7 +496,6 @@ DECLARE
     v_all_cols_select TEXT;
     v_entity_key_join_clause TEXT;
     v_all_source_row_ids INTEGER[];
-    v_feedback sql_saga.temporal_merge_result;
     v_target_schema_name name;
     v_target_table_name_only name;
     v_valid_from_col name;
@@ -501,10 +504,12 @@ DECLARE
     v_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
 BEGIN
-    v_internal_keys_to_remove := ARRAY['_sql_saga_source_row_id_'];
+    v_internal_keys_to_remove := ARRAY[]::name[];
 
     IF p_founding_id_column IS NOT NULL THEN
         v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
+    ELSE
+        v_internal_keys_to_remove := v_internal_keys_to_remove || p_source_row_id_column;
     END IF;
 
     IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge') IS NOT NULL THEN
@@ -539,7 +544,7 @@ BEGIN
         RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
     END IF;
 
-    EXECUTE format('SELECT array_agg(row_id) FROM %s', p_source_table::TEXT) INTO v_all_source_row_ids;
+    EXECUTE format('SELECT array_agg(%I) FROM %s', p_source_row_id_column, p_source_table::TEXT) INTO v_all_source_row_ids;
 
         -- Dynamically construct join clause for composite entity key.
         SELECT
@@ -562,6 +567,7 @@ BEGIN
             p_ephemeral_columns        => p_ephemeral_columns,
             p_mode                     => p_mode,
             p_era_name                 => p_era_name,
+            p_source_row_id_column     => p_source_row_id_column,
             p_founding_id_column       => p_founding_id_column
         );
 
@@ -579,7 +585,7 @@ BEGIN
         common_data_cols AS (
             SELECT t.attname, t.atttypid
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(p_id_columns)
         ),
         all_available_cols AS (
@@ -706,7 +712,7 @@ BEGIN
                         common_data_cols AS (
                             SELECT s.attname
                             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-                            WHERE s.attname NOT IN ('row_id', v_valid_from_col, v_valid_until_col, 'era_id', 'era_name', p_founding_id_column)
+                            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name', p_founding_id_column)
                               AND s.attname <> ALL(p_id_columns)
                         ),
                         all_available_cols AS (
@@ -867,19 +873,19 @@ BEGIN
                 IF v_source_update_set_clause IS NOT NULL THEN
                     EXECUTE format($$
                         WITH map_row_to_entity AS (
-                            SELECT DISTINCT ON (s.row_id)
-                                s.row_id,
+                            SELECT DISTINCT ON (s.source_row_id)
+                                s.source_row_id,
                                 p.entity_ids
-                            FROM (SELECT DISTINCT unnest(source_row_ids) AS row_id FROM __temp_last_sql_saga_temporal_merge_plan WHERE operation = 'INSERT') s
-                            JOIN __temp_last_sql_saga_temporal_merge_plan p ON s.row_id = ANY(p.source_row_ids)
+                            FROM (SELECT DISTINCT unnest(source_row_ids) AS source_row_id FROM __temp_last_sql_saga_temporal_merge_plan WHERE operation = 'INSERT') s
+                            JOIN __temp_last_sql_saga_temporal_merge_plan p ON s.source_row_id = ANY(p.source_row_ids)
                             WHERE p.entity_ids IS NOT NULL
-                            ORDER BY s.row_id, p.plan_op_seq
+                            ORDER BY s.source_row_id, p.plan_op_seq
                         )
                         UPDATE %1$s s
                         SET %2$s
                         FROM map_row_to_entity p
-                        WHERE s.row_id = p.row_id;
-                    $$, p_source_table::text, v_source_update_set_clause);
+                        WHERE s.%3$I = p.source_row_id;
+                    $$, p_source_table::text, v_source_update_set_clause, p_source_row_id_column);
                 END IF;
             END;
         END IF;
@@ -910,7 +916,7 @@ BEGIN
         -- 4. Generate and store feedback
         INSERT INTO __temp_last_sql_saga_temporal_merge
             SELECT
-                s.row_id AS source_row_id,
+                s.source_row_id AS source_row_id,
                 COALESCE(jsonb_agg(DISTINCT (p_unnested.entity_ids - v_internal_keys_to_remove)) FILTER (WHERE p_unnested.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids,
                 CASE
                     WHEN bool_and(p_unnested.plan_op_seq IS NOT NULL) THEN 'SUCCESS'::sql_saga.set_result_status
@@ -918,19 +924,19 @@ BEGIN
                 END AS status,
                 NULL::TEXT AS error_message
             FROM
-                (SELECT unnest(v_all_source_row_ids) as row_id) s
+                (SELECT unnest(v_all_source_row_ids) as source_row_id) s
             LEFT JOIN (
                 SELECT unnest(p.source_row_ids) as source_row_id, p.plan_op_seq, p.entity_ids
                 FROM __temp_last_sql_saga_temporal_merge_plan p
-            ) p_unnested ON s.row_id = p_unnested.source_row_id
+            ) p_unnested ON s.source_row_id = p_unnested.source_row_id
             GROUP BY
-                s.row_id
+                s.source_row_id
             ORDER BY
-                s.row_id;
+                s.source_row_id;
 
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, boolean) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean) IS
 'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

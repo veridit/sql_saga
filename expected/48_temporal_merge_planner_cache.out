@@ -107,14 +107,16 @@ SELECT count(*)::int as num_cached_plans FROM pg_prepared_statements WHERE name 
 -- This avoids echoing the command with its unstable MD5 hash.
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command
 FROM pg_prepared_statements
-WHERE name = 'tm_plan_' || md5(format('%s:%s:%s:%s:%s:%s:%s',
+WHERE name = 'tm_plan_' || md5(format('%s:%s:%s:%s:%s:%s:%s:%s',
     'tmpc.target'::regclass::oid,
     'source1'::regclass::oid,
-    '{id}',
-    '{}',
-    'upsert_patch',
+    '{id}'::text[],
+    '{}'::text[],
+    'upsert_patch'::sql_saga.temporal_merge_mode,
     'valid',
-    ''))
+    'row_id',
+    ''
+))
 \gset
 -- Now, echo a stable placeholder for the regression test's expected output...
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
