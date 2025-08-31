@@ -175,7 +175,7 @@ BEGIN
             ON dobj.object_type = 'view'
             AND (dobj.address_names[1], dobj.address_names[2]) = (fpv.view_schema_name, fpv.view_table_name)
     LOOP
-        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_api()" instead',
+        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_updatable_views()" instead',
             r.object_identity;
     END LOOP;
 

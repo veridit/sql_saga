@@ -31,11 +31,11 @@ TABLE sql_saga.era;
 
 /* api */
 ALTER TABLE rename_test ADD COLUMN id integer PRIMARY KEY;
-SELECT sql_saga.add_api('rename_test', 'p');
+SELECT sql_saga.add_updatable_views('rename_test', 'p');
 TABLE sql_saga.api_view;
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
 TABLE sql_saga.api_view;
-SELECT sql_saga.drop_api('rename_test', 'p');
+SELECT sql_saga.drop_updatable_views('rename_test', 'p');
 ALTER TABLE rename_test DROP COLUMN id;
 
 

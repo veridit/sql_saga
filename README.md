@@ -326,10 +326,10 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
-The `add_api` function creates views to simplify interaction with temporal tables. This includes a view that only shows the *current* state of data (ideal for PostgREST) and a view that emulates the `FOR PORTION OF` syntax for updating historical records.
+The `add_updatable_views` function creates views to simplify interaction with temporal tables. This includes a view that only shows the *current* state of data (ideal for PostgREST) and a view that emulates the `FOR PORTION OF` syntax for updating historical records.
 
-- `add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
-- `drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
+- `add_updatable_views(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
+- `drop_updatable_views(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
 - `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.

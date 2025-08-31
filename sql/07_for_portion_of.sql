@@ -17,7 +17,7 @@ CREATE TABLE pricing (id1 bigserial,
                       id4 bigint GENERATED ALWAYS AS (id1 + id2) STORED,
                       product text, quantity_from integer, quantity_until integer, price numeric);
 SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
-SELECT sql_saga.add_api('pricing', 'quantities');
+SELECT sql_saga.add_updatable_views('pricing', 'quantities');
 TABLE sql_saga.api_view;
 /* Test UPDATE FOR PORTION */
 INSERT INTO pricing (product, quantity_from, quantity_until, price) VALUES ('Trinket', 2, 21, 200);
@@ -43,14 +43,14 @@ SELECT sql_saga.drop_era('pricing', 'quantities');
 TABLE sql_saga.api_view;
 -- Add it back to test the drop_for_portion_view function
 SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantities');
-SELECT sql_saga.add_api('pricing', 'quantities');
+SELECT sql_saga.add_updatable_views('pricing', 'quantities');
 -- We can't drop the the table without first dropping the FOR PORTION views
 -- because Postgres will complain about dependant objects (our views) before we
 -- get a chance to clean them up.
 SAVEPOINT expect_fail;
 DROP TABLE pricing;
 ROLLBACK TO SAVEPOINT expect_fail;
-SELECT sql_saga.drop_api('pricing', NULL);
+SELECT sql_saga.drop_updatable_views('pricing', NULL);
 TABLE sql_saga.api_view;
 SELECT sql_saga.drop_era('pricing', 'quantities');
 DROP TABLE pricing;
@@ -65,14 +65,14 @@ CREATE TABLE bt (
     valid_until integer
 );
 SELECT sql_saga.add_era('bt', 'valid_from', 'valid_until', 'p');
-SELECT sql_saga.add_api('bt', 'p');
+SELECT sql_saga.add_updatable_views('bt', 'p');
 
 INSERT INTO bt (pt, t, valid_from, valid_until) VALUES ('(0, 0)', 'sample', 10, 41);
 TABLE bt ORDER BY valid_from, valid_until;
 UPDATE bt__for_portion_of_p SET t = 'simple', valid_from = 21, valid_until = 31;
 TABLE bt ORDER BY valid_from, valid_until;
 
-SELECT sql_saga.drop_api('bt', 'p');
+SELECT sql_saga.drop_updatable_views('bt', 'p');
 SELECT sql_saga.drop_era('bt', 'p');
 DROP TABLE bt;
 
@@ -80,7 +80,7 @@ ROLLBACK;
 
 \i sql/include/test_teardown.sql
 
--- Test that add_api works without a PK, using a temporal unique key instead.
+-- Test that add_updatable_views works without a PK, using a temporal unique key instead.
 \i sql/include/test_setup.sql
 
 BEGIN;
@@ -95,7 +95,7 @@ CREATE TABLE no_pk_test (
 
 SELECT sql_saga.add_era('no_pk_test', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
-SELECT sql_saga.add_api('no_pk_test');
+SELECT sql_saga.add_updatable_views('no_pk_test');
 
 INSERT INTO no_pk_test (id, value, valid_from, valid_until) VALUES (1, 'initial', '2020-01-01', '2021-01-01');
 TABLE no_pk_test;
@@ -103,7 +103,7 @@ TABLE no_pk_test;
 UPDATE no_pk_test__for_portion_of_valid SET value = 'updated', valid_from = '2020-06-01', valid_until = '2020-09-01';
 TABLE no_pk_test ORDER BY valid_from;
 
-SELECT sql_saga.drop_api('no_pk_test', 'valid');
+SELECT sql_saga.drop_updatable_views('no_pk_test', 'valid');
 SELECT sql_saga.drop_unique_key('no_pk_test', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_era('no_pk_test');
 DROP TABLE no_pk_test;

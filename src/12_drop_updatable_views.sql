@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_updatable_views(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER

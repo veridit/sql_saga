@@ -1002,7 +1002,7 @@ BEGIN
     PERFORM sql_saga.drop_unique_key_by_name(table_oid, key_name_found, drop_behavior, cleanup);
 END;
 $function$;
-CREATE FUNCTION sql_saga.drop_api(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_updatable_views(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1100,7 +1100,7 @@ BEGIN
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_api(table_oid, era_name, drop_behavior, cleanup);
+    PERFORM sql_saga.drop_updatable_views(table_oid, era_name, drop_behavior, cleanup);
 
     /* If this is a system_time era, get rid of the triggers */
     DECLARE
@@ -2551,7 +2551,7 @@ BEGIN
     RETURN foreign_key_name;
 END;
 $function$;
-CREATE FUNCTION sql_saga.add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_updatable_views(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -2869,7 +2869,7 @@ BEGIN
             ON dobj.object_type = 'view'
             AND (dobj.address_names[1], dobj.address_names[2]) = (fpv.view_schema_name, fpv.view_table_name)
     LOOP
-        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_api()" instead',
+        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_updatable_views()" instead',
             r.object_identity;
     END LOOP;
 

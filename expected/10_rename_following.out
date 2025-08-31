@@ -79,9 +79,9 @@ TABLE sql_saga.era;
 
 /* api */
 ALTER TABLE rename_test ADD COLUMN id integer PRIMARY KEY;
-SELECT sql_saga.add_api('rename_test', 'p');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('rename_test', 'p');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
@@ -98,9 +98,9 @@ TABLE sql_saga.api_view;
  public       | rename_test | p        | public           | rename_test__for_portion_of_p | portion_trigger
 (1 row)
 
-SELECT sql_saga.drop_api('rename_test', 'p');
- drop_api 
-----------
+SELECT sql_saga.drop_updatable_views('rename_test', 'p');
+ drop_updatable_views 
+----------------------
  t
 (1 row)
 

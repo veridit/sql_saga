@@ -25,7 +25,7 @@ CREATE TABLE gen_cols_test (
 
 -- Add sql_saga features with non-standard, quoted column names
 SELECT sql_saga.add_era('gen_cols_test', '"from"', '"until"', 'p');
-SELECT sql_saga.add_api('gen_cols_test', 'p');
+SELECT sql_saga.add_updatable_views('gen_cols_test', 'p');
 
 -- Insert initial data
 INSERT INTO gen_cols_test (product, """from""", """until""", price) VALUES ('Widget', 10, 20, 100);
@@ -42,7 +42,7 @@ UPDATE gen_cols_test__for_portion_of_p SET """from""" = 15, """until""" = 20, pr
 TABLE gen_cols_test ORDER BY """from""";
 
 -- Clean up
-SELECT sql_saga.drop_api('gen_cols_test', 'p');
+SELECT sql_saga.drop_updatable_views('gen_cols_test', 'p');
 SELECT sql_saga.drop_era('gen_cols_test', 'p');
 DROP TABLE gen_cols_test;
 

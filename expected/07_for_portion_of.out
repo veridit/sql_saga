@@ -42,9 +42,9 @@ SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantitie
  t
 (1 row)
 
-SELECT sql_saga.add_api('pricing', 'quantities');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('pricing', 'quantities');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
@@ -126,9 +126,9 @@ SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantitie
  t
 (1 row)
 
-SELECT sql_saga.add_api('pricing', 'quantities');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('pricing', 'quantities');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
@@ -141,9 +141,9 @@ ERROR:  cannot drop table pricing because other objects depend on it
 DETAIL:  view pricing__for_portion_of_quantities depends on table pricing
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ROLLBACK TO SAVEPOINT expect_fail;
-SELECT sql_saga.drop_api('pricing', NULL);
- drop_api 
-----------
+SELECT sql_saga.drop_updatable_views('pricing', NULL);
+ drop_updatable_views 
+----------------------
  t
 (1 row)
 
@@ -174,9 +174,9 @@ SELECT sql_saga.add_era('bt', 'valid_from', 'valid_until', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_api('bt', 'p');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('bt', 'p');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
@@ -196,9 +196,9 @@ TABLE bt ORDER BY valid_from, valid_until;
   3 | (0,0) | sample |         31 |          41
 (3 rows)
 
-SELECT sql_saga.drop_api('bt', 'p');
- drop_api 
-----------
+SELECT sql_saga.drop_updatable_views('bt', 'p');
+ drop_updatable_views 
+----------------------
  t
 (1 row)
 
@@ -228,7 +228,7 @@ DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;
 DROP ROLE IF EXISTS sql_saga_unprivileged_user;
--- Test that add_api works without a PK, using a temporal unique key instead.
+-- Test that add_updatable_views works without a PK, using a temporal unique key instead.
 \i sql/include/test_setup.sql
 --
 -- test_setup.sql
@@ -274,9 +274,9 @@ SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
  no_pk_test_id_valid
 (1 row)
 
-SELECT sql_saga.add_api('no_pk_test');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('no_pk_test');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
@@ -296,9 +296,9 @@ TABLE no_pk_test ORDER BY valid_from;
   1 | initial | 2020-09-01 | 2021-01-01
 (3 rows)
 
-SELECT sql_saga.drop_api('no_pk_test', 'valid');
- drop_api 
-----------
+SELECT sql_saga.drop_updatable_views('no_pk_test', 'valid');
+ drop_updatable_views 
+----------------------
  t
 (1 row)
 

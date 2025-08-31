@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_api(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_updatable_views(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER

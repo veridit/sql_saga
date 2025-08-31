@@ -61,15 +61,15 @@ CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 93 at RAISE
 ROLLBACK TO SAVEPOINT s3;
 /* api */
 ALTER TABLE dp ADD CONSTRAINT dp_pkey PRIMARY KEY (id);
-SELECT sql_saga.add_api('dp', 'p');
- add_api 
----------
+SELECT sql_saga.add_updatable_views('dp', 'p');
+ add_updatable_views 
+---------------------
  t
 (1 row)
 
 SAVEPOINT s4;
 DROP VIEW dp__for_portion_of_p;
-ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_api()" instead
+ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_updatable_views()" instead
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 173 at RAISE
 ROLLBACK TO SAVEPOINT s4;
 SAVEPOINT s5;
@@ -82,9 +82,9 @@ ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 ERROR:  cannot drop primary key on table "dp" because it has a FOR PORTION OF view for period "p"
 CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 197 at RAISE
 ROLLBACK TO SAVEPOINT s6;
-SELECT sql_saga.drop_api('dp', 'p');
- drop_api 
-----------
+SELECT sql_saga.drop_updatable_views('dp', 'p');
+ drop_updatable_views 
+----------------------
  t
 (1 row)
 

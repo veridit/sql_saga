@@ -46,7 +46,7 @@ BEGIN
     END IF;
 
     /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_api(table_oid, era_name, drop_behavior, cleanup);
+    PERFORM sql_saga.drop_updatable_views(table_oid, era_name, drop_behavior, cleanup);
 
     /* If this is a system_time era, get rid of the triggers */
     DECLARE

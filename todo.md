@@ -24,7 +24,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
 
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
-- [ ] **Rename `add_api` to `add_updatable_views` for clarity:** The name `add_api` is too generic. Rename `add_api` to `add_updatable_views` and `drop_api` to `drop_updatable_views` to make it clear that these functions create and manage the specialized updatable views for interacting with temporal data.
+- [x] **Rename `add_api` to `add_updatable_views` for clarity:** Renamed `add_api` and `drop_api` to `add_updatable_views` and `drop_updatable_views` respectively, to better reflect their purpose of managing views for temporal data.
 
 - [ ] **Refactor `temporal_merge` founding ID logic:** Make the source `row_id` column configurable and use it as the default `founding_id` for new entities, eliminating the internal `_sql_saga_source_row_id_` key.
 
@@ -54,7 +54,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
 
-- [x] **Refactor `add_api` to not require a primary key:** Refactored `add_api` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
+- [x] **Refactor `add_updatable_views` to not require a primary key:** Refactored `add_updatable_views` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
 
 - [x] **Fix event trigger regressions:** Resolved bugs in `rename_following` and `health_checks` event triggers that were exposed by refactoring. The triggers now correctly handle `search_path` issues and reliably update metadata for renamed objects.
 
