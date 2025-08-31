@@ -530,14 +530,15 @@ BEGIN
     END IF;
     CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 
-    -- Auto-detect columns with default values or identity columns
+    -- Auto-detect columns that should be excluded from INSERT statements.
+    -- This includes columns with defaults, identity columns, and generated columns.
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_insert_defaulted_columns
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = p_target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
-      AND (a.atthasdef OR a.attidentity IN ('a', 'd'));
+      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
 
     -- Introspect era information to get the correct column names
     SELECT n.nspname, c.relname
