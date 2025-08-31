@@ -124,7 +124,7 @@ BEGIN
 
         -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
         SELECT
-            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
+            format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
         INTO
             v_entity_id_as_jsonb
         FROM unnest(p_id_columns) AS col;
@@ -149,7 +149,7 @@ BEGIN
               AND s.attname <> ALL(p_id_columns)
         )
         SELECT
-            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
+            format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), ''))
         INTO
             v_source_data_cols_jsonb_build -- Re-use this variable for the common expression
         FROM
@@ -161,7 +161,7 @@ BEGIN
 
         -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
         SELECT
-            string_agg(format('t.%I IS NULL', col), ' AND ')
+            COALESCE(string_agg(format('t.%I IS NULL', col), ' AND '), 'true')
         INTO
             v_entity_id_check_is_null_expr
         FROM unnest(p_id_columns) AS col;
@@ -568,6 +568,8 @@ BEGIN
         INTO
             v_entity_key_join_clause
         FROM unnest(p_id_columns) AS col;
+
+        v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
         IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge_plan') IS NOT NULL THEN
             DROP TABLE __temp_last_sql_saga_temporal_merge_plan;
