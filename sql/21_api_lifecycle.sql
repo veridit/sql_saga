@@ -31,9 +31,9 @@ SELECT sql_saga.add_foreign_key(
 TABLE sql_saga.foreign_keys;
 
 -- Add API views
-SELECT sql_saga.add_updatable_views('houses');
-TABLE sql_saga.api_view;
-\d houses_valid_v
+SELECT sql_saga.add_for_portion_of_view('houses');
+TABLE sql_saga.updatable_view;
+\d houses__for_portion_of_valid
 
 -- While sql_saga is active
 \d rooms
@@ -41,8 +41,8 @@ TABLE sql_saga.api_view;
 \d shifts
 
 -- Remove sql_saga
-SELECT sql_saga.drop_updatable_views('houses', 'valid');
-TABLE sql_saga.api_view;
+SELECT sql_saga.drop_for_portion_of_view('houses', 'valid');
+TABLE sql_saga.updatable_view;
 SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
 TABLE sql_saga.foreign_keys;
 

@@ -55,9 +55,9 @@ SELECT sql_saga.add_era('owner_test', 'f', 'u', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('owner_test', 'p');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('owner_test', 'p');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -77,9 +77,9 @@ TABLE show_owners ORDER BY object_name;
  public      | owner_test__for_portion_of_p | view        | periods_acl_2
 (2 rows)
 
-SELECT sql_saga.drop_updatable_views('owner_test', 'p');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('owner_test', 'p');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 
@@ -118,9 +118,9 @@ SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('fpacl', 'p');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('fpacl', 'p');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -201,9 +201,9 @@ TABLE show_acls ORDER BY sort_order;
          18 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
 (18 rows)
 
-SELECT sql_saga.drop_updatable_views('fpacl', 'p');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('fpacl', 'p');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 

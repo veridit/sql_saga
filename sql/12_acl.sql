@@ -33,14 +33,14 @@ CREATE VIEW show_owners AS
 CREATE TABLE owner_test (col text PRIMARY KEY, f integer, u integer);
 ALTER TABLE owner_test OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('owner_test', 'f', 'u', 'p');
-SELECT sql_saga.add_updatable_views('owner_test', 'p');
+SELECT sql_saga.add_for_portion_of_view('owner_test', 'p');
 TABLE show_owners ORDER BY object_name;
 
 -- This should change everything
 ALTER TABLE owner_test OWNER TO periods_acl_2;
 TABLE show_owners ORDER BY object_name;
 
-SELECT sql_saga.drop_updatable_views('owner_test', 'p');
+SELECT sql_saga.drop_for_portion_of_view('owner_test', 'p');
 SELECT sql_saga.drop_era('owner_test', 'p');
 DROP TABLE owner_test CASCADE;
 DROP VIEW show_owners;
@@ -69,7 +69,7 @@ CREATE VIEW show_acls AS
 CREATE TABLE fpacl (col text PRIMARY KEY, f integer, u integer);
 ALTER TABLE fpacl OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
-SELECT sql_saga.add_updatable_views('fpacl', 'p');
+SELECT sql_saga.add_for_portion_of_view('fpacl', 'p');
 TABLE show_acls ORDER BY sort_order;
 
 GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2; -- fail
@@ -80,7 +80,7 @@ REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2; -- fail
 REVOKE UPDATE ON TABLE fpacl FROM periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
 
-SELECT sql_saga.drop_updatable_views('fpacl', 'p');
+SELECT sql_saga.drop_for_portion_of_view('fpacl', 'p');
 SELECT sql_saga.drop_era('fpacl', 'p');
 DROP TABLE fpacl CASCADE;
 DROP VIEW show_acls;

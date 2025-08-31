@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_updatable_views(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -45,8 +45,9 @@ BEGIN
               AND (era_name IS NULL OR p.era_name = era_name)
               AND p.era_name <> 'system_time'
               AND NOT EXISTS (
-                    SELECT FROM sql_saga.api_view AS _fpv
-                    WHERE (_fpv.table_schema, _fpv.table_name, _fpv.era_name) = (p.table_schema, p.table_name, p.era_name))
+                    SELECT FROM sql_saga.updatable_view AS v
+                    WHERE (v.table_schema, v.table_name, v.era_name) = (p.table_schema, p.table_name, p.era_name)
+                      AND v.view_type = 'for_portion_of')
         LOOP
             DECLARE
                 identifier_columns name[];
@@ -79,10 +80,10 @@ BEGIN
                 trigger_name := 'for_portion_of_' || r.era_name;
                 EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
                 EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
-                EXECUTE format('CREATE TRIGGER %I INSTEAD OF UPDATE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.update_portion_of(%s)',
+                EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.for_portion_of_trigger(%s)',
                     trigger_name, r.schema_name, view_name, identifier_columns_quoted);
-                INSERT INTO sql_saga.api_view (table_schema, table_name, era_name, view_schema_name, view_table_name, trigger_name)
-                    VALUES (r.schema_name, r.table_name, r.era_name, r.schema_name, view_name, trigger_name);
+                INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name)
+                    VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name);
             END;
         END LOOP;
     END;

@@ -79,28 +79,28 @@ TABLE sql_saga.era;
 
 /* api */
 ALTER TABLE rename_test ADD COLUMN id integer PRIMARY KEY;
-SELECT sql_saga.add_updatable_views('rename_test', 'p');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('rename_test', 'p');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name  | era_name | view_schema_name |        view_table_name        |   trigger_name   
---------------+-------------+----------+------------------+-------------------------------+------------------
- public       | rename_test | p        | public           | rename_test__for_portion_of_p | for_portion_of_p
+TABLE sql_saga.updatable_view;
+ view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |   trigger_name   
+-------------+-------------------------------+----------------+--------------+-------------+----------+------------------
+ public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | for_portion_of_p
 (1 row)
 
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
-TABLE sql_saga.api_view;
- table_schema | table_name  | era_name | view_schema_name |        view_table_name        |  trigger_name   
---------------+-------------+----------+------------------+-------------------------------+-----------------
- public       | rename_test | p        | public           | rename_test__for_portion_of_p | portion_trigger
+TABLE sql_saga.updatable_view;
+ view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |  trigger_name   
+-------------+-------------------------------+----------------+--------------+-------------+----------+-----------------
+ public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | portion_trigger
 (1 row)
 
-SELECT sql_saga.drop_updatable_views('rename_test', 'p');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('rename_test', 'p');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 
@@ -165,19 +165,19 @@ TABLE sql_saga.foreign_keys; -- The column name should be updated here
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 397 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_update" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 397 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_update" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 397 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 397 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |         type         | table_schema |   table_name    |    column_names     | fk_era_name |             fk_table_columns_snapshot             |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               | fk_check_constraint | fk_helper_function |               uk_update_trigger               |               uk_delete_trigger               

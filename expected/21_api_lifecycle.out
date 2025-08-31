@@ -146,19 +146,29 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 -- Add API views
-SELECT sql_saga.add_updatable_views('houses');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('houses');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_schema_name |       view_table_name        |     trigger_name     
---------------+------------+----------+------------------+------------------------------+----------------------
- public       | houses     | valid    | public           | houses__for_portion_of_valid | for_portion_of_valid
+TABLE sql_saga.updatable_view;
+ view_schema |          view_name           |   view_type    | table_schema | table_name | era_name |     trigger_name     
+-------------+------------------------------+----------------+--------------+------------+----------+----------------------
+ public      | houses__for_portion_of_valid | for_portion_of | public       | houses     | valid    | for_portion_of_valid
 (1 row)
 
-\d houses_valid_v
+\d houses__for_portion_of_valid
+           View "public.houses__for_portion_of_valid"
+   Column    |       Type       | Collation | Nullable | Default 
+-------------+------------------+-----------+----------+---------
+ id          | integer          |           |          | 
+ assessment  | double precision |           |          | 
+ valid_from  | date             |           |          | 
+ valid_until | date             |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON houses__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
 -- While sql_saga is active
 \d rooms
                   Table "public.rooms"
@@ -212,15 +222,15 @@ Check constraints:
     "shifts_valid_check" CHECK (valid_from < valid_until)
 
 -- Remove sql_saga
-SELECT sql_saga.drop_updatable_views('houses', 'valid');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('houses', 'valid');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_schema_name | view_table_name | trigger_name 
---------------+------------+----------+------------------+-----------------+--------------
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name 
+-------------+-----------+-----------+--------------+------------+----------+--------------
 (0 rows)
 
 SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');

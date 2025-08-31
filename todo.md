@@ -29,9 +29,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [ ] **Refactor and Finalize `for_portion_of` Updatable View:** Port the existing `add_updatable_views` logic to the new symmetrical API, formalizing its DML semantics and test coverage.
     - **Phase 1: Data Model (Shared Prerequisite - Complete):**
         - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
-    - **Phase 2: Define the Goal (Tests & Docs):**
-        - [ ] Update `README.md` with the symmetrical `add/drop_for_portion_of_view` API reference.
-        - [ ] Create the primary test file (`sql/29_updatable_view_for_portion_of_basis.sql`). This will define the 80% "happy path" for the API lifecycle and DML semantics.
+    - **Phase 2: Define the Goal (Tests & Docs) - Complete:**
+        - [x] `README.md` is updated with the symmetrical API reference.
+        - [x] Created `sql/29_updatable_view_for_portion_of_basis.sql` to define the target behavior.
     - **Phase 3: Implementation:**
         - [ ] Rename `add_updatable_views` to `add_for_portion_of_view` and `drop_updatable_views` to `drop_for_portion_of_view`.
         - [ ] Refine the trigger logic to match the documented DML semantics.
@@ -67,8 +67,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
 - [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main orchestrator procedure simple and readable.
-- [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
-
 - [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
 
 - [x] **Clarify `temporal_merge` feedback statuses:** Renamed the feedback status enums for clarity. The public status is now `temporal_merge_status` with values `APPLIED`, `SKIPPED`, `TARGET_NOT_FOUND`, and `ERROR`. The internal planner enum is now `planner_action` with `IDENTICAL` replacing `NOOP`.

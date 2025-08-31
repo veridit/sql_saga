@@ -37,7 +37,7 @@ BEGIN
         JOIN pg_class c ON c.oid = ddl.objid
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname))
-           OR EXISTS (SELECT 1 FROM sql_saga.api_view v JOIN pg_class vc ON vc.relname = v.view_table_name JOIN pg_namespace vn ON vn.oid = vc.relnamespace AND vn.nspname = v.view_schema_name WHERE vc.oid = c.oid)
+           OR EXISTS (SELECT 1 FROM sql_saga.updatable_view v JOIN pg_class vc ON vc.relname = v.view_name JOIN pg_namespace vn ON vn.oid = vc.relnamespace AND vn.nspname = v.view_schema WHERE vc.oid = c.oid)
     );
 END;
 $function$;

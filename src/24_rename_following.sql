@@ -151,27 +151,30 @@ BEGIN
 --    END LOOP;
 
     ---
-    --- api_view
+    --- updatable_view
     ---
     DECLARE
-        v_api_view_row sql_saga.api_view;
+        v_view_row sql_saga.updatable_view;
         v_view_oid regclass;
         v_new_trigger_name name;
     BEGIN
-        FOR v_api_view_row IN SELECT * FROM sql_saga.api_view
+        FOR v_view_row IN SELECT * FROM sql_saga.updatable_view
         LOOP
-            v_view_oid := to_regclass(format('%I.%I', v_api_view_row.view_schema_name, v_api_view_row.view_table_name));
+            v_view_oid := to_regclass(format('%I.%I', v_view_row.view_schema, v_view_row.view_name));
 
             -- Check if the registered trigger still exists on the view
-            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_api_view_row.trigger_name) THEN
-                -- If it's stale, find the *new* trigger on that view that points to our function
-                SELECT tgname INTO v_new_trigger_name FROM pg_trigger
-                WHERE tgrelid = v_view_oid AND tgfoid = 'sql_saga.update_portion_of()'::regprocedure;
+            IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name) THEN
+                -- If it's stale, find the *new* trigger on that view that points to our function.
+                -- This currently only supports for_portion_of, but is extensible.
+                IF v_view_row.view_type = 'for_portion_of' THEN
+                    SELECT tgname INTO v_new_trigger_name FROM pg_trigger
+                    WHERE tgrelid = v_view_oid AND tgfoid = 'sql_saga.for_portion_of_trigger()'::regprocedure;
 
-                IF FOUND THEN
-                    sql := format('UPDATE sql_saga.api_view SET trigger_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
-                        v_new_trigger_name, v_api_view_row.table_schema, v_api_view_row.table_name, v_api_view_row.era_name);
-                    EXECUTE sql;
+                    IF FOUND THEN
+                        sql := format('UPDATE sql_saga.updatable_view SET trigger_name = %L WHERE (view_schema, view_name) = (%L, %L)',
+                            v_new_trigger_name, v_view_row.view_schema, v_view_row.view_name);
+                        EXECUTE sql;
+                    END IF;
                 END IF;
             END IF;
         END LOOP;

@@ -197,7 +197,8 @@ CREATE TRIGGER legal_unit_synchronize_validity
     FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 
 -- Register the table as a temporal table (an "era")
-SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+-- Note: It is best practice to explicitly cast table names to regclass.
+SELECT sql_saga.add_era(table_oid => 'legal_unit'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
@@ -245,7 +246,7 @@ SELECT sql_saga.add_foreign_key(
 ```
 -- Foreign keys must be dropped before the unique keys they reference.
 SELECT sql_saga.drop_foreign_key(
-    table_oid => 'establishment',
+    table_oid => 'establishment'::regclass,
     column_names => ARRAY['legal_unit_id'],
     era_name => 'valid'
 );
@@ -261,11 +262,11 @@ SELECT sql_saga.drop_unique_key(
     era_name => 'valid'
 );
 SELECT sql_saga.drop_unique_key(
-    table_oid => 'establishment',
+    table_oid => 'establishment'::regclass,
     column_names => ARRAY['name'],
     era_name => 'valid'
 );
-SELECT sql_saga.drop_era('establishment');
+SELECT sql_saga.drop_era('establishment'::regclass);
 
 
 SELECT sql_saga.drop_unique_key(
@@ -284,7 +285,7 @@ SELECT sql_saga.drop_unique_key(
     column_names => ARRAY['name'],
     era_name => 'valid'
 );
-SELECT sql_saga.drop_era('legal_unit');
+SELECT sql_saga.drop_era('legal_unit'::regclass);
 ```
 
 ## Development
@@ -334,8 +335,28 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
 `sql_saga` provides a symmetrical set of functions to create and drop specialized, updatable views that simplify interaction with temporal data. These views have different semantics tailored to specific use cases.
 
-- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for historical corrections (`UPDATE`) and permanent deletion of historical facts (`DELETE`).
+- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for `INSERT`, historical corrections (`UPDATE`), and permanent deletion of historical facts (`DELETE`).
 - `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `for_portion_of` view associated with the specified table and era.
+
+#### Using the `_for_portion_of_` View for Updates
+
+The `UPDATE` operation on a `_for_portion_of_` view is extremely powerful and has a specific usage pattern to apply a change to a *portion of an entity's timeline*.
+
+**The Pattern:** To update an entity's data for a specific period, you must pass the start and end of that period **via the `SET` clause**. The `INSTEAD OF UPDATE` trigger uses these values as parameters to correctly split existing historical records.
+
+**Example:** Imagine a product price was wrong between June 1st and August 1st.
+```sql
+-- This query applies a price change only for the period from 2024-06-01 to 2024-08-01.
+UPDATE products__for_portion_of_valid
+SET
+    price = 1175, -- The new data value
+    -- These act as parameters for the trigger:
+    valid_from = '2024-06-01',
+    valid_until = '2024-08-01'
+WHERE
+    id = 1; -- The entity identifier
+```
+The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the price change for exactly that duration.
 - `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a simplified view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. DML operations on this view automatically manage history using the SCD Type 2 pattern: `UPDATE` evolves an entity's state by creating a new historical record, and `DELETE` performs a soft-delete by ending the current record's validity.
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `current` view associated with the specified table and era.
 

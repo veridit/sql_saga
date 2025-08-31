@@ -42,16 +42,16 @@ SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantitie
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('pricing', 'quantities');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('pricing', 'quantities');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name |  era_name  | view_schema_name |          view_table_name           |       trigger_name        
---------------+------------+------------+------------------+------------------------------------+---------------------------
- public       | pricing    | quantities | public           | pricing__for_portion_of_quantities | for_portion_of_quantities
+TABLE sql_saga.updatable_view;
+ view_schema |             view_name              |   view_type    | table_schema | table_name |  era_name  |       trigger_name        
+-------------+------------------------------------+----------------+--------------+------------+------------+---------------------------
+ public      | pricing__for_portion_of_quantities | for_portion_of | public       | pricing    | quantities | for_portion_of_quantities
 (1 row)
 
 /* Test UPDATE FOR PORTION */
@@ -106,17 +106,23 @@ TABLE pricing ORDER BY quantity_from;
    4 |   4 |   4 |   8 | Trinket |            15 |             21 |    80
 (4 rows)
 
--- If we drop the period (without CASCADE) then the FOR PORTION views should be
--- dropped, too.
-SELECT sql_saga.drop_era('pricing', 'quantities');
+-- If we drop the period with CASCADE, the FOR PORTION views should be
+-- dropped, too. First, test that RESTRICT fails as expected.
+SAVEPOINT before_drop_era;
+SELECT sql_saga.drop_era('pricing', 'quantities', 'RESTRICT');
+ERROR:  era quantities is used by an updatable view
+CONTEXT:  PL/pgSQL function sql_saga.drop_era(regclass,name,sql_saga.drop_behavior,boolean) line 81 at RAISE
+ROLLBACK TO before_drop_era;
+-- Now drop with CASCADE
+SELECT sql_saga.drop_era('pricing', 'quantities', 'CASCADE');
  drop_era 
 ----------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_schema_name | view_table_name | trigger_name 
---------------+------------+----------+------------------+-----------------+--------------
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name 
+-------------+-----------+-----------+--------------+------------+----------+--------------
 (0 rows)
 
 -- Add it back to test the drop_for_portion_view function
@@ -126,9 +132,9 @@ SELECT sql_saga.add_era('pricing', 'quantity_from', 'quantity_until', 'quantitie
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('pricing', 'quantities');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('pricing', 'quantities');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -141,15 +147,15 @@ ERROR:  cannot drop table pricing because other objects depend on it
 DETAIL:  view pricing__for_portion_of_quantities depends on table pricing
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
 ROLLBACK TO SAVEPOINT expect_fail;
-SELECT sql_saga.drop_updatable_views('pricing', NULL);
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('pricing', NULL);
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 
-TABLE sql_saga.api_view;
- table_schema | table_name | era_name | view_schema_name | view_table_name | trigger_name 
---------------+------------+----------+------------------+-----------------+--------------
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name 
+-------------+-----------+-----------+--------------+------------+----------+--------------
 (0 rows)
 
 SELECT sql_saga.drop_era('pricing', 'quantities');
@@ -174,9 +180,9 @@ SELECT sql_saga.add_era('bt', 'valid_from', 'valid_until', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('bt', 'p');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('bt', 'p');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -196,9 +202,9 @@ TABLE bt ORDER BY valid_from, valid_until;
   3 | (0,0) | sample |         31 |          41
 (3 rows)
 
-SELECT sql_saga.drop_updatable_views('bt', 'p');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('bt', 'p');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 
@@ -274,9 +280,9 @@ SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
  no_pk_test_id_valid
 (1 row)
 
-SELECT sql_saga.add_updatable_views('no_pk_test');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('no_pk_test');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -296,9 +302,9 @@ TABLE no_pk_test ORDER BY valid_from;
   1 | initial | 2020-09-01 | 2021-01-01
 (3 rows)
 
-SELECT sql_saga.drop_updatable_views('no_pk_test', 'valid');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('no_pk_test', 'valid');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 

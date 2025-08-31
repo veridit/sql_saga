@@ -6,6 +6,7 @@ CREATE TYPE sql_saga.drop_behavior AS ENUM ('CASCADE', 'RESTRICT');
 CREATE TYPE sql_saga.fk_actions AS ENUM ('CASCADE', 'SET NULL', 'SET DEFAULT', 'RESTRICT', 'NO ACTION');
 CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
 CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'regular_to_temporal');
+COMMENT ON TYPE sql_saga.fg_type IS 'Distinguishes between foreign keys from a temporal table to another temporal table, and from a regular (non-temporal) table to a temporal table.';
 
 -- This enum represents Allen's Interval Algebra, a set of thirteen mutually
 -- exclusive relations that can hold between two temporal intervals. These
@@ -105,6 +106,7 @@ CREATE TABLE sql_saga.system_time_era (
 );
 GRANT SELECT ON TABLE sql_saga.system_time_era TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.system_time_era', '');
+COMMENT ON TABLE sql_saga.system_time_era IS 'Stores metadata specific to system-versioned eras.';
 
 CREATE TABLE sql_saga.unique_keys (
     unique_key_name name NOT NULL,
@@ -219,6 +221,7 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
     'replace_only',
     'insert_only'
 );
+COMMENT ON TYPE sql_saga.temporal_merge_mode IS 'Defines the behavior of the temporal_merge procedure, specifying how source data should be applied to the target table (e.g., insert and update, or only insert).';
 
 DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_status AS ENUM ('APPLIED', 'SKIPPED', 'TARGET_NOT_FOUND', 'ERROR');
@@ -276,6 +279,9 @@ EXCEPTION
 END $$;
 
 
+CREATE TYPE sql_saga.updatable_view_type AS ENUM ('for_portion_of', 'current');
+COMMENT ON TYPE sql_saga.updatable_view_type IS 'Defines the semantic type of an updatable view. "for_portion_of" provides direct access to historical records, while "current" provides a simplified view of only the currently active data.';
+
 CREATE VIEW sql_saga.information_schema__era AS
     SELECT current_catalog AS table_catalog,
            e.table_schema,
@@ -286,22 +292,24 @@ CREATE VIEW sql_saga.information_schema__era AS
     FROM sql_saga.era AS e;
 
 
-CREATE TABLE sql_saga.api_view (
+CREATE TABLE sql_saga.updatable_view (
+    view_schema name NOT NULL,
+    view_name name NOT NULL,
+    view_type sql_saga.updatable_view_type NOT NULL,
+
+    -- These three columns form the composite foreign key to the era table.
+    -- They are necessary because an era_name is only unique within a single table.
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL,
-    view_schema_name name NOT NULL,
-    view_table_name name NOT NULL,
+
     trigger_name name NOT NULL,
-    -- truncate_trigger name NOT NULL,
 
-    PRIMARY KEY (table_schema, table_name, era_name),
-
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name),
-
-    UNIQUE (view_schema_name, view_table_name)
+    PRIMARY KEY (view_schema, view_name),
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE
 );
-GRANT SELECT ON TABLE sql_saga.api_view TO PUBLIC;
-SELECT pg_catalog.pg_extension_config_dump('sql_saga.api_view', '');
+GRANT SELECT ON TABLE sql_saga.updatable_view TO PUBLIC;
+SELECT pg_catalog.pg_extension_config_dump('sql_saga.updatable_view', '');
+COMMENT ON TABLE sql_saga.updatable_view IS 'A registry of updatable views created by sql_saga, linking a view to its underlying temporal table and era.';
 
 

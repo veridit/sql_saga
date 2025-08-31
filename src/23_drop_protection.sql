@@ -64,7 +64,7 @@ BEGIN
         END;
 
         -- 3. Delete all metadata for the dropped table.
-        DELETE FROM sql_saga.api_view WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
+        DELETE FROM sql_saga.updatable_view WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.foreign_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.unique_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.era WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
@@ -164,42 +164,51 @@ BEGIN
 --    END LOOP;
 
     ---
-    --- api_view
+    --- updatable_view
     ---
 
-    /* Reject dropping the FOR PORTION OF view. */
+    /* Reject dropping any of our updatable views directly. */
     FOR r IN
-        SELECT dobj.object_identity
-        FROM sql_saga.api_view AS fpv
+        SELECT dobj.object_identity, v.view_type
+        FROM sql_saga.updatable_view AS v
         JOIN pg_catalog.pg_event_trigger_dropped_objects() AS dobj
             ON dobj.object_type = 'view'
-            AND (dobj.address_names[1], dobj.address_names[2]) = (fpv.view_schema_name, fpv.view_table_name)
+            AND (dobj.address_names[1], dobj.address_names[2]) = (v.view_schema, v.view_name)
     LOOP
-        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_updatable_views()" instead',
-            r.object_identity;
+        RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_%_view()" instead',
+            r.object_identity, r.view_type;
     END LOOP;
 
-    /* Complain if the FOR PORTION OF trigger is missing. */
+    /* Complain if the updatable view's trigger is missing. */
     FOR r IN
-        SELECT format('%I.%I', fpv.table_schema, fpv.table_name)::regclass AS table_oid, fpv.era_name, format('%I.%I', fpv.view_schema_name, fpv.view_table_name)::regclass as view_oid, fpv.trigger_name
-        FROM sql_saga.api_view AS fpv
+        SELECT format('%I.%I', v.table_schema, v.table_name)::regclass AS table_oid, v.era_name, format('%I.%I', v.view_schema, v.view_name)::regclass as view_oid, v.trigger_name
+        FROM sql_saga.updatable_view AS v
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fpv.view_schema_name, fpv.view_table_name)), fpv.trigger_name))
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', v.view_schema, v.view_name)), v.trigger_name))
     LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is used in FOR PORTION OF view for period "%" on table "%"',
+        RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is part of an updatable view for era "%" on table "%"',
             r.trigger_name, r.view_oid, r.era_name, r.table_oid;
     END LOOP;
 
-    /* Complain if the table's primary key has been dropped. */
+    /* Complain if the table's identifier (PK or unique key) has been dropped. */
     FOR r IN
-        SELECT to_regclass(format('%I.%I', fpv.table_schema, fpv.table_name)) AS table_oid, fpv.era_name
-        FROM sql_saga.api_view AS fpv
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_constraint AS c
-            WHERE (c.conrelid, c.contype) = (to_regclass(format('%I.%I', fpv.table_schema, fpv.table_name)), 'p'))
+        SELECT to_regclass(format('%I.%I', v.table_schema, v.table_name)) AS table_oid, v.era_name
+        FROM sql_saga.updatable_view AS v
+        WHERE
+            -- Check for a Primary Key
+            NOT EXISTS (
+                SELECT FROM pg_catalog.pg_constraint AS c
+                WHERE (c.conrelid, c.contype) = (to_regclass(format('%I.%I', v.table_schema, v.table_name)), 'p')
+            )
+            -- Check for a single-column temporal unique key
+            AND NOT EXISTS (
+                SELECT FROM sql_saga.unique_keys uk
+                WHERE (uk.table_schema, uk.table_name, uk.era_name) = (v.table_schema, v.table_name, v.era_name)
+                  AND array_length(uk.column_names, 1) = 1
+            )
     LOOP
-        RAISE EXCEPTION 'cannot drop primary key on table "%" because it has a FOR PORTION OF view for period "%"',
+        RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key to support its updatable view for era "%"',
             r.table_oid, r.era_name;
     END LOOP;
 
