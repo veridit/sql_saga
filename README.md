@@ -12,7 +12,6 @@ In the context of this extension, a **Saga** represents the complete history of 
 
 ## Features
 
-- Temporal Table Design Suggestions
 - Support for foreign keys between temporal tables, and from regular (non-temporal) tables to temporal tables.
 - High-performance, set-based API for bulk temporal data loading (`temporal_merge`).
 - Intuitive API for seamless integration with existing NSO systems.
@@ -34,7 +33,14 @@ The entity identifier is the column (or set of columns) that holds the same valu
 
 The primary key of the temporal table is typically a composite key that includes the entity identifier and a temporal column (e.g., `(id, valid_from)`) to uniquely identify each historical version of the entity.
 
-The currently valid row has `infinity` in the `valid_until` column.
+A row is considered **"current"** if its validity period `[valid_from, valid_until)` contains the present moment (e.g., `now()` or `CURRENT_DATE`). This is a powerful concept as it correctly includes records with a known future end date, such as a contract that is active today but expires next month. This `is_current` check can be efficiently served by a standard B-tree index on the temporal columns.
+
+### Managing Historical Changes: Slowly Changing Dimensions (SCD)
+When an attribute of an entity changes over time, we need a strategy to record that change. The most robust method for this is the **Type 2 Slowly Changing Dimension (SCD Type 2)**. Instead of overwriting old data, this pattern preserves history by:
+1.  "Closing out" the current historical record by updating its `valid_until` to the timestamp of the change.
+2.  Inserting a new record with the updated data, which becomes the new "current" version.
+
+`sql_saga` automates this pattern through its updatable views, making it easy to maintain a complete and accurate history of every entity.
 
 ### Temporal Table with Valid Time
 
@@ -326,10 +332,12 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
-The `add_updatable_views` function creates views to simplify interaction with temporal tables. This includes a view that only shows the *current* state of data (ideal for PostgREST) and a view that emulates the `FOR PORTION OF` syntax for updating historical records.
+`sql_saga` provides a symmetrical set of functions to create and drop specialized, updatable views that simplify interaction with temporal data. These views have different semantics tailored to specific use cases.
 
-- `add_updatable_views(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid') RETURNS boolean`
-- `drop_updatable_views(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
+- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for historical corrections (`UPDATE`) and permanent deletion of historical facts (`DELETE`).
+- `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `for_portion_of` view associated with the specified table and era.
+- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a simplified view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. DML operations on this view automatically manage history using the SCD Type 2 pattern: `UPDATE` evolves an entity's state by creating a new historical record, and `DELETE` performs a soft-delete by ending the current record's validity.
+- `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `current` view associated with the specified table and era.
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
 - `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.

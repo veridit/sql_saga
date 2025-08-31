@@ -26,6 +26,42 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
 - [x] **Rename `add_api` to `add_updatable_views` for clarity:** Renamed `add_api` and `drop_api` to `add_updatable_views` and `drop_updatable_views` respectively, to better reflect their purpose of managing views for temporal data.
 
+- [ ] **Refactor and Finalize `for_portion_of` Updatable View:** Port the existing `add_updatable_views` logic to the new symmetrical API, formalizing its DML semantics and test coverage.
+    - **Phase 1: Data Model (Shared Prerequisite - Complete):**
+        - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
+    - **Phase 2: Define the Goal (Tests & Docs):**
+        - [ ] Update `README.md` with the symmetrical `add/drop_for_portion_of_view` API reference.
+        - [ ] Create the primary test file (`sql/29_updatable_view_for_portion_of_basis.sql`). This will define the 80% "happy path" for the API lifecycle and DML semantics.
+    - **Phase 3: Implementation:**
+        - [ ] Rename `add_updatable_views` to `add_for_portion_of_view` and `drop_updatable_views` to `drop_for_portion_of_view`.
+        - [ ] Refine the trigger logic to match the documented DML semantics.
+        - [ ] Create internal helper functions (`__internal_add...`, `__internal_drop...`).
+    - **Phase 4: Verification (Basis):**
+        - [ ] Run the `29_updatable_view_for_portion_of_basis.sql` test and iterate until it passes.
+
+- [ ] **Implement `current` Updatable View:** Create the new `current` view with SCD Type 2 semantics for easy integration with ORMs and APIs.
+    - **Phase 1: Data Model (Shared Prerequisite - Complete):**
+        - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
+    - **Phase 2: Define the Goal (Tests & Docs):**
+        - [ ] Update `README.md` with the symmetrical `add/drop_current_view` API reference.
+        - [ ] Create the primary test file (`sql/30_updatable_view_current_basis.sql`). This will define the 80% "happy path" for the API lifecycle and DML semantics.
+    - **Phase 3: Implementation:**
+        - [ ] Create the new `add_current_view` and `drop_current_view` functions.
+        - [ ] Implement the trigger logic (SCD Type 2 `UPDATE`, configurable soft `DELETE`).
+        - [ ] Leverage internal helper functions.
+    - **Phase 4: Verification (Basis):**
+        - [ ] Run the `30_updatable_view_current_basis.sql` test and iterate until it passes.
+
+- [ ] **Synchronized: Full Test Coverage & Cleanup:**
+    - **Prerequisite:** Phase 4 must be complete for *both* `for_portion_of` and `current` views.
+    - **Phase 5: Full Test Coverage:**
+        - [ ] Create `sql/31_updatable_view_for_portion_of_full.sql`: 20% path (edge cases, ACLs).
+        - [ ] Create `sql/32_updatable_view_current_full.sql`: 20% path (edge cases, ACLs).
+        - [ ] Create `sql/33_updatable_view_current_modes.sql`: Configurable `DELETE` modes.
+        - [ ] Create `sql/34_updatable_views_types.sql`: Test both views against all supported range types.
+    - **Phase 6: Deprecation & Finalization:**
+        - [ ] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
+
 - [ ] **Refactor `temporal_merge` founding ID logic:** Make the source `row_id` column configurable and use it as the default `founding_id` for new entities, eliminating the internal `_sql_saga_source_row_id_` key.
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
