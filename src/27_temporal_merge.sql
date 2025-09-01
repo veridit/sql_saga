@@ -179,6 +179,26 @@ BEGIN
             v_entity_id_check_is_null_expr
         FROM unnest(p_id_columns) AS col;
 
+        -- Determine the scope of target entities to process based on the mode.
+        CASE p_mode
+            WHEN 'upsert_patch', 'patch_only', 'insert_only' THEN
+                -- Non-destructive modes always filter for efficiency, as they never need to consider target entities not in the source.
+                v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+            WHEN 'upsert_replace', 'replace_only' THEN
+                CASE p_delete_mode
+                    WHEN 'DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES' THEN
+                        -- Full sync modes must scan the whole target table to find entities that are missing from the source.
+                        v_target_rows_filter := '';
+                    WHEN 'NONE', 'DELETE_MISSING_TIMELINE' THEN
+                        -- Replace modes that don't delete missing entities can be optimized to only scan relevant target entities.
+                        v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+                    ELSE
+                         RAISE EXCEPTION 'Unhandled p_delete_mode: %', p_delete_mode;
+                END CASE;
+            ELSE
+                RAISE EXCEPTION 'Unhandled p_mode: %', p_mode;
+        END CASE;
+
         -- 2. Construct expressions and resolver CTEs based on the mode.
         IF p_mode IN ('upsert_patch', 'patch_only') THEN
             -- In 'patch' modes, data is merged and NULLs from the source are ignored.
@@ -216,7 +236,6 @@ $$;
 
             CASE p_delete_mode
                 WHEN 'DELETE_MISSING_TIMELINE_AND_ENTITIES' THEN
-                    v_target_rows_filter := ''; -- Process all target entities
                     v_resolver_ctes := $$,
 resolved_atomic_segments_with_payloads_with_flag AS (
     SELECT *,
@@ -227,12 +246,10 @@ $$;
                     v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN s_data_payload ELSE NULL END$$;
                     v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
                 WHEN 'DELETE_MISSING_TIMELINE' THEN
-                    v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
                     v_resolver_ctes := '';
                     v_final_data_payload_expr := 's_data_payload'; -- For entities in source, their timeline is replaced.
                     v_resolver_from := 'resolved_atomic_segments_with_payloads';
                 WHEN 'DELETE_MISSING_ENTITIES' THEN
-                    v_target_rows_filter := ''; -- Process all target entities
                     v_resolver_ctes := $$,
 resolved_atomic_segments_with_payloads_with_flag AS (
     SELECT *,
@@ -243,7 +260,6 @@ $$;
                     v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN COALESCE(s_data_payload, t_data_payload) ELSE NULL END$$;
                     v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
                 WHEN 'NONE' THEN
-                    v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
                     v_resolver_ctes := '';
                     v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
                     v_resolver_from := 'resolved_atomic_segments_with_payloads';
@@ -666,7 +682,8 @@ BEGIN
             string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
             string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
             string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
-            string_agg(format('(s.full_data->>%L)::%s', attname, format_type(atttypid, -1)), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns))
+            string_agg(format('(s.full_data->>%L)::%s', attname, format_type(atttypid, -1)), ', ')
+                FILTER (WHERE attname <> ALL(v_insert_defaulted_columns) AND attname NOT IN (v_valid_from_col, v_valid_until_col))
         INTO
             v_data_cols_ident,
             v_data_cols_select,
@@ -772,6 +789,7 @@ BEGIN
                             WHERE pa.attrelid = p_target_table
                               AND pa.attnum > 0 AND NOT pa.attisdropped
                               AND pa.attgenerated = '' -- Exclude only generated columns
+                              AND pa.attname NOT IN (v_valid_from_col, v_valid_until_col)
                         )
                         SELECT
                             string_agg(format('%I', attname), ', '),
