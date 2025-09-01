@@ -17,7 +17,7 @@ CREATE TABLE test_schema.schema_test (
 );
 SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
-SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mode := 'delete_as_cutoff', p_current_func_name := 'test_now()');
 
 \d test_schema.schema_test__current_valid
 TABLE sql_saga.updatable_view;
@@ -35,7 +35,7 @@ SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
 
 SET ROLE view_test_role;
 -- This should succeed as the role owns the table
-SELECT sql_saga.add_current_view('acl_test'::regclass, delete_mode := 'delete_as_documented_ending', comment_column := 'comment', p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('acl_test'::regclass, delete_mode := 'delete_as_documented_ending', p_current_func_name := 'test_now()');
 RESET ROLE;
 
 -- Verify owner of the view is correct

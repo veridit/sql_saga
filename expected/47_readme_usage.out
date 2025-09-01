@@ -52,13 +52,8 @@ CREATE TABLE readme.legal_unit (
   name VARCHAR NOT NULL,
   status TEXT, -- e.g., 'active', 'inactive'
   valid_from DATE,
-  valid_until DATE,
-  valid_to DATE -- Optional: for human-readable inclusive end dates
+  valid_until DATE
 );
--- Optional: a trigger to keep valid_to and valid_until in sync.
-CREATE TRIGGER legal_unit_synchronize_validity
-    BEFORE INSERT OR UPDATE ON readme.legal_unit
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 CREATE TABLE readme.establishment (
   id SERIAL NOT NULL,
   name VARCHAR NOT NULL,
@@ -193,8 +188,8 @@ INSERT INTO source_data VALUES
 -- Legal Unit 1: "SpareParts Corp" with a name change history
 (101, 1, 'legal_unit', 'LU001', NULL, 'AutoSpareParts INC', 'active', NULL, '2023-07-01', '2024-01-01'),
 (102, 1, 'legal_unit', 'LU001', NULL, 'SpareParts Corporation', 'active', NULL, '2024-01-01', 'infinity'),
--- Establishment 1, belonging to Legal Unit 1
-(201, 1, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-07-01', 'infinity'),
+-- Establishment 1, now belonging to Legal Unit 2 to avoid FK dependency during historical update test
+(201, 2, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-02-01', 'infinity'),
 -- Legal Unit 2: "General Refinement LLC"
 (103, 2, 'legal_unit', 'LU002', NULL, 'General Refinement LLC', 'active', NULL, '2023-01-01', 'infinity'),
 -- Establishment 2, belonging to Legal Unit 2
@@ -207,7 +202,7 @@ SELECT * FROM source_data ORDER BY row_id;
     101 |           1 | legal_unit    | LU001       |               | AutoSpareParts INC     | active |                      | 2023-07-01 | 2024-01-01
     102 |           1 | legal_unit    | LU001       |               | SpareParts Corporation | active |                      | 2024-01-01 | infinity
     103 |           2 | legal_unit    | LU002       |               | General Refinement LLC | active |                      | 2023-01-01 | infinity
-    201 |           1 | establishment |             |               | Main Branch            |        | 123 Innovation Drive | 2023-07-01 | infinity
+    201 |           2 | establishment |             |               | Main Branch            |        | 123 Innovation Drive | 2023-02-01 | infinity
     202 |           2 | establishment |             |               | Refinery Plant         |        | 456 Industrial Ave   | 2023-01-01 | infinity
 (5 rows)
 
@@ -260,7 +255,7 @@ SELECT row_id, founding_id, entity_type, legal_unit_id, name FROM source_data OR
     101 |           1 | legal_unit    |             1 | AutoSpareParts INC
     102 |           1 | legal_unit    |             1 | SpareParts Corporation
     103 |           2 | legal_unit    |             2 | General Refinement LLC
-    201 |           1 | establishment |             1 | Main Branch
+    201 |           2 | establishment |             2 | Main Branch
     202 |           2 | establishment |             2 | Refinery Plant
 (5 rows)
 
@@ -280,10 +275,131 @@ CALL sql_saga.temporal_merge(
 \echo '--- Verification: Final state of establishment table ---'
 --- Verification: Final state of establishment table ---
 SELECT id, name, address, legal_unit_id, valid_from, valid_until FROM readme.establishment ORDER BY id, valid_from;
- id |      name      |       address        | legal_unit_id | valid_from | valid_until 
-----+----------------+----------------------+---------------+------------+-------------
-  1 | Main Branch    | 123 Innovation Drive |             1 | 2023-07-01 | infinity
-  2 | Refinery Plant | 456 Industrial Ave   |             2 | 2023-01-01 | infinity
+ id |      name      |      address       | legal_unit_id | valid_from | valid_until 
+----+----------------+--------------------+---------------+------------+-------------
+  1 | Refinery Plant | 456 Industrial Ave |             2 | 2023-01-01 | infinity
+(1 row)
+
+--------------------------------------------------------------------------------
+\echo '\n--- 2.5. Updatable Views for Simplified Data Management ---'
+
+--- 2.5. Updatable Views for Simplified Data Management ---
+--------------------------------------------------------------------------------
+\echo '--- Creating updatable views for legal_unit ---'
+--- Creating updatable views for legal_unit ---
+-- A stable function to override now() for deterministic testing
+CREATE FUNCTION readme.test_now() RETURNS date AS $$ SELECT '2024-06-01'::date $$ LANGUAGE sql;
+SELECT sql_saga.add_for_portion_of_view('readme.legal_unit'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+SELECT sql_saga.add_current_view('readme.legal_unit'::regclass, p_current_func_name := 'readme.test_now()');
+ add_current_view 
+------------------
+ t
+(1 row)
+
+\d readme.legal_unit__for_portion_of_valid
+          View "readme.legal_unit__for_portion_of_valid"
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ legal_ident | character varying |           |          | 
+ name        | character varying |           |          | 
+ status      | text              |           |          | 
+ valid_from  | date              |           |          | 
+ valid_until | date              |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON readme.legal_unit__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
+\d readme.legal_unit__current_valid
+             View "readme.legal_unit__current_valid"
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ legal_ident | character varying |           |          | 
+ name        | character varying |           |          | 
+ status      | text              |           |          | 
+ valid_from  | date              |           |          | 
+ valid_until | date              |           |          | 
+Triggers:
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON readme.legal_unit__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+
+\echo '\n--- Using the for_portion_of view (Historical Split) ---'
+
+--- Using the for_portion_of view (Historical Split) ---
+\echo 'Mark legal_unit 1 as inactive for a portion of its history'
+Mark legal_unit 1 as inactive for a portion of its history
+UPDATE readme.legal_unit__for_portion_of_valid
+SET
+    status = 'inactive',
+    valid_from = '2023-09-01',
+    valid_until = '2023-11-01'
+WHERE id = 1;
+\echo '--- Verification: legal_unit history after split ---'
+--- Verification: legal_unit history after split ---
+SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+ id |  status  | valid_from | valid_until 
+----+----------+------------+-------------
+  1 | inactive | 2023-09-01 | 2023-11-01
+  1 | active   | 2024-01-01 | infinity
+(2 rows)
+
+\echo '\n--- Using the current view ---'
+
+--- Using the current view ---
+\echo '--- INSERT: A new legal unit becomes active ---'
+--- INSERT: A new legal unit becomes active ---
+INSERT INTO readme.legal_unit__current_valid (legal_ident, name, status) VALUES ('LU003', 'New Ventures Inc', 'active');
+\echo '--- Verification: The new unit is now current ---'
+--- Verification: The new unit is now current ---
+TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
+ id | legal_ident |          name          | status | valid_from | valid_until 
+----+-------------+------------------------+--------+------------+-------------
+  1 | LU001       | SpareParts Corporation | active | 2024-01-01 | infinity
+  2 | LU002       | General Refinement LLC | active | 2023-01-01 | infinity
+  5 | LU003       | New Ventures Inc       | active | 2024-06-01 | infinity
+(3 rows)
+
+\echo '\n--- UPDATE (SCD Type 2): Change the name of the new unit ---'
+
+--- UPDATE (SCD Type 2): Change the name of the new unit ---
+-- Simulate the passage of time for the SCD Type 2 update
+CREATE OR REPLACE FUNCTION readme.test_now() RETURNS date AS $$ SELECT '2024-07-01'::date $$ LANGUAGE sql;
+UPDATE readme.legal_unit__current_valid SET name = 'New Ventures LLC' WHERE legal_ident = 'LU003';
+\echo '--- Verification: Full history of the renamed unit ---'
+--- Verification: Full history of the renamed unit ---
+SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
+ id |       name       | valid_from | valid_until 
+----+------------------+------------+-------------
+  5 | New Ventures Inc | 2024-06-01 | 2024-07-01
+  5 | New Ventures LLC | 2024-07-01 | infinity
+(2 rows)
+
+\echo '\n--- DELETE (Soft-Delete): Archive the new unit ---'
+
+--- DELETE (Soft-Delete): Archive the new unit ---
+-- Simulate the passage of time for the soft-delete
+CREATE OR REPLACE FUNCTION readme.test_now() RETURNS date AS $$ SELECT '2024-08-01'::date $$ LANGUAGE sql;
+DELETE FROM readme.legal_unit__current_valid WHERE legal_ident = 'LU003';
+\echo '--- Verification: The new unit is no longer current ---'
+--- Verification: The new unit is no longer current ---
+TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
+ id | legal_ident |          name          | status | valid_from | valid_until 
+----+-------------+------------------------+--------+------------+-------------
+  1 | LU001       | SpareParts Corporation | active | 2024-01-01 | infinity
+  2 | LU002       | General Refinement LLC | active | 2023-01-01 | infinity
+(2 rows)
+
+\echo '--- Verification: The historical record shows the unit''s timeline has ended ---'
+--- Verification: The historical record shows the unit's timeline has ended ---
+SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
+ id | status | valid_from | valid_until 
+----+--------+------------+-------------
+  5 | active | 2024-06-01 | 2024-07-01
+  5 | active | 2024-07-01 | 2024-08-01
 (2 rows)
 
 --------------------------------------------------------------------------------
@@ -293,6 +409,19 @@ SELECT id, name, address, legal_unit_id, valid_from, valid_until FROM readme.est
 --------------------------------------------------------------------------------
 \echo '--- Deactivating sql_saga ---'
 --- Deactivating sql_saga ---
+-- Drop the views first, as they depend on the underlying temporal table setup.
+SELECT sql_saga.drop_for_portion_of_view('readme.legal_unit'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_current_view('readme.legal_unit'::regclass);
+ drop_current_view 
+-------------------
+ t
+(1 row)
+
 -- Foreign keys must be dropped before the unique keys they reference.
 SELECT sql_saga.drop_foreign_key('readme.establishment'::regclass, ARRAY['legal_unit_id'], 'valid');
  drop_foreign_key 
@@ -374,6 +503,7 @@ SELECT count(*)::int AS remaining_fks FROM sql_saga.foreign_keys WHERE table_sch
 \echo '--- 4. Cleanup ---'
 --- 4. Cleanup ---
 --------------------------------------------------------------------------------
+DROP FUNCTION readme.test_now();
 DROP TABLE readme.legal_unit, readme.establishment, readme.projects;
 DROP SCHEMA readme;
 SET client_min_messages TO NOTICE;

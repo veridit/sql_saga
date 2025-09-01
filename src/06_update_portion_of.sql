@@ -37,7 +37,7 @@ BEGIN
     identifier_columns := TG_ARGV;
 
     -- Get metadata about the view's underlying table.
-    SELECT v.table_schema, v.table_name, e.valid_from_column_name, e.valid_until_column_name,
+    SELECT v.table_schema, v.table_name, v.era_name, e.valid_from_column_name, e.valid_until_column_name,
            format_type(a.atttypid, a.atttypmod) AS datatype, c.oid AS table_oid
     INTO info
     FROM sql_saga.updatable_view AS v

@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', comment_column name DEFAULT NULL, p_current_func_name text DEFAULT NULL)
+CREATE FUNCTION sql_saga.add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -18,9 +18,6 @@ BEGIN
 
     IF delete_mode NOT IN ('delete_as_cutoff', 'delete_as_documented_ending') THEN
         RAISE EXCEPTION 'delete_mode must be one of ''delete_as_cutoff'' or ''delete_as_documented_ending''';
-    END IF;
-    IF delete_mode = 'delete_as_documented_ending' AND comment_column IS NULL THEN
-        RAISE EXCEPTION 'comment_column must be specified when delete_mode is ''delete_as_documented_ending''';
     END IF;
 
     /* Always serialize operations on our catalogs */
@@ -116,7 +113,6 @@ BEGIN
 
             trigger_args := concat_ws(', ',
                 quote_literal(delete_mode),
-                quote_literal(COALESCE(comment_column, '')),
                 identifier_columns_quoted
             );
 

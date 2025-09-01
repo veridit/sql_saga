@@ -23,6 +23,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [x] **Document Updatable Views in README:** Updated `README.md` with a comprehensive section on the `for_portion_of` and `current` updatable views, explaining their purpose, DML protocols, and security model. The runnable example test (`47_readme_usage.sql`) has been extended to cover the usage of these views.
+
 - [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
 
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
@@ -50,13 +52,13 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
     - **Phase 4: Verification (Basis) - Complete:**
         - [x] The `30_updatable_view_current_basis.sql` test is now passing.
 
-- [ ] **Synchronized: Full Test Coverage & Cleanup:**
+- [x] **Synchronized: Full Test Coverage & Cleanup:**
     - **Prerequisite:** Phase 4 must be complete for *both* `for_portion_of` and `current` views.
     - **Phase 5: Full Test Coverage:**
         - [x] `sql/31_updatable_view_for_portion_of_full.sql` is passing, covering edge cases and ACLs for `for_portion_of` views.
         - [x] `sql/32_updatable_view_current_full.sql` is passing, now with full coverage for both empty- and non-empty-range soft-deletes.
         - [x] The two `current` view tests (`30_..._basis` and `32_..._full`) cover both `delete_as_cutoff` and `delete_as_documented_ending` modes.
-        - [x] Create `sql/34_updatable_views_types.sql`: Test both views against all supported range types.
+        - [x] `sql/34_updatable_views_types.sql` is passing, testing both views against all supported range types.
     - **Phase 6: Deprecation & Finalization:**
         - [x] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
 

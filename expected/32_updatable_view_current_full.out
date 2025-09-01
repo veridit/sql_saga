@@ -47,7 +47,7 @@ SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
  schema_test_id_valid
 (1 row)
 
-SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mode := 'delete_as_cutoff', p_current_func_name := 'test_now()');
  add_current_view 
 ------------------
  t
@@ -62,7 +62,7 @@ SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, p_current_
  valid_until | date    |           |          | 
  value       | text    |           |          | 
 Triggers:
-    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', '', 'id')
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
 
 TABLE sql_saga.updatable_view;
  view_schema |         view_name          | view_type | table_schema | table_name  | era_name | trigger_name  | current_func 
@@ -100,7 +100,7 @@ SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
 
 SET ROLE view_test_role;
 -- This should succeed as the role owns the table
-SELECT sql_saga.add_current_view('acl_test'::regclass, delete_mode := 'delete_as_documented_ending', comment_column := 'comment', p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('acl_test'::regclass, delete_mode := 'delete_as_documented_ending', p_current_func_name := 'test_now()');
  add_current_view 
 ------------------
  t
@@ -119,7 +119,7 @@ RESET ROLE;
  status      | text    |           |          | 
  comment     | text    |           |          | 
 Triggers:
-    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_documented_ending', 'comment', 'id')
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_documented_ending', 'id')
 
 TABLE sql_saga.updatable_view;
  view_schema |        view_name        | view_type | table_schema | table_name | era_name | trigger_name  | current_func 

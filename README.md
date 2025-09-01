@@ -165,6 +165,89 @@ A foreign key from `projects.lead_employee_id` to `employees.id` ensures that an
 
 This validation is implemented using a `CHECK` constraint on the regular table, which calls a high-performance helper function created by `sql_saga`.
 
+## Updatable Views for Simplified Data Management
+To simplify common interactions with temporal data, `sql_saga` provides two types of updatable views. These views act as a stable, user-friendly API layer on top of your temporal tables, and are especially useful for integration with tools like PostgREST.
+
+### The `for_portion_of` View: Full Historical Access
+This view provides a direct window into the entire history of a table. It is designed for advanced use cases where you need to make precise changes to historical data.
+- **`INSERT`**: Directly inserts a new historical record with specified `valid_from` and `valid_until` dates.
+- **`UPDATE`**: Can be used for two purposes:
+    1.  **Historical Correction**: A simple `UPDATE ... WHERE valid_from = ...` will correct a fact in a specific historical record.
+    2.  **Applying a Change to a Time Period**: This is a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. By supplying `valid_from` and `valid_until` in the `SET` clause, you instruct the trigger to apply a change to that specific time slice. The trigger will automatically split and update existing records to reflect the change.
+- **`DELETE`**: Performs a hard delete of a historical record. This is a destructive operation and should be used with caution.
+
+**Known Limitation:** The trigger for this view performs `DELETE` and `INSERT` operations that can create a transient, inconsistent state. If the base table is referenced by a temporal foreign key from another table, an `UPDATE` that creates a temporary gap in history may cause the foreign key check to fail.
+
+For these more complex scenarios, the `temporal_merge` procedure is the recommended solution as it is designed to handle such dependencies correctly. However, if you must use the `for_portion_of` view, you can manually disable and re-enable the outgoing foreign key triggers on the referenced table within a transaction.
+
+**Manual Workaround Example:**
+You can find the trigger names to disable in the `uk_update_trigger` and `uk_delete_trigger` columns of the `sql_saga.foreign_keys` metadata table.
+```sql
+BEGIN;
+
+-- Temporarily disable the outgoing FK triggers on the 'legal_unit' table.
+ALTER TABLE readme.legal_unit DISABLE TRIGGER establishment_legal_unit_id_valid_uk_update;
+ALTER TABLE readme.legal_unit DISABLE TRIGGER establishment_legal_unit_id_valid_uk_delete;
+
+-- Perform the historical update via the view
+UPDATE readme.legal_unit__for_portion_of_valid
+SET status = 'inactive', valid_from = '2023-09-01', valid_until = '2023-11-01'
+WHERE id = 1;
+
+-- Re-enable the triggers
+ALTER TABLE readme.legal_unit ENABLE TRIGGER establishment_legal_unit_id_valid_uk_update;
+ALTER TABLE readme.legal_unit ENABLE TRIGGER establishment_legal_unit_id_valid_uk_delete;
+
+COMMIT;
+```
+
+**Example: Marking a legal unit as inactive for a specific period**
+```sql
+-- This query marks legal_unit 1 as inactive only for the period from 2023-09-01 to 2023-11-01.
+UPDATE legal_unit__for_portion_of_valid
+SET
+    status = 'inactive', -- The new data value
+    -- These act as parameters for the trigger:
+    valid_from = '2023-09-01',
+    valid_until = '2023-11-01'
+WHERE
+    id = 1; -- The entity identifier
+```
+
+### The `current` View: A Simple View of the Present
+This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It shows only the records that are currently active and hides the temporal columns, presenting the data as if it were a regular, non-temporal table. It provides a safe, explicit protocol for data modification.
+
+- **`INSERT`**: Creates a new entity. The `valid_from` is automatically set to the current time, and `valid_until` is set to 'infinity'.
+- **`UPDATE` (SCD Type 2)**: A standard `UPDATE ... SET column = 'new value'` automatically performs a **Type 2 Slowly Changing Dimension** operation. The current record is closed out (its `valid_until` is set to `now()`), and a new record is inserted with the updated data, becoming the new current version.
+
+#### Ending an Entity's Timeline (Soft-Delete)
+`sql_saga` provides two configurable modes for handling the end of an entity's timeline, controlled by the `delete_mode` parameter in `add_current_view`. This allows you to choose between maximum ORM compatibility and maximum auditability.
+
+**1. Simple Cutoff Mode (Default)**
+This is the default mode, provided for compatibility with ORMs and other tools that expect to be able to use standard `DELETE` statements.
+- **`DELETE` is a Soft-Delete**: A standard `DELETE FROM my_table__current_valid WHERE ...` statement is allowed. The trigger intercepts this operation and performs a soft-delete by setting the `valid_until` of the current record to `now()`. While convenient, this provides no way to record *why* the entity's timeline was ended.
+
+**2. Documented Ending Mode**
+This mode (`delete_mode := 'delete_as_documented_ending'`) is recommended for systems where auditability is critical. It enforces a clear and unambiguous protocol for ending an entity's timeline.
+- **`DELETE` is Disallowed**: A direct `DELETE` statement on the view is forbidden. This prevents accidental, undocumented data loss and forces developers to be explicit about their intent.
+- **Documented Soft-Delete via `UPDATE`**: To end an entity's timeline, you must use a special `UPDATE` statement: `UPDATE my_table__current_valid SET valid_from = 'infinity' WHERE ...`. This signals the trigger to close out the current record. You can also include other columns in the `SET` clause (e.g., `SET valid_from = 'infinity', status = 'archived'`) to record the reason for the change on the now-historical record.
+
+**Example: Changing an employee's department (SCD Type 2)**
+```sql
+-- Bob moves from Sales to Management.
+-- sql_saga automatically handles the history.
+UPDATE employees__current_valid SET department = 'Management' WHERE id = 2;
+```
+
+**Example: Soft-deleting an employee record (Documented Ending Mode)**
+```sql
+-- Alice leaves the company, and we record the reason.
+UPDATE employees__current_valid SET valid_from = 'infinity', status = 'resigned' WHERE id = 1;
+```
+
+### Security Model: `SECURITY INVOKER`
+All triggers on these views are `SECURITY INVOKER` (the default). This is a key security feature. It means that any DML operation on a view is executed with the permissions of the *calling user*. The system checks the user's permissions on the underlying base table before allowing the operation, so a user can only do what they are already allowed to do. This ensures seamless compatibility with PostgreSQL's Row-Level Security (RLS) and standard table `GRANT`s.
+
 ## Installation
 
 TODO: Build a docker image with postgres and the sql_saga extension.
@@ -352,25 +435,25 @@ The `UPDATE` operation on a `_for_portion_of_` view is extremely powerful and ha
 
 **The Pattern:** To update an entity's data for a specific period, you must pass the start and end of that period **via the `SET` clause**. The `INSTEAD OF UPDATE` trigger uses these values as parameters to correctly split existing historical records.
 
-**Example:** Imagine a product price was wrong between June 1st and August 1st.
+**Example:** Imagine a legal unit was incorrectly marked as 'active' between September 1st and November 1st.
 ```sql
--- This query applies a price change only for the period from 2024-06-01 to 2024-08-01.
-UPDATE products__for_portion_of_valid
+-- This query marks legal_unit 1 as inactive only for the period from 2023-09-01 to 2023-11-01.
+UPDATE legal_unit__for_portion_of_valid
 SET
-    price = 1175, -- The new data value
+    status = 'inactive', -- The new data value
     -- These act as parameters for the trigger:
-    valid_from = '2024-06-01',
-    valid_until = '2024-08-01'
+    valid_from = '2023-09-01',
+    valid_until = '2023-11-01'
 WHERE
     id = 1; -- The entity identifier
 ```
-The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the price change for exactly that duration.
-- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ..., p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. The view includes all columns of the base table, which enables a powerful DML protocol inspired by the `for_portion_of` view:
+The trigger will use `'2023-09-01'` and `'2023-11-01'` to find all of legal unit 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the status change for exactly that duration.
+- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. The view enables a powerful DML protocol:
   - **`INSERT`**: Creates a new historical record for an entity, which becomes the new "current" state.
-  - **`UPDATE`**: This operation is used for both state changes and for ending a record's timeline.
-    - **State Change (SCD Type 2):** A standard `UPDATE ... SET column = 'new value'` will automatically perform an SCD Type 2 operation: the existing current record is closed out, and a new record is inserted with the updated data.
-    - **Documented Soft-Delete:** To end a record's timeline (a "soft-delete") and record a reason, use the special protocol: `UPDATE ... SET valid_from = 'infinity', comment = '...'`. The trigger recognizes `valid_from = 'infinity'` as a signal to end the record's timeline at the present moment, applying any other changes in the `SET` clause (like a comment) to the now-historical record.
-  - **`DELETE`**: This operation is **disallowed** to prevent accidental undocumented data loss. The error message will guide the user to use the correct `UPDATE` protocol to end a record's timeline.
+  - **`UPDATE`**: A standard `UPDATE` performs a **State Change (SCD Type 2)**: the existing current record is closed out, and a new record is inserted with the updated data.
+  - **Ending a Timeline (Soft-Delete)**: The behavior is controlled by the `delete_mode` parameter:
+    - `'delete_as_cutoff'` (Default): A standard `DELETE` statement is **allowed** and is automatically translated into a soft-delete (the record's `valid_until` is set to the current time). This is the default mode for ORM compatibility.
+    - `'delete_as_documented_ending'`: `DELETE` is **disallowed**. A soft-delete must be performed via a special `UPDATE` statement: `UPDATE ... SET valid_from = 'infinity', status = 'archived'`. The `valid_from = 'infinity'` signals the trigger to end the timeline, while other `SET` clauses are applied to the now-historical record for audit purposes. This mode is for systems where auditability is critical.
   - The optional `p_current_func_name` parameter allows for overriding the function used to determine the current time (e.g., `now()` or `CURRENT_DATE`). This is primarily for testing, allowing for deterministic test runs. For security, this parameter is validated to ensure it is a valid function signature.
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.
 

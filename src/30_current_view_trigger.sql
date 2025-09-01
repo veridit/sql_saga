@@ -8,7 +8,6 @@ DECLARE
     info record;
     identifier_columns name[];
     delete_mode name;
-    comment_column name;
     source_table_oid regclass;
     now_function text;
     source_table_name text;
@@ -18,11 +17,10 @@ DECLARE
     insert_column_list text;
     insert_values_list text;
 BEGIN
-    -- Extract parameters: delete_mode, comment_column, then identifier_columns
+    -- Extract parameters: delete_mode, then identifier_columns
     delete_mode := TG_ARGV[0];
-    comment_column := NULLIF(TG_ARGV[1], '');
-    -- TG_ARGV is a 0-indexed array. The identifier columns start at index 2.
-    identifier_columns := TG_ARGV[2:TG_NARGS-1];
+    -- TG_ARGV is a 0-indexed array. The identifier columns start at index 1.
+    identifier_columns := TG_ARGV[1:TG_NARGS-1];
 
     -- Get metadata about the view's underlying table.
     SELECT
@@ -159,8 +157,26 @@ BEGIN
         RETURN NEW;
 
     ELSIF (TG_OP = 'DELETE') THEN
-        RAISE EXCEPTION 'Direct DELETE on a "current" view is disallowed.'
-            USING HINT = 'To end an entity''s timeline, perform an UPDATE. For an undocumented soft-delete, use the protocol: UPDATE ... SET valid_from = ''infinity''. For a documented soft-delete, add a comment or status change: UPDATE ... SET valid_from = ''infinity'', comment = ''...''';
+        CASE delete_mode
+            WHEN 'delete_as_cutoff' THEN
+                SELECT string_agg(quote_ident(col) || ' = ($1).' || quote_ident(col), ' AND ')
+                INTO where_clause
+                FROM unnest(identifier_columns) AS t(col);
+
+                EXECUTE format('UPDATE %I.%I SET %I = %s WHERE %s AND %I = ''infinity''',
+                    info.table_schema, info.table_name,
+                    info.valid_until_column_name, now_function,
+                    where_clause, info.valid_until_column_name
+                )
+                USING OLD;
+            WHEN 'delete_as_documented_ending' THEN
+                RAISE EXCEPTION 'Direct DELETE on a "current" view is disallowed.'
+                    USING HINT = 'To end an entity''s timeline, perform an UPDATE. For an undocumented soft-delete, use the protocol: UPDATE ... SET valid_from = ''infinity''. For a documented soft-delete, add a comment or status change: UPDATE ... SET valid_from = ''infinity'', comment = ''...''';
+            ELSE
+                -- This case should not be reachable due to the check in add_current_view, but it is good practice.
+                RAISE EXCEPTION 'sql_saga: internal error: unhandled delete_mode "%"', delete_mode;
+        END CASE;
+        RETURN OLD;
     END IF;
 
     RETURN NULL;

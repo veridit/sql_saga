@@ -73,13 +73,9 @@ TABLE employees ORDER BY id, valid_from;
 TABLE employees_current_view_select;
 
 -- Test DELETE (Soft delete)
--- Alice leaves the company. A direct DELETE is disallowed. We must use the UPDATE protocol.
-SAVEPOINT expect_delete_fail;
+-- Alice leaves the company. With the default 'delete_as_cutoff' mode, a
+-- standard DELETE performs a soft-delete.
 DELETE FROM employees__current_valid WHERE id = 1;
-ROLLBACK TO expect_delete_fail;
-
--- Correct workflow for undocumented soft-delete:
-UPDATE employees__current_valid SET valid_from = 'infinity'::date WHERE id = 1;
 
 -- Alice's current record should be closed out. She should no longer be in the current view.
 TABLE employees ORDER BY id, valid_from;
