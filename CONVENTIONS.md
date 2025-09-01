@@ -44,6 +44,9 @@ For file system operations and large-scale edits, prefer suggesting shell comman
       - Keep the SQL readable by aligning numbered placeholders with inline comments that show which parameter they refer to (e.g., `... %1$I ... /* %1$I */`).
 - **Table Aliases**: Prefer explicit `AS` for table aliases, e.g., `FROM my_table AS mt`.
 
+### Build System
+- **`Makefile` and Source Files**: The `Makefile` uses a glob pattern (`src/[0-9][0-9]_*.sql`) to automatically discover and concatenate SQL source files. When adding a new feature, simply create a new numbered `.sql` file in the `src/` directory (e.g., `src/31_new_feature.sql`). It will be included in the build automatically without any need to edit the `Makefile`.
+
 ### SQL Naming conventions
 - `x_id` is a foreign key to table `x`
 - `x_ident` is an external identifier, not originating from the database
