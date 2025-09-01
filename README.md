@@ -335,6 +335,14 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 ### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
 `sql_saga` provides a symmetrical set of functions to create and drop specialized, updatable views that simplify interaction with temporal data. These views have different semantics tailored to specific use cases.
 
+#### Security Model: `SECURITY INVOKER` Triggers
+A key design principle of these updatable views is their robust and secure permission model, which is fully compatible with PostgreSQL's Row-Level Security (RLS) and standard schema permissions. This is achieved through a two-part architecture:
+
+1.  **`SECURITY DEFINER` API Functions**: The functions that create and drop views (e.g., `add_current_view`) run with `SECURITY DEFINER` privileges. This is necessary to allow these functions to create objects like views and triggers in the same schema as the target table, which may be owned by a different user.
+2.  **`SECURITY INVOKER` Triggers**: The `INSTEAD OF` triggers attached to the views are `SECURITY INVOKER` (the default). This means that any `INSERT`, `UPDATE`, or `DELETE` operation on the view is executed with the permissions of the *calling user*, not the trigger's owner. PostgreSQL will therefore check the user's permissions on the underlying base table before allowing the operation to proceed.
+
+This ensures that a user can only perform actions on the temporal data that they are already permitted to perform on the base table, providing a secure and intuitive security model. All `GRANT` and `REVOKE` operations on the base table are automatically propagated to the associated views by an event trigger, keeping permissions synchronized.
+
 - `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for `INSERT`, historical corrections (`UPDATE`), and permanent deletion of historical facts (`DELETE`).
 - `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `for_portion_of` view associated with the specified table and era.
 
@@ -357,11 +365,12 @@ WHERE
     id = 1; -- The entity identifier
 ```
 The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the price change for exactly that duration.
-- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a simplified view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. DML operations on this view automatically manage history using the SCD Type 2 pattern: `UPDATE` evolves an entity's state by creating a new historical record, and `DELETE` performs a soft-delete by ending the current record's validity.
+- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ..., p_current_func_name text DEFAULT NULL)`: Creates a simplified view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. DML operations on this view automatically manage history using the SCD Type 2 pattern: `UPDATE` evolves an entity's state by creating a new historical record, and `DELETE` performs a soft-delete by ending the current record's validity.
+  - The optional `p_current_func_name` parameter allows for overriding the function used to determine the current time (e.g., `now()` or `CURRENT_DATE`). This is primarily for testing, allowing for deterministic test runs. For security, this parameter is validated to ensure it is a valid function signature.
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `current` view associated with the specified table and era.
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
   - `p_target_table`: The temporal table to merge data into.
   - `p_source_table`: A table (usually temporary) containing the source data.
   - `p_id_columns`: An array of column names that form the conceptual entity identifier.
@@ -380,6 +389,12 @@ The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1'
     - `'DELETE_MISSING_TIMELINE'`: For entities present in the source, their timelines are completely replaced. Any part of their history in the target not covered by the source is deleted. Target entities not in the source are untouched.
     - `'DELETE_MISSING_ENTITIES'`: Any entity in the target that is not present in the source is deleted. The timelines of entities that *are* in the source are preserved and patched.
     - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A full synchronization. Timelines of source entities are replaced, and target entities not in the source are deleted.
+
+  #### Operation Feedback and Session State
+  The procedure uses two session-scoped temporary tables to manage its state: `__temp_last_sql_saga_temporal_merge_plan` (which stores the execution plan) and `__temp_last_sql_saga_temporal_merge` (which stores the final row-by-row feedback). These tables are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
+
+  - **Caveat for Multi-Role Sessions:** Because `TEMP` tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later in the same session by an unprivileged user, the second call will fail as the unprivileged user will not have permission to drop the temporary tables created by the superuser.
+  - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, you must manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS __temp_last_sql_saga_temporal_merge_plan, __temp_last_sql_saga_temporal_merge;`
 
 ### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
