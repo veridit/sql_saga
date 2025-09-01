@@ -83,12 +83,14 @@ Triggers:
 
 -- Verify that enable and disable each work correctly.
 SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until');
+NOTICE:  sql_saga: Created trigger "employees_synchronize_valid_to_until_trigger" on table exposed.employees to synchronize column "valid_to".
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until');
+NOTICE:  sql_saga: Created trigger "staff_synchronize_valid_to_until_trigger" on table hidden.staff to synchronize column "valid_to".
  add_era 
 ---------
  t
@@ -150,6 +152,7 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
+    employees_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('valid_until', 'valid_to')
     staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
     staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
     synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
@@ -173,6 +176,7 @@ Check constraints:
 Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_until, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    staff_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('valid_until', 'valid_to')
     synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 -- Test data.
@@ -276,6 +280,7 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
+    employees_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('valid_until', 'valid_to')
     synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
@@ -293,6 +298,7 @@ Indexes:
 Check constraints:
     "staff_valid_check" CHECK (valid_from < valid_until)
 Triggers:
+    staff_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('valid_until', 'valid_to')
     synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 ROLLBACK;

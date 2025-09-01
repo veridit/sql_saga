@@ -44,7 +44,9 @@ When an attribute of an entity changes over time, we need a strategy to record t
 
 ### Temporal Table with Valid Time
 
-For users who prefer to work with inclusive end dates (e.g., a `valid_to` column), `sql_saga` provides a convenience trigger `sql_saga.synchronize_valid_to_until()`. This trigger can be used to automatically maintain the relationship `valid_until = valid_to + '1 day'`.
+For users who prefer to work with inclusive end dates (e.g., a `valid_to` column), `sql_saga` provides a convenience trigger, `sql_saga.synchronize_valid_to_until()`, to automatically maintain the relationship `valid_until = valid_to + '1 day'`.
+
+When you call `add_era`, it can automatically create this trigger for you. It will look for a column named `valid_to` (or the name you provide in the `p_synchronize_valid_to_column` parameter). If a compatible, non-generated column is found, the synchronization trigger will be created. To disable this, set `p_synchronize_valid_to_column` to `NULL`.
 
 Example table:
 ```
@@ -274,14 +276,9 @@ CREATE TABLE legal_unit (
   -- Note: A primary key on temporal tables is often not on the temporal columns
 );
 
--- Optional: a trigger to keep valid_to and valid_until in sync.
-CREATE TRIGGER legal_unit_synchronize_validity
-    BEFORE INSERT OR UPDATE ON legal_unit
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
-
--- Register the table as a temporal table (an "era")
--- Note: It is best practice to explicitly cast table names to regclass.
-SELECT sql_saga.add_era(table_oid => 'legal_unit'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+-- Register the table as a temporal table (an "era") using default column names.
+-- This will also automatically create a trigger to synchronize 'valid_to' and 'valid_until'.
+SELECT sql_saga.add_era('legal_unit'::regclass);
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
@@ -303,7 +300,7 @@ CREATE TABLE establishment (
   valid_until DATE
 );
 
-SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era('establishment'::regclass);
 SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
@@ -398,7 +395,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 ## API Reference
 
 ### Era Management
-- `add_era(table_oid regclass, valid_from_column_name name, valid_until_column_name name, era_name name DEFAULT 'valid', range_type regtype DEFAULT NULL, bounds_check_constraint name DEFAULT NULL, create_columns boolean DEFAULT false) RETURNS boolean`
+- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', valid_until_column_name name DEFAULT 'valid_until', era_name name DEFAULT 'valid', range_type regtype DEFAULT NULL, bounds_check_constraint name DEFAULT NULL, create_columns boolean DEFAULT false, p_synchronize_valid_to_column name DEFAULT 'valid_to') RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration for column names. The `range_type` is automatically inferred from the column data types. If a compatible column matching `p_synchronize_valid_to_column` is found, it also automatically creates a trigger to keep it synchronized with the `valid_until` column (`valid_until = valid_to + 1 day`). To disable this behavior, set this parameter to `NULL`.
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### Unique Keys
@@ -492,9 +489,6 @@ The trigger will use `'2023-09-01'` and `'2023-11-01'` to find all of legal unit
 - `set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[]) RETURNS void`
 - `generated_always_as_row_start_end() RETURNS trigger` (C function)
 - `write_history() RETURNS trigger` (C function)
-
-### Convenience Triggers
-- `synchronize_valid_to_until() RETURNS trigger`
 
 ## Dependencies
 

@@ -1,11 +1,12 @@
-CREATE FUNCTION sql_saga.add_era(
+CREATE OR REPLACE FUNCTION sql_saga.add_era(
     table_oid regclass,
-    valid_from_column_name name,
-    valid_until_column_name name,
+    valid_from_column_name name DEFAULT 'valid_from',
+    valid_until_column_name name DEFAULT 'valid_until',
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
     bounds_check_constraint name DEFAULT NULL,
-    create_columns boolean DEFAULT false)
+    create_columns boolean DEFAULT false,
+    p_synchronize_valid_to_column name DEFAULT 'valid_to')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -28,6 +29,10 @@ DECLARE
     valid_until_type oid;
     valid_until_collation oid;
     valid_until_notnull boolean;
+
+    sync_col_type_oid oid;
+    sync_col_is_generated text;
+    trigger_name name;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -331,6 +336,37 @@ BEGIN
         INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
         VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint);
     END;
+
+    -- Look for a valid_to column to synchronize and automatically create a trigger
+    IF p_synchronize_valid_to_column IS NOT NULL THEN
+        -- Check if column exists, is of correct type, and is not generated
+        SELECT a.atttypid, a.attgenerated
+        INTO sync_col_type_oid, sync_col_is_generated
+        FROM pg_attribute a
+        JOIN pg_class c ON a.attrelid = c.oid
+        WHERE c.oid = table_oid
+          AND a.attname = p_synchronize_valid_to_column
+          AND NOT a.attisdropped;
+
+        IF FOUND THEN
+            IF sync_col_is_generated <> '' THEN -- 'g' if generated, '' if not.
+                RAISE NOTICE 'sql_saga: Column "%" on table % is a generated column and cannot be used for synchronization. Skipping trigger creation.', p_synchronize_valid_to_column, table_oid;
+            ELSIF sync_col_type_oid NOT IN ('date'::regtype, 'timestamp'::regtype, 'timestamptz'::regtype) THEN
+                RAISE NOTICE 'sql_saga: Column "%" on table % has an incompatible data type (%) for synchronization. Skipping trigger creation.', p_synchronize_valid_to_column, table_oid, format_type(sync_col_type_oid, NULL);
+            ELSE
+                -- All checks passed, create the trigger with a deterministic name.
+                trigger_name := format('%s_synchronize_valid_to_until_trigger', table_name);
+                EXECUTE format(
+                    'CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until(%L, %L)',
+                    trigger_name,
+                    table_oid::text,
+                    valid_until_column_name,
+                    p_synchronize_valid_to_column
+                );
+                RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize column "%".', trigger_name, table_oid, p_synchronize_valid_to_column;
+            END IF;
+        END IF;
+    END IF;
 
     -- Code for creation of triggers, when extending the era api
     --        /* Make sure all the excluded columns exist */

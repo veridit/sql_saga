@@ -101,9 +101,13 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Low Priority - Future Work & New Features
 
-- [ ] **Support native range types and `valid_to` columns ergonomically:**
-  - **Issue:** Users must manually create triggers to synchronize a `range` or `valid_to` column with the required `valid_from`/`valid_until` columns.
-  - **Action:** Make `add_era` "smarter." It should inspect the target table for the presence of commonly named columns (e.g., a `range` or `tsrange` column, or a `valid_to` column). If found, it should automatically create and apply the appropriate synchronization trigger (`synchronize_range_and_bounds` or `synchronize_valid_to_until`) on the user's behalf. This makes the feature "just work" and dramatically improves ergonomics. The trigger must also enforce the required `[)` semantics.
+- [x] **Ergonomic `add_era` with column defaults and `valid_to` sync:**
+  - **Issue:** Users had to manually specify `valid_from`/`valid_until` and create a trigger to synchronize a `valid_to` column.
+  - **Action:** Enhanced `add_era` with default column names (`valid_from`, `valid_until`) and a new `p_synchronize_valid_to_column` parameter (default `valid_to`). `add_era` now automatically creates the synchronization trigger if a compatible column is found, making the common case much simpler. This can be disabled by setting the parameter to `NULL`.
+
+- [ ] **Support native range types ergonomically:**
+  - **Issue:** Users must manually create triggers to synchronize a `range` column with the required `valid_from`/`valid_until` columns.
+  - **Action:** Make `add_era` "smarter." It should inspect the target table for the presence of commonly named columns (e.g., a `range` or `tsrange` column). If found, it should automatically create and apply the appropriate synchronization trigger (`synchronize_range_and_bounds`) on the user's behalf. The trigger must also enforce the required `[)` semantics.
   - **Viability Note:** This is the recommended architecture. It provides maximum flexibility for both database and PostgREST users, leverages an existing pattern, and requires no changes to the core extension.
 
 - [ ] **Ensure `infinity` is the default for `valid_to` columns:**
