@@ -71,6 +71,11 @@ CREATE TABLE sql_saga.era (
     valid_until_column_name name NOT NULL,
     -- active_column_name name NOT NULL,
     range_type regtype NOT NULL,
+    range_subtype regtype NOT NULL,
+    -- The category of the range's subtype (e.g., 'D' for DateTime, 'N' for Numeric).
+    -- This is cached for performance and clarity.
+    -- See: https://www.postgresql.org/docs/current/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
+    range_subtype_category char(1) NOT NULL,
     bounds_check_constraint name NOT NULL,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
@@ -322,9 +327,11 @@ CREATE TABLE sql_saga.updatable_view (
     era_name name NOT NULL,
 
     trigger_name name NOT NULL,
+    current_func text, -- Stores the function call, e.g., 'now()' or 'my_test_now()'
 
     PRIMARY KEY (view_schema, view_name),
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE,
+    CHECK ((current_func IS NULL) = (view_type <> 'current'))
 );
 GRANT SELECT ON TABLE sql_saga.updatable_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.updatable_view', '');

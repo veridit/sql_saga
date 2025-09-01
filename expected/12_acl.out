@@ -147,7 +147,7 @@ TABLE show_acls ORDER BY sort_order;
 
 GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2; -- fail
 ERROR:  cannot grant SELECT directly to "fpacl__for_portion_of_p"; grant SELECT to "fpacl" instead
-CONTEXT:  PL/pgSQL function health_checks() line 153 at RAISE
+CONTEXT:  PL/pgSQL function health_checks() line 154 at RAISE
 GRANT SELECT, UPDATE ON TABLE fpacl TO periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
  sort_order | schema_name |       object_name       | object_type |    grantee    | privilege_type 
@@ -176,7 +176,7 @@ TABLE show_acls ORDER BY sort_order;
 
 REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2; -- fail
 ERROR:  cannot revoke UPDATE directly from "fpacl__for_portion_of_p", revoke UPDATE from "fpacl" instead
-CONTEXT:  PL/pgSQL function health_checks() line 269 at RAISE
+CONTEXT:  PL/pgSQL function health_checks() line 272 at RAISE
 REVOKE UPDATE ON TABLE fpacl FROM periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
  sort_order | schema_name |       object_name       | object_type |    grantee    | privilege_type 

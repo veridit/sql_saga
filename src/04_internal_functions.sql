@@ -81,7 +81,7 @@ BEGIN
 END;
 $function$;
 
-CREATE FUNCTION sql_saga.__internal_make_api_view_name(table_name name, era_name name)
+CREATE FUNCTION sql_saga.__internal_make_updatable_view_name(table_name name, era_name name, view_type_suffix text)
  RETURNS name
  IMMUTABLE
  LANGUAGE plpgsql
@@ -95,15 +95,13 @@ DECLARE
     NAMEDATALEN CONSTANT integer := 64;
 BEGIN
     /*
-     * Reduce the table and period names until they fit in NAMEDATALEN.  This
-     * probably isn't very efficient but it's not on a hot code path so we
-     * don't care.
+     * Reduce the table and period names until they fit in NAMEDATALEN. This
+     * is not very efficient but it's not on a hot code path.
      */
-
     max_length := greatest(length(table_name), length(era_name));
 
     LOOP
-        result := format('%s__for_portion_of_%s', table_name, era_name);
+        result := format('%s__%s_%s', table_name, view_type_suffix, era_name);
         IF octet_length(result) <= NAMEDATALEN-1 THEN
             RETURN result;
         END IF;

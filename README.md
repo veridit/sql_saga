@@ -344,7 +344,7 @@ A key design principle of these updatable views is their robust and secure permi
 This ensures that a user can only perform actions on the temporal data that they are already permitted to perform on the base table, providing a secure and intuitive security model. All `GRANT` and `REVOKE` operations on the base table are automatically propagated to the associated views by an event trigger, keeping permissions synchronized.
 
 - `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for `INSERT`, historical corrections (`UPDATE`), and permanent deletion of historical facts (`DELETE`).
-- `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `for_portion_of` view associated with the specified table and era.
+- `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `for_portion_of` view associated with the specified table and era.
 
 #### Using the `_for_portion_of_` View for Updates
 
@@ -365,9 +365,14 @@ WHERE
     id = 1; -- The entity identifier
 ```
 The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the price change for exactly that duration.
-- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ..., p_current_func_name text DEFAULT NULL)`: Creates a simplified view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. DML operations on this view automatically manage history using the SCD Type 2 pattern: `UPDATE` evolves an entity's state by creating a new historical record, and `DELETE` performs a soft-delete by ending the current record's validity.
+- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', ..., p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. The view includes all columns of the base table, which enables a powerful DML protocol inspired by the `for_portion_of` view:
+  - **`INSERT`**: Creates a new historical record for an entity, which becomes the new "current" state.
+  - **`UPDATE`**: This operation is used for both state changes and for ending a record's timeline.
+    - **State Change (SCD Type 2):** A standard `UPDATE ... SET column = 'new value'` will automatically perform an SCD Type 2 operation: the existing current record is closed out, and a new record is inserted with the updated data.
+    - **Documented Soft-Delete:** To end a record's timeline (a "soft-delete") and record a reason, use the special protocol: `UPDATE ... SET valid_from = 'infinity', comment = '...'`. The trigger recognizes `valid_from = 'infinity'` as a signal to end the record's timeline at the present moment, applying any other changes in the `SET` clause (like a comment) to the now-historical record.
+  - **`DELETE`**: This operation is **disallowed** to prevent accidental undocumented data loss. The error message will guide the user to use the correct `UPDATE` protocol to end a record's timeline.
   - The optional `p_current_func_name` parameter allows for overriding the function used to determine the current time (e.g., `now()` or `CURRENT_DATE`). This is primarily for testing, allowing for deterministic test runs. For security, this parameter is validated to ensure it is a valid function signature.
-- `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid')`: Drops the `current` view associated with the specified table and era.
+- `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.
 
 ### High-Performance Bulk Data Loading (`temporal_merge`)
 - `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.

@@ -1,0 +1,232 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+-- A stable function to override now() for deterministic testing
+CREATE FUNCTION test_now() RETURNS date AS $$ SELECT '2024-02-29'::date $$ LANGUAGE sql;
+CREATE TABLE employees (
+    id int,
+    valid_from date,
+    valid_until date,
+    name text,
+    department text
+);
+-- Register era and unique key
+SELECT sql_saga.add_era('employees', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('employees', ARRAY['id']);
+   add_unique_key   
+--------------------
+ employees_id_valid
+(1 row)
+
+-- Populate with some data
+INSERT INTO employees VALUES
+(1, '2023-01-01', '2024-01-01', 'Alice', 'Engineering'),
+(1, '2024-01-01', 'infinity', 'Alice', 'R&D'),
+(2, '2023-05-01', 'infinity', 'Bob', 'Sales');
+TABLE employees ORDER BY id, valid_from;
+ id | valid_from | valid_until | name  | department  
+----+------------+-------------+-------+-------------
+  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2023-05-01 | infinity    | Bob   | Sales
+(3 rows)
+
+-- Test API Lifecycle
+-- ==================
+-- Add the current view, overriding the now() function for stable tests
+SELECT sql_saga.add_current_view('employees'::regclass, p_current_func_name := 'test_now()');
+ add_current_view 
+------------------
+ t
+(1 row)
+
+\d employees__current_valid
+         View "public.employees__current_valid"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+ name        | text    |           |          | 
+ department  | text    |           |          | 
+Triggers:
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', '', 'id')
+
+TABLE sql_saga.updatable_view;
+ view_schema |        view_name         | view_type | table_schema | table_name | era_name | trigger_name  | current_func 
+-------------+--------------------------+-----------+--------------+------------+----------+---------------+--------------
+ public      | employees__current_valid | current   | public       | employees  | valid    | current_valid | test_now()
+(1 row)
+
+-- Test Error Handling for non-time-based eras
+SAVEPOINT before_failure_setup;
+CREATE TABLE widgets (id int, valid_from int, valid_until int);
+SELECT sql_saga.add_era('widgets', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SAVEPOINT expect_fail;
+-- This will fail because the era is not time-based, which is the point of the test.
+SELECT sql_saga.add_current_view('widgets'::regclass, p_current_func_name := 'test_now()');
+ERROR:  Cannot create a "current" view for era "valid" on table "widgets" because it is a range of integer, and only date or timestamp is supported.
+CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,name,text) line 51 at RAISE
+ROLLBACK TO expect_fail;
+ROLLBACK TO before_failure_setup;
+-- Test DML Semantics
+-- ==================
+-- Test SELECT
+-- Should show only currently active records and hide temporal columns.
+-- Only Alice (R&D) and Bob should be visible.
+CREATE VIEW employees_current_view_select AS
+TABLE employees__current_valid ORDER BY id;
+TABLE employees_current_view_select;
+ id | valid_from | valid_until | name  | department 
+----+------------+-------------+-------+------------
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2023-05-01 | infinity    | Bob   | Sales
+(2 rows)
+
+-- Test INSERT (SCD Type 2)
+-- Carol joins the company
+INSERT INTO employees__current_valid (id, name, department)
+VALUES (3, 'Carol', 'Marketing');
+-- The new record should be visible in the base table with a recent timestamp,
+-- and the view should now show Carol.
+TABLE employees ORDER BY id, valid_from;
+ id | valid_from | valid_until | name  | department  
+----+------------+-------------+-------+-------------
+  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2023-05-01 | infinity    | Bob   | Sales
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(4 rows)
+
+TABLE employees_current_view_select;
+ id | valid_from | valid_until | name  | department 
+----+------------+-------------+-------+------------
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2023-05-01 | infinity    | Bob   | Sales
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(3 rows)
+
+-- Test UPDATE (SCD Type 2)
+-- Bob moves from Sales to Management
+UPDATE employees__current_valid SET department = 'Management' WHERE id = 2;
+-- The old record for Bob should be closed out, and a new one created.
+-- The view should show Bob in Management.
+TABLE employees ORDER BY id, valid_from;
+ id | valid_from | valid_until | name  | department  
+----+------------+-------------+-------+-------------
+  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2023-05-01 | 2024-02-29  | Bob   | Sales
+  2 | 2024-02-29 | infinity    | Bob   | Management
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(5 rows)
+
+TABLE employees_current_view_select;
+ id | valid_from | valid_until | name  | department 
+----+------------+-------------+-------+------------
+  1 | 2024-01-01 | infinity    | Alice | R&D
+  2 | 2024-02-29 | infinity    | Bob   | Management
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(3 rows)
+
+-- Test DELETE (Soft delete)
+-- Alice leaves the company. A direct DELETE is disallowed. We must use the UPDATE protocol.
+SAVEPOINT expect_delete_fail;
+DELETE FROM employees__current_valid WHERE id = 1;
+ERROR:  Direct DELETE on a "current" view is disallowed.
+HINT:  To end an entity's timeline, perform an UPDATE. For an undocumented soft-delete, use the protocol: UPDATE ... SET valid_from = 'infinity'. For a documented soft-delete, add a comment or status change: UPDATE ... SET valid_from = 'infinity', comment = '...'
+CONTEXT:  PL/pgSQL function sql_saga.current_view_trigger() line 158 at RAISE
+ROLLBACK TO expect_delete_fail;
+-- Correct workflow for undocumented soft-delete:
+UPDATE employees__current_valid SET valid_from = 'infinity'::date WHERE id = 1;
+-- Alice's current record should be closed out. She should no longer be in the current view.
+TABLE employees ORDER BY id, valid_from;
+ id | valid_from | valid_until | name  | department  
+----+------------+-------------+-------+-------------
+  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | 2024-01-01 | 2024-02-29  | Alice | R&D
+  2 | 2023-05-01 | 2024-02-29  | Bob   | Sales
+  2 | 2024-02-29 | infinity    | Bob   | Management
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(5 rows)
+
+TABLE employees_current_view_select;
+ id | valid_from | valid_until | name  | department 
+----+------------+-------------+-------+------------
+  2 | 2024-02-29 | infinity    | Bob   | Management
+  3 | 2024-02-29 | infinity    | Carol | Marketing
+(2 rows)
+
+-- Drop the dependent view first
+DROP VIEW employees_current_view_select;
+-- Drop the view
+SELECT sql_saga.drop_current_view('employees'::regclass);
+ drop_current_view 
+-------------------
+ t
+(1 row)
+
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------
+(0 rows)
+
+-- The view should no longer exist.
+SAVEPOINT view_is_gone;
+SELECT * FROM employees__current_valid;
+ERROR:  relation "employees__current_valid" does not exist
+LINE 1: SELECT * FROM employees__current_valid;
+                      ^
+ROLLBACK TO view_is_gone;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

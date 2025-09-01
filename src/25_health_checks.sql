@@ -127,7 +127,8 @@ BEGIN
                        acl.privilege_type,
                        acl.privilege_type AS base_privilege_type,
                        acl.grantee,
-                       'p' AS history_or_portion
+                       'p' AS history_or_portion,
+                       v.view_type
                 FROM sql_saga.updatable_view v
                 JOIN pg_class vt ON vt.relname = v.view_name
                 JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
@@ -211,7 +212,9 @@ BEGIN
             LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
             GROUP BY object_type
         LOOP
+            SET session_replication_role = 'replica';
             EXECUTE cmd;
+            RESET session_replication_role;
         END LOOP;
     END IF;
 
@@ -322,7 +325,9 @@ BEGIN
             LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
             GROUP BY object_type
         LOOP
+            SET session_replication_role = 'replica';
             EXECUTE cmd;
+            RESET session_replication_role;
         END LOOP;
     END IF;
 

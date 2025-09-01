@@ -29,8 +29,8 @@ SET ROLE TO sql_saga_unprivileged_user;
 /* Basic period definitions with dates */
 CREATE TABLE basic (val text, valid_from date, valid_until date);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-------------------+------------------
 (0 rows)
 
 SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp');
@@ -40,9 +40,9 @@ SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
- public       | basic      | bp       | valid_from             | valid_until             | daterange  | basic_bp_check          |                   | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-------------------+------------------
+ public       | basic      | bp       | valid_from             | valid_until             | daterange  | date          | D                      | basic_bp_check          |                   | 
 (1 row)
 
 SELECT sql_saga.drop_era('basic', 'bp');
@@ -52,8 +52,8 @@ SELECT sql_saga.drop_era('basic', 'bp');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-------------------+------------------
 (0 rows)
 
 SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c');
@@ -63,9 +63,9 @@ SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
- public       | basic      | bp       | valid_from             | valid_until             | daterange  | c                       |                   | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-------------------+------------------
+ public       | basic      | bp       | valid_from             | valid_until             | daterange  | date          | D                      | c                       |                   | 
 (1 row)
 
 /* Test constraints */

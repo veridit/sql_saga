@@ -120,7 +120,6 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
    Sort Key: (row_number() OVER (?))
    CTE source_initial
      ->  Seq Scan on source1 t
-           Filter: (valid_from < valid_until)
    CTE target_rows
      ->  Hash Join
            Hash Cond: (jsonb_build_object('id', t_1.id) = source_initial.entity_id)
@@ -206,7 +205,7 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                                    Filter: (data_payload IS NOT NULL)
                                        SubPlan 9
                                          ->  CTE Scan on coalesced_final_segments f_inner
-(90 rows)
+(89 rows)
 
 SET client_min_messages TO NOTICE;
 ROLLBACK;

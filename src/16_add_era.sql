@@ -319,8 +319,18 @@ BEGIN
         EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(alter_commands, ', '));
     END IF;
 
-    INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint)
-    VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, bounds_check_constraint);
+    DECLARE
+        range_subtype regtype;
+        range_subtype_category char(1);
+    BEGIN
+        SELECT r.rngsubtype, t.typcategory
+        INTO range_subtype, range_subtype_category
+        FROM pg_catalog.pg_range r JOIN pg_catalog.pg_type t ON t.oid = r.rngsubtype
+        WHERE r.rngtypid = range_type;
+
+        INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
+        VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint);
+    END;
 
     -- Code for creation of triggers, when extending the era api
     --        /* Make sure all the excluded columns exist */

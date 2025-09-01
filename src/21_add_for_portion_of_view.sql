@@ -76,7 +76,7 @@ BEGIN
 
                 SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
 
-                view_name := sql_saga.__internal_make_api_view_name(r.table_name, r.era_name);
+                view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'for_portion_of');
                 trigger_name := 'for_portion_of_' || r.era_name;
                 EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
                 EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);

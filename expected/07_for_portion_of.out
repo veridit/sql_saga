@@ -49,9 +49,9 @@ SELECT sql_saga.add_for_portion_of_view('pricing', 'quantities');
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema |             view_name              |   view_type    | table_schema | table_name |  era_name  |       trigger_name        
--------------+------------------------------------+----------------+--------------+------------+------------+---------------------------
- public      | pricing__for_portion_of_quantities | for_portion_of | public       | pricing    | quantities | for_portion_of_quantities
+ view_schema |             view_name              |   view_type    | table_schema | table_name |  era_name  |       trigger_name        | current_func 
+-------------+------------------------------------+----------------+--------------+------------+------------+---------------------------+--------------
+ public      | pricing__for_portion_of_quantities | for_portion_of | public       | pricing    | quantities | for_portion_of_quantities | 
 (1 row)
 
 /* Test UPDATE FOR PORTION */
@@ -121,8 +121,8 @@ SELECT sql_saga.drop_era('pricing', 'quantities', 'CASCADE');
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name 
--------------+-----------+-----------+--------------+------------+----------+--------------
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------
 (0 rows)
 
 -- Add it back to test the drop_for_portion_view function
@@ -154,8 +154,8 @@ SELECT sql_saga.drop_for_portion_of_view('pricing', NULL);
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name 
--------------+-----------+-----------+--------------+------------+----------+--------------
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------
 (0 rows)
 
 SELECT sql_saga.drop_era('pricing', 'quantities');

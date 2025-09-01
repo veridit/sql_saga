@@ -99,6 +99,8 @@ BEGIN
 
         IF pre_assigned OR post_assigned THEN
             SET CONSTRAINTS ALL DEFERRED;
+            -- This is a transaction-scoped cache for generated column names.
+            -- It can be dropped in tests to verify cache-building logic.
             IF to_regclass('__sql_saga_generated_columns_cache') IS NULL THEN
                 CREATE TEMP TABLE __sql_saga_generated_columns_cache (table_oid oid PRIMARY KEY, column_names name[]) ON COMMIT DROP;
             END IF;
