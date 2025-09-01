@@ -56,9 +56,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
         - [x] `sql/31_updatable_view_for_portion_of_full.sql` is passing, covering edge cases and ACLs for `for_portion_of` views.
         - [x] `sql/32_updatable_view_current_full.sql` is passing, now with full coverage for both empty- and non-empty-range soft-deletes.
         - [x] The two `current` view tests (`30_..._basis` and `32_..._full`) cover both `delete_as_cutoff` and `delete_as_documented_ending` modes.
-        - [ ] Create `sql/34_updatable_views_types.sql`: Test both views against all supported range types.
+        - [x] Create `sql/34_updatable_views_types.sql`: Test both views against all supported range types.
     - **Phase 6: Deprecation & Finalization:**
-        - [ ] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
+        - [x] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
 
 - [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_founding_id_column` to handle intra-batch dependencies for new entities.
 
