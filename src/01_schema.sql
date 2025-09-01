@@ -224,6 +224,24 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
 COMMENT ON TYPE sql_saga.temporal_merge_mode IS 'Defines the behavior of the temporal_merge procedure, specifying how source data should be applied to the target table (e.g., insert and update, or only insert).';
 
 DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_merge_delete_mode AS ENUM (
+        'NONE',
+        'DELETE_MISSING_TIMELINE',
+        'DELETE_MISSING_ENTITIES',
+        'DELETE_MISSING_TIMELINE_AND_ENTITIES'
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+COMMENT ON TYPE sql_saga.temporal_merge_delete_mode IS
+'Controls deletion behavior for `replace` modes.
+- NONE (default): No deletions occur.
+- DELETE_MISSING_TIMELINE: For entities in the source, any part of their target timeline not covered by the source is deleted.
+- DELETE_MISSING_ENTITIES: Any entity in the target that is not present in the source is completely deleted.
+- DELETE_MISSING_TIMELINE_AND_ENTITIES: A combination of both timeline and entity deletion.';
+
+DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_status AS ENUM ('APPLIED', 'SKIPPED', 'TARGET_NOT_FOUND', 'ERROR');
 EXCEPTION
     WHEN duplicate_object THEN null;

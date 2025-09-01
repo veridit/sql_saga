@@ -6,6 +6,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## High Priority - Bugs & Core Features
 
+- [x] **Design and implement `temporal_merge` deletion semantics:** Based on the architecture outlined in `docs/temporal_merge_delete_semantics.md`, added a new `p_delete_mode` parameter to `temporal_merge` to allow for opt-in destructive deletes. This enables "source as truth" synchronization for ETL processes while maintaining safe, non-destructive behavior by default.
+- [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
 - [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
 
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
@@ -62,7 +64,11 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
     - **Phase 6: Deprecation & Finalization:**
         - [ ] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
 
-- [ ] **Refactor `temporal_merge` founding ID logic:** Make the source `row_id` column configurable and use it as the default `founding_id` for new entities, eliminating the internal `_sql_saga_source_row_id_` key.
+- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_founding_id_column` to handle intra-batch dependencies for new entities.
+
+- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_founding_id_column` to handle intra-batch dependencies for new entities.
+
+- [x] **Create a test suite for `temporal_merge` parameter edge cases:** The test `52_temporal_merge_parameters.sql` now provides comprehensive coverage for API parameter variations, including `NULL` and empty `p_id_columns`, non-existent column names, custom source row identifiers, and fully non-standard naming conventions.
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 

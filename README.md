@@ -375,6 +375,11 @@ The trigger will use `'2024-06-01'` and `'2024-08-01'` to find all of product 1'
   - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If this is `NULL`, the `p_source_row_id_column` is used as the default founding identifier.
     - **Important:** The scope of a `founding_id` is limited to a single `temporal_merge` call. All rows belonging to a single founding event *must* be processed within the same source table in a single call. Splitting a `founding_id` set across multiple `temporal_merge` calls will result in the creation of multiple, distinct entities, as the procedure has no memory of `founding_id` values used in previous calls.
   - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
+  - `p_delete_mode`: Controls the deletion behavior when using a `replace` mode. It is ignored for `patch` modes.
+    - `'NONE'` (Default): No deletions occur. Timelines are preserved and patched.
+    - `'DELETE_MISSING_TIMELINE'`: For entities present in the source, their timelines are completely replaced. Any part of their history in the target not covered by the source is deleted. Target entities not in the source are untouched.
+    - `'DELETE_MISSING_ENTITIES'`: Any entity in the target that is not present in the source is deleted. The timelines of entities that *are* in the source are preserved and patched.
+    - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A full synchronization. Timelines of source entities are replaced, and target entities not in the source are deleted.
 
 ### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.

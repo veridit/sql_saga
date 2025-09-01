@@ -7,7 +7,8 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name,
     p_source_row_id_column name DEFAULT 'row_id',
-    p_founding_id_column name DEFAULT NULL
+    p_founding_id_column name DEFAULT NULL,
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
 ) RETURNS SETOF sql_saga.temporal_plan_op
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
@@ -56,7 +57,7 @@ BEGIN
     END IF;
 
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_id_columns,
@@ -65,7 +66,8 @@ BEGIN
         p_era_name,
         p_source_row_id_column,
         COALESCE(p_founding_id_column, ''),
-        v_range_constructor
+        v_range_constructor,
+        p_delete_mode
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
 
@@ -93,6 +95,7 @@ BEGIN
         v_entity_id_check_is_null_expr TEXT;
         v_founding_id_select_expr TEXT;
         v_planner_entity_id_expr TEXT;
+        v_target_rows_filter TEXT;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
         IF p_founding_id_column IS NOT NULL THEN
@@ -210,12 +213,43 @@ $$;
         ELSE -- upsert_replace, replace_only
             -- In 'replace' modes, the source data payload overwrites the target. NULLs are meaningful.
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
-            v_resolver_ctes := '';
-            -- In `replace` mode, we prioritize the source data (`s_data_payload`). If there is no
-            -- source data for a given time segment, we preserve the target data (`t_data_payload`).
-            -- This correctly implements the "Temporal Patch" semantic.
-            v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
-            v_resolver_from := 'resolved_atomic_segments_with_payloads';
+
+            CASE p_delete_mode
+                WHEN 'DELETE_MISSING_TIMELINE_AND_ENTITIES' THEN
+                    v_target_rows_filter := ''; -- Process all target entities
+                    v_resolver_ctes := $$,
+resolved_atomic_segments_with_payloads_with_flag AS (
+    SELECT *,
+        bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY entity_id) as entity_is_in_source
+    FROM resolved_atomic_segments_with_payloads
+)
+$$;
+                    v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN s_data_payload ELSE NULL END$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
+                WHEN 'DELETE_MISSING_TIMELINE' THEN
+                    v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+                    v_resolver_ctes := '';
+                    v_final_data_payload_expr := 's_data_payload'; -- For entities in source, their timeline is replaced.
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads';
+                WHEN 'DELETE_MISSING_ENTITIES' THEN
+                    v_target_rows_filter := ''; -- Process all target entities
+                    v_resolver_ctes := $$,
+resolved_atomic_segments_with_payloads_with_flag AS (
+    SELECT *,
+        bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY entity_id) as entity_is_in_source
+    FROM resolved_atomic_segments_with_payloads
+)
+$$;
+                    v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN COALESCE(s_data_payload, t_data_payload) ELSE NULL END$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
+                WHEN 'NONE' THEN
+                    v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+                    v_resolver_ctes := '';
+                    v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads';
+                ELSE
+                    RAISE EXCEPTION 'Unhandled p_delete_mode: %', p_delete_mode;
+            END CASE;
         END IF;
 
 
@@ -267,7 +301,7 @@ target_rows AS (
         t.%15$I as valid_until,
         %6$s AS data_payload
     FROM %4$s t
-    WHERE (%1$s) IN (SELECT DISTINCT entity_id FROM source_initial)
+    %20$s -- v_target_rows_filter
 ),
 source_rows AS (
     -- Filter the initial source rows based on the operation mode.
@@ -480,7 +514,8 @@ $SQL$,
             v_founding_id_select_expr,      -- 16
             v_planner_entity_id_expr,       -- 17
             p_source_row_id_column,         -- 18
-            v_range_constructor             -- 19
+            v_range_constructor,            -- 19
+            v_target_rows_filter            -- 20
         );
 
         EXECUTE format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
@@ -490,7 +525,7 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
@@ -504,7 +539,8 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_era_name name DEFAULT 'valid',
     p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL,
-    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false
+    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false,
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
@@ -596,7 +632,8 @@ BEGIN
             p_mode                     => p_mode,
             p_era_name                 => p_era_name,
             p_source_row_id_column     => p_source_row_id_column,
-            p_founding_id_column       => p_founding_id_column
+            p_founding_id_column       => p_founding_id_column,
+            p_delete_mode              => p_delete_mode
         ) p;
 
         -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
@@ -963,6 +1000,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode) IS
 'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 
