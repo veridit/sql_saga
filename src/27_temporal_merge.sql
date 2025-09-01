@@ -16,7 +16,27 @@ DECLARE
     v_target_schema_name name;
     v_target_table_name_only name;
     v_range_constructor name;
+    v_valid_from_col name;
+    v_valid_until_col name;
 BEGIN
+    -- An entity must be identifiable. Fail fast if no ID columns are provided.
+    IF p_id_columns IS NULL OR cardinality(p_id_columns) = 0 THEN
+        RAISE EXCEPTION 'p_id_columns must be a non-empty array of column names that form the entity identifier.';
+    END IF;
+
+    -- Validate that provided column names exist.
+    PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_source_row_id_column AND NOT attisdropped AND attnum > 0;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'p_source_row_id_column "%" does not exist in source table %s', p_source_row_id_column, p_source_table::text;
+    END IF;
+
+    IF p_founding_id_column IS NOT NULL THEN
+        PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_founding_id_column AND NOT attisdropped AND attnum > 0;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'p_founding_id_column "%" does not exist in source table %s', p_founding_id_column, p_source_table::text;
+        END IF;
+    END IF;
+
     -- Introspect just enough to get the range constructor, which is part of the cache key.
     SELECT n.nspname, c.relname
     INTO v_target_schema_name, v_target_table_name_only
@@ -24,12 +44,16 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = p_target_table;
 
-    SELECT e.range_type::name
-    INTO v_range_constructor
+    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name
+    INTO v_range_constructor, v_valid_from_col, v_valid_until_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
       AND e.era_name = p_era_name;
+
+    IF v_valid_from_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    END IF;
 
     -- Generate the cache key first from all relevant arguments. This is fast.
     v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s',
@@ -67,8 +91,6 @@ BEGIN
         v_diff_join_condition TEXT;
         v_plan_source_row_ids_expr TEXT;
         v_entity_id_check_is_null_expr TEXT;
-        v_valid_from_col name;
-        v_valid_until_col name;
         v_founding_id_select_expr TEXT;
         v_planner_entity_id_expr TEXT;
     BEGIN
@@ -95,18 +117,6 @@ BEGIN
                     ELSE si.entity_id
                 END
             $$, COALESCE(p_founding_id_column, p_source_row_id_column));
-        END IF;
-
-        -- Introspect era information to get the correct column names
-        SELECT e.valid_from_column_name, e.valid_until_column_name
-        INTO v_valid_from_col, v_valid_until_col
-        FROM sql_saga.era e
-        WHERE e.table_schema = v_target_schema_name
-          AND e.table_name = v_target_table_name_only
-          AND e.era_name = p_era_name;
-
-        IF v_valid_from_col IS NULL THEN
-            RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
         END IF;
 
         -- Resolve table identifiers to be correctly quoted and schema-qualified.
@@ -249,7 +259,6 @@ source_initial AS (
         %2$s AS data_payload,
         %13$s as is_new_entity
     FROM %3$s t
-    WHERE t.%14$I < t.%15$I
 ),
 target_rows AS (
     SELECT
@@ -718,28 +727,14 @@ BEGIN
                         v_stage3_all_cols_ident TEXT;
                         v_stage3_all_cols_select TEXT;
                     BEGIN
-                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns,
-                        -- as the IDs have now been generated and back-filled into the plan.
-                        WITH source_cols AS (
+                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns.
+                        -- We can now safely insert all non-generated columns.
+                        WITH target_cols AS (
                             SELECT pa.attname
                             FROM pg_catalog.pg_attribute pa
-                            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
-                        ),
-                        target_cols AS (
-                            SELECT pa.attname
-                            FROM pg_catalog.pg_attribute pa
-                            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
-                        ),
-                        common_data_cols AS (
-                            SELECT s.attname
-                            FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-                            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name', p_founding_id_column)
-                              AND s.attname <> ALL(p_id_columns)
-                        ),
-                        all_available_cols AS (
-                            SELECT attname FROM common_data_cols
-                            UNION ALL
-                            SELECT unnest(p_id_columns)
+                            WHERE pa.attrelid = p_target_table
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
+                              AND pa.attgenerated = '' -- Exclude only generated columns
                         )
                         SELECT
                             string_agg(format('%I', attname), ', '),
@@ -747,7 +742,7 @@ BEGIN
                         INTO
                             v_stage3_all_cols_ident,
                             v_stage3_all_cols_select
-                        FROM all_available_cols;
+                        FROM target_cols;
 
                         EXECUTE format($$
                             INSERT INTO %1$s (%2$s, %4$I, %5$I)
