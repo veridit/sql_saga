@@ -19,7 +19,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
 - [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
-- [x] **Fix(api): Harden sync triggers and finalize view behavior:** Fixed synchronization regressions by adding declarative metadata to the `era` table. Hardened the `add_era` API to fail-fast on missing columns. Corrected view logic to be transparent, and updated documentation and tests accordingly.
+- [x] **Feat(api): Add unified synchronization for temporal columns:** Enhanced `add_era` to support `p_synchronize_valid_to_column` and `p_synchronize_range_column`. This creates a single, unified trigger to keep all temporal representations (bounds, `valid_to`, range) consistent and enables declarative metadata for synchronization.
 
 ## Medium Priority - Refactoring & API Improvements
 
@@ -88,8 +88,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Complete the `regclass` -> `(schema, table)` refactoring:** Removed all `oid` columns from metadata tables, making event triggers robust against `DROP`.
 
-- [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
-
 - [x] **Refactor `add_updatable_views` to not require a primary key:** Refactored `add_updatable_views` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
 
 - [x] **Fix event trigger regressions:** Resolved bugs in `rename_following` and `health_checks` event triggers that were exposed by refactoring. The triggers now correctly handle `search_path` issues and reliably update metadata for renamed objects.
@@ -100,15 +98,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 
 ## Low Priority - Future Work & New Features
-
-- [x] **Ergonomic `add_era` with column defaults and `valid_to` sync:**
-  - **Issue:** Users had to manually specify `valid_from`/`valid_until` and create a trigger to synchronize a `valid_to` column.
-  - **Action:** Enhanced `add_era` with default column names (`valid_from`, `valid_until`) and a new `p_synchronize_valid_to_column` parameter (default `valid_to`). `add_era` now automatically creates the synchronization trigger if a compatible column is found, making the common case much simpler. This can be disabled by setting the parameter to `NULL`.
-
-- [x] **Ergonomic native range type handling:**
-  - **Issue:** Users must manually create triggers to synchronize `valid_to` and native `range` columns with the core `valid_from`/`valid_until` columns.
-  - **Action:** Enhanced `add_era` to automatically create a single, unified trigger that synchronizes all three column types (`bounds`, `valid_to`, `range`). This resolves a circular dependency bug that made separate triggers unworkable. The new trigger establishes a clear order of precedence (`range` -> `bounds` -> `valid_to`) to ensure robust, predictable behavior.
-  - **Viability Note:** This is the recommended architecture. It provides maximum flexibility for both database and PostgREST users, leverages an existing pattern, and requires no changes to the core extension.
 
 - [ ] **Ensure `infinity` is the default for `valid_to` columns:**
   - **File:** `sql_saga--1.0.sql`
