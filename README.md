@@ -20,9 +20,16 @@ In the context of this extension, a **Saga** represents the complete history of 
 - Built upon the robust and reliable PostgreSQL database system.
 - Supports change tracking and delete in accordance with NSO requirements.
 
-## Temporal Tables with Foreign Keys example
+## Installation
 
-A simplified example to illustrate the concept.
+TODO: Build a docker image with postgres and the sql_saga extension.
+
+TODO: Build an Ubuntu packate with sql_saga.
+
+`CREATE EXTENSION sql_saga;`
+
+## Core Concepts
+
 A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end), aligning with PostgreSQL's native range types. While `DATE` is used in these examples for simplicity, any data type that can form a range is supported, including `TIMESTAMPTZ`, `TIMESTAMP`, `INTEGER`, `BIGINT`, and `NUMERIC`.
 
 ### Entity Identifiers
@@ -37,143 +44,17 @@ A row is considered **"current"** if its validity period `[valid_from, valid_unt
 
 ### Managing Historical Changes: Slowly Changing Dimensions (SCD)
 When an attribute of an entity changes over time, we need a strategy to record that change. The most robust method for this is the **Type 2 Slowly Changing Dimension (SCD Type 2)**. Instead of overwriting old data, this pattern preserves history by:
-1.  "Closing out" the current historical record by updating its `valid_until` to the timestamp of the change.
+1.  "Closing out" a historical record by updating its `valid_until` to the timestamp of the change.
 2.  Inserting a new record with the updated data, which becomes the new "current" version.
 
 `sql_saga` automates this pattern through its updatable views, making it easy to maintain a complete and accurate history of every entity.
 
-### Temporal Table with Valid Time
+### Level 2: Common Patterns
 
-When you call `add_era`, it can automatically create synchronization triggers for you.
-
--   **For `valid_to` columns:** To enable synchronization for a `valid_to`-style column, provide its name in the `p_synchronize_valid_to_column` parameter. If the era's data type is discrete (e.g., `date`, `integer`), a trigger is created to enforce `valid_until = valid_to + 1`. If the type is continuous (e.g., `timestamptz`), this feature is disabled with a `WARNING`.
--   **For `range` columns:** To enable synchronization for a native `range` column, provide its name in the `p_synchronize_range_column` parameter. A trigger will be created to keep it synchronized with the `valid_from` and `valid_until` bounds.
-
-These features are disabled by default (`NULL`).
-
-Example table:
-```
-TABLE establishment (
-    id,
-    valid_from date,
-    valid_until date,
-    name
-)
-```
-Example data
-```
-------+------------+-------------+------------------------------------
-id    | valid_from | valid_until |  name
-------+------------+-------------+------------------------------------
-01    | 2023-01-01 |  2023-07-01 |  AutoParts LLC
-01    | 2023-07-01 |  2024-01-01 |  AutoSpareParts INC
-01    | 2024-01-01 |  infinity   |  SpareParts Corporation
-02    | 2022-01-01 |  2022-07-01 |  Gasoline Refinement LLC
-02    | 2022-07-01 |  2023-01-01 |  Gasoline and Diesel Refinement LLC
-02    | 2023-01-01 |  infinity   |  General Refinement LLC
-------+------------+-------------+------------------------------------
-```
-
-A regular table of statistical values
-```
-TABLE stat_definition(
-  code,
-  stat_type,
-  frequency,
-  name,
-)
-```
-Example values measured for an establishment.
-```
-----------+-----------+--------------+---------------------------
-code      | stat_type |   frequency  |  name
-----------+-----------+--------------+---------------------------
-employees |   int     |   yearly     |  Number of people employed
-turnover  |   int     |   yearly     |  Turnover (Local Currency)
-----------+-----------+--------------+---------------------------
-```
-There is no temporal information for the `stat_definition` table,
-as we don't report on their historic development.
-
-A table for tracking the measured values over time,
-using `valid_from` and `valid_until`, in addition to having
-a regular foreign key to `stat_definition_id`, and a temporal
-foreign key to `establishment.id`.
-
-```
-TABLE stat_for_unit (
-    id
-    stat_definition_id,
-    valid_from,
-    valid_until,
-    establishment_id,
-    value,
-)
-```
-
-Some example data to show how measurements are kept in `stat_for_unit`.
-```
------------+------------+-------------+--------+------------
- stat_def  | valid_from | valid_until | est_id | value
------------+------------+-------------+--------+------------
- employees | 2020-01-01 |  2024-01-01 |  01    |         90
- employees | 2024-01-01 |  infinity   |  01    |        130
- turnover  | 2023-01-01 |  2024-01-01 |  01    | 10 000 000
- turnover  | 2024-01-01 |  infinity   |  01    | 30 000 000
- employees | 2022-01-01 |  2023-01-01 |  02    |         20
- employees | 2023-01-01 |  infinity   |  02    |         80
- turnover  | 2022-01-01 |  2023-01-01 |  02    | 40 000 000
- turnover  | 2023-01-01 |  infinity   |  02    | 70 000 000
------------+------------+-------------+--------+------------
-```
-
-The purpose of this extension is to make sure that for foreign keys
-between temporal tables, the linked table, in this case `establishment`,
-must have the linked foreign key available for the entire period `[valid_from, valid_until)`
-of the `stat_for_unit` table.
-
-Notice that there can be multiple matching rows, and the periods do not
-need to align between the tables.
-
-So this line from `stat_for_unit` which represents the period `[2022-01-01, 2023-01-01)`
-```
-turnover  | ... | 2022-01-01 | 2023-01-01 |  02    | 40 000 000
-```
-is covered by these two contiguous lines in `establishment` for periods `[2022-01-01, 2022-07-01)` and `[2022-07-01, 2023-01-01)`
-```
-02    | ... | 2022-01-01 | 2022-07-01 |  Gasoline Refinement LLC
-02    | ... | 2022-07-01 | 2023-01-01 |  Gasoline and Diesel Refinement LLC
-```
-
-### Foreign Keys from Regular (Non-Temporal) Tables
-
-`sql_saga` also supports foreign keys from a regular (non-temporal) table to a temporal table. This is useful for ensuring that a reference in a regular table points to an entity that exists (or existed at some point) in a temporal table.
-
-For example, a regular `projects` table might reference a lead employee from a temporal `employees` table:
-
-```
-TABLE projects (
-    id int,
-    name text,
-    lead_employee_id int
-)
-
-TABLE employees (
-    id int,
-    valid_from date,
-    valid_until date,
-    name text
-)
-```
-
-A foreign key from `projects.lead_employee_id` to `employees.id` ensures that any `lead_employee_id` in the `projects` table corresponds to a valid employee in the `employees` table's history. Unlike temporal-to-temporal foreign keys which check for coverage over a period, this type of foreign key simply checks for the *existence* of the key in the referenced temporal table at any point in its history.
-
-This validation is implemented using a `CHECK` constraint on the regular table, which calls a high-performance helper function created by `sql_saga`.
-
-## Updatable Views for Simplified Data Management
+#### Updatable Views for Simplified Data Management
 To simplify common interactions with temporal data, `sql_saga` provides two types of updatable views. These views act as a stable, user-friendly API layer on top of your temporal tables, and are especially useful for integration with tools like PostgREST.
 
-### The `for_portion_of` View: Full Historical Access
+##### The `for_portion_of` View: Full Historical Access
 This view provides a direct window into the entire history of a table. It is designed for advanced use cases where you need to make precise changes to historical data.
 - **`INSERT`**: Directly inserts a new historical record with specified `valid_from` and `valid_until` dates.
 - **`UPDATE`**: Can be used for two purposes:
@@ -219,19 +100,19 @@ WHERE
     id = 1; -- The entity identifier
 ```
 
-### The `current` View: A Simple View of the Present
+##### The `current` View: A Simple View of the Present
 This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It simplifies interaction by showing only the records that are currently active. Because it is based on the concept of "now", the `current` view can only be created on eras that use a `date` or `timestamp`-based data type. It provides a safe, explicit protocol for data modification.
 
 - **`INSERT`**: Creates a new entity. The `valid_from` is automatically set to the current time, and `valid_until` is set to 'infinity'.
 - **`UPDATE` (SCD Type 2)**: A standard `UPDATE ... SET column = 'new value'` automatically performs a **Type 2 Slowly Changing Dimension** operation. The current record is closed out (its `valid_until` is set to `now()`), and a new record is inserted with the updated data, becoming the new current version.
 
-##### Advanced Usage: Exposing All Temporal Columns in Views
+###### Advanced Usage: Exposing All Temporal Columns in Views
 The updatable views (`for_portion_of` and `current`) are designed for transparency. They will always expose *all* columns from the underlying base table. This allows for advanced use cases where multiple temporal representations are managed on the same table.
 
 - **Regular Usage:** If your table only has `valid_from` and `valid_until`, the views will expose just those two columns.
 - **Advanced Usage:** If you add synchronized columns like a human-readable `valid_to` or a native `range` column to your base table, they will also be visible in the views. This allows you to interact with whichever temporal representation is most convenient.
 
-#### Ending an Entity's Timeline (Soft-Delete)
+###### Ending an Entity's Timeline (Soft-Delete)
 `sql_saga` provides two configurable modes for handling the end of an entity's timeline, controlled by the `delete_mode` parameter in `add_current_view`. This allows you to choose between maximum ORM compatibility and maximum auditability.
 
 **1. Simple Cutoff Mode (Default)**
@@ -256,22 +137,75 @@ UPDATE employees__current_valid SET department = 'Management' WHERE id = 2;
 UPDATE employees__current_valid SET valid_from = 'infinity', status = 'resigned' WHERE id = 1;
 ```
 
-### Security Model: `SECURITY INVOKER`
+##### Security Model: `SECURITY INVOKER`
 All triggers on these views are `SECURITY INVOKER` (the default). This is a key security feature. It means that any DML operation on a view is executed with the permissions of the *calling user*. The system checks the user's permissions on the underlying base table before allowing the operation, so a user can only do what they are already allowed to do. This ensures seamless compatibility with PostgreSQL's Row-Level Security (RLS) and standard table `GRANT`s.
 
-## Installation
+#### Foreign Keys from Regular (Non-Temporal) Tables
 
-TODO: Build a docker image with postgres and the sql_saga extension.
+`sql_saga` also supports foreign keys from a regular (non-temporal) table to a temporal table. This is useful for ensuring that a reference in a regular table points to an entity that exists (or existed at some point) in a temporal table.
 
-TODO: Build an Ubuntu packate with sql_saga.
+For example, a regular `projects` table might reference a lead employee from a temporal `employees` table:
 
-`CREATE EXTENSION sql_saga;`
+```
+TABLE projects (
+    id int,
+    name text,
+    lead_employee_id int
+)
+
+TABLE employees (
+    id int,
+    valid_from date,
+    valid_until date,
+    name text
+)
+```
+
+A foreign key from `projects.lead_employee_id` to `employees.id` ensures that any `lead_employee_id` in the `projects` table corresponds to a valid employee in the `employees` table's history. Unlike temporal-to-temporal foreign keys which check for coverage over a period, this type of foreign key simply checks for the *existence* of the key in the referenced temporal table at any point in its history.
+
+This validation is implemented using a `CHECK` constraint on the regular table, which calls a high-performance helper function created by `sql_saga`.
+
+#### High-Performance Bulk Data Loading (`temporal_merge`)
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
+  - `p_target_table`: The temporal table to merge data into.
+  - `p_source_table`: A table (usually temporary) containing the source data.
+  - `p_id_columns`: An array of column names that form the conceptual entity identifier.
+  - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated (e.g., `edit_comment`).
+  - `p_mode`: Controls the merge behavior.
+    - `'upsert_patch'`: Inserts new entities and updates existing ones. `NULL` values in the source are ignored, preserving existing data.
+    - `'upsert_replace'`: Inserts new entities and updates existing ones. `NULL` values in the source will overwrite existing data.
+    - `'patch_only'` / `'replace_only'`: Only affects entities that already exist in the target table.
+    - `'insert_only'`: Only inserts new entities.
+  - `p_source_row_id_column`: The name of the column in the source table that uniquely identifies each row (default: `row_id`). This column is required for providing feedback on a per-row basis.
+  - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If this is `NULL`, the `p_source_row_id_column` is used as the default founding identifier.
+    - **Important:** The scope of a `founding_id` is limited to a single `temporal_merge` call. All rows belonging to a single founding event *must* be processed within the same source table in a single call. Splitting a `founding_id` set across multiple `temporal_merge` calls will result in the creation of multiple, distinct entities, as the procedure has no memory of `founding_id` values used in previous calls.
+  - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
+  - `p_delete_mode`: Controls the deletion behavior when using a `replace` mode. It is ignored for `patch` modes.
+    - `'NONE'` (Default): No deletions occur. Timelines are preserved and patched.
+    - `'DELETE_MISSING_TIMELINE'`: For entities present in the source, their timelines are completely replaced. Any part of their history in the target not covered by the source is deleted. Target entities not in the source are untouched.
+    - `'DELETE_MISSING_ENTITIES'`: Any entity in the target that is not present in the source is deleted. The timelines of entities that *are* in the source are preserved and patched.
+    - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A full synchronization. Timelines of source entities are replaced, and target entities not in the source are deleted.
+
+  ##### Operation Feedback and Session State
+  The procedure uses two session-scoped temporary tables to manage its state: `__temp_last_sql_saga_temporal_merge_plan` (which stores the execution plan) and `__temp_last_sql_saga_temporal_merge` (which stores the final row-by-row feedback). These tables are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
+
+  - **Caveat for Multi-Role Sessions:** Because `TEMP` tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later in the same session by an unprivileged user, the second call will fail as the unprivileged user will not have permission to drop the temporary tables created by the superuser.
+  - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, you must manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS __temp_last_sql_saga_temporal_merge_plan, __temp_last_sql_saga_temporal_merge;`
+
+#### System Versioning (History Tables)
+`sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
+
+### Level 3: The Deep Dive - Complete API Reference
 
 ## Usage
 
-Detailed examples and explanations on how to use the `sql_saga` system.
+This section provides a guide to using `sql_saga`, organized into three levels of complexity.
 
-### Activate
+### Level 1: The Quick Tour
+
+This example provides a complete, runnable demonstration of the core DDL functions to set up temporal tables and relationships.
+
+#### Activate
 
 ```
 CREATE TABLE legal_unit (
@@ -330,7 +264,7 @@ SELECT sql_saga.add_foreign_key(
 );
 ```
 
-### Deactivate
+#### Deactivate
 
 ```
 -- Foreign keys must be dropped before the unique keys they reference.
@@ -401,103 +335,38 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   make diff-fail-all vim
   ```
 
-## API Reference
-
-### Era Management
+#### Era Management
 - `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., p_synchronize_valid_to_column name DEFAULT NULL, p_synchronize_range_column name DEFAULT NULL, create_columns boolean DEFAULT false) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
   - The `range_type` is automatically inferred from the column data types.
   - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `p_synchronize_valid_to_column` or `p_synchronize_range_column`. This creates a single, unified trigger to keep all temporal columns consistent.
-  - The trigger uses a **fail-fast on inconsistency** approach: if you provide multiple temporal representations that are inconsistent with each other (e.g., a `valid_to` of '2024-12-31' and a `validity` range of `[2024-01-01, 2024-06-01)`), it will raise an error rather than guess your intent. It is safe to provide redundant, but consistent, information.
-  - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`). If requested for a continuous type (e.g., `timestamptz`, `numeric`), a `WARNING` is issued and the feature is disabled for that era.
-  - If `create_columns` is `true`, it will also create the `valid_from` and `valid_until` columns if they do not exist. This flag does not create synchronization columns (`valid_to` or a range column), which must exist beforehand.
+  - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`).
+  - If `create_columns` is `true`, it will also create the `valid_from` and `valid_until` columns if they do not exist.
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
-### Unique Keys
+#### Unique Keys
 - `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL, predicate text DEFAULT NULL) RETURNS name`
 - `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 
-### Foreign Keys
+#### Foreign Keys
 - **For temporal-to-temporal foreign keys:**
   - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
 - **For regular-to-temporal foreign keys:**
   - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_check_constraint name DEFAULT NULL, fk_helper_function text DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
 - **Dropping foreign keys:**
-  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name DEFAULT NULL, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT') RETURNS void`: Drops a foreign key. For temporal-to-temporal keys, `era_name` must be provided. For regular-to-temporal keys, `era_name` should be omitted.
+  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name DEFAULT NULL, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops a foreign key. For temporal-to-temporal keys, `era_name` must be provided. For regular-to-temporal keys, `era_name` should be omitted.
   - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
-### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
-`sql_saga` provides a symmetrical set of functions to create and drop specialized, updatable views that simplify interaction with temporal data. These views have different semantics tailored to specific use cases.
-
-#### Security Model: `SECURITY INVOKER` Triggers
-A key design principle of these updatable views is their robust and secure permission model, which is fully compatible with PostgreSQL's Row-Level Security (RLS) and standard schema permissions. This is achieved through a two-part architecture:
-
-1.  **`SECURITY DEFINER` API Functions**: The functions that create and drop views (e.g., `add_current_view`) run with `SECURITY DEFINER` privileges. This is necessary to allow these functions to create objects like views and triggers in the same schema as the target table, which may be owned by a different user.
-2.  **`SECURITY INVOKER` Triggers**: The `INSTEAD OF` triggers attached to the views are `SECURITY INVOKER` (the default). This means that any `INSERT`, `UPDATE`, or `DELETE` operation on the view is executed with the permissions of the *calling user*, not the trigger's owner. PostgreSQL will therefore check the user's permissions on the underlying base table before allowing the operation to proceed.
-
-This ensures that a user can only perform actions on the temporal data that they are already permitted to perform on the base table, providing a secure and intuitive security model. All `GRANT` and `REVOKE` operations on the base table are automatically propagated to the associated views by an event trigger, keeping permissions synchronized.
-
-- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax. It provides direct access to historical records, allowing for `INSERT`, historical corrections (`UPDATE`), and permanent deletion of historical facts (`DELETE`).
+#### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
+- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax.
 - `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `for_portion_of` view associated with the specified table and era.
-
-#### Using the `_for_portion_of_` View for Updates
-
-The `UPDATE` operation on a `_for_portion_of_` view is extremely powerful and has a specific usage pattern to apply a change to a *portion of an entity's timeline*.
-
-**The Pattern:** To update an entity's data for a specific period, you must pass the start and end of that period **via the `SET` clause**. The `INSTEAD OF UPDATE` trigger uses these values as parameters to correctly split existing historical records.
-
-**Example:** Imagine a legal unit was incorrectly marked as 'active' between September 1st and November 1st.
-```sql
--- This query marks legal_unit 1 as inactive only for the period from 2023-09-01 to 2023-11-01.
-UPDATE legal_unit__for_portion_of_valid
-SET
-    status = 'inactive', -- The new data value
-    -- These act as parameters for the trigger:
-    valid_from = '2023-09-01',
-    valid_until = '2023-11-01'
-WHERE
-    id = 1; -- The entity identifier
-```
-The trigger will use `'2023-09-01'` and `'2023-11-01'` to find all of legal unit 1's historical records that overlap with this period, and it will automatically truncate, split, and insert new records as needed to apply the status change for exactly that duration.
-- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs. The view enables a powerful DML protocol:
-  - **`INSERT`**: Creates a new historical record for an entity, which becomes the new "current" state.
-  - **`UPDATE`**: A standard `UPDATE` performs a **State Change (SCD Type 2)**: the existing current record is closed out, and a new record is inserted with the updated data.
-  - **Ending a Timeline (Soft-Delete)**: The behavior is controlled by the `delete_mode` parameter:
-    - `'delete_as_cutoff'` (Default): A standard `DELETE` statement is **allowed** and is automatically translated into a soft-delete (the record's `valid_until` is set to the current time). This is the default mode for ORM compatibility.
-    - `'delete_as_documented_ending'`: `DELETE` is **disallowed**. A soft-delete must be performed via a special `UPDATE` statement: `UPDATE ... SET valid_from = 'infinity', status = 'archived'`. The `valid_from = 'infinity'` signals the trigger to end the timeline, while other `SET` clauses are applied to the now-historical record for audit purposes. This mode is for systems where auditability is critical.
-  - The optional `p_current_func_name` parameter allows for overriding the function used to determine the current time (e.g., `now()` or `CURRENT_DATE`). This is primarily for testing, allowing for deterministic test runs. For security, this parameter is validated to ensure it is a valid function signature.
+- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs.
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.
 
-### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement.
-  - `p_target_table`: The temporal table to merge data into.
-  - `p_source_table`: A table (usually temporary) containing the source data.
-  - `p_id_columns`: An array of column names that form the conceptual entity identifier.
-  - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated (e.g., `edit_comment`).
-  - `p_mode`: Controls the merge behavior.
-    - `'upsert_patch'`: Inserts new entities and updates existing ones. `NULL` values in the source are ignored, preserving existing data.
-    - `'upsert_replace'`: Inserts new entities and updates existing ones. `NULL` values in the source will overwrite existing data.
-    - `'patch_only'` / `'replace_only'`: Only affects entities that already exist in the target table.
-    - `'insert_only'`: Only inserts new entities.
-  - `p_source_row_id_column`: The name of the column in the source table that uniquely identifies each row (default: `row_id`). This column is required for providing feedback on a per-row basis.
-  - `p_founding_id_column`: The name of a column in the source table used to group multiple rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If this is `NULL`, the `p_source_row_id_column` is used as the default founding identifier.
-    - **Important:** The scope of a `founding_id` is limited to a single `temporal_merge` call. All rows belonging to a single founding event *must* be processed within the same source table in a single call. Splitting a `founding_id` set across multiple `temporal_merge` calls will result in the creation of multiple, distinct entities, as the procedure has no memory of `founding_id` values used in previous calls.
-  - `p_update_source_with_assigned_entity_ids`: If `true`, the procedure will update the source table with any generated surrogate key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
-  - `p_delete_mode`: Controls the deletion behavior when using a `replace` mode. It is ignored for `patch` modes.
-    - `'NONE'` (Default): No deletions occur. Timelines are preserved and patched.
-    - `'DELETE_MISSING_TIMELINE'`: For entities present in the source, their timelines are completely replaced. Any part of their history in the target not covered by the source is deleted. Target entities not in the source are untouched.
-    - `'DELETE_MISSING_ENTITIES'`: Any entity in the target that is not present in the source is deleted. The timelines of entities that *are* in the source are preserved and patched.
-    - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A full synchronization. Timelines of source entities are replaced, and target entities not in the source are deleted.
+#### High-Performance Bulk Data Loading (`temporal_merge`)
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'upsert_patch', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`
 
-  #### Operation Feedback and Session State
-  The procedure uses two session-scoped temporary tables to manage its state: `__temp_last_sql_saga_temporal_merge_plan` (which stores the execution plan) and `__temp_last_sql_saga_temporal_merge` (which stores the final row-by-row feedback). These tables are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
-
-  - **Caveat for Multi-Role Sessions:** Because `TEMP` tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later in the same session by an unprivileged user, the second call will fail as the unprivileged user will not have permission to drop the temporary tables created by the superuser.
-  - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, you must manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS __temp_last_sql_saga_temporal_merge_plan, __temp_last_sql_saga_temporal_merge;`
-
-### System Versioning (History Tables)
-`sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
-
+#### System Versioning (History Tables)
 - `add_system_versioning(table_oid regclass, history_table_name name DEFAULT NULL, view_name name DEFAULT NULL)`
 - `drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)`
 - `set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[]) RETURNS void`
