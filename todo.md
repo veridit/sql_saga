@@ -30,15 +30,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
 - [x] **Rename `add_api` to `add_updatable_views` for clarity:** Renamed `add_api` and `drop_api` to `add_updatable_views` and `drop_updatable_views` respectively, to better reflect their purpose of managing views for temporal data.
 
-- [x] **Refactor and Finalize `for_portion_of` Updatable View:** Port the existing `add_updatable_views` logic to the new symmetrical API, formalizing its DML semantics and test coverage.
-    - **Phase 1: Data Model (Shared Prerequisite - Complete):**
-        - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
-    - **Phase 2: Define the Goal (Tests & Docs) - Complete:**
-        - [x] `README.md` is updated with the symmetrical API reference.
-        - [x] Created `sql/29_updatable_view_for_portion_of_basis.sql` to define the target behavior.
-    - **Phase 3 & 4: Implementation & Verification (Basis) - Complete:**
-        - [x] Renamed and implemented the `add/drop_for_portion_of_view` API and its trigger logic.
-        - [x] The basis test `29_updatable_view_for_portion_of_basis.sql` is now passing.
+- [x] **Refactor and Finalize `for_portion_of` Updatable View:** Ported and expanded test coverage from legacy files, and formalized DML semantics. The view's behavior, including its known limitation of not coalescing adjacent identical rows from multi-row updates, is now fully verified by the test suite.
 
 - [x] **Implement `current` Updatable View:** Created the new `current` view with a robust and explicit DML protocol for easy integration with ORMs and APIs.
     - **Phase 1: Data Model (Shared Prerequisite - Complete):**

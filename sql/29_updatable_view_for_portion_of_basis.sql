@@ -61,6 +61,40 @@ WHERE id = 1;
 TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 
+
+-- Test UPDATE (spanning multiple historical records)
+-- This should shorten two records and insert a new one in the middle.
+-- To get a clean state, we delete and re-insert product 1's history.
+DELETE FROM products WHERE id = 1;
+INSERT INTO products VALUES
+(1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
+(1, 'Laptop', 1150, '2024-01-01', 'infinity');
+TABLE products ORDER BY id, valid_from;
+
+UPDATE products__for_portion_of_valid
+SET
+    price = 1180,
+    valid_from = '2023-10-01',
+    valid_until = '2024-04-01'
+WHERE id = 1;
+
+TABLE products ORDER BY id, valid_from;
+TABLE products_view_select_for_portion_of;
+
+-- Test UPDATE (fully surrounding all existing records for an entity)
+-- This runs on the result of the previous test and should replace all
+-- historical records for Laptop with a single new one.
+UPDATE products__for_portion_of_valid
+SET
+    price = 1300,
+    valid_from = '2022-01-01',
+    valid_until = 'infinity'
+WHERE id = 1;
+
+TABLE products ORDER BY id, valid_from;
+TABLE products_view_select_for_portion_of;
+
+
 -- Test DELETE (Hard historical delete)
 -- Delete the Mouse record
 DELETE FROM products__for_portion_of_valid WHERE id = 2;

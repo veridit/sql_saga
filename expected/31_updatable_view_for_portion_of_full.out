@@ -161,6 +161,199 @@ SELECT sql_saga.drop_for_portion_of_view('acl_test'::regclass);
  t
 (1 row)
 
+-- Scenario 3: Drop behavior
+CREATE TABLE drop_test (id int PRIMARY KEY, value text, valid_from date, valid_until date);
+SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('drop_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+-- RESTRICT should fail because the view depends on the era
+SAVEPOINT before_drop_era;
+SELECT sql_saga.drop_era('drop_test'::regclass, 'valid', 'RESTRICT');
+ERROR:  era valid is used by an updatable view
+CONTEXT:  PL/pgSQL function sql_saga.drop_era(regclass,name,sql_saga.drop_behavior,boolean) line 81 at RAISE
+ROLLBACK TO before_drop_era;
+-- CASCADE should succeed and drop the view
+SELECT sql_saga.drop_era('drop_test'::regclass, 'valid', 'CASCADE');
+ drop_era 
+----------
+ t
+(1 row)
+
+-- The view should be gone from the metadata
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------
+(0 rows)
+
+-- DROP TABLE should now succeed
+DROP TABLE drop_test;
+-- Recreate for next test
+CREATE TABLE drop_test (id int PRIMARY KEY, value text, valid_from date, valid_until date);
+SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('drop_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+-- Dropping table directly should fail due to dependent view
+SAVEPOINT expect_fail;
+DROP TABLE drop_test;
+ERROR:  cannot drop table drop_test because other objects depend on it
+DETAIL:  view drop_test__for_portion_of_valid depends on table drop_test
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ROLLBACK TO SAVEPOINT expect_fail;
+-- We must drop the view first, then the table
+SELECT sql_saga.drop_for_portion_of_view('drop_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+DROP TABLE drop_test;
+-- Scenario 4: Table with no primary key (using temporal unique key as identifier)
+CREATE TABLE no_pk_test (
+    id integer,
+    value text,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('no_pk_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
+   add_unique_key    
+---------------------
+ no_pk_test_id_valid
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('no_pk_test');
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+INSERT INTO no_pk_test (id, value, valid_from, valid_until) VALUES (1, 'initial', '2020-01-01', '2021-01-01');
+TABLE no_pk_test;
+ id |  value  | valid_from | valid_until 
+----+---------+------------+-------------
+  1 | initial | 2020-01-01 | 2021-01-01
+(1 row)
+
+UPDATE no_pk_test__for_portion_of_valid SET value = 'updated', valid_from = '2020-06-01', valid_until = '2020-09-01' WHERE id = 1;
+TABLE no_pk_test ORDER BY valid_from;
+ id |  value  | valid_from | valid_until 
+----+---------+------------+-------------
+  1 | initial | 2020-01-01 | 2020-06-01
+  1 | updated | 2020-06-01 | 2020-09-01
+  1 | initial | 2020-09-01 | 2021-01-01
+(3 rows)
+
+SELECT sql_saga.drop_for_portion_of_view('no_pk_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('no_pk_test', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('no_pk_test');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE no_pk_test;
+-- Scenario 5: Table with non-B-tree-indexable column types
+CREATE TABLE non_btree_test (
+    id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+    pt point,
+    value text,
+    valid_from integer,
+    valid_until integer
+);
+SELECT sql_saga.add_era('non_btree_test', 'valid_from', 'valid_until', 'p');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('non_btree_test', 'p');
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+INSERT INTO non_btree_test (pt, value, valid_from, valid_until) VALUES ('(0, 0)', 'sample', 10, 41);
+TABLE non_btree_test;
+ id |  pt   | value  | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  1 | (0,0) | sample |         10 |          41
+(1 row)
+
+-- Test with explicit WHERE clause on PK
+SAVEPOINT before_btree_update;
+UPDATE non_btree_test__for_portion_of_p SET value = 'simple', valid_from = 21, valid_until = 31 WHERE id = 1;
+TABLE non_btree_test ORDER BY valid_from;
+ id |  pt   | value  | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  2 | (0,0) | sample |         10 |          21
+  1 | (0,0) | simple |         21 |          31
+  3 | (0,0) | sample |         31 |          41
+(3 rows)
+
+ROLLBACK TO before_btree_update;
+-- Check that state was restored
+TABLE non_btree_test;
+ id |  pt   | value  | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  1 | (0,0) | sample |         10 |          41
+(1 row)
+
+-- Test without explicit WHERE clause (legacy behavior)
+UPDATE non_btree_test__for_portion_of_p SET value = 'simple', valid_from = 21, valid_until = 31;
+TABLE non_btree_test ORDER BY valid_from;
+ id |  pt   | value  | valid_from | valid_until 
+----+-------+--------+------------+-------------
+  4 | (0,0) | sample |         10 |          21
+  1 | (0,0) | simple |         21 |          31
+  5 | (0,0) | sample |         31 |          41
+(3 rows)
+
+SELECT sql_saga.drop_for_portion_of_view('non_btree_test', 'p');
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_era('non_btree_test', 'p');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE non_btree_test;
 ROLLBACK;
 DROP ROLE view_test_role;
 \i sql/include/test_teardown.sql
