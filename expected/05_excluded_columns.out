@@ -50,9 +50,9 @@ SELECT sql_saga.add_era('gen_cols_test', '"from"', '"until"', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_updatable_views('gen_cols_test', 'p');
- add_updatable_views 
----------------------
+SELECT sql_saga.add_for_portion_of_view('gen_cols_test', 'p');
+ add_for_portion_of_view 
+-------------------------
  t
 (1 row)
 
@@ -78,9 +78,9 @@ TABLE gen_cols_test ORDER BY """from""";
 (2 rows)
 
 -- Clean up
-SELECT sql_saga.drop_updatable_views('gen_cols_test', 'p');
- drop_updatable_views 
-----------------------
+SELECT sql_saga.drop_for_portion_of_view('gen_cols_test', 'p');
+ drop_for_portion_of_view 
+--------------------------
  t
 (1 row)
 

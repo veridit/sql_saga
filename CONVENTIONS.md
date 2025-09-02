@@ -44,6 +44,9 @@ For file system operations and large-scale edits, prefer suggesting shell comman
       - Keep the SQL readable by aligning numbered placeholders with inline comments that show which parameter they refer to (e.g., `... %1$I ... /* %1$I */`).
 - **Table Aliases**: Prefer explicit `AS` for table aliases, e.g., `FROM my_table AS mt`.
 
+### Build System
+- **`Makefile` and Source Files**: The `Makefile` uses a glob pattern (`src/[0-9][0-9]_*.sql`) to automatically discover and concatenate SQL source files. When adding a new feature, simply create a new numbered `.sql` file in the `src/` directory (e.g., `src/31_new_feature.sql`). It will be included in the build automatically without any need to edit the `Makefile`.
+
 ### SQL Naming conventions
 - `x_id` is a foreign key to table `x`
 - `x_ident` is an external identifier, not originating from the database
@@ -133,7 +136,7 @@ When a task is complex or has a history of regressions (e.g., the `rename_follow
 This protocol transforms debugging from a cycle of "guess-and-check" into a methodical, scientific process of data gathering and verification, dramatically reducing the number of failed attempts.
 
 ### Development Journaling
-For complex, multi-step tasks like major refactoring, a detailed plan should be maintained in `tmp/journal.md`. This file outlines the sequence of steps, the actions required for each step, and the expected outcome. It serves as a roadmap for the task, ensuring a systematic approach. The journal should be cleared when you begin on a new major todo item. This hels for bug fixing and iterative development by logging hypotheses and outcomes, providing a low-level history of the debugging process.
+For complex, multi-step tasks like major refactoring, a detailed plan should be maintained in `tmp/journal.md`. This file outlines the sequence of steps, the actions required for each step, and the expected outcome. It serves as a roadmap for the task, ensuring a systematic approach. The journal should be cleared when you begin on a new major todo item. To clear the journal, you **must** propose the shell command `echo -n > tmp/journal.md` (or the relevant journal file). You **must not** attempt to clear it using a `SEARCH/REPLACE` block, as its contents are ephemeral and cannot be reliably searched. This helps for bug fixing and iterative development by logging hypotheses and outcomes, providing a low-level history of the debugging process, and to spot patterns of failure or repetition, upon wich you can suggest a clearing of the context for improved focus.
 
 ## Known Pitfalls and Falsified Assumptions
 This section documents incorrect assumptions that have been disproven through testing. Reviewing these can help avoid repeating past mistakes.

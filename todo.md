@@ -5,7 +5,8 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-
+- [x] **Design and implement `temporal_merge` deletion semantics:** Based on the architecture outlined in `docs/temporal_merge_delete_semantics.md`, added a new `p_delete_mode` parameter to `temporal_merge` to allow for opt-in destructive deletes. This enables "source as truth" synchronization for ETL processes while maintaining safe, non-destructive behavior by default.
+- [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
 - [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
 
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
@@ -18,57 +19,56 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
 - [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
+- [x] **Feat(api): Add unified synchronization for temporal columns:** Enhanced `add_era` to support `p_synchronize_valid_to_column` and `p_synchronize_range_column`. This creates a single, unified trigger to keep all temporal representations (bounds, `valid_to`, range) consistent and enables declarative metadata for synchronization.
 
 ## Medium Priority - Refactoring & API Improvements
+
+- [x] **Document Updatable Views in README:** Updated `README.md` with a comprehensive section on the `for_portion_of` and `current` updatable views, explaining their purpose, DML protocols, and security model. The runnable example test (`47_readme_usage.sql`) has been extended to cover the usage of these views.
 
 - [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
 
 - [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
 - [x] **Rename `add_api` to `add_updatable_views` for clarity:** Renamed `add_api` and `drop_api` to `add_updatable_views` and `drop_updatable_views` respectively, to better reflect their purpose of managing views for temporal data.
 
-- [ ] **Refactor and Finalize `for_portion_of` Updatable View:** Port the existing `add_updatable_views` logic to the new symmetrical API, formalizing its DML semantics and test coverage.
+- [x] **Refactor and Finalize `for_portion_of` Updatable View:** Port the existing `add_updatable_views` logic to the new symmetrical API, formalizing its DML semantics and test coverage.
     - **Phase 1: Data Model (Shared Prerequisite - Complete):**
         - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
-    - **Phase 2: Define the Goal (Tests & Docs):**
-        - [ ] Update `README.md` with the symmetrical `add/drop_for_portion_of_view` API reference.
-        - [ ] Create the primary test file (`sql/29_updatable_view_for_portion_of_basis.sql`). This will define the 80% "happy path" for the API lifecycle and DML semantics.
-    - **Phase 3: Implementation:**
-        - [ ] Rename `add_updatable_views` to `add_for_portion_of_view` and `drop_updatable_views` to `drop_for_portion_of_view`.
-        - [ ] Refine the trigger logic to match the documented DML semantics.
-        - [ ] Create internal helper functions (`__internal_add...`, `__internal_drop...`).
-    - **Phase 4: Verification (Basis):**
-        - [ ] Run the `29_updatable_view_for_portion_of_basis.sql` test and iterate until it passes.
+    - **Phase 2: Define the Goal (Tests & Docs) - Complete:**
+        - [x] `README.md` is updated with the symmetrical API reference.
+        - [x] Created `sql/29_updatable_view_for_portion_of_basis.sql` to define the target behavior.
+    - **Phase 3 & 4: Implementation & Verification (Basis) - Complete:**
+        - [x] Renamed and implemented the `add/drop_for_portion_of_view` API and its trigger logic.
+        - [x] The basis test `29_updatable_view_for_portion_of_basis.sql` is now passing.
 
-- [ ] **Implement `current` Updatable View:** Create the new `current` view with SCD Type 2 semantics for easy integration with ORMs and APIs.
+- [x] **Implement `current` Updatable View:** Created the new `current` view with a robust and explicit DML protocol for easy integration with ORMs and APIs.
     - **Phase 1: Data Model (Shared Prerequisite - Complete):**
         - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
-    - **Phase 2: Define the Goal (Tests & Docs):**
-        - [ ] Update `README.md` with the symmetrical `add/drop_current_view` API reference.
-        - [ ] Create the primary test file (`sql/30_updatable_view_current_basis.sql`). This will define the 80% "happy path" for the API lifecycle and DML semantics.
-    - **Phase 3: Implementation:**
-        - [ ] Create the new `add_current_view` and `drop_current_view` functions.
-        - [ ] Implement the trigger logic (SCD Type 2 `UPDATE`, configurable soft `DELETE`).
-        - [ ] Leverage internal helper functions.
-    - **Phase 4: Verification (Basis):**
-        - [ ] Run the `30_updatable_view_current_basis.sql` test and iterate until it passes.
+    - **Phase 2: Define the Goal (Tests & Docs) - Complete:**
+        - [x] `README.md` is updated with the symmetrical `add/drop_current_view` API reference.
+        - [x] Created the primary test file (`sql/30_updatable_view_current_basis.sql`) to define the target behavior.
+    - **Phase 3: Implementation - Complete:**
+        - [x] Created the `add_current_view` and `drop_current_view` functions.
+        - [x] Implemented the trigger logic with an explicit `UPDATE` protocol for SCD Type 2 and soft-deletes, while disallowing ambiguous `DELETE`s.
+    - **Phase 4: Verification (Basis) - Complete:**
+        - [x] The `30_updatable_view_current_basis.sql` test is now passing.
 
-- [ ] **Synchronized: Full Test Coverage & Cleanup:**
+- [x] **Synchronized: Full Test Coverage & Cleanup:**
     - **Prerequisite:** Phase 4 must be complete for *both* `for_portion_of` and `current` views.
     - **Phase 5: Full Test Coverage:**
-        - [ ] Create `sql/31_updatable_view_for_portion_of_full.sql`: 20% path (edge cases, ACLs).
-        - [ ] Create `sql/32_updatable_view_current_full.sql`: 20% path (edge cases, ACLs).
-        - [ ] Create `sql/33_updatable_view_current_modes.sql`: Configurable `DELETE` modes.
-        - [ ] Create `sql/34_updatable_views_types.sql`: Test both views against all supported range types.
+        - [x] `sql/31_updatable_view_for_portion_of_full.sql` is passing, covering edge cases and ACLs for `for_portion_of` views.
+        - [x] `sql/32_updatable_view_current_full.sql` is passing, now with full coverage for both empty- and non-empty-range soft-deletes.
+        - [x] The two `current` view tests (`30_..._basis` and `32_..._full`) cover both `delete_as_cutoff` and `delete_as_documented_ending` modes.
+        - [x] `sql/34_updatable_views_types.sql` is passing, testing both views against all supported range types.
     - **Phase 6: Deprecation & Finalization:**
-        - [ ] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
+        - [x] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
 
-- [ ] **Refactor `temporal_merge` founding ID logic:** Make the source `row_id` column configurable and use it as the default `founding_id` for new entities, eliminating the internal `_sql_saga_source_row_id_` key.
+- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_founding_id_column` to handle intra-batch dependencies for new entities.
+
+- [x] **Create a test suite for `temporal_merge` parameter edge cases:** The test `52_temporal_merge_parameters.sql` now provides comprehensive coverage for API parameter variations, including `NULL` and empty `p_id_columns`, non-existent column names, custom source row identifiers, and fully non-standard naming conventions.
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
 - [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main orchestrator procedure simple and readable.
-- [ ] **Refactor `update_portion_of` to use `temporal_merge`:** Unify the codebase by refactoring the `update_for_portion_of` view's trigger to be a simple wrapper around `temporal_merge` with `mode = 'patch_only'`. This will reduce code duplication and ensure consistent behavior.
-
 - [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
 
 - [x] **Clarify `temporal_merge` feedback statuses:** Renamed the feedback status enums for clarity. The public status is now `temporal_merge_status` with values `APPLIED`, `SKIPPED`, `TARGET_NOT_FOUND`, and `ERROR`. The internal planner enum is now `planner_action` with `IDENTICAL` replacing `NOOP`.
@@ -88,8 +88,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Complete the `regclass` -> `(schema, table)` refactoring:** Removed all `oid` columns from metadata tables, making event triggers robust against `DROP`.
 
-- [x] **Provide convenience trigger `synchronize_valid_to_until`:** Added trigger to help manage human-readable inclusive end-dates.
-
 - [x] **Refactor `add_updatable_views` to not require a primary key:** Refactored `add_updatable_views` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
 
 - [x] **Fix event trigger regressions:** Resolved bugs in `rename_following` and `health_checks` event triggers that were exposed by refactoring. The triggers now correctly handle `search_path` issues and reliably update metadata for renamed objects.
@@ -98,10 +96,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
 
-- [ ] **Investigate Statement-Level Triggers:**
-  - **Goal:** Replace the `uk_update_check_c` and `uk_delete_check_c` row-level triggers with statement-level triggers.
-  - **Benefit:** This would provide correct validation for complex, single-statement DML operations that modify multiple rows (e.g., `UPDATE ... FROM ...`, `MERGE`). This is the architecturally correct way to handle multi-row validation.
-  - **Limitation:** This would not solve the problem of multi-statement transactions that are only valid at commit time (e.g., two separate `UPDATE` statements swapping periods), as statement-level triggers are not deferrable to the end of the transaction. This limitation should be documented.
 
 ## Low Priority - Future Work & New Features
 
@@ -110,10 +104,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
   - **Issue:** The `add_era` function does not enforce `'infinity'` as the default value for the `stop_on_column_name` (e.g., `valid_to`).
   - **Action:** Modify `add_era` to set the default and potentially add a check constraint.
 
-- [ ] **Implement full `ON UPDATE` action support for foreign keys:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The `update_action` parameter in `add_foreign_key` is not fully handled; the comment notes it should affect trigger timing.
-  - **Action:** Implement the logic for `ON UPDATE` actions (`NO ACTION`, `RESTRICT`) correctly.
 
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.

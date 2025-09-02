@@ -73,12 +73,12 @@ BEGIN
         --
         --        UNION ALL
 
-        SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema_name, v.view_table_name, t.relowner::regrole)
-        FROM sql_saga.api_view v
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema, v.view_name, t.relowner::regrole)
+        FROM sql_saga.updatable_view v
         JOIN pg_class t ON t.relname = v.table_name
         JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
-        JOIN pg_class vt ON vt.relname = v.view_table_name
-        JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema_name
+        JOIN pg_class vt ON vt.relname = v.view_name
+        JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
         WHERE t.relowner <> vt.relowner
 
         --        UNION ALL
@@ -127,10 +127,11 @@ BEGIN
                        acl.privilege_type,
                        acl.privilege_type AS base_privilege_type,
                        acl.grantee,
-                       'p' AS history_or_portion
-                FROM sql_saga.api_view v
-                JOIN pg_class vt ON vt.relname = v.view_table_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema_name
+                       'p' AS history_or_portion,
+                       v.view_type
+                FROM sql_saga.updatable_view v
+                JOIN pg_class vt ON vt.relname = v.view_name
+                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
                 CROSS JOIN LATERAL aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS acl
 
 --                UNION ALL
@@ -187,12 +188,12 @@ BEGIN
                        vt.oid::regclass::text AS object_name,
                        acl.privilege_type AS privilege_type,
                        acl.grantee
-                FROM sql_saga.api_view v
+                FROM sql_saga.updatable_view v
                 JOIN pg_class t ON t.relname = v.table_name
                 JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
                 CROSS JOIN LATERAL aclexplode(COALESCE(t.relacl, acldefault('r', t.relowner))) AS acl
-                JOIN pg_class vt ON vt.relname = v.view_table_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema_name
+                JOIN pg_class vt ON vt.relname = v.view_name
+                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
                 WHERE NOT has_table_privilege(acl.grantee, vt.oid, acl.privilege_type)
 
 --                UNION ALL
@@ -211,7 +212,9 @@ BEGIN
             LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
             GROUP BY object_type
         LOOP
+            SET session_replication_role = 'replica';
             EXECUTE cmd;
+            RESET session_replication_role;
         END LOOP;
     END IF;
 
@@ -242,12 +245,12 @@ BEGIN
                    vt.oid::regclass::text AS object_name,
                    acl.privilege_type,
                    acl.privilege_type AS base_privilege_type
-            FROM sql_saga.api_view v
+            FROM sql_saga.updatable_view v
             JOIN pg_class t ON t.relname = v.table_name
             JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
             CROSS JOIN LATERAL aclexplode(COALESCE(t.relacl, acldefault('r', t.relowner))) AS acl
-            JOIN pg_class vt ON vt.relname = v.view_table_name
-            JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema_name
+            JOIN pg_class vt ON vt.relname = v.view_name
+            JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
             WHERE NOT EXISTS (
                 SELECT
                 FROM aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS _acl
@@ -301,9 +304,9 @@ BEGIN
                        vt.oid::regclass::text AS object_name,
                        hacl.privilege_type,
                        hacl.grantee
-                FROM sql_saga.api_view v
-                JOIN pg_class vt ON vt.relname = v.view_table_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema_name
+                FROM sql_saga.updatable_view v
+                JOIN pg_class vt ON vt.relname = v.view_name
+                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
                 CROSS JOIN LATERAL aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS hacl
                 WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', v.table_schema, v.table_name)), hacl.privilege_type)
 
@@ -322,7 +325,9 @@ BEGIN
             LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
             GROUP BY object_type
         LOOP
+            SET session_replication_role = 'replica';
             EXECUTE cmd;
+            RESET session_replication_role;
         END LOOP;
     END IF;
 

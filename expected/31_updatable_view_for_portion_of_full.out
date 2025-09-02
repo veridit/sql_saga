@@ -1,0 +1,183 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+CREATE ROLE view_test_role;
+BEGIN;
+-- Scenario 1: Test with a table in a non-public schema
+CREATE SCHEMA test_schema;
+CREATE TABLE test_schema.schema_test (
+    id int,
+    value text,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
+    add_unique_key    
+----------------------
+ schema_test_id_valid
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('test_schema.schema_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+\d test_schema.schema_test__for_portion_of_valid
+  View "test_schema.schema_test__for_portion_of_valid"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ value       | text    |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
+TABLE sql_saga.updatable_view;
+ view_schema |             view_name             |   view_type    | table_schema | table_name  | era_name |     trigger_name     | current_func 
+-------------+-----------------------------------+----------------+--------------+-------------+----------+----------------------+--------------
+ test_schema | schema_test__for_portion_of_valid | for_portion_of | test_schema  | schema_test | valid    | for_portion_of_valid | 
+(1 row)
+
+INSERT INTO test_schema.schema_test__for_portion_of_valid VALUES (1, 'A', '2024-01-01', 'infinity');
+TABLE test_schema.schema_test;
+ id | value | valid_from | valid_until 
+----+-------+------------+-------------
+  1 | A     | 2024-01-01 | infinity
+(1 row)
+
+SELECT sql_saga.drop_for_portion_of_view('test_schema.schema_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+-- Scenario 2: ACL and Ownership tests
+CREATE TABLE acl_test (id int, value text, valid_from date, valid_until date);
+ALTER TABLE acl_test OWNER to view_test_role;
+SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
+  add_unique_key   
+-------------------
+ acl_test_id_valid
+(1 row)
+
+SET ROLE view_test_role;
+-- This should succeed as the role owns the table
+SELECT sql_saga.add_for_portion_of_view('acl_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+RESET ROLE;
+-- Verify owner of the view is correct
+\d acl_test__for_portion_of_valid
+      View "public.acl_test__for_portion_of_valid"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ value       | text    |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
+TABLE sql_saga.updatable_view;
+ view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func 
+-------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------
+ public      | acl_test__for_portion_of_valid | for_portion_of | public       | acl_test   | valid    | for_portion_of_valid | 
+(1 row)
+
+-- Verify that permissions are handled correctly
+GRANT SELECT ON acl_test TO sql_saga_unprivileged_user;
+SAVEPOINT no_insert;
+SET ROLE sql_saga_unprivileged_user;
+SELECT CURRENT_ROLE;
+        current_role        
+----------------------------
+ sql_saga_unprivileged_user
+(1 row)
+
+-- Should fail, as we only have SELECT on the base table
+INSERT INTO acl_test__for_portion_of_valid VALUES (1, 'no', '2024-01-01', 'infinity');
+ERROR:  permission denied for view acl_test__for_portion_of_valid
+ROLLBACK TO no_insert;
+SAVEPOINT can_insert;
+GRANT INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
+SET ROLE sql_saga_unprivileged_user;
+SELECT CURRENT_ROLE;
+        current_role        
+----------------------------
+ sql_saga_unprivileged_user
+(1 row)
+
+-- Should now succeed
+INSERT INTO acl_test__for_portion_of_valid VALUES (1, 'yes', '2024-01-01', 'infinity');
+TABLE acl_test;
+ id | value | valid_from | valid_until 
+----+-------+------------+-------------
+  1 | yes   | 2024-01-01 | infinity
+(1 row)
+
+ROLLBACK TO can_insert;
+SELECT sql_saga.drop_for_portion_of_view('acl_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+ROLLBACK;
+DROP ROLE view_test_role;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

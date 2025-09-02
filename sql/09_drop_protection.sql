@@ -32,7 +32,7 @@ ROLLBACK TO SAVEPOINT s3;
 
 /* api */
 ALTER TABLE dp ADD CONSTRAINT dp_pkey PRIMARY KEY (id);
-SELECT sql_saga.add_updatable_views('dp', 'p');
+SELECT sql_saga.add_for_portion_of_view('dp', 'p');
 SAVEPOINT s4;
 DROP VIEW dp__for_portion_of_p;
 ROLLBACK TO SAVEPOINT s4;
@@ -42,7 +42,7 @@ ROLLBACK TO SAVEPOINT s5;
 SAVEPOINT s6;
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 ROLLBACK TO SAVEPOINT s6;
-SELECT sql_saga.drop_updatable_views('dp', 'p');
+SELECT sql_saga.drop_for_portion_of_view('dp', 'p');
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 
 /* unique_keys */

@@ -45,9 +45,6 @@ BEGIN
         RETURN false;
     END IF;
 
-    /* Drop the "for portion" view if it hasn't been dropped already */
-    PERFORM sql_saga.drop_updatable_views(table_oid, era_name, drop_behavior, cleanup);
-
     /* If this is a system_time era, get rid of the triggers */
     DECLARE
         system_time_era_row sql_saga.system_time_era;
@@ -81,6 +78,14 @@ BEGIN
             RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
         END IF;
 
+        /* Check for updatable views */
+        IF EXISTS (
+            SELECT FROM sql_saga.updatable_view AS v
+            WHERE (v.table_schema, v.table_name, v.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is used by an updatable view', era_name;
+        END IF;
+
 --        /* Check for SYSTEM VERSIONING */
 --        IF EXISTS (
 --            SELECT FROM sql_saga.system_versioning AS sv
@@ -103,6 +108,8 @@ BEGIN
     END IF;
 
     /* We must be in CASCADE mode now */
+
+    PERFORM sql_saga.drop_for_portion_of_view(table_oid, era_name, drop_behavior, cleanup);
 
     PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
     FROM sql_saga.foreign_keys AS fk

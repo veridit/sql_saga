@@ -1,0 +1,218 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+CREATE TABLE products (
+    id int,
+    name text,
+    price numeric,
+    valid_from date,
+    valid_until date
+);
+-- Register era and unique key
+SELECT sql_saga.add_era('products', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('products', ARRAY['id']);
+  add_unique_key   
+-------------------
+ products_id_valid
+(1 row)
+
+-- Populate with some historical data
+INSERT INTO products VALUES
+(1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
+(1, 'Laptop', 1150, '2024-01-01', 'infinity'),
+(2, 'Mouse', 25, '2023-05-01', 'infinity');
+TABLE products ORDER BY id, valid_from;
+ id |  name  | price | valid_from | valid_until 
+----+--------+-------+------------+-------------
+  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | 2024-01-01 | infinity
+  2 | Mouse  |    25 | 2023-05-01 | infinity
+(3 rows)
+
+-- Test API Lifecycle
+-- ==================
+-- Add the for_portion_of view
+SELECT sql_saga.add_for_portion_of_view('products'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+\d products__for_portion_of_valid
+      View "public.products__for_portion_of_valid"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ name        | text    |           |          | 
+ price       | numeric |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON products__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
+TABLE sql_saga.updatable_view;
+ view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func 
+-------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------
+ public      | products__for_portion_of_valid | for_portion_of | public       | products   | valid    | for_portion_of_valid | 
+(1 row)
+
+-- Test DML Semantics
+-- ==================
+-- Test SELECT
+-- Should show the complete history, same as the base table.
+CREATE VIEW products_view_select_for_portion_of AS
+TABLE products__for_portion_of_valid ORDER BY id, valid_from;
+TABLE products_view_select_for_portion_of;
+ id |  name  | price | valid_from | valid_until 
+----+--------+-------+------------+-------------
+  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | 2024-01-01 | infinity
+  2 | Mouse  |    25 | 2023-05-01 | infinity
+(3 rows)
+
+-- Test INSERT (Direct historical insert)
+INSERT INTO products__for_portion_of_valid (id, name, price, valid_from, valid_until)
+VALUES (3, 'Keyboard', 75, '2023-01-01', 'infinity');
+-- The new record should be visible in both the base table and the view
+TABLE products ORDER BY id, valid_from;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | infinity
+  2 | Mouse    |    25 | 2023-05-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(4 rows)
+
+TABLE products_view_select_for_portion_of;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | infinity
+  2 | Mouse    |    25 | 2023-05-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(4 rows)
+
+-- Test UPDATE (applying a change to a portion of the timeline)
+-- Apply a price change to Laptop for a 3-month period.
+-- This should split the second historical record into three distinct parts.
+UPDATE products__for_portion_of_valid
+SET
+    price = 1175,
+    valid_from = '2024-03-01', -- Parameter for start of change
+    valid_until = '2024-06-01'  -- Parameter for end of change
+WHERE id = 1;
+-- The timeline for Laptop should now have 4 distinct periods.
+TABLE products ORDER BY id, valid_from;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | 2024-03-01
+  1 | Laptop   |  1175 | 2024-03-01 | 2024-06-01
+  1 | Laptop   |  1150 | 2024-06-01 | infinity
+  2 | Mouse    |    25 | 2023-05-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(6 rows)
+
+TABLE products_view_select_for_portion_of;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | 2024-03-01
+  1 | Laptop   |  1175 | 2024-03-01 | 2024-06-01
+  1 | Laptop   |  1150 | 2024-06-01 | infinity
+  2 | Mouse    |    25 | 2023-05-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(6 rows)
+
+-- Test DELETE (Hard historical delete)
+-- Delete the Mouse record
+DELETE FROM products__for_portion_of_valid WHERE id = 2;
+-- The record for the mouse should be gone completely
+TABLE products ORDER BY id, valid_from;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | 2024-03-01
+  1 | Laptop   |  1175 | 2024-03-01 | 2024-06-01
+  1 | Laptop   |  1150 | 2024-06-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(5 rows)
+
+TABLE products_view_select_for_portion_of;
+ id |   name   | price | valid_from | valid_until 
+----+----------+-------+------------+-------------
+  1 | Laptop   |  1200 | 2023-01-01 | 2024-01-01
+  1 | Laptop   |  1150 | 2024-01-01 | 2024-03-01
+  1 | Laptop   |  1175 | 2024-03-01 | 2024-06-01
+  1 | Laptop   |  1150 | 2024-06-01 | infinity
+  3 | Keyboard |    75 | 2023-01-01 | infinity
+(5 rows)
+
+-- Drop the dependent view first
+DROP VIEW products_view_select_for_portion_of;
+-- Drop the view
+SELECT sql_saga.drop_for_portion_of_view('products'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+TABLE sql_saga.updatable_view;
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------
+(0 rows)
+
+-- The view should no longer exist. This will fail if it does.
+SAVEPOINT view_is_gone;
+SELECT * FROM products__for_portion_of_valid;
+ERROR:  relation "products__for_portion_of_valid" does not exist
+LINE 1: SELECT * FROM products__for_portion_of_valid;
+                      ^
+ROLLBACK TO view_is_gone;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

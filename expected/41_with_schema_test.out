@@ -50,10 +50,6 @@ CREATE TABLE hidden.staff (
   salary FLOAT,
   employee_id INTEGER
 );
-CREATE TRIGGER synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
-CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
 -- Before using sql_saga
 \d exposed.employees
                     Table "exposed.employees"
@@ -65,8 +61,6 @@ CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staf
  valid_until | date              |           |          | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
-Triggers:
-    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -78,27 +72,27 @@ Triggers:
  valid_until | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
-Triggers:
-    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table exposed.employees to synchronize columns: valid_to
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "staff_synchronize_temporal_columns_trigger" on table hidden.staff to synchronize columns: valid_to
  add_era 
 ---------
  t
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
- exposed      | employees  | valid    | valid_from             | valid_until             | daterange  | employees_valid_check   |                   | 
- hidden       | staff      | valid    | valid_from             | valid_until             | daterange  | staff_valid_check       |                   | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+-------------------+------------------
+ exposed      | employees  | valid    | valid_from             | valid_until             | daterange  | date          | D                      | employees_valid_check   | valid_to                    |                          |                   | 
+ hidden       | staff      | valid    | valid_from             | valid_until             | daterange  | date          | D                      | staff_valid_check       | valid_to                    |                          |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
@@ -150,9 +144,9 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
+    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
     staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
     staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
-    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -173,7 +167,7 @@ Check constraints:
 Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_until, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
+    staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 -- Test data.
 -- We only insert valid_from and valid_to, the trigger will set valid_after.
@@ -256,8 +250,8 @@ SELECT sql_saga.drop_era('hidden.staff');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | bounds_check_constraint | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+-------------------------+-------------------+------------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
@@ -276,7 +270,7 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
+    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -293,7 +287,7 @@ Indexes:
 Check constraints:
     "staff_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until()
+    staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

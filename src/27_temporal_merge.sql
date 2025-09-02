@@ -7,7 +7,8 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name,
     p_source_row_id_column name DEFAULT 'row_id',
-    p_founding_id_column name DEFAULT NULL
+    p_founding_id_column name DEFAULT NULL,
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
 ) RETURNS SETOF sql_saga.temporal_plan_op
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
@@ -16,7 +17,27 @@ DECLARE
     v_target_schema_name name;
     v_target_table_name_only name;
     v_range_constructor name;
+    v_valid_from_col name;
+    v_valid_until_col name;
 BEGIN
+    -- An entity must be identifiable. Fail fast if no ID columns are provided.
+    IF p_id_columns IS NULL OR cardinality(p_id_columns) = 0 THEN
+        RAISE EXCEPTION 'p_id_columns must be a non-empty array of column names that form the entity identifier.';
+    END IF;
+
+    -- Validate that provided column names exist.
+    PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_source_row_id_column AND NOT attisdropped AND attnum > 0;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'p_source_row_id_column "%" does not exist in source table %s', p_source_row_id_column, p_source_table::text;
+    END IF;
+
+    IF p_founding_id_column IS NOT NULL THEN
+        PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_founding_id_column AND NOT attisdropped AND attnum > 0;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'p_founding_id_column "%" does not exist in source table %s', p_founding_id_column, p_source_table::text;
+        END IF;
+    END IF;
+
     -- Introspect just enough to get the range constructor, which is part of the cache key.
     SELECT n.nspname, c.relname
     INTO v_target_schema_name, v_target_table_name_only
@@ -24,15 +45,19 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = p_target_table;
 
-    SELECT e.range_type::name
-    INTO v_range_constructor
+    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name
+    INTO v_range_constructor, v_valid_from_col, v_valid_until_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
       AND e.era_name = p_era_name;
 
+    IF v_valid_from_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    END IF;
+
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_id_columns,
@@ -41,7 +66,8 @@ BEGIN
         p_era_name,
         p_source_row_id_column,
         COALESCE(p_founding_id_column, ''),
-        v_range_constructor
+        v_range_constructor,
+        p_delete_mode
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
 
@@ -67,10 +93,9 @@ BEGIN
         v_diff_join_condition TEXT;
         v_plan_source_row_ids_expr TEXT;
         v_entity_id_check_is_null_expr TEXT;
-        v_valid_from_col name;
-        v_valid_until_col name;
         v_founding_id_select_expr TEXT;
         v_planner_entity_id_expr TEXT;
+        v_target_rows_filter TEXT;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
         IF p_founding_id_column IS NOT NULL THEN
@@ -97,18 +122,6 @@ BEGIN
             $$, COALESCE(p_founding_id_column, p_source_row_id_column));
         END IF;
 
-        -- Introspect era information to get the correct column names
-        SELECT e.valid_from_column_name, e.valid_until_column_name
-        INTO v_valid_from_col, v_valid_until_col
-        FROM sql_saga.era e
-        WHERE e.table_schema = v_target_schema_name
-          AND e.table_name = v_target_table_name_only
-          AND e.era_name = p_era_name;
-
-        IF v_valid_from_col IS NULL THEN
-            RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
-        END IF;
-
         -- Resolve table identifiers to be correctly quoted and schema-qualified.
         v_target_table_ident := p_target_table::TEXT;
 
@@ -124,7 +137,7 @@ BEGIN
 
         -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
         SELECT
-            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
+            format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
         INTO
             v_entity_id_as_jsonb
         FROM unnest(p_id_columns) AS col;
@@ -149,7 +162,7 @@ BEGIN
               AND s.attname <> ALL(p_id_columns)
         )
         SELECT
-            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
+            format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), ''))
         INTO
             v_source_data_cols_jsonb_build -- Re-use this variable for the common expression
         FROM
@@ -161,10 +174,30 @@ BEGIN
 
         -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
         SELECT
-            string_agg(format('t.%I IS NULL', col), ' AND ')
+            COALESCE(string_agg(format('t.%I IS NULL', col), ' AND '), 'true')
         INTO
             v_entity_id_check_is_null_expr
         FROM unnest(p_id_columns) AS col;
+
+        -- Determine the scope of target entities to process based on the mode.
+        CASE p_mode
+            WHEN 'upsert_patch', 'patch_only', 'insert_only' THEN
+                -- Non-destructive modes always filter for efficiency, as they never need to consider target entities not in the source.
+                v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+            WHEN 'upsert_replace', 'replace_only' THEN
+                CASE p_delete_mode
+                    WHEN 'DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES' THEN
+                        -- Full sync modes must scan the whole target table to find entities that are missing from the source.
+                        v_target_rows_filter := '';
+                    WHEN 'NONE', 'DELETE_MISSING_TIMELINE' THEN
+                        -- Replace modes that don't delete missing entities can be optimized to only scan relevant target entities.
+                        v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+                    ELSE
+                         RAISE EXCEPTION 'Unhandled p_delete_mode: %', p_delete_mode;
+                END CASE;
+            ELSE
+                RAISE EXCEPTION 'Unhandled p_mode: %', p_mode;
+        END CASE;
 
         -- 2. Construct expressions and resolver CTEs based on the mode.
         IF p_mode IN ('upsert_patch', 'patch_only') THEN
@@ -200,12 +233,39 @@ $$;
         ELSE -- upsert_replace, replace_only
             -- In 'replace' modes, the source data payload overwrites the target. NULLs are meaningful.
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
-            v_resolver_ctes := '';
-            -- In `replace` mode, we prioritize the source data (`s_data_payload`). If there is no
-            -- source data for a given time segment, we preserve the target data (`t_data_payload`).
-            -- This correctly implements the "Temporal Patch" semantic.
-            v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
-            v_resolver_from := 'resolved_atomic_segments_with_payloads';
+
+            CASE p_delete_mode
+                WHEN 'DELETE_MISSING_TIMELINE_AND_ENTITIES' THEN
+                    v_resolver_ctes := $$,
+resolved_atomic_segments_with_payloads_with_flag AS (
+    SELECT *,
+        bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY entity_id) as entity_is_in_source
+    FROM resolved_atomic_segments_with_payloads
+)
+$$;
+                    v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN s_data_payload ELSE NULL END$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
+                WHEN 'DELETE_MISSING_TIMELINE' THEN
+                    v_resolver_ctes := '';
+                    v_final_data_payload_expr := 's_data_payload'; -- For entities in source, their timeline is replaced.
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads';
+                WHEN 'DELETE_MISSING_ENTITIES' THEN
+                    v_resolver_ctes := $$,
+resolved_atomic_segments_with_payloads_with_flag AS (
+    SELECT *,
+        bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY entity_id) as entity_is_in_source
+    FROM resolved_atomic_segments_with_payloads
+)
+$$;
+                    v_final_data_payload_expr := $$CASE WHEN entity_is_in_source THEN COALESCE(s_data_payload, t_data_payload) ELSE NULL END$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads_with_flag';
+                WHEN 'NONE' THEN
+                    v_resolver_ctes := '';
+                    v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
+                    v_resolver_from := 'resolved_atomic_segments_with_payloads';
+                ELSE
+                    RAISE EXCEPTION 'Unhandled p_delete_mode: %', p_delete_mode;
+            END CASE;
         END IF;
 
 
@@ -249,7 +309,6 @@ source_initial AS (
         %2$s AS data_payload,
         %13$s as is_new_entity
     FROM %3$s t
-    WHERE t.%14$I < t.%15$I
 ),
 target_rows AS (
     SELECT
@@ -258,7 +317,7 @@ target_rows AS (
         t.%15$I as valid_until,
         %6$s AS data_payload
     FROM %4$s t
-    WHERE (%1$s) IN (SELECT DISTINCT entity_id FROM source_initial)
+    %20$s -- v_target_rows_filter
 ),
 source_rows AS (
     -- Filter the initial source rows based on the operation mode.
@@ -471,7 +530,8 @@ $SQL$,
             v_founding_id_select_expr,      -- 16
             v_planner_entity_id_expr,       -- 17
             p_source_row_id_column,         -- 18
-            v_range_constructor             -- 19
+            v_range_constructor,            -- 19
+            v_target_rows_filter            -- 20
         );
 
         EXECUTE format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
@@ -481,7 +541,7 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
@@ -495,7 +555,8 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_era_name name DEFAULT 'valid',
     p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL,
-    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false
+    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false,
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
@@ -530,14 +591,15 @@ BEGIN
     END IF;
     CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 
-    -- Auto-detect columns with default values or identity columns
+    -- Auto-detect columns that should be excluded from INSERT statements.
+    -- This includes columns with defaults, identity columns, and generated columns.
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_insert_defaulted_columns
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = p_target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
-      AND (a.atthasdef OR a.attidentity IN ('a', 'd'));
+      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
 
     -- Introspect era information to get the correct column names
     SELECT n.nspname, c.relname
@@ -569,6 +631,8 @@ BEGIN
             v_entity_key_join_clause
         FROM unnest(p_id_columns) AS col;
 
+        v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
+
         IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge_plan') IS NOT NULL THEN
             DROP TABLE __temp_last_sql_saga_temporal_merge_plan;
         END IF;
@@ -584,7 +648,8 @@ BEGIN
             p_mode                     => p_mode,
             p_era_name                 => p_era_name,
             p_source_row_id_column     => p_source_row_id_column,
-            p_founding_id_column       => p_founding_id_column
+            p_founding_id_column       => p_founding_id_column,
+            p_delete_mode              => p_delete_mode
         ) p;
 
         -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
@@ -617,7 +682,8 @@ BEGIN
             string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
             string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
             string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
-            string_agg(format('(s.full_data->>%L)::%s', attname, format_type(atttypid, -1)), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns))
+            string_agg(format('(s.full_data->>%L)::%s', attname, format_type(atttypid, -1)), ', ')
+                FILTER (WHERE attname <> ALL(v_insert_defaulted_columns) AND attname NOT IN (v_valid_from_col, v_valid_until_col))
         INTO
             v_data_cols_ident,
             v_data_cols_select,
@@ -715,28 +781,15 @@ BEGIN
                         v_stage3_all_cols_ident TEXT;
                         v_stage3_all_cols_select TEXT;
                     BEGIN
-                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns,
-                        -- as the IDs have now been generated and back-filled into the plan.
-                        WITH source_cols AS (
+                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns.
+                        -- We can now safely insert all non-generated columns.
+                        WITH target_cols AS (
                             SELECT pa.attname
                             FROM pg_catalog.pg_attribute pa
-                            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
-                        ),
-                        target_cols AS (
-                            SELECT pa.attname
-                            FROM pg_catalog.pg_attribute pa
-                            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
-                        ),
-                        common_data_cols AS (
-                            SELECT s.attname
-                            FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-                            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name', p_founding_id_column)
-                              AND s.attname <> ALL(p_id_columns)
-                        ),
-                        all_available_cols AS (
-                            SELECT attname FROM common_data_cols
-                            UNION ALL
-                            SELECT unnest(p_id_columns)
+                            WHERE pa.attrelid = p_target_table
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
+                              AND pa.attgenerated = '' -- Exclude only generated columns
+                              AND pa.attname NOT IN (v_valid_from_col, v_valid_until_col)
                         )
                         SELECT
                             string_agg(format('%I', attname), ', '),
@@ -744,7 +797,7 @@ BEGIN
                         INTO
                             v_stage3_all_cols_ident,
                             v_stage3_all_cols_select
-                        FROM all_available_cols;
+                        FROM target_cols;
 
                         EXECUTE format($$
                             INSERT INTO %1$s (%2$s, %4$I, %5$I)
@@ -965,6 +1018,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode) IS
 'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

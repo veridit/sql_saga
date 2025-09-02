@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.drop_updatable_views(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+CREATE FUNCTION sql_saga.drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -6,8 +6,8 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    view_schema_name name;
-    view_table_name name;
+    view_schema name;
+    view_name name;
     trigger_name name;
     target_schema_name name;
     target_table_name name;
@@ -35,14 +35,15 @@ BEGIN
         WHERE c.oid = table_oid;
     END IF;
 
-    FOR view_schema_name, view_table_name, trigger_name IN
-        DELETE FROM sql_saga.api_view AS fp
-        WHERE (table_oid IS NULL OR (fp.table_schema, fp.table_name) = (target_schema_name, target_table_name))
-          AND (era_name IS NULL OR fp.era_name = era_name)
-        RETURNING fp.view_schema_name, fp.view_table_name, fp.trigger_name
+    FOR view_schema, view_name, trigger_name IN
+        DELETE FROM sql_saga.updatable_view AS v
+        WHERE (table_oid IS NULL OR (v.table_schema, v.table_name) = (target_schema_name, target_table_name))
+          AND (era_name IS NULL OR v.era_name = era_name)
+          AND v.view_type = 'for_portion_of'
+        RETURNING v.view_schema, v.view_name, v.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name, view_schema_name, view_table_name);
-        EXECUTE format('DROP VIEW %I.%I %s', view_schema_name, view_table_name, drop_behavior);
+        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name, view_schema, view_name);
+        EXECUTE format('DROP VIEW %I.%I %s', view_schema, view_name, drop_behavior);
     END LOOP;
 
     RETURN true;

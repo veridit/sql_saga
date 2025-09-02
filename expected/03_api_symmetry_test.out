@@ -256,7 +256,7 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
 SAVEPOINT before_fail;
 SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
 ERROR:  column "v_from" not found in table "era_symmetry_test"
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,boolean) line 141 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean) line 145 at RAISE
 ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era
 ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
