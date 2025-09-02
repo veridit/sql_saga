@@ -36,7 +36,7 @@ CREATE UNLOGGED TABLE log (id bigint, valid_from date, valid_until date);
 SAVEPOINT s1;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- fails
 ERROR:  table "log" must be persistent
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,boolean,name) line 69 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean) line 69 at RAISE
 ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_from', 'valid_until', 'p'); -- passes

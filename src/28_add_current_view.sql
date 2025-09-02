@@ -28,7 +28,7 @@ BEGIN
     WHERE c.oid = table_oid;
 
     FOR r IN
-        SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid, p.range_type, p.range_subtype, p.range_subtype_category, p.valid_from_column_name, p.valid_until_column_name
+        SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid, p.range_type, p.range_subtype, p.range_subtype_category, p.valid_from_column_name, p.valid_until_column_name, p.synchronize_valid_to_column, p.synchronize_range_column
         FROM sql_saga.era AS p
         JOIN pg_catalog.pg_class AS c ON c.relname = p.table_name
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = p.table_schema

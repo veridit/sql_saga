@@ -5,8 +5,9 @@ CREATE OR REPLACE FUNCTION sql_saga.add_era(
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
     bounds_check_constraint name DEFAULT NULL,
-    create_columns boolean DEFAULT false,
-    p_synchronize_valid_to_column name DEFAULT 'valid_to')
+    p_synchronize_valid_to_column name DEFAULT NULL,
+    p_synchronize_range_column name DEFAULT NULL,
+    create_columns boolean DEFAULT false)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -337,35 +338,72 @@ BEGIN
         VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint);
     END;
 
-    -- Look for a valid_to column to synchronize and automatically create a trigger
-    IF p_synchronize_valid_to_column IS NOT NULL THEN
-        -- Check if column exists, is of correct type, and is not generated
-        SELECT a.atttypid, a.attgenerated
-        INTO sync_col_type_oid, sync_col_is_generated
-        FROM pg_attribute a
-        JOIN pg_class c ON a.attrelid = c.oid
-        WHERE c.oid = table_oid
-          AND a.attname = p_synchronize_valid_to_column
-          AND NOT a.attisdropped;
+    -- Create the unified synchronization trigger if any sync columns are specified.
+    IF p_synchronize_valid_to_column IS NOT NULL OR p_synchronize_range_column IS NOT NULL THEN
+        DECLARE
+            v_to_col      name := p_synchronize_valid_to_column;
+            v_range_col   name := p_synchronize_range_column;
+            sync_cols     name[] := ARRAY[]::name[];
+            trigger_name  name;
+            subtype_is_discrete boolean;
+            v_range_subtype regtype;
+        BEGIN
+            -- Get metadata about the era's subtype
+            SELECT e.range_subtype, (t.typcategory IN ('D', 'N') AND t.typname NOT IN ('timestamptz', 'timestamp', 'numeric'))
+            INTO v_range_subtype, subtype_is_discrete
+            FROM sql_saga.era e JOIN pg_type t ON e.range_subtype = t.oid
+            WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, era_name);
 
-        IF FOUND THEN
-            IF sync_col_is_generated <> '' THEN -- 'g' if generated, '' if not.
-                RAISE NOTICE 'sql_saga: Column "%" on table % is a generated column and cannot be used for synchronization. Skipping trigger creation.', p_synchronize_valid_to_column, table_oid;
-            ELSIF sync_col_type_oid NOT IN ('date'::regtype, 'timestamp'::regtype, 'timestamptz'::regtype) THEN
-                RAISE NOTICE 'sql_saga: Column "%" on table % has an incompatible data type (%) for synchronization. Skipping trigger creation.', p_synchronize_valid_to_column, table_oid, format_type(sync_col_type_oid, NULL);
-            ELSE
-                -- All checks passed, create the trigger with a deterministic name.
-                trigger_name := format('%s_synchronize_valid_to_until_trigger', table_name);
-                EXECUTE format(
-                    'CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until(%L, %L)',
-                    trigger_name,
-                    table_oid::text,
-                    valid_until_column_name,
-                    p_synchronize_valid_to_column
-                );
-                RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize column "%".', trigger_name, table_oid, p_synchronize_valid_to_column;
+            -- Validate valid_to column
+            IF v_to_col IS NOT NULL THEN
+                DECLARE
+                    v_to_col_type oid;
+                BEGIN
+                    SELECT atttypid INTO v_to_col_type FROM pg_attribute WHERE attrelid = table_oid AND attname = v_to_col AND NOT attisdropped;
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'Synchronization column "%" not found on table %.', v_to_col, table_oid;
+                    ELSIF v_to_col_type <> v_range_subtype THEN
+                        RAISE WARNING 'sql_saga: Synchronization column "%" on table % has an incompatible data type (%). It must match the era subtype (%). Skipping synchronization.', v_to_col, table_oid, v_to_col_type::regtype, v_range_subtype::regtype;
+                        v_to_col := NULL;
+                    ELSIF NOT subtype_is_discrete THEN
+                        RAISE WARNING 'sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "%" on non-discrete era for table %.', v_to_col, table_oid;
+                        v_to_col := NULL;
+                    ELSE
+                        sync_cols := sync_cols || v_to_col;
+                    END IF;
+                END;
             END IF;
-        END IF;
+
+            -- Validate range column
+            IF v_range_col IS NOT NULL THEN
+                 IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = table_oid AND attname = v_range_col AND NOT attisdropped) THEN
+                    RAISE EXCEPTION 'Synchronization column "%" not found on table %.', v_range_col, table_oid;
+                 ELSE
+                    sync_cols := sync_cols || v_range_col;
+                 END IF;
+            END IF;
+
+            IF v_to_col IS NOT NULL OR v_range_col IS NOT NULL THEN
+                trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
+                EXECUTE format(
+                    'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L)',
+                    trigger_name,
+                    array_to_string(ARRAY[valid_from_column_name, valid_until_column_name] || sync_cols, ', '),
+                    table_oid::text,
+                    valid_from_column_name,
+                    valid_until_column_name,
+                    v_to_col,
+                    v_range_col,
+                    v_range_subtype
+                );
+                RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
+
+                UPDATE sql_saga.era e
+                SET synchronize_valid_to_column = v_to_col,
+                    synchronize_range_column = v_range_col
+                WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, era_name);
+            END IF;
+        END;
     END IF;
 
     -- Code for creation of triggers, when extending the era api

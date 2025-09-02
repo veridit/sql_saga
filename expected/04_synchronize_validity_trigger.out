@@ -35,9 +35,9 @@ Test: Automatic `valid_to` synchronization via add_era
 \echo '--- 1. Test default behavior: trigger is created for `valid_to` ---'
 --- 1. Test default behavior: trigger is created for `valid_to` ---
 SAVEPOINT test_1;
-CREATE TABLE sync_test_default (id int, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('sync_test_default');
-NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_valid_to_until_trigger" on table sync_test_default to synchronize column "valid_to".
+CREATE TABLE sync_test_default (id int, valid_from date, valid_to date, valid_until date);
+SELECT sql_saga.add_era('sync_test_default', p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_columns_trigger" on table sync_test_default to synchronize columns: valid_to
  add_era 
 ---------
  t
@@ -49,12 +49,12 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_valid_to_until
 -------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 
  valid_to    | date    |           |          | 
+ valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_default_valid_check" CHECK (valid_from < valid_until)
 Triggers:
-    sync_test_default_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('valid_until', 'valid_to')
+    sync_test_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 INSERT INTO sync_test_default (id, valid_from, valid_to) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, valid_from, valid_until, valid_to FROM sync_test_default;
@@ -74,8 +74,8 @@ ROLLBACK TO SAVEPOINT test_1;
 \echo '--- 2. Test disabling the feature with NULL ---'
 --- 2. Test disabling the feature with NULL ---
 SAVEPOINT test_2;
-CREATE TABLE sync_test_disabled (id int, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('sync_test_disabled', p_synchronize_valid_to_column := NULL);
+CREATE TABLE sync_test_disabled (id int, valid_from date, valid_to date, valid_until date);
+SELECT sql_saga.add_era('sync_test_disabled');
  add_era 
 ---------
  t
@@ -87,8 +87,8 @@ SELECT sql_saga.add_era('sync_test_disabled', p_synchronize_valid_to_column := N
 -------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 
  valid_to    | date    |           |          | 
+ valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_disabled_valid_check" CHECK (valid_from < valid_until)
 
@@ -103,9 +103,9 @@ ROLLBACK TO SAVEPOINT test_2;
 \echo '--- 3. Test with a custom column name ---'
 --- 3. Test with a custom column name ---
 SAVEPOINT test_3;
-CREATE TABLE sync_test_custom_name (id int, start_date date, stop_date date, end_date date);
-SELECT sql_saga.add_era('sync_test_custom_name', 'start_date', 'stop_date', p_synchronize_valid_to_column := 'end_date');
-NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_valid_to_until_trigger" on table sync_test_custom_name to synchronize column "end_date".
+CREATE TABLE sync_test_custom_name (id int, start_date date, until_date date, to_date date);
+SELECT sql_saga.add_era('sync_test_custom_name', 'start_date', 'until_date', p_synchronize_valid_to_column := 'to_date');
+NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_columns_trigger" on table sync_test_custom_name to synchronize columns: to_date
  add_era 
 ---------
  t
@@ -117,16 +117,16 @@ NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_valid_to_u
 ------------+---------+-----------+----------+---------
  id         | integer |           |          | 
  start_date | date    |           | not null | 
- stop_date  | date    |           | not null | 
- end_date   | date    |           |          | 
+ until_date | date    |           | not null | 
+ to_date    | date    |           |          | 
 Check constraints:
-    "sync_test_custom_name_valid_check" CHECK (start_date < stop_date)
+    "sync_test_custom_name_valid_check" CHECK (start_date < until_date)
 Triggers:
-    sync_test_custom_name_synchronize_valid_to_until_trigger BEFORE INSERT OR UPDATE ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until('stop_date', 'end_date')
+    sync_test_custom_name_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF start_date, until_date, to_date ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('start_date', 'until_date', 'to_date', 'null', 'date')
 
-INSERT INTO sync_test_custom_name (id, start_date, end_date) VALUES (1, '2024-01-01', '2024-12-31');
-SELECT id, start_date, stop_date, end_date FROM sync_test_custom_name;
- id | start_date | stop_date  |  end_date  
+INSERT INTO sync_test_custom_name (id, start_date, to_date) VALUES (1, '2024-01-01', '2024-12-31');
+SELECT id, start_date, until_date, to_date FROM sync_test_custom_name;
+ id | start_date | until_date |  to_date   
 ----+------------+------------+------------
   1 | 2024-01-01 | 2025-01-01 | 2024-12-31
 (1 row)
@@ -136,8 +136,8 @@ ROLLBACK TO SAVEPOINT test_3;
 --- 4. Test edge case: generated column is skipped ---
 SAVEPOINT test_4;
 CREATE TABLE sync_test_generated (id int, valid_from date, valid_until date, valid_to date GENERATED ALWAYS AS (valid_until - INTERVAL '1 day') STORED);
-SELECT sql_saga.add_era('sync_test_generated');
-NOTICE:  sql_saga: Column "valid_to" on table sync_test_generated is a generated column and cannot be used for synchronization. Skipping trigger creation.
+SELECT sql_saga.add_era('sync_test_generated', p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_columns_trigger" on table sync_test_generated to synchronize columns: valid_to
  add_era 
 ---------
  t
@@ -153,6 +153,8 @@ NOTICE:  sql_saga: Column "valid_to" on table sync_test_generated is a generated
  valid_to    | date    |           |          | generated always as ((valid_until - '@ 1 day'::interval)) stored
 Check constraints:
     "sync_test_generated_valid_check" CHECK (valid_from < valid_until)
+Triggers:
+    sync_test_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 INSERT INTO sync_test_generated (id, valid_from, valid_until) VALUES (1, '2024-01-01', '2025-01-01');
 SELECT id, valid_from, valid_until, valid_to FROM sync_test_generated;
@@ -165,9 +167,9 @@ ROLLBACK TO SAVEPOINT test_4;
 \echo '--- 5. Test edge case: wrong data type is skipped ---'
 --- 5. Test edge case: wrong data type is skipped ---
 SAVEPOINT test_5;
-CREATE TABLE sync_test_wrong_type (id int, valid_from date, valid_until date, valid_to text);
-SELECT sql_saga.add_era('sync_test_wrong_type');
-NOTICE:  sql_saga: Column "valid_to" on table sync_test_wrong_type has an incompatible data type (text) for synchronization. Skipping trigger creation.
+CREATE TABLE sync_test_wrong_type (id int, valid_from date, valid_to text, valid_until date);
+SELECT sql_saga.add_era('sync_test_wrong_type', p_synchronize_valid_to_column := 'valid_to');
+WARNING:  sql_saga: Synchronization column "valid_to" on table sync_test_wrong_type has an incompatible data type (text). It must match the era subtype (date). Skipping synchronization.
  add_era 
 ---------
  t
@@ -179,8 +181,8 @@ NOTICE:  sql_saga: Column "valid_to" on table sync_test_wrong_type has an incomp
 -------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 
  valid_to    | text    |           |          | 
+ valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_wrong_type_valid_check" CHECK (valid_from < valid_until)
 

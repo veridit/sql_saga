@@ -1718,11 +1718,7 @@ CREATE TABLE temporal_merge_test_vt.test_target (
     PRIMARY KEY (id, valid_from)
 );
 
-CREATE TRIGGER test_target_synchronize_validity
-    BEFORE INSERT OR UPDATE ON temporal_merge_test_vt.test_target
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
-
-SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
 
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_vt.reset_target() LANGUAGE plpgsql AS $$

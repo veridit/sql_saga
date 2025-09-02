@@ -27,18 +27,13 @@ CREATE TABLE hidden.staff (
   employee_id INTEGER
 );
 
-CREATE TRIGGER synchronize_employees_validity BEFORE INSERT OR UPDATE ON exposed.employees
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
-CREATE TRIGGER synchronize_staff_validity BEFORE INSERT OR UPDATE ON hidden.staff
-    FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_valid_to_until();
-
 -- Before using sql_saga
 \d exposed.employees
 \d hidden.staff
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until');
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');

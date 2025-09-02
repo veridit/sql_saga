@@ -37,7 +37,7 @@ BEGIN
     identifier_columns := TG_ARGV;
 
     -- Get metadata about the view's underlying table.
-    SELECT v.table_schema, v.table_name, v.era_name, e.valid_from_column_name, e.valid_until_column_name,
+    SELECT v.table_schema, v.table_name, v.era_name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column,
            format_type(a.atttypid, a.atttypmod) AS datatype, c.oid AS table_oid
     INTO info
     FROM sql_saga.updatable_view AS v
@@ -113,6 +113,14 @@ BEGIN
                 EXECUTE generated_columns_sql INTO generated_columns USING info.table_oid;
                 INSERT INTO __sql_saga_generated_columns_cache (table_oid, column_names) VALUES (info.table_oid, generated_columns);
             END IF;
+
+            IF info.synchronize_valid_to_column IS NOT NULL THEN
+                generated_columns := COALESCE(generated_columns, '{}'::name[]) || info.synchronize_valid_to_column;
+            END IF;
+            IF info.synchronize_range_column IS NOT NULL THEN
+                generated_columns := COALESCE(generated_columns, '{}'::name[]) || info.synchronize_range_column;
+            END IF;
+
             IF generated_columns IS NOT NULL THEN
                 IF SERVER_VERSION < 100000 THEN
                     SELECT jsonb_object_agg(e.key, e.value) INTO pre_row FROM jsonb_each(pre_row) AS e (key, value) WHERE e.key <> ALL (generated_columns);

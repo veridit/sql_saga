@@ -5,7 +5,6 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-
 - [x] **Design and implement `temporal_merge` deletion semantics:** Based on the architecture outlined in `docs/temporal_merge_delete_semantics.md`, added a new `p_delete_mode` parameter to `temporal_merge` to allow for opt-in destructive deletes. This enables "source as truth" synchronization for ETL processes while maintaining safe, non-destructive behavior by default.
 - [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
 - [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
@@ -20,6 +19,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
 
 - [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
+- [x] **Fix(api): Harden sync triggers and finalize view behavior:** Fixed synchronization regressions by adding declarative metadata to the `era` table. Hardened the `add_era` API to fail-fast on missing columns. Corrected view logic to be transparent, and updated documentation and tests accordingly.
 
 ## Medium Priority - Refactoring & API Improvements
 
@@ -105,9 +105,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
   - **Issue:** Users had to manually specify `valid_from`/`valid_until` and create a trigger to synchronize a `valid_to` column.
   - **Action:** Enhanced `add_era` with default column names (`valid_from`, `valid_until`) and a new `p_synchronize_valid_to_column` parameter (default `valid_to`). `add_era` now automatically creates the synchronization trigger if a compatible column is found, making the common case much simpler. This can be disabled by setting the parameter to `NULL`.
 
-- [ ] **Support native range types ergonomically:**
-  - **Issue:** Users must manually create triggers to synchronize a `range` column with the required `valid_from`/`valid_until` columns.
-  - **Action:** Make `add_era` "smarter." It should inspect the target table for the presence of commonly named columns (e.g., a `range` or `tsrange` column). If found, it should automatically create and apply the appropriate synchronization trigger (`synchronize_range_and_bounds`) on the user's behalf. The trigger must also enforce the required `[)` semantics.
+- [x] **Ergonomic native range type handling:**
+  - **Issue:** Users must manually create triggers to synchronize `valid_to` and native `range` columns with the core `valid_from`/`valid_until` columns.
+  - **Action:** Enhanced `add_era` to automatically create a single, unified trigger that synchronizes all three column types (`bounds`, `valid_to`, `range`). This resolves a circular dependency bug that made separate triggers unworkable. The new trigger establishes a clear order of precedence (`range` -> `bounds` -> `valid_to`) to ensure robust, predictable behavior.
   - **Viability Note:** This is the recommended architecture. It provides maximum flexibility for both database and PostgREST users, leverages an existing pattern, and requires no changes to the core extension.
 
 - [ ] **Ensure `infinity` is the default for `valid_to` columns:**

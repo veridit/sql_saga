@@ -44,9 +44,12 @@ When an attribute of an entity changes over time, we need a strategy to record t
 
 ### Temporal Table with Valid Time
 
-For users who prefer to work with inclusive end dates (e.g., a `valid_to` column), `sql_saga` provides a convenience trigger, `sql_saga.synchronize_valid_to_until()`, to automatically maintain the relationship `valid_until = valid_to + '1 day'`.
+When you call `add_era`, it can automatically create synchronization triggers for you.
 
-When you call `add_era`, it can automatically create this trigger for you. It will look for a column named `valid_to` (or the name you provide in the `p_synchronize_valid_to_column` parameter). If a compatible, non-generated column is found, the synchronization trigger will be created. To disable this, set `p_synchronize_valid_to_column` to `NULL`.
+-   **For `valid_to` columns:** To enable synchronization for a `valid_to`-style column, provide its name in the `p_synchronize_valid_to_column` parameter. If the era's data type is discrete (e.g., `date`, `integer`), a trigger is created to enforce `valid_until = valid_to + 1`. If the type is continuous (e.g., `timestamptz`), this feature is disabled with a `WARNING`.
+-   **For `range` columns:** To enable synchronization for a native `range` column, provide its name in the `p_synchronize_range_column` parameter. A trigger will be created to keep it synchronized with the `valid_from` and `valid_until` bounds.
+
+These features are disabled by default (`NULL`).
 
 Example table:
 ```
@@ -217,10 +220,16 @@ WHERE
 ```
 
 ### The `current` View: A Simple View of the Present
-This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It shows only the records that are currently active and hides the temporal columns, presenting the data as if it were a regular, non-temporal table. It provides a safe, explicit protocol for data modification.
+This view is designed to be the primary interface for most applications (e.g., ORMs, REST APIs). It simplifies interaction by showing only the records that are currently active. Because it is based on the concept of "now", the `current` view can only be created on eras that use a `date` or `timestamp`-based data type. It provides a safe, explicit protocol for data modification.
 
 - **`INSERT`**: Creates a new entity. The `valid_from` is automatically set to the current time, and `valid_until` is set to 'infinity'.
 - **`UPDATE` (SCD Type 2)**: A standard `UPDATE ... SET column = 'new value'` automatically performs a **Type 2 Slowly Changing Dimension** operation. The current record is closed out (its `valid_until` is set to `now()`), and a new record is inserted with the updated data, becoming the new current version.
+
+##### Advanced Usage: Exposing All Temporal Columns in Views
+The updatable views (`for_portion_of` and `current`) are designed for transparency. They will always expose *all* columns from the underlying base table. This allows for advanced use cases where multiple temporal representations are managed on the same table.
+
+- **Regular Usage:** If your table only has `valid_from` and `valid_until`, the views will expose just those two columns.
+- **Advanced Usage:** If you add synchronized columns like a human-readable `valid_to` or a native `range` column to your base table, they will also be visible in the views. This allows you to interact with whichever temporal representation is most convenient.
 
 #### Ending an Entity's Timeline (Soft-Delete)
 `sql_saga` provides two configurable modes for handling the end of an entity's timeline, controlled by the `delete_mode` parameter in `add_current_view`. This allows you to choose between maximum ORM compatibility and maximum auditability.
@@ -271,14 +280,14 @@ CREATE TABLE legal_unit (
   name VARCHAR NOT NULL,
   status TEXT, -- e.g., 'active', 'inactive'
   valid_from DATE,
-  valid_until DATE,
-  valid_to DATE -- Optional: for human-readable inclusive end dates
+  valid_to DATE, -- Optional: for human-readable inclusive end dates
+  valid_until DATE
   -- Note: A primary key on temporal tables is often not on the temporal columns
 );
 
 -- Register the table as a temporal table (an "era") using default column names.
--- This will also automatically create a trigger to synchronize 'valid_to' and 'valid_until'.
-SELECT sql_saga.add_era('legal_unit'::regclass);
+-- Explicitly enable synchronization for the 'valid_to' column.
+SELECT sql_saga.add_era('legal_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
@@ -395,7 +404,12 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 ## API Reference
 
 ### Era Management
-- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', valid_until_column_name name DEFAULT 'valid_until', era_name name DEFAULT 'valid', range_type regtype DEFAULT NULL, bounds_check_constraint name DEFAULT NULL, create_columns boolean DEFAULT false, p_synchronize_valid_to_column name DEFAULT 'valid_to') RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration for column names. The `range_type` is automatically inferred from the column data types. If a compatible column matching `p_synchronize_valid_to_column` is found, it also automatically creates a trigger to keep it synchronized with the `valid_until` column (`valid_until = valid_to + 1 day`). To disable this behavior, set this parameter to `NULL`.
+- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., p_synchronize_valid_to_column name DEFAULT NULL, p_synchronize_range_column name DEFAULT NULL, create_columns boolean DEFAULT false) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
+  - The `range_type` is automatically inferred from the column data types.
+  - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `p_synchronize_valid_to_column` or `p_synchronize_range_column`. This creates a single, unified trigger to keep all temporal columns consistent.
+  - The trigger uses a **fail-fast on inconsistency** approach: if you provide multiple temporal representations that are inconsistent with each other (e.g., a `valid_to` of '2024-12-31' and a `validity` range of `[2024-01-01, 2024-06-01)`), it will raise an error rather than guess your intent. It is safe to provide redundant, but consistent, information.
+  - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`). If requested for a continuous type (e.g., `timestamptz`, `numeric`), a `WARNING` is issued and the feature is disabled for that era.
+  - If `create_columns` is `true`, it will also create the `valid_from` and `valid_until` columns if they do not exist. This flag does not create synchronization columns (`valid_to` or a range column), which must exist beforehand.
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 ### Unique Keys
@@ -525,4 +539,4 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for deta
 
 ---
 
-For more any issues or improvements, please use github.
+For any issues or improvements, please use github.
