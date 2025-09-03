@@ -71,10 +71,10 @@ SELECT sql_saga.add_era('location', 'valid_from', 'valid_until');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+-------------------+------------------
- public       | legal_unit | valid    | valid_from             | valid_until             | daterange  | date          | D                      | legal_unit_valid_check  |                             |                          |                   | 
- public       | location   | valid    | valid_from             | valid_until             | daterange  | date          | D                      | location_valid_check    |                             |                          |                   | 
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
+ public       | legal_unit | valid    | valid_from             | valid_until             | daterange  | date          | D                      | legal_unit_valid_check  |                             |                          | f                        |                   | 
+ public       | location   | valid    | valid_from             | valid_until             | daterange  | date          | D                      | location_valid_check    |                             |                          | f                        |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -273,8 +273,8 @@ SELECT sql_saga.drop_era('location');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
@@ -288,8 +288,6 @@ TABLE sql_saga.era;
  name        | character varying |           | not null | 
 Indexes:
     "legal_unit_id_idx" btree (id)
-Check constraints:
-    "legal_unit_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 \d location
                       Table "public.location"
@@ -302,8 +300,6 @@ Check constraints:
  postal_place  | text    |           | not null | 
 Indexes:
     "location_id_idx" btree (id)
-Check constraints:
-    "location_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 DROP TABLE legal_unit;
 DROP TABLE location;

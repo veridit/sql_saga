@@ -54,13 +54,11 @@ When an attribute of an entity changes over time, we need a strategy to record t
 #### Updatable Views for Simplified Data Management
 To simplify common interactions with temporal data, `sql_saga` provides two types of updatable views. These views act as a stable, user-friendly API layer on top of your temporal tables, and are especially useful for integration with tools like PostgREST.
 
-##### The `for_portion_of` View: Full Historical Access
-This view provides a direct window into the entire history of a table. It is designed for advanced use cases where you need to make precise changes to historical data.
-- **`INSERT`**: Directly inserts a new historical record with specified `valid_from` and `valid_until` dates.
-- **`UPDATE`**: Can be used for two purposes:
-    1.  **Historical Correction**: A simple `UPDATE ... WHERE valid_from = ...` will correct a fact in a specific historical record.
-    2.  **Applying a Change to a Time Period**: This is a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. By supplying `valid_from` and `valid_until` in the `SET` clause, you instruct the trigger to apply a change to that specific time slice. The trigger will automatically split and update existing records to reflect the change.
-- **`DELETE`**: Performs a hard delete of a historical record. This is a destructive operation and should be used with caution.
+##### The `for_portion_of` View: Applying Changes to a Time Slice
+This view is a specialized tool that provides a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. It exists for one purpose: to apply a data change to a specific slice of an entity's timeline. The trigger will automatically split, update, and insert historical records to correctly reflect the change.
+
+- **`UPDATE`**: This is the only operation supported by the view. To use it, you must provide `valid_from` and `valid_until` in the `SET` clause, which act as parameters defining the time period to be changed.
+- **`INSERT`, `DELETE`, and simple `UPDATE`s (historical corrections) are not supported.** These operations should be performed directly on the base table. This specialized design ensures the view's purpose is clear and prevents accidental misuse.
 
 **Known Limitation:** The trigger for this view performs `DELETE` and `INSERT` operations that can create a transient, inconsistent state. If the base table is referenced by a temporal foreign key from another table, an `UPDATE` that creates a temporary gap in history may cause the foreign key check to fail.
 
@@ -360,7 +358,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
 
 #### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
-- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a view for advanced users that emulates the SQL:2011 `FOR PORTION OF` syntax.
+- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a change to be applied to a specific time slice of a record's history.
 - `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `for_portion_of` view associated with the specified table and era.
 - `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs.
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.

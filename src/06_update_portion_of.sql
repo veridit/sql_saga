@@ -33,6 +33,12 @@ DECLARE
     GENERATED_COLUMNS_SQL_CURRENT CONSTANT text := 'SELECT array_agg(a.attname) FROM pg_catalog.pg_attribute AS a LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') OR a.attidentity <> '''' OR a.attgenerated <> '''' OR EXISTS (SELECT 1 FROM sql_saga.era AS _p JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
 
 BEGIN
+    -- This view only supports UPDATE operations to apply changes to a specific time slice.
+    -- For INSERTs, DELETEs, or simple historical corrections, use the base table directly.
+    IF TG_OP <> 'UPDATE' THEN
+        RAISE EXCEPTION 'sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.';
+    END IF;
+
     -- Identifier columns are passed as trigger arguments for performance.
     identifier_columns := TG_ARGV;
 
@@ -51,17 +57,18 @@ BEGIN
          RAISE EXCEPTION 'sql_saga: could not find metadata for view %.%', quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
     END IF;
 
-    IF (TG_OP = 'INSERT') THEN
-        EXECUTE format('INSERT INTO %I.%I SELECT ($1).*', info.table_schema, info.table_name)
-        USING NEW;
-        RETURN NEW;
-
-    ELSIF (TG_OP = 'UPDATE') THEN
+    IF (TG_OP = 'UPDATE') THEN
         jnew := to_jsonb(NEW);
+        jold := to_jsonb(OLD);
+        -- Enforce that this is a "time slice" update by requiring the temporal
+        -- bounds to be provided in the SET clause.
+        IF (jnew->info.valid_from_column_name, jnew->info.valid_until_column_name) IS NOT DISTINCT FROM (jold->info.valid_from_column_name, jold->info.valid_until_column_name) THEN
+            RAISE EXCEPTION 'sql_saga: To update a portion of the timeline, you must provide new values for "%" and "%" in the SET clause.', info.valid_from_column_name, info.valid_until_column_name
+                USING HINT = 'Simple historical corrections should be performed on the base table directly.';
+        END IF;
+
         fromval := jnew->info.valid_from_column_name;
         toval := jnew->info.valid_until_column_name;
-
-        jold := to_jsonb(OLD);
         bstartval := jold->info.valid_from_column_name;
         bendval := jold->info.valid_until_column_name;
 
@@ -162,17 +169,9 @@ BEGIN
         END IF;
 
         RETURN NEW;
-
-    ELSIF (TG_OP = 'DELETE') THEN
-        SELECT string_agg(quote_ident(col) || ' = ($1).' || quote_ident(col), ' AND ')
-        INTO where_clause
-        FROM unnest(identifier_columns || ARRAY[info.valid_from_column_name, info.valid_until_column_name]) AS t(col);
-
-        EXECUTE format('DELETE FROM %I.%I WHERE %s', info.table_schema, info.table_name, where_clause)
-        USING OLD;
-        RETURN OLD;
     END IF;
 
+    -- This should not be reachable due to the check at the top of the function.
     RETURN NULL;
 END;
 $function$;

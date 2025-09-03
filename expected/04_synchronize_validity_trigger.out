@@ -44,17 +44,17 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_colum
 (1 row)
 
 \d sync_test_default
-                Table "public.sync_test_default"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
+            Table "public.sync_test_default"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_to    | date    |           |          | 'infinity'::date
- valid_until | date    |           | not null | 'infinity'::date
+ valid_to    | date    |           |          | 
+ valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
-    sync_test_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
+    sync_test_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
 
 INSERT INTO sync_test_default (id, valid_from, valid_to) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, valid_from, valid_until, valid_to FROM sync_test_default;
@@ -112,17 +112,17 @@ NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_c
 (1 row)
 
 \d sync_test_custom_name
-              Table "public.sync_test_custom_name"
-   Column   |  Type   | Collation | Nullable |     Default      
-------------+---------+-----------+----------+------------------
+         Table "public.sync_test_custom_name"
+   Column   |  Type   | Collation | Nullable | Default 
+------------+---------+-----------+----------+---------
  id         | integer |           |          | 
  start_date | date    |           | not null | 
- until_date | date    |           | not null | 'infinity'::date
- to_date    | date    |           |          | 'infinity'::date
+ until_date | date    |           | not null | 
+ to_date    | date    |           |          | 
 Check constraints:
     "sync_test_custom_name_valid_check" CHECK (start_date < until_date AND start_date > '-infinity'::date)
 Triggers:
-    sync_test_custom_name_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF start_date, until_date, to_date ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('start_date', 'until_date', 'to_date', 'null', 'date')
+    sync_test_custom_name_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF start_date, until_date, to_date ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('start_date', 'until_date', 'to_date', 'null', 'date', 't')
 
 INSERT INTO sync_test_custom_name (id, start_date, to_date) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, start_date, until_date, to_date FROM sync_test_custom_name;
@@ -149,12 +149,12 @@ NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_col
 -------------+---------+-----------+----------+------------------------------------------------------------------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+ valid_until | date    |           | not null | 
  valid_to    | date    |           |          | generated always as ((valid_until - '@ 1 day'::interval)) stored
 Check constraints:
     "sync_test_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
-    sync_test_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
+    sync_test_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
 
 INSERT INTO sync_test_generated (id, valid_from, valid_until) VALUES (1, '2024-01-01', '2025-01-01');
 SELECT id, valid_from, valid_until, valid_to FROM sync_test_generated;
@@ -176,13 +176,13 @@ WARNING:  sql_saga: Synchronization column "valid_to" on table sync_test_wrong_t
 (1 row)
 
 \d sync_test_wrong_type
-               Table "public.sync_test_wrong_type"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
+          Table "public.sync_test_wrong_type"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_to    | text    |           |          | 'infinity'::text
- valid_until | date    |           | not null | 'infinity'::date
+ valid_to    | text    |           |          | 
+ valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_wrong_type_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 

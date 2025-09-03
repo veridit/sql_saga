@@ -98,18 +98,20 @@ BEGIN
         DELETE FROM sql_saga.era AS p
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
 
-        /* Delete bounds check constraint and columns if purging */
+        /* Drop synchronization trigger */
+        IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
+             EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name), table_oid);
+        END IF;
+
+        /* Delete bounds check constraint. */
+        IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint);
+        END IF;
+
+        /* Delete columns if purging */
         IF NOT is_dropped AND cleanup THEN
-            DECLARE
-                clauses text[] := ARRAY[]::text[];
-            BEGIN
-                IF era_row.bounds_check_constraint IS NOT NULL THEN
-                    clauses := clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
-                END IF;
-                clauses := clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
-                clauses := clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
-                EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(clauses, ', '));
-            END;
+            EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
+                table_oid, era_row.valid_from_column_name, era_row.valid_until_column_name);
         END IF;
 
         RETURN true;
@@ -131,18 +133,20 @@ BEGIN
     DELETE FROM sql_saga.era AS p
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
 
-    /* Delete bounds check constraint and columns if purging */
+    /* Drop synchronization trigger */
+    IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
+         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name), table_oid);
+    END IF;
+
+    /* Delete bounds check constraint. */
+    IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint);
+    END IF;
+
+    /* Delete columns if purging */
     IF NOT is_dropped AND cleanup THEN
-        DECLARE
-            clauses text[] := ARRAY[]::text[];
-        BEGIN
-            IF era_row.bounds_check_constraint IS NOT NULL THEN
-                clauses := clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
-            END IF;
-            clauses := clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
-            clauses := clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
-            EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(clauses, ', '));
-        END;
+        EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
+            table_oid, era_row.valid_from_column_name, era_row.valid_until_column_name);
     END IF;
 
     RETURN true;

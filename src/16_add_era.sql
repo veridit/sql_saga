@@ -36,6 +36,7 @@ DECLARE
     sync_col_type_oid oid;
     sync_col_is_generated text;
     trigger_name name;
+    v_trigger_applies_defaults boolean := false;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -246,13 +247,12 @@ BEGIN
 
         IF p_add_defaults THEN
             IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
-                alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
-                IF p_synchronize_valid_to_column IS NOT NULL THEN
-                    SELECT a.attgenerated INTO sync_col_is_generated FROM pg_attribute a WHERE a.attrelid = table_oid AND a.attname = p_synchronize_valid_to_column;
-                    IF sync_col_is_generated = '' THEN -- attgenerated is 'g' for generated, '' for normal
-                        -- For an open-ended period, both until (exclusive) and to (inclusive) are infinity.
-                        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', p_synchronize_valid_to_column);
-                    END IF;
+                IF p_synchronize_valid_to_column IS NOT NULL OR p_synchronize_range_column IS NOT NULL THEN
+                    -- If there are synchronized columns, the trigger will handle defaults.
+                    v_trigger_applies_defaults := true;
+                ELSE
+                    -- For simple eras, set the default directly on the table.
+                    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
                 END IF;
             END IF;
         END IF;
@@ -364,8 +364,8 @@ BEGIN
         FROM pg_catalog.pg_range r JOIN pg_catalog.pg_type t ON t.oid = r.rngsubtype
         WHERE r.rngtypid = range_type;
 
-        INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
-        VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint);
+        INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint, trigger_applies_defaults)
+        VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint, v_trigger_applies_defaults);
     END;
 
     -- Create the unified synchronization trigger if any sync columns are specified.
@@ -416,7 +416,7 @@ BEGIN
             IF v_to_col IS NOT NULL OR v_range_col IS NOT NULL THEN
                 trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
                 EXECUTE format(
-                    'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L)',
+                    'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L, %L)',
                     trigger_name,
                     array_to_string(ARRAY[valid_from_column_name, valid_until_column_name] || sync_cols, ', '),
                     table_oid::text,
@@ -424,7 +424,8 @@ BEGIN
                     valid_until_column_name,
                     v_to_col,
                     v_range_col,
-                    v_range_subtype
+                    v_range_subtype,
+                    v_trigger_applies_defaults
                 );
                 RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
 

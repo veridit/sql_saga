@@ -39,13 +39,26 @@ CREATE VIEW products_view_select_for_portion_of AS
 TABLE products__for_portion_of_valid ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 
--- Test INSERT (Direct historical insert)
+-- Test INSERT (should be disallowed)
+SAVEPOINT insert_should_fail;
 INSERT INTO products__for_portion_of_valid (id, name, price, valid_from, valid_until)
 VALUES (3, 'Keyboard', 75, '2023-01-01', 'infinity');
+ROLLBACK TO insert_should_fail;
 
--- The new record should be visible in both the base table and the view
+-- The table should be unchanged.
 TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
+
+
+-- Test simple UPDATE (Historical correction, should be disallowed)
+SAVEPOINT simple_update_should_fail;
+UPDATE products__for_portion_of_valid SET price = 1250 WHERE id = 1 AND valid_from = '2023-01-01';
+ROLLBACK TO simple_update_should_fail;
+
+-- Price should be unchanged.
+TABLE products ORDER BY id, valid_from;
+TABLE products_view_select_for_portion_of;
+
 
 -- Test UPDATE (applying a change to a portion of the timeline)
 -- Apply a price change to Laptop for a 3-month period.
@@ -95,11 +108,13 @@ TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 
 
--- Test DELETE (Hard historical delete)
+-- Test DELETE (should be disallowed)
 -- Delete the Mouse record
+SAVEPOINT delete_should_fail;
 DELETE FROM products__for_portion_of_valid WHERE id = 2;
+ROLLBACK TO delete_should_fail;
 
--- The record for the mouse should be gone completely
+-- The record for the mouse should still be present
 TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 

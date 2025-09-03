@@ -79,6 +79,7 @@ CREATE TABLE sql_saga.era (
     bounds_check_constraint name,
     synchronize_valid_to_column name,
     synchronize_range_column name,
+    trigger_applies_defaults boolean NOT NULL DEFAULT false,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
     audit_schema_name name,

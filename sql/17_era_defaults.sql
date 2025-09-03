@@ -7,10 +7,14 @@ SET ROLE TO sql_saga_unprivileged_user;
 
 /* Test default values for types that support infinity */
 CREATE TABLE defaults_date (val text, valid_from date, valid_until date, valid_to date);
+-- For synchronized tables, the trigger handles defaults, not the table DDL.
 SELECT sql_saga.add_era('defaults_date', p_synchronize_valid_to_column => 'valid_to');
 \d defaults_date
+-- Test implicit default (omitting column)
 INSERT INTO defaults_date (val, valid_from) VALUES ('a', '2000-01-01');
-TABLE defaults_date;
+-- Test explicit NULL default
+INSERT INTO defaults_date (val, valid_from, valid_until) VALUES ('b', '2001-01-01', NULL);
+TABLE defaults_date ORDER BY val;
 DROP TABLE defaults_date;
 
 CREATE TABLE defaults_ts (val text, valid_from timestamptz, valid_until timestamptz);

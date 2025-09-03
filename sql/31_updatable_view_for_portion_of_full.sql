@@ -19,7 +19,8 @@ SELECT sql_saga.add_for_portion_of_view('test_schema.schema_test'::regclass);
 \d test_schema.schema_test__for_portion_of_valid
 TABLE sql_saga.updatable_view;
 
-INSERT INTO test_schema.schema_test__for_portion_of_valid VALUES (1, 'A', '2024-01-01', 'infinity');
+-- DML must be on the base table now
+INSERT INTO test_schema.schema_test VALUES (1, 'A', '2024-01-01', 'infinity');
 TABLE test_schema.schema_test;
 
 SELECT sql_saga.drop_for_portion_of_view('test_schema.schema_test'::regclass);
@@ -40,23 +41,24 @@ RESET ROLE;
 TABLE sql_saga.updatable_view;
 
 -- Verify that permissions are handled correctly
+INSERT INTO acl_test (id, value, valid_from, valid_until) VALUES (1, 'initial', '2024-01-01', 'infinity');
 GRANT SELECT ON acl_test TO sql_saga_unprivileged_user;
 
-SAVEPOINT no_insert;
+SAVEPOINT no_update;
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
 -- Should fail, as we only have SELECT on the base table
-INSERT INTO acl_test__for_portion_of_valid VALUES (1, 'no', '2024-01-01', 'infinity');
-ROLLBACK TO no_insert;
+UPDATE acl_test__for_portion_of_valid SET value = 'no', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
+ROLLBACK TO no_update;
 
-SAVEPOINT can_insert;
-GRANT INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
+SAVEPOINT can_update;
+GRANT UPDATE, INSERT ON acl_test TO sql_saga_unprivileged_user;
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
 -- Should now succeed
-INSERT INTO acl_test__for_portion_of_valid VALUES (1, 'yes', '2024-01-01', 'infinity');
-TABLE acl_test;
-ROLLBACK TO can_insert;
+UPDATE acl_test__for_portion_of_valid SET value = 'yes', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
+TABLE acl_test ORDER BY valid_from;
+ROLLBACK TO can_update;
 
 SELECT sql_saga.drop_for_portion_of_view('acl_test'::regclass);
 

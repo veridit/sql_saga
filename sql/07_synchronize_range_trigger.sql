@@ -92,7 +92,7 @@ ROLLBACK TO SAVEPOINT test_6;
 SAVEPOINT test_7;
 CREATE TABLE sync_both (id int, valid_from date, valid_to date, valid_until date, validity daterange);
 -- Enable both triggers
-SELECT sql_saga.add_era('sync_both', p_synchronize_valid_to_column := 'valid_to', p_synchronize_range_column := 'validity');
+SELECT sql_saga.add_era('sync_both', p_synchronize_valid_to_column := 'valid_to', p_synchronize_range_column := 'validity', p_add_defaults := false);
 \d sync_both
 -- 7a. INSERT with range, other columns are auto-populated
 INSERT INTO sync_both (id, validity) VALUES (1, '[2024-01-01, 2025-01-01)');
@@ -104,16 +104,38 @@ SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=2
 INSERT INTO sync_both (id, valid_from, valid_until) VALUES (3, '2028-01-01', '2029-01-01');
 SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=3;
 
+-- 7c2. INSERT with NULL valid_until, should get default from trigger
+SAVEPOINT with_defaults_test;
+-- To test this, we must re-add the era with defaults enabled.
+SELECT sql_saga.drop_era('sync_both');
+SELECT sql_saga.add_era('sync_both', p_synchronize_valid_to_column := 'valid_to', p_synchronize_range_column := 'validity', p_add_defaults := true);
+\d sync_both
+INSERT INTO sync_both (id, valid_from, valid_until) VALUES (4, '2028-01-01', NULL);
+SELECT * FROM sync_both WHERE id = 4;
+ROLLBACK TO with_defaults_test;
+-- The era should be back to its previous state (no defaults).
+\d sync_both
+
 -- 7d. INSERT with CONSISTENT multiple representations (valid_to and range)
 \echo '--- 7d. Test consistent multiple inputs ---'
-INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (4, '2030-01-01', '2030-12-31', '[2030-01-01, 2031-01-01)');
-SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=4;
+INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (5, '2030-01-01', '2030-12-31', '[2030-01-01, 2031-01-01)');
+SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=5;
 
 -- 7e. INSERT with INCONSISTENT multiple representations (valid_to and range)
 \echo '--- 7e. Test inconsistent multiple inputs ---'
 DO $$
 BEGIN
-    INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (5, '2030-01-01', '2030-12-31', '[2099-01-01, 2100-01-01)');
+    INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (6, '2030-01-01', '2030-12-31', '[2099-01-01, 2100-01-01)');
+EXCEPTION WHEN others THEN
+    RAISE NOTICE 'Caught expected error: %', SQLERRM;
+END;
+$$;
+
+-- 7f. UPDATE with INCONSISTENT multiple representations
+\echo '--- 7f. Test inconsistent update ---'
+DO $$
+BEGIN
+    UPDATE sync_both SET valid_to = '2025-12-31', validity = '[2099-01-01, 2100-01-01)' WHERE id = 1;
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
 END;

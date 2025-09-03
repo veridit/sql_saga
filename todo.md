@@ -23,6 +23,10 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [x] **Refactor default value handling to be metadata-driven**: Implemented a robust, metadata-driven strategy for default values. For simple eras, `add_era` sets `DEFAULT 'infinity'`. For eras with synchronized columns, a metadata flag instructs the trigger to programmatically apply the default on `INSERT`. This removes the brittle `'infinity'` heuristic and adds fail-fast consistency checks for `UPDATE` operations.
+
+- [x] **Simplify `for_portion_of` view semantics**: Refactored the `for_portion_of` view to only provide the complex "apply change to a time slice" `UPDATE` functionality. Simple `INSERT`, `UPDATE`, and `DELETE` operations are now disallowed on the view and must be performed on the base table.
+
 - [x] **Fix regressions from optional `add_era` parameters**: Resolved failures in `04_synchronize_validity_trigger` and other tests caused by `add_era`'s new default-setting behavior interacting incorrectly with generated columns and the synchronization trigger's consistency checks.
 
 - [x] **Make `add_era` constraints and defaults optional**: Added `p_add_defaults` and `p_add_bounds_check` parameters to `add_era` to allow users to opt out of the default integrity management. This provides flexibility for advanced use cases while maintaining a safe default.

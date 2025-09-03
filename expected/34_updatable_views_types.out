@@ -140,48 +140,12 @@ NOTICE:  --- Testing updatable views with various data types ---
 NOTICE:  
 NOTICE:  --- Testing type: date ---
 NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Testing current view for type: date ---
-NOTICE:  4. current: INSERT at time 1
-NOTICE:  5. current: UPDATE (SCD2) at time 2
-NOTICE:  6. current: UPDATE (soft-delete) at time 3
-NOTICE:  
-NOTICE:  --- Testing type: int ---
-NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Skipping current view test for type: int ---
-NOTICE:  
-NOTICE:  --- Testing type: bigint ---
-NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Skipping current view test for type: bigint ---
-NOTICE:  
-NOTICE:  --- Testing type: numeric ---
-NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Skipping current view test for type: numeric ---
-NOTICE:  
-NOTICE:  --- Testing type: timestamp ---
-NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Testing current view for type: timestamp ---
-NOTICE:  4. current: INSERT at time 1
-NOTICE:  5. current: UPDATE (SCD2) at time 2
-NOTICE:  6. current: UPDATE (soft-delete) at time 3
-NOTICE:  
-NOTICE:  --- Testing type: timestamptz ---
-NOTICE:  1. for_portion_of: INSERT
-NOTICE:  2. for_portion_of: UPDATE (historical correction)
-NOTICE:  3. for_portion_of: UPDATE (split)
-NOTICE:  --- Testing current view for type: timestamptz ---
-NOTICE:  4. current: INSERT at time 1
-NOTICE:  5. current: UPDATE (SCD2) at time 2
-NOTICE:  6. current: UPDATE (soft-delete) at time 3
+ERROR:  sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.
+CONTEXT:  PL/pgSQL function for_portion_of_trigger() line 35 at RAISE
+SQL statement "
+            INSERT INTO test_table_date__for_portion_of_valid (id, value, valid_from, valid_until) VALUES (1, 'initial', '2024-01-10'::date, '2024-01-20'::date);
+        "
+PL/pgSQL function inline_code_block line 45 at EXECUTE
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql
@@ -195,21 +159,7 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-psql:sql/include/test_teardown.sql:13: NOTICE:  drop cascades to 6 other objects
-DETAIL:  drop cascades to trigger for_portion_of_valid on view test_table_date__for_portion_of_valid
-drop cascades to trigger for_portion_of_valid on view test_table_int__for_portion_of_valid
-drop cascades to trigger for_portion_of_valid on view test_table_bigint__for_portion_of_valid
-drop cascades to trigger for_portion_of_valid on view test_table_numeric__for_portion_of_valid
-drop cascades to trigger for_portion_of_valid on view test_table_timestamp__for_portion_of_valid
-drop cascades to trigger for_portion_of_valid on view test_table_timestamptz__for_portion_of_valid
 DROP EXTENSION IF EXISTS btree_gist CASCADE;
-psql:sql/include/test_teardown.sql:14: NOTICE:  drop cascades to 6 other objects
-DETAIL:  drop cascades to constraint test_table_date_id_valid_excl on table test_table_date
-drop cascades to constraint test_table_int_id_valid_excl on table test_table_int
-drop cascades to constraint test_table_bigint_id_valid_excl on table test_table_bigint
-drop cascades to constraint test_table_numeric_id_valid_excl on table test_table_numeric
-drop cascades to constraint test_table_timestamp_id_valid_excl on table test_table_timestamp
-drop cascades to constraint test_table_timestamptz_id_valid_excl on table test_table_timestamptz
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.
 DROP OWNED BY sql_saga_unprivileged_user;
