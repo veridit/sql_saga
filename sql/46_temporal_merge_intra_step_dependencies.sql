@@ -86,7 +86,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
@@ -95,7 +95,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State (A single entity with two historical slices) ---'
 SELECT * FROM (VALUES
@@ -164,7 +164,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
@@ -175,7 +175,7 @@ SELECT * FROM (VALUES
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Expected Final State ---'
 SELECT * FROM (VALUES

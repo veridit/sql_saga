@@ -185,10 +185,10 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
     - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A full synchronization. Timelines of source entities are replaced, and target entities not in the source are deleted.
 
   ##### Operation Feedback and Session State
-  The procedure uses two session-scoped temporary tables to manage its state: `__temp_last_sql_saga_temporal_merge_plan` (which stores the execution plan) and `__temp_last_sql_saga_temporal_merge` (which stores the final row-by-row feedback). These tables are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
+  The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 
-  - **Caveat for Multi-Role Sessions:** Because `TEMP` tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later in the same session by an unprivileged user, the second call will fail as the unprivileged user will not have permission to drop the temporary tables created by the superuser.
-  - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, you must manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS __temp_last_sql_saga_temporal_merge_plan, __temp_last_sql_saga_temporal_merge;`
+  - **Caveat for Multi-Role Sessions:** Because temporary tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later by an unprivileged user, the second call may fail as the unprivileged user might not have permission to `TRUNCATE` the tables created by the superuser.
+  - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, it is safest to manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS pg_temp.temporal_merge_plan, pg_temp.temporal_merge_feedback;`
 
 #### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
@@ -336,7 +336,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 #### Era Management
 - `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., p_synchronize_valid_to_column name DEFAULT NULL, p_synchronize_range_column name DEFAULT NULL, create_columns boolean DEFAULT false, p_add_defaults boolean DEFAULT true, p_add_bounds_check boolean DEFAULT true) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
   - The `range_type` is automatically inferred from the column data types.
-  - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `p_synchronize_valid_to_column` or `p_synchronize_range_column`. This creates a single, unified trigger to keep all temporal columns consistent.
+  - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `p_synchronize_valid_to_column` or `p_synchronize_range_column`. This also adds a `NOT NULL` constraint to the synchronized columns and creates a unified trigger to keep all temporal representations consistent.
   - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`).
   - If `create_columns` is `true`, it will also create the `valid_from` and `valid_until` columns if they do not exist.
   - `p_add_defaults`: If `true` (the default), `sql_saga` will set `DEFAULT 'infinity'` on the `valid_until` column for data types that support it. This simplifies `INSERT` statements for open-ended periods. Set to `false` if you wish to manage default values manually.

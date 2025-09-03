@@ -133,6 +133,9 @@ CALL sql_saga.temporal_merge(
     p_update_source_with_assigned_entity_ids => true
 );
 
+\echo '--- Verification: Feedback from temporal_merge ---'
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+
 \echo '--- Verification: Final state of legal_unit table ---'
 SELECT id, legal_ident, name, status, valid_from, valid_until FROM readme.legal_unit ORDER BY id, valid_from;
 
@@ -160,6 +163,9 @@ CALL sql_saga.temporal_merge(
     p_era_name => 'valid',
     p_founding_id_column => 'founding_id'
 );
+
+\echo '--- Verification: Feedback from temporal_merge ---'
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Verification: Final state of establishment table ---'
 SELECT id, name, address, legal_unit_id, valid_from, valid_until FROM readme.establishment ORDER BY id, valid_from;

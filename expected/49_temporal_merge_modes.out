@@ -103,7 +103,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {101}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-06-01      | {"value": "Original A"} | starts
@@ -126,7 +126,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
            101 | [{"id": 1}]       | APPLIED
@@ -151,7 +151,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {101}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-06-01      | {"value": "Original A"} | starts
@@ -237,7 +237,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {201}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-06-01      | {"value": "Original A"} | starts
@@ -260,7 +260,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
            201 | [{"id": 1}]       | APPLIED
@@ -340,7 +340,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids |      status      
 ---------------+-------------------+------------------
            301 | [{"id": 1}]       | APPLIED
@@ -363,7 +363,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {301}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-06-01      | {"value": "Original A"} | starts
@@ -441,7 +441,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids |      status      
 ---------------+-------------------+------------------
            401 | [{"id": 1}]       | APPLIED
@@ -464,7 +464,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {401}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-06-01      | {"value": "Original A"} | starts
@@ -542,7 +542,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 |                | IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"value": "Original A"} | equals
@@ -563,7 +563,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
            501 | []                | SKIPPED
@@ -633,7 +633,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
            601 | []                | SKIPPED
@@ -651,7 +651,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |          data           | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------+----------
            1 | {601}          | IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"value": "Original A"} | equals

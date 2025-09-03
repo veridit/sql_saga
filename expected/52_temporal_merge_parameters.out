@@ -136,7 +136,7 @@ SELECT * FROM (VALUES
 \echo '--- Orchestrator: Actual Plan ---'
 --- Orchestrator: Actual Plan ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids
-FROM __temp_last_sql_saga_temporal_merge_plan
+FROM pg_temp.temporal_merge_plan
 ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids 
 -------------+----------------+-----------+------------
@@ -309,7 +309,7 @@ SELECT * FROM (VALUES (101, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_m
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge WHERE source_row_id = 101;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback WHERE source_row_id = 101;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
            101 | [{"id": 1}]       | APPLIED
@@ -406,7 +406,7 @@ SELECT * FROM (VALUES (1, '[{"unit_pk": 1}]'::jsonb, 'APPLIED'::sql_saga.tempora
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
              1 | [{"unit_pk": 1}]  | APPLIED
@@ -474,7 +474,7 @@ SELECT * FROM (VALUES (1, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_mer
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
  source_row_id | target_entity_ids | status  
 ---------------+-------------------+---------
              1 | [{"id": 1}]       | APPLIED
@@ -612,7 +612,7 @@ SELECT * FROM (VALUES
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT source_row_id, target_entity_ids
-FROM __temp_last_sql_saga_temporal_merge
+FROM pg_temp.temporal_merge_feedback
 ORDER BY source_row_id;
  source_row_id |              target_entity_ids              
 ---------------+---------------------------------------------

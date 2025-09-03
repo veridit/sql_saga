@@ -586,10 +586,13 @@ BEGIN
         v_internal_keys_to_remove := v_internal_keys_to_remove || p_source_row_id_column;
     END IF;
 
-    IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge') IS NOT NULL THEN
-        DROP TABLE __temp_last_sql_saga_temporal_merge;
+    -- If the feedback table exists from a previous call in the same transaction,
+    -- truncate it. Otherwise, create it.
+    IF to_regclass('pg_temp.temporal_merge_feedback') IS NULL THEN
+        CREATE TEMP TABLE temporal_merge_feedback (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
+    ELSE
+        TRUNCATE TABLE pg_temp.temporal_merge_feedback;
     END IF;
-    CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
 
     -- Auto-detect columns that should be excluded from INSERT statements.
     -- This includes columns with defaults, identity columns, and generated columns.
@@ -633,13 +636,13 @@ BEGIN
 
         v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
-        IF to_regclass('pg_temp.__temp_last_sql_saga_temporal_merge_plan') IS NOT NULL THEN
-            DROP TABLE __temp_last_sql_saga_temporal_merge_plan;
+        IF to_regclass('pg_temp.temporal_merge_plan') IS NULL THEN
+            CREATE TEMP TABLE temporal_merge_plan (LIKE sql_saga.temporal_plan_op, PRIMARY KEY (plan_op_seq)) ON COMMIT DROP;
+        ELSE
+            TRUNCATE TABLE pg_temp.temporal_merge_plan;
         END IF;
-        CREATE TEMP TABLE __temp_last_sql_saga_temporal_merge_plan (LIKE sql_saga.temporal_plan_op) ON COMMIT DROP;
-        ALTER TABLE __temp_last_sql_saga_temporal_merge_plan ADD PRIMARY KEY (plan_op_seq);
 
-        INSERT INTO __temp_last_sql_saga_temporal_merge_plan
+        INSERT INTO temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
             p_target_table             => p_target_table,
             p_source_table             => p_source_table,
@@ -724,9 +727,9 @@ BEGIN
 
                 -- If founding_id_column is used, we need the multi-stage "Smart Merge" process
                 IF p_founding_id_column IS NOT NULL AND
-                   (SELECT TRUE FROM __temp_last_sql_saga_temporal_merge_plan WHERE entity_ids ? p_founding_id_column LIMIT 1)
+                   (SELECT TRUE FROM temporal_merge_plan WHERE entity_ids ? p_founding_id_column LIMIT 1)
                 THEN
-                    CREATE TEMP TABLE __temp_id_map (founding_id TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
+                    CREATE TEMP TABLE temporal_merge_entity_id_map (founding_id TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
 
                     -- Stage 1: Insert just ONE row for each new conceptual entity to generate the ID.
                     -- Use a MERGE statement to get a direct mapping from the founding_id to the new key.
@@ -738,7 +741,7 @@ BEGIN
                                 p.new_valid_from,
                                 p.new_valid_until,
                                 p.entity_ids || p.data as full_data
-                            FROM __temp_last_sql_saga_temporal_merge_plan p
+                            FROM temporal_merge_plan p
                             WHERE p.operation = 'INSERT' AND p.entity_ids ? %7$L
                             ORDER BY p.entity_ids->>%7$L, p.plan_op_seq
                         ),
@@ -750,7 +753,7 @@ BEGIN
                                 VALUES (%3$s, s.new_valid_from::%8$s, s.new_valid_until::%9$s)
                             RETURNING t.*, s.founding_id
                         )
-                        INSERT INTO __temp_id_map (founding_id, new_entity_ids)
+                        INSERT INTO temporal_merge_entity_id_map (founding_id, new_entity_ids)
                         SELECT
                             ir.founding_id,
                             %4$s -- v_entity_id_update_jsonb_build expression
@@ -770,9 +773,9 @@ BEGIN
                     -- Stage 2: Back-fill the generated IDs into the plan for all dependent operations,
                     -- preserving the internal founding_id key for the next step.
                     EXECUTE format($$
-                        UPDATE __temp_last_sql_saga_temporal_merge_plan p
+                        UPDATE temporal_merge_plan p
                         SET entity_ids = m.new_entity_ids || jsonb_build_object(%1$L, p.entity_ids->>%1$L)
-                        FROM __temp_id_map m
+                        FROM temporal_merge_entity_id_map m
                         WHERE p.entity_ids->>%1$L = m.founding_id;
                     $$, p_founding_id_column);
 
@@ -802,13 +805,13 @@ BEGIN
                         EXECUTE format($$
                             INSERT INTO %1$s (%2$s, %4$I, %5$I)
                             SELECT %3$s, p.new_valid_from::%7$s, p.new_valid_until::%8$s
-                            FROM __temp_last_sql_saga_temporal_merge_plan p,
+                            FROM temporal_merge_plan p,
                                  LATERAL jsonb_populate_record(null::%1$s, p.entity_ids || p.data) as jpr_all
                             WHERE p.operation = 'INSERT'
                               AND NOT EXISTS ( -- Exclude the "founding" rows we already inserted
                                 SELECT 1 FROM (
                                     SELECT DISTINCT ON (p_inner.entity_ids->>%6$L) plan_op_seq
-                                    FROM __temp_last_sql_saga_temporal_merge_plan p_inner
+                                    FROM temporal_merge_plan p_inner
                                     WHERE p_inner.operation = 'INSERT' AND p_inner.entity_ids ? %6$L
                                     ORDER BY p_inner.entity_ids->>%6$L, p_inner.plan_op_seq
                                 ) AS founding_ops
@@ -826,7 +829,7 @@ BEGIN
                         );
                     END;
 
-                    DROP TABLE __temp_id_map;
+                    DROP TABLE temporal_merge_entity_id_map;
                 ELSE
                     -- Standard case: No intra-step dependencies, or not using founding_id.
                     -- Use the robust MERGE pattern to handle all INSERTS in one go.
@@ -838,7 +841,7 @@ BEGIN
                                 p.new_valid_from,
                                 p.new_valid_until,
                                 p.entity_ids || p.data as full_data
-                            FROM __temp_last_sql_saga_temporal_merge_plan p
+                            FROM temporal_merge_plan p
                             WHERE p.operation = 'INSERT'
                         ),
                         inserted_rows AS (
@@ -849,7 +852,7 @@ BEGIN
                                 VALUES (%3$s, s.new_valid_from::%7$s, s.new_valid_until::%8$s)
                             RETURNING t.*, s.plan_op_seq
                         )
-                        UPDATE __temp_last_sql_saga_temporal_merge_plan p
+                        UPDATE temporal_merge_plan p
                         SET entity_ids = %4$s
                         FROM inserted_rows ir
                         WHERE p.plan_op_seq = ir.plan_op_seq;
@@ -900,7 +903,7 @@ BEGIN
                             p.plan_op_seq,
                             p.new_valid_from,
                             p.new_valid_until
-                        FROM __temp_last_sql_saga_temporal_merge_plan p
+                        FROM temporal_merge_plan p
                         WHERE p.operation = 'INSERT'
                     ),
                     inserted_rows AS (
@@ -911,7 +914,7 @@ BEGIN
                             VALUES (s.new_valid_from::%5$s, s.new_valid_until::%6$s)
                         RETURNING t.*, s.plan_op_seq
                     )
-                    UPDATE __temp_last_sql_saga_temporal_merge_plan p
+                    UPDATE temporal_merge_plan p
                     SET entity_ids = %2$s
                     FROM inserted_rows ir
                     WHERE p.plan_op_seq = ir.plan_op_seq;
@@ -941,7 +944,7 @@ BEGIN
                 INTO v_source_update_set_clause
                 FROM (
                     SELECT key FROM jsonb_object_keys(
-                        (SELECT entity_ids FROM __temp_last_sql_saga_temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
+                        (SELECT entity_ids FROM temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
                     ) as key
                 ) j
                 JOIN pg_attribute a ON a.attname = j.key
@@ -953,8 +956,8 @@ BEGIN
                             SELECT DISTINCT ON (s.source_row_id)
                                 s.source_row_id,
                                 p.entity_ids
-                            FROM (SELECT DISTINCT unnest(source_row_ids) AS source_row_id FROM __temp_last_sql_saga_temporal_merge_plan WHERE operation = 'INSERT') s
-                            JOIN __temp_last_sql_saga_temporal_merge_plan p ON s.source_row_id = ANY(p.source_row_ids)
+                            FROM (SELECT DISTINCT unnest(source_row_ids) AS source_row_id FROM temporal_merge_plan WHERE operation = 'INSERT') s
+                            JOIN temporal_merge_plan p ON s.source_row_id = ANY(p.source_row_ids)
                             WHERE p.entity_ids IS NOT NULL
                             ORDER BY s.source_row_id, p.plan_op_seq
                         )
@@ -970,28 +973,28 @@ BEGIN
         -- 2. Execute UPDATE operations
         IF v_update_set_clause IS NOT NULL THEN
             EXECUTE format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
-                FROM __temp_last_sql_saga_temporal_merge_plan p,
+                FROM temporal_merge_plan p,
                      LATERAL jsonb_populate_record(null::%1$s, p.data) AS jpr_data,
                      LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
                 WHERE p.operation = 'UPDATE' AND %3$s AND t.%4$I = p.old_valid_from::%6$s;
             $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
         ELSIF v_all_cols_ident IS NOT NULL THEN
             EXECUTE format($$ UPDATE %1$s t SET %3$I = p.new_valid_from::%5$s, %4$I = p.new_valid_until::%6$s
-                FROM __temp_last_sql_saga_temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+                FROM temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
                 WHERE p.operation = 'UPDATE' AND %2$s AND t.%3$I = p.old_valid_from::%5$s;
             $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
         END IF;
 
         -- 3. Execute DELETE operations
         EXECUTE format($$ DELETE FROM %1$s t
-            USING __temp_last_sql_saga_temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+            USING temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
             WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_from::%4$s;
         $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_from_col_type);
 
         SET CONSTRAINTS ALL IMMEDIATE;
 
         -- 4. Generate and store feedback
-        INSERT INTO __temp_last_sql_saga_temporal_merge
+        INSERT INTO temporal_merge_feedback
             SELECT
                 s.source_row_id AS source_row_id,
                 COALESCE(jsonb_agg(DISTINCT (p_unnested.entity_ids - v_internal_keys_to_remove)) FILTER (WHERE p_unnested.entity_ids IS NOT NULL AND p_unnested.operation <> 'IDENTICAL'), '[]'::jsonb) AS target_entity_ids,
@@ -1008,7 +1011,7 @@ BEGIN
                 (SELECT unnest(v_all_source_row_ids) as source_row_id) s
             LEFT JOIN (
                 SELECT unnest(p.source_row_ids) as source_row_id, p.plan_op_seq, p.entity_ids, p.operation
-                FROM __temp_last_sql_saga_temporal_merge_plan p
+                FROM temporal_merge_plan p
             ) p_unnested ON s.source_row_id = p_unnested.source_row_id
             GROUP BY
                 s.source_row_id

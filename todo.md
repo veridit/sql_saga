@@ -101,6 +101,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Low Priority - Future Work & New Features
 
+- [x] **Use `pg_temp` schema for temporary tables**: Refactored `temporal_merge` to create its feedback table in the session-local `pg_temp` schema for improved robustness and concurrency safety.
+- [x] **Enforce `NOT NULL` on synchronized temporal columns**: Modified `add_era` to apply `NOT NULL` constraints on `valid_to` and `valid_range` columns when synchronization is enabled to strengthen data integrity guarantees.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.

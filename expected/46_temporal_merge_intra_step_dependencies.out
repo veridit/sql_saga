@@ -136,7 +136,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation |          entity_ids           | old_valid_from | new_valid_from | new_valid_until |                                        data                                        | relation 
 -------------+----------------+-----------+-------------------------------+----------------+----------------+-----------------+------------------------------------------------------------------------------------+----------
            1 | {1}            | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
@@ -157,7 +157,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
              1 | [{"id": 1}]       | APPLIED | 
@@ -276,7 +276,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM __temp_last_sql_saga_temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation |           entity_ids           | old_valid_from | new_valid_from | new_valid_until |                           data                           | relation 
 -------------+----------------+-----------+--------------------------------+----------------+----------------+-----------------+----------------------------------------------------------+----------
            1 | {101}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
@@ -304,7 +304,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
-SELECT * FROM __temp_last_sql_saga_temporal_merge ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
            101 | [{"id": 1}]       | APPLIED | 

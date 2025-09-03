@@ -83,7 +83,7 @@ SELECT * FROM (VALUES
 ) AS t(plan_op_seq, source_row_ids, operation, entity_ids);
 \echo '--- Orchestrator: Actual Plan ---'
 SELECT plan_op_seq, source_row_ids, operation, entity_ids
-FROM __temp_last_sql_saga_temporal_merge_plan
+FROM pg_temp.temporal_merge_plan
 ORDER BY plan_op_seq;
 
 -- Verify final state is correct.
@@ -206,7 +206,7 @@ TABLE tm_custom_rowid_target;
 SELECT * FROM (VALUES (101, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
     AS t(source_row_id, target_entity_ids, status);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge WHERE source_row_id = 101;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback WHERE source_row_id = 101;
 ROLLBACK TO SAVEPOINT scenario_11;
 
 SAVEPOINT scenario_12;
@@ -270,7 +270,7 @@ TABLE tm_weird_names;
 SELECT * FROM (VALUES (1, '[{"unit_pk": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
     AS t(source_row_id, target_entity_ids, status);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
 ROLLBACK TO SAVEPOINT scenario_13;
 
 SAVEPOINT scenario_14;
@@ -309,7 +309,7 @@ TABLE tm_no_data_cols_target;
 SELECT * FROM (VALUES (1, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
     AS t(source_row_id, target_entity_ids, status);
 \echo '--- Orchestrator: Actual Feedback ---'
-SELECT source_row_id, target_entity_ids, status FROM __temp_last_sql_saga_temporal_merge;
+SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
 ROLLBACK TO SAVEPOINT scenario_14;
 
 SAVEPOINT scenario_15;
@@ -399,7 +399,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT source_row_id, target_entity_ids
-FROM __temp_last_sql_saga_temporal_merge
+FROM pg_temp.temporal_merge_feedback
 ORDER BY source_row_id;
 ROLLBACK TO SAVEPOINT scenario_16;
 

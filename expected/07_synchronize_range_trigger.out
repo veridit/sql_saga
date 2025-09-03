@@ -50,7 +50,7 @@ NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_colu
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
  valid_until | date      |           | not null | 
- validity    | daterange |           |          | 
+ validity    | daterange |           | not null | 
 Check constraints:
     "sync_range_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -137,8 +137,8 @@ NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_colum
  id        | integer   |           |          | 
  start_num | integer   |           | not null | 
  until_num | integer   |           | not null | 
- num_range | int4range |           |          | 
- to_num    | integer   |           |          | 
+ num_range | int4range |           | not null | 
+ to_num    | integer   |           | not null | 
 Check constraints:
     "sync_range_custom_valid_check" CHECK (start_num < until_num)
 Triggers:
@@ -219,7 +219,7 @@ NOTICE:  sql_saga: Created trigger "sync_range_generated_synchronize_temporal_co
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
  valid_until | date      |           | not null | 
- validity    | daterange |           |          | generated always as (daterange(valid_from, valid_until, '[)'::text)) stored
+ validity    | daterange |           | not null | generated always as (daterange(valid_from, valid_until, '[)'::text)) stored
 Check constraints:
     "sync_range_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -252,9 +252,9 @@ NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigg
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
+ valid_to    | date      |           | not null | 
  valid_until | date      |           | not null | 
- validity    | daterange |           |          | 
+ validity    | daterange |           | not null | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -306,9 +306,9 @@ NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigg
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
+ valid_to    | date      |           | not null | 
  valid_until | date      |           | not null | 
- validity    | daterange |           |          | 
+ validity    | daterange |           | not null | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -329,9 +329,9 @@ ROLLBACK TO with_defaults_test;
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
+ valid_to    | date      |           | not null | 
  valid_until | date      |           | not null | 
- validity    | daterange |           |          | 
+ validity    | daterange |           | not null | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:

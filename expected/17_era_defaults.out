@@ -43,7 +43,7 @@ NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_t
  val         | text |           |          | 
  valid_from  | date |           | not null | 
  valid_until | date |           | not null | 
- valid_to    | date |           |          | 
+ valid_to    | date |           | not null | 
 Check constraints:
     "defaults_date_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:

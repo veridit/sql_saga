@@ -49,7 +49,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_colum
 -------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_to    | date    |           |          | 
+ valid_to    | date    |           | not null | 
  valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -118,7 +118,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_c
  id         | integer |           |          | 
  start_date | date    |           | not null | 
  until_date | date    |           | not null | 
- to_date    | date    |           |          | 
+ to_date    | date    |           | not null | 
 Check constraints:
     "sync_test_custom_name_valid_check" CHECK (start_date < until_date AND start_date > '-infinity'::date)
 Triggers:
@@ -150,7 +150,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_col
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
  valid_until | date    |           | not null | 
- valid_to    | date    |           |          | generated always as ((valid_until - '@ 1 day'::interval)) stored
+ valid_to    | date    |           | not null | generated always as ((valid_until - '@ 1 day'::interval)) stored
 Check constraints:
     "sync_test_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:

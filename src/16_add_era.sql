@@ -377,6 +377,7 @@ BEGIN
             trigger_name  name;
             subtype_is_discrete boolean;
             v_range_subtype regtype;
+            sync_alter_commands TEXT[] := '{}';
         BEGIN
             -- Get metadata about the era's subtype
             SELECT e.range_subtype, (t.typcategory IN ('D', 'N') AND t.typname NOT IN ('timestamptz', 'timestamp', 'numeric'))
@@ -411,6 +412,17 @@ BEGIN
                  ELSE
                     sync_cols := sync_cols || v_range_col;
                  END IF;
+            END IF;
+
+            IF v_to_col IS NOT NULL THEN
+                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_to_col);
+            END IF;
+            IF v_range_col IS NOT NULL THEN
+                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_range_col);
+            END IF;
+
+            IF sync_alter_commands <> '{}' THEN
+                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(sync_alter_commands, ', '));
             END IF;
 
             IF v_to_col IS NOT NULL OR v_range_col IS NOT NULL THEN

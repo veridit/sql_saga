@@ -43,11 +43,11 @@ BEGIN
     IF (TG_OP = 'INSERT') THEN
         -- An INSERT creates a new history, starting now.
         -- This logic is clean and can use temporal_merge.
-        IF to_regclass('pg_temp.__temp_merge_source_seq') IS NULL THEN
-            CREATE TEMP SEQUENCE __temp_merge_source_seq;
-            GRANT USAGE ON SEQUENCE pg_temp.__temp_merge_source_seq TO PUBLIC;
+        IF to_regclass('pg_temp.current_view_trigger_source_seq') IS NULL THEN
+            CREATE TEMP SEQUENCE current_view_trigger_source_seq;
+            GRANT USAGE ON SEQUENCE pg_temp.current_view_trigger_source_seq TO PUBLIC;
         END IF;
-        source_table_name := format('__temp_merge_source_%s', nextval('pg_temp.__temp_merge_source_seq'));
+        source_table_name := format('current_view_trigger_source_%s', nextval('pg_temp.current_view_trigger_source_seq'));
 
         IF to_regclass(source_table_name) IS NOT NULL THEN
             EXECUTE format('DROP TABLE %I', source_table_name);
@@ -74,8 +74,8 @@ BEGIN
             p_era_name          := info.era_name,
             p_mode              := 'upsert_replace'::sql_saga.temporal_merge_mode
         );
-        DROP TABLE __temp_last_sql_saga_temporal_merge;
-        DROP TABLE __temp_last_sql_saga_temporal_merge_plan;
+        DROP TABLE pg_temp.temporal_merge_feedback;
+        DROP TABLE pg_temp.temporal_merge_plan;
         RETURN NEW;
 
     ELSIF (TG_OP = 'UPDATE') THEN

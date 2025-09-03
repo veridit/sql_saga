@@ -133,7 +133,7 @@ TABLE sql_saga.foreign_keys;
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_to    | date              |           |          | 
+ valid_to    | date              |           | not null | 
  valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
@@ -154,7 +154,7 @@ Triggers:
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
  valid_from  | date             |           | not null | 
- valid_to    | date             |           |          | 
+ valid_to    | date             |           | not null | 
  valid_until | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
@@ -261,7 +261,7 @@ TABLE sql_saga.era;
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_to    | date              |           |          | 
+ valid_to    | date              |           | not null | 
  valid_until | date              |           | not null | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
@@ -274,7 +274,7 @@ Indexes:
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
  valid_from  | date             |           | not null | 
- valid_to    | date             |           |          | 
+ valid_to    | date             |           | not null | 
  valid_until | date             |           | not null | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
