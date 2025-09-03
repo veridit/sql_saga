@@ -51,20 +51,20 @@ SELECT sql_saga.add_unique_key(
 (1 row)
 
 \d employees
-                 Table "public.employees"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                     Table "public.employees"
+    Column     |  Type   | Collation | Nullable |     Default      
+---------------+---------+-----------+----------+------------------
  id            | integer |           |          | 
  name          | text    |           |          | 
  department_id | integer |           |          | 
  valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 
+ valid_until   | date    |           | not null | 'infinity'::date
 Indexes:
     "employees_name_idx" btree (name)
     "employees_name_if_department_valid_excl" EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
     "employees_name_if_department_valid_idx" UNIQUE, btree (name, valid_from, valid_until) WHERE department_id IS NOT NULL
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until)
+    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 -- 1. Inserts that should PASS
 -- Two employees with same name, but NULL department (outside predicate)
@@ -105,18 +105,18 @@ SELECT unique_key_name FROM sql_saga.unique_keys WHERE table_schema = 'public' A
 (0 rows)
 
 \d employees
-                 Table "public.employees"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                     Table "public.employees"
+    Column     |  Type   | Collation | Nullable |     Default      
+---------------+---------+-----------+----------+------------------
  id            | integer |           |          | 
  name          | text    |           |          | 
  department_id | integer |           |          | 
  valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 
+ valid_until   | date    |           | not null | 'infinity'::date
 Indexes:
     "employees_name_idx" btree (name)
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until)
+    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 -- Test Scenario 2: Add constraint to a table with existing data.
 -- ===============================================================

@@ -1,0 +1,251 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+/* Run tests as unprivileged user */
+SET ROLE TO sql_saga_unprivileged_user;
+/* Test default values for types that support infinity */
+CREATE TABLE defaults_date (val text, valid_from date, valid_until date, valid_to date);
+SELECT sql_saga.add_era('defaults_date', p_synchronize_valid_to_column => 'valid_to');
+NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_trigger" on table defaults_date to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+\d defaults_date
+                 Table "public.defaults_date"
+   Column    | Type | Collation | Nullable |     Default      
+-------------+------+-----------+----------+------------------
+ val         | text |           |          | 
+ valid_from  | date |           | not null | 
+ valid_until | date |           | not null | 'infinity'::date
+ valid_to    | date |           |          | 'infinity'::date
+Check constraints:
+    "defaults_date_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    defaults_date_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON defaults_date FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
+
+INSERT INTO defaults_date (val, valid_from) VALUES ('a', '2000-01-01');
+TABLE defaults_date;
+ val | valid_from | valid_until | valid_to 
+-----+------------+-------------+----------
+ a   | 2000-01-01 | infinity    | infinity
+(1 row)
+
+DROP TABLE defaults_date;
+CREATE TABLE defaults_ts (val text, valid_from timestamptz, valid_until timestamptz);
+SELECT sql_saga.add_era('defaults_ts');
+ add_era 
+---------
+ t
+(1 row)
+
+\d defaults_ts
+                                      Table "public.defaults_ts"
+   Column    |           Type           | Collation | Nullable |               Default                
+-------------+--------------------------+-----------+----------+--------------------------------------
+ val         | text                     |           |          | 
+ valid_from  | timestamp with time zone |           | not null | 
+ valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+Check constraints:
+    "defaults_ts_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp with time zone)
+
+INSERT INTO defaults_ts (val, valid_from) VALUES ('a', '2000-01-01');
+TABLE defaults_ts;
+ val |       valid_from       | valid_until 
+-----+------------------------+-------------
+ a   | 2000-01-01 00:00:00-08 | infinity
+(1 row)
+
+DROP TABLE defaults_ts;
+CREATE TABLE defaults_numeric (val text, valid_from numeric, valid_until numeric);
+SELECT sql_saga.add_era('defaults_numeric');
+ add_era 
+---------
+ t
+(1 row)
+
+\d defaults_numeric
+                  Table "public.defaults_numeric"
+   Column    |  Type   | Collation | Nullable |       Default       
+-------------+---------+-----------+----------+---------------------
+ val         | text    |           |          | 
+ valid_from  | numeric |           | not null | 
+ valid_until | numeric |           | not null | 'Infinity'::numeric
+Check constraints:
+    "defaults_numeric_valid_check" CHECK (valid_from < valid_until AND valid_from > '-Infinity'::numeric)
+
+INSERT INTO defaults_numeric (val, valid_from) VALUES ('a', 100);
+TABLE defaults_numeric;
+ val | valid_from | valid_until 
+-----+------------+-------------
+ a   |        100 |    Infinity
+(1 row)
+
+-- This should now fail as 'infinity' is not less than 'infinity'
+SAVEPOINT expect_inf_inf_fail;
+INSERT INTO defaults_numeric (val, valid_from, valid_until) VALUES ('b', 'infinity', 'infinity');
+ERROR:  new row for relation "defaults_numeric" violates check constraint "defaults_numeric_valid_check"
+DETAIL:  Failing row contains (b, Infinity, Infinity).
+ROLLBACK TO SAVEPOINT expect_inf_inf_fail;
+TABLE defaults_numeric;
+ val | valid_from | valid_until 
+-----+------------+-------------
+ a   |        100 |    Infinity
+(1 row)
+
+DROP TABLE defaults_numeric;
+/* Test that -infinity is not allowed for valid_from */
+CREATE TABLE no_neg_inf (val text, valid_from date, valid_until date);
+SELECT sql_saga.add_era('no_neg_inf');
+ add_era 
+---------
+ t
+(1 row)
+
+\d no_neg_inf
+                  Table "public.no_neg_inf"
+   Column    | Type | Collation | Nullable |     Default      
+-------------+------+-----------+----------+------------------
+ val         | text |           |          | 
+ valid_from  | date |           | not null | 
+ valid_until | date |           | not null | 'infinity'::date
+Check constraints:
+    "no_neg_inf_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+-- This should fail due to the new check constraint
+SAVEPOINT expect_neg_inf_fail;
+INSERT INTO no_neg_inf (val, valid_from, valid_until) VALUES ('c', '-infinity', '2000-01-01');
+ERROR:  new row for relation "no_neg_inf" violates check constraint "no_neg_inf_valid_check"
+DETAIL:  Failing row contains (c, -infinity, 2000-01-01).
+ROLLBACK TO SAVEPOINT expect_neg_inf_fail;
+DROP TABLE no_neg_inf;
+/* Test that no default is set for types that do not support infinity */
+CREATE TABLE defaults_int (val text, valid_from int, valid_until int);
+SELECT sql_saga.add_era('defaults_int');
+ add_era 
+---------
+ t
+(1 row)
+
+\d defaults_int
+              Table "public.defaults_int"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ val         | text    |           |          | 
+ valid_from  | integer |           | not null | 
+ valid_until | integer |           | not null | 
+Check constraints:
+    "defaults_int_valid_check" CHECK (valid_from < valid_until)
+
+-- This should fail because valid_until is NOT NULL and has no default
+SAVEPOINT expect_fail;
+INSERT INTO defaults_int (val, valid_from) VALUES ('a', 1);
+ERROR:  null value in column "valid_until" of relation "defaults_int" violates not-null constraint
+DETAIL:  Failing row contains (a, 1, null).
+ROLLBACK TO SAVEPOINT expect_fail;
+TABLE defaults_int;
+ val | valid_from | valid_until 
+-----+------------+-------------
+(0 rows)
+
+DROP TABLE defaults_int;
+/* Test optional flags */
+CREATE TABLE flags_test (val text, valid_from date, valid_until date);
+-- No defaults
+SELECT sql_saga.add_era('flags_test', p_add_defaults => false);
+ add_era 
+---------
+ t
+(1 row)
+
+\d flags_test
+              Table "public.flags_test"
+   Column    | Type | Collation | Nullable | Default 
+-------------+------+-----------+----------+---------
+ val         | text |           |          | 
+ valid_from  | date |           | not null | 
+ valid_until | date |           | not null | 
+Check constraints:
+    "flags_test_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+-- This should fail because there is no default
+SAVEPOINT no_default_fail;
+INSERT INTO flags_test (val, valid_from) VALUES ('a', '2000-01-01');
+ERROR:  null value in column "valid_until" of relation "flags_test" violates not-null constraint
+DETAIL:  Failing row contains (a, 2000-01-01, null).
+ROLLBACK TO SAVEPOINT no_default_fail;
+-- No check
+SELECT sql_saga.drop_era('flags_test');
+ drop_era 
+----------
+ t
+(1 row)
+
+-- Recreate the table to ensure the old CHECK constraint is gone.
+DROP TABLE flags_test;
+CREATE TABLE flags_test (val text, valid_from date, valid_until date);
+SELECT sql_saga.add_era('flags_test', p_add_bounds_check => false);
+ add_era 
+---------
+ t
+(1 row)
+
+\d flags_test
+                  Table "public.flags_test"
+   Column    | Type | Collation | Nullable |     Default      
+-------------+------+-----------+----------+------------------
+ val         | text |           |          | 
+ valid_from  | date |           | not null | 
+ valid_until | date |           | not null | 'infinity'::date
+
+INSERT INTO flags_test VALUES ('a', '2020-01-01', '2000-01-01'); -- should succeed
+TABLE flags_test;
+ val | valid_from | valid_until 
+-----+------------+-------------
+ a   | 2020-01-01 | 2000-01-01
+(1 row)
+
+DROP TABLE flags_test;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

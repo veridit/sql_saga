@@ -76,7 +76,7 @@ CREATE TABLE sql_saga.era (
     -- This is cached for performance and clarity.
     -- See: https://www.postgresql.org/docs/current/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
     range_subtype_category char(1) NOT NULL,
-    bounds_check_constraint name NOT NULL,
+    bounds_check_constraint name,
     synchronize_valid_to_column name,
     synchronize_range_column name,
     -- infinity_check_constraint name NOT NULL,

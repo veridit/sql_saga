@@ -230,14 +230,14 @@ SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v',
 (1 row)
 
 \d era_symmetry_test
-                  Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable | Default 
----------+--------------------------+-----------+----------+---------
+                                 Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable |               Default                
+---------+--------------------------+-----------+----------+--------------------------------------
  id      | integer                  |           |          | 
  v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Check constraints:
-    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+    "era_symmetry_test_v_check" CHECK (v_from < v_until AND v_from > '-infinity'::timestamp with time zone)
 
 -- 2. Drop era and columns together
 SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
@@ -256,7 +256,7 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
 SAVEPOINT before_fail;
 SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
 ERROR:  column "v_from" not found in table "era_symmetry_test"
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean) line 145 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean,boolean,boolean) line 145 at RAISE
 ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era
 ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
@@ -267,14 +267,14 @@ SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v')
 (1 row)
 
 \d era_symmetry_test
-                  Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable | Default 
----------+--------------------------+-----------+----------+---------
+                                 Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable |               Default                
+---------+--------------------------+-----------+----------+--------------------------------------
  id      | integer                  |           |          | 
  v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Check constraints:
-    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+    "era_symmetry_test_v_check" CHECK (v_from < v_until AND v_from > '-infinity'::timestamp with time zone)
 
 -- 5. Drop era but leave columns (default behavior)
 SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v');
@@ -284,14 +284,14 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v');
 (1 row)
 
 \d era_symmetry_test
-                  Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable | Default 
----------+--------------------------+-----------+----------+---------
+                                 Table "public.era_symmetry_test"
+ Column  |           Type           | Collation | Nullable |               Default                
+---------+--------------------------+-----------+----------+--------------------------------------
  id      | integer                  |           |          | 
  v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 
+ v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Check constraints:
-    "era_symmetry_test_v_check" CHECK (v_from < v_until)
+    "era_symmetry_test_v_check" CHECK (v_from < v_until AND v_from > '-infinity'::timestamp with time zone)
 
 DROP TABLE era_symmetry_test;
 -- Note: The FK and UK were already dropped in the earlier parts of this test.

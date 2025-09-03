@@ -7,7 +7,9 @@ CREATE OR REPLACE FUNCTION sql_saga.add_era(
     bounds_check_constraint name DEFAULT NULL,
     p_synchronize_valid_to_column name DEFAULT NULL,
     p_synchronize_range_column name DEFAULT NULL,
-    create_columns boolean DEFAULT false)
+    create_columns boolean DEFAULT false,
+    p_add_defaults boolean DEFAULT true,
+    p_add_bounds_check boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -225,6 +227,7 @@ BEGIN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
     END IF;
 
+
     /*
      * Find and appropriate a CHECK constraint to make sure that start < end.
      * Create one if necessary.
@@ -232,10 +235,36 @@ BEGIN
      * SQL:2016 11.27 GR 2.b
      */
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+        condef text;
         context text;
+        subtype_info record;
     BEGIN
-        IF bounds_check_constraint IS NOT NULL THEN
+        SELECT t.typcategory, t.typname
+        INTO subtype_info
+        FROM pg_catalog.pg_type t
+        WHERE t.oid = valid_from_type;
+
+        IF p_add_defaults THEN
+            IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
+                alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
+                IF p_synchronize_valid_to_column IS NOT NULL THEN
+                    SELECT a.attgenerated INTO sync_col_is_generated FROM pg_attribute a WHERE a.attrelid = table_oid AND a.attname = p_synchronize_valid_to_column;
+                    IF sync_col_is_generated = '' THEN -- attgenerated is 'g' for generated, '' for normal
+                        -- For an open-ended period, both until (exclusive) and to (inclusive) are infinity.
+                        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', p_synchronize_valid_to_column);
+                    END IF;
+                END IF;
+            END IF;
+        END IF;
+
+        IF p_add_bounds_check THEN
+            IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
+                condef := format('CHECK ((%I < %I) AND (%I > ''-infinity''))', valid_from_column_name, valid_until_column_name, valid_from_column_name);
+            ELSE
+                condef := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+            END IF;
+
+            IF bounds_check_constraint IS NOT NULL THEN
             /* We were given a name, does it exist? */
             SELECT pg_catalog.pg_get_constraintdef(c.oid)
             INTO context
@@ -266,6 +295,7 @@ BEGIN
                 bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
                 alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
             END IF;
+        END IF;
         END IF;
     END;
 

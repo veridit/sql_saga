@@ -30,6 +30,8 @@ DECLARE
     user_to      text := new_row ->> to_col;
     user_range   text := new_row ->> range_col;
 BEGIN
+    RAISE DEBUG 'TG_OP: %, user_from: %, user_until: %, user_to: %, user_range: %', TG_OP, user_from, user_until, user_to, user_range;
+
     -- Step 1: Determine the source of truth and derive initial bounds.
     IF TG_OP = 'UPDATE' THEN
         DECLARE
@@ -55,26 +57,37 @@ BEGIN
         END;
     ELSE -- INSERT: use precedence
         IF range_col IS NOT NULL AND user_range IS NOT NULL AND user_range <> 'empty' THEN
-            -- Source: Range
+            -- Source: Range is the highest precedence.
             DECLARE range_type regtype;
             BEGIN
                 SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
                 EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type, range_type) INTO derived_from, derived_until USING user_range;
             END;
+        -- Heuristic: If user_until is set to a specific, non-infinity value,
+        -- it's user-provided and should take precedence over a valid_to
+        -- that may have been populated by a DEFAULT.
+        ELSIF user_until IS NOT NULL AND user_until <> 'infinity' THEN
+            -- Source: Bounds
+            derived_from  := user_from;
+            derived_until := user_until;
         ELSIF to_col IS NOT NULL AND user_to IS NOT NULL THEN
             -- Source: valid_to
             derived_from := user_from;
             EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype) INTO derived_until USING user_to;
         ELSE
-            -- Source: Bounds (or nothing provided)
+            -- Source: Bounds (e.g., user only provided valid_from, and valid_until came from a DEFAULT)
             derived_from  := user_from;
             derived_until := user_until;
         END IF;
     END IF;
 
+    RAISE DEBUG 'Derived after Step 1: derived_from: %, derived_until: %', derived_from, derived_until;
+
     -- Step 2: From the derived bounds, derive all other representations.
     IF to_col IS NOT NULL AND derived_until IS NOT NULL THEN
-        EXECUTE format('SELECT ($1::%s - 1)::text', range_subtype) INTO derived_to USING derived_until;
+        EXECUTE format('SELECT CASE WHEN $1 = ''infinity'' THEN ''infinity'' ELSE ($1::%s - 1)::text END', range_subtype)
+            INTO derived_to
+            USING derived_until;
     END IF;
 
     IF range_col IS NOT NULL AND derived_from IS NOT NULL AND derived_until IS NOT NULL THEN
@@ -88,14 +101,16 @@ BEGIN
 
     -- Step 3: Verify consistency for INSERTs and populate NEW record.
     -- For UPDATEs, we trust the derivation precedence and simply apply it.
+    -- For INSERTs, we check for explicit inconsistencies, but allow default
+    -- values (e.g., 'infinity' for valid_until) to be overridden without error.
     IF TG_OP = 'INSERT' THEN
         IF user_from IS NOT NULL AND user_from IS DISTINCT FROM derived_from THEN
             RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', from_col, user_from, derived_from;
         END IF;
-        IF user_until IS NOT NULL AND user_until IS DISTINCT FROM derived_until THEN
+        IF user_until IS NOT NULL AND user_until IS DISTINCT FROM derived_until AND user_until <> 'infinity' THEN
             RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', until_col, user_until, derived_until;
         END IF;
-        IF to_col IS NOT NULL AND user_to IS NOT NULL AND user_to IS DISTINCT FROM derived_to THEN
+        IF to_col IS NOT NULL AND user_to IS NOT NULL AND user_to IS DISTINCT FROM derived_to AND user_to <> 'infinity' THEN
             RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', to_col, user_to, derived_to;
         END IF;
         IF range_col IS NOT NULL AND user_range IS NOT NULL AND user_range <> 'empty' AND user_range IS DISTINCT FROM derived_range THEN

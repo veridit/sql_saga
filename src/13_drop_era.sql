@@ -100,8 +100,16 @@ BEGIN
 
         /* Delete bounds check constraint and columns if purging */
         IF NOT is_dropped AND cleanup THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
-                table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+            DECLARE
+                clauses text[] := ARRAY[]::text[];
+            BEGIN
+                IF era_row.bounds_check_constraint IS NOT NULL THEN
+                    clauses := clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
+                END IF;
+                clauses := clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                clauses := clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+                EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(clauses, ', '));
+            END;
         END IF;
 
         RETURN true;
@@ -125,8 +133,16 @@ BEGIN
 
     /* Delete bounds check constraint and columns if purging */
     IF NOT is_dropped AND cleanup THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I, DROP COLUMN %I, DROP COLUMN %I',
-            table_oid, era_row.bounds_check_constraint, era_row.valid_from_column_name, era_row.valid_until_column_name);
+        DECLARE
+            clauses text[] := ARRAY[]::text[];
+        BEGIN
+            IF era_row.bounds_check_constraint IS NOT NULL THEN
+                clauses := clauses || format('DROP CONSTRAINT %I', era_row.bounds_check_constraint);
+            END IF;
+            clauses := clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+            clauses := clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+            EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(clauses, ', '));
+        END;
     END IF;
 
     RETURN true;

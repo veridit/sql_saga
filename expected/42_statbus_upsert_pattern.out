@@ -110,30 +110,30 @@ TABLE sql_saga.foreign_keys;
 
 -- While sql_saga is active
 \d legal_unit
-                    Table "public.legal_unit"
-   Column    |       Type        | Collation | Nullable | Default 
--------------+-------------------+-----------+----------+---------
+                         Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable |     Default      
+-------------+-------------------+-----------+----------+------------------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_until | date              |           | not null | 
+ valid_until | date              |           | not null | 'infinity'::date
  name        | character varying |           | not null | 
 Indexes:
     "legal_unit_id_idx" btree (id)
     "legal_unit_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     "legal_unit_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "legal_unit_valid_check" CHECK (valid_from < valid_until)
+    "legal_unit_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     location_legal_unit_id_valid_uk_delete AFTER DELETE ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
     location_legal_unit_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON legal_unit FROM location DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
 
 \d location
-                 Table "public.location"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                      Table "public.location"
+    Column     |  Type   | Collation | Nullable |     Default      
+---------------+---------+-----------+----------+------------------
  id            | integer |           |          | 
  valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 
+ valid_until   | date    |           | not null | 'infinity'::date
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 Indexes:
@@ -141,7 +141,7 @@ Indexes:
     "location_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     "location_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "location_valid_check" CHECK (valid_from < valid_until)
+    "location_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     location_legal_unit_id_valid_fk_insert AFTER INSERT ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     location_legal_unit_id_valid_fk_update AFTER UPDATE OF legal_unit_id, valid_from, valid_until ON location FROM legal_unit DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('location_legal_unit_id_valid', 'public', 'location', '{legal_unit_id}', 'valid', 'valid_from', 'valid_until', 'public', 'legal_unit', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
@@ -279,31 +279,31 @@ TABLE sql_saga.era;
 
 -- After removing sql_saga, it should be as before.
 \d legal_unit
-                    Table "public.legal_unit"
-   Column    |       Type        | Collation | Nullable | Default 
--------------+-------------------+-----------+----------+---------
+                         Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable |     Default      
+-------------+-------------------+-----------+----------+------------------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_until | date              |           | not null | 
+ valid_until | date              |           | not null | 'infinity'::date
  name        | character varying |           | not null | 
 Indexes:
     "legal_unit_id_idx" btree (id)
 Check constraints:
-    "legal_unit_valid_check" CHECK (valid_from < valid_until)
+    "legal_unit_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 \d location
-                 Table "public.location"
-    Column     |  Type   | Collation | Nullable | Default 
----------------+---------+-----------+----------+---------
+                      Table "public.location"
+    Column     |  Type   | Collation | Nullable |     Default      
+---------------+---------+-----------+----------+------------------
  id            | integer |           |          | 
  valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 
+ valid_until   | date    |           | not null | 'infinity'::date
  legal_unit_id | integer |           | not null | 
  postal_place  | text    |           | not null | 
 Indexes:
     "location_id_idx" btree (id)
 Check constraints:
-    "location_valid_check" CHECK (valid_from < valid_until)
+    "location_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 DROP TABLE legal_unit;
 DROP TABLE location;

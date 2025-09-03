@@ -23,6 +23,12 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [x] **Fix regressions from optional `add_era` parameters**: Resolved failures in `04_synchronize_validity_trigger` and other tests caused by `add_era`'s new default-setting behavior interacting incorrectly with generated columns and the synchronization trigger's consistency checks.
+
+- [x] **Make `add_era` constraints and defaults optional**: Added `p_add_defaults` and `p_add_bounds_check` parameters to `add_era` to allow users to opt out of the default integrity management. This provides flexibility for advanced use cases while maintaining a safe default.
+
+- [x] **Set `valid_until` to `DEFAULT 'infinity'` in `add_era`**: Modified `add_era` to be type-aware, automatically setting `DEFAULT 'infinity'` and stricter `CHECK` constraints on `valid_until` columns only for data types that support infinity. This improves ergonomics while maintaining correctness for all types.
+
 - [x] **Document Updatable Views in README:** Updated `README.md` with a comprehensive section on the `for_portion_of` and `current` updatable views, explaining their purpose, DML protocols, and security model. The runnable example test (`47_readme_usage.sql`) has been extended to cover the usage of these views.
 
 - [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
@@ -90,12 +96,6 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 
 ## Low Priority - Future Work & New Features
-
-- [ ] **Ensure `infinity` is the default for `valid_to` columns:**
-  - **File:** `sql_saga--1.0.sql`
-  - **Issue:** The `add_era` function does not enforce `'infinity'` as the default value for the `stop_on_column_name` (e.g., `valid_to`).
-  - **Action:** Modify `add_era` to set the default and potentially add a check constraint.
-
 
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.

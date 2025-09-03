@@ -44,15 +44,15 @@ NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_colu
 (1 row)
 
 \d sync_range_default
-            Table "public.sync_range_default"
-   Column    |   Type    | Collation | Nullable | Default 
--------------+-----------+-----------+----------+---------
+                 Table "public.sync_range_default"
+   Column    |   Type    | Collation | Nullable |     Default      
+-------------+-----------+-----------+----------+------------------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           | not null | 'infinity'::date
  validity    | daterange |           |          | 
 Check constraints:
-    "sync_range_default_valid_check" CHECK (valid_from < valid_until)
+    "sync_range_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     sync_range_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, validity ON sync_range_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'null', 'validity', 'date')
 
@@ -100,15 +100,15 @@ SELECT sql_saga.add_era('sync_range_disabled');
 (1 row)
 
 \d sync_range_disabled
-            Table "public.sync_range_disabled"
-   Column    |   Type    | Collation | Nullable | Default 
--------------+-----------+-----------+----------+---------
+                Table "public.sync_range_disabled"
+   Column    |   Type    | Collation | Nullable |     Default      
+-------------+-----------+-----------+----------+------------------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           | not null | 'infinity'::date
  validity    | daterange |           |          | 
 Check constraints:
-    "sync_range_disabled_valid_check" CHECK (valid_from < valid_until)
+    "sync_range_disabled_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 
 -- This will succeed with inconsistent data, proving the trigger was not created.
 INSERT INTO sync_range_disabled (id, valid_from, valid_until, validity) VALUES (1, '2024-01-01', '2025-01-01', '[2099-01-01, 2099-12-31)');
@@ -218,10 +218,10 @@ NOTICE:  sql_saga: Created trigger "sync_range_generated_synchronize_temporal_co
 -------------+-----------+-----------+----------+-----------------------------------------------------------------------------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           | not null | 'infinity'::date
  validity    | daterange |           |          | generated always as (daterange(valid_from, valid_until, '[)'::text)) stored
 Check constraints:
-    "sync_range_generated_valid_check" CHECK (valid_from < valid_until)
+    "sync_range_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     sync_range_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, validity ON sync_range_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'null', 'validity', 'date')
 
@@ -247,16 +247,16 @@ NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigg
 (1 row)
 
 \d sync_both
-                 Table "public.sync_both"
-   Column    |   Type    | Collation | Nullable | Default 
--------------+-----------+-----------+----------+---------
+                     Table "public.sync_both"
+   Column    |   Type    | Collation | Nullable |     Default      
+-------------+-----------+-----------+----------+------------------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
- valid_until | date      |           | not null | 
+ valid_to    | date      |           |          | 'infinity'::date
+ valid_until | date      |           | not null | 'infinity'::date
  validity    | daterange |           |          | 
 Check constraints:
-    "sync_both_valid_check" CHECK (valid_from < valid_until)
+    "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     sync_both_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to, validity ON sync_both FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'validity', 'date')
 
@@ -320,15 +320,15 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
 (1 row)
 
 \d sync_continuous_tstz
-                   Table "public.sync_continuous_tstz"
-   Column    |           Type           | Collation | Nullable | Default 
--------------+--------------------------+-----------+----------+---------
+                                 Table "public.sync_continuous_tstz"
+   Column    |           Type           | Collation | Nullable |               Default                
+-------------+--------------------------+-----------+----------+--------------------------------------
  id          | integer                  |           |          | 
  valid_from  | timestamp with time zone |           | not null | 
- valid_to    | timestamp with time zone |           |          | 
- valid_until | timestamp with time zone |           | not null | 
+ valid_to    | timestamp with time zone |           |          | 'infinity'::timestamp with time zone
+ valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
 Check constraints:
-    "sync_continuous_tstz_valid_check" CHECK (valid_from < valid_until)
+    "sync_continuous_tstz_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp with time zone)
 
 INSERT INTO sync_continuous_tstz (id, valid_from, valid_until, valid_to) VALUES (1, '2024-01-01', '2025-01-01', '2099-12-31');
 SELECT * FROM sync_continuous_tstz;
@@ -350,15 +350,15 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
 (1 row)
 
 \d sync_continuous_ts
-                     Table "public.sync_continuous_ts"
-   Column    |            Type             | Collation | Nullable | Default 
--------------+-----------------------------+-----------+----------+---------
+                                     Table "public.sync_continuous_ts"
+   Column    |            Type             | Collation | Nullable |                 Default                 
+-------------+-----------------------------+-----------+----------+-----------------------------------------
  id          | integer                     |           |          | 
  valid_from  | timestamp without time zone |           | not null | 
- valid_to    | timestamp without time zone |           |          | 
- valid_until | timestamp without time zone |           | not null | 
+ valid_to    | timestamp without time zone |           |          | 'infinity'::timestamp without time zone
+ valid_until | timestamp without time zone |           | not null | 'infinity'::timestamp without time zone
 Check constraints:
-    "sync_continuous_ts_valid_check" CHECK (valid_from < valid_until)
+    "sync_continuous_ts_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp without time zone)
 
 INSERT INTO sync_continuous_ts (id, valid_from, valid_until, valid_to) VALUES (1, '2024-01-01', '2025-01-01', '2099-12-31');
 SELECT * FROM sync_continuous_ts;
@@ -380,15 +380,15 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
 (1 row)
 
 \d sync_continuous_numeric
-         Table "public.sync_continuous_numeric"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
+               Table "public.sync_continuous_numeric"
+   Column    |  Type   | Collation | Nullable |       Default       
+-------------+---------+-----------+----------+---------------------
  id          | integer |           |          | 
  valid_from  | numeric |           | not null | 
- valid_to    | numeric |           |          | 
- valid_until | numeric |           | not null | 
+ valid_to    | numeric |           |          | 'Infinity'::numeric
+ valid_until | numeric |           | not null | 'Infinity'::numeric
 Check constraints:
-    "sync_continuous_numeric_valid_check" CHECK (valid_from < valid_until)
+    "sync_continuous_numeric_valid_check" CHECK (valid_from < valid_until AND valid_from > '-Infinity'::numeric)
 
 INSERT INTO sync_continuous_numeric (id, valid_from, valid_until, valid_to) VALUES (1, 100.5, 200.5, 999.9);
 SELECT * FROM sync_continuous_numeric;

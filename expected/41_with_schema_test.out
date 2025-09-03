@@ -128,13 +128,13 @@ TABLE sql_saga.foreign_keys;
 
 -- While sql_saga is active
 \d exposed.employees
-                    Table "exposed.employees"
-   Column    |       Type        | Collation | Nullable | Default 
--------------+-------------------+-----------+----------+---------
+                         Table "exposed.employees"
+   Column    |       Type        | Collation | Nullable |     Default      
+-------------+-------------------+-----------+----------+------------------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_to    | date              |           |          | 
- valid_until | date              |           | not null | 
+ valid_to    | date              |           |          | 'infinity'::date
+ valid_until | date              |           | not null | 'infinity'::date
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Indexes:
@@ -142,20 +142,20 @@ Indexes:
     "employees_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     "employees_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until)
+    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
     staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
     staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
 
 \d hidden.staff
-                      Table "hidden.staff"
-   Column    |       Type       | Collation | Nullable | Default 
--------------+------------------+-----------+----------+---------
+                           Table "hidden.staff"
+   Column    |       Type       | Collation | Nullable |     Default      
+-------------+------------------+-----------+----------+------------------
  id          | integer          |           |          | 
  valid_from  | date             |           | not null | 
- valid_to    | date             |           |          | 
- valid_until | date             |           | not null | 
+ valid_to    | date             |           |          | 'infinity'::date
+ valid_until | date             |           | not null | 'infinity'::date
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
@@ -163,7 +163,7 @@ Indexes:
     "staff_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     "staff_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
-    "staff_valid_check" CHECK (valid_from < valid_until)
+    "staff_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
     staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_until, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
@@ -256,36 +256,36 @@ TABLE sql_saga.era;
 
 -- After removing sql_saga, it should be as before.
 \d exposed.employees
-                    Table "exposed.employees"
-   Column    |       Type        | Collation | Nullable | Default 
--------------+-------------------+-----------+----------+---------
+                         Table "exposed.employees"
+   Column    |       Type        | Collation | Nullable |     Default      
+-------------+-------------------+-----------+----------+------------------
  id          | integer           |           |          | 
  valid_from  | date              |           | not null | 
- valid_to    | date              |           |          | 
- valid_until | date              |           | not null | 
+ valid_to    | date              |           |          | 'infinity'::date
+ valid_until | date              |           | not null | 'infinity'::date
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Indexes:
     "employees_id_idx" btree (id)
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until)
+    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
 \d hidden.staff
-                      Table "hidden.staff"
-   Column    |       Type       | Collation | Nullable | Default 
--------------+------------------+-----------+----------+---------
+                           Table "hidden.staff"
+   Column    |       Type       | Collation | Nullable |     Default      
+-------------+------------------+-----------+----------+------------------
  id          | integer          |           |          | 
  valid_from  | date             |           | not null | 
- valid_to    | date             |           |          | 
- valid_until | date             |           | not null | 
+ valid_to    | date             |           |          | 'infinity'::date
+ valid_until | date             |           | not null | 'infinity'::date
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
     "staff_id_idx" btree (id)
 Check constraints:
-    "staff_valid_check" CHECK (valid_from < valid_until)
+    "staff_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
     staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date')
 
