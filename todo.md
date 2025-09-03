@@ -9,6 +9,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
 - [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
 
+- [x] **Fix duplicated column in FK trigger `UPDATE OF` list:** Corrected `add_foreign_key` to prevent adding a synchronized `valid_to`-style column to the trigger's `UPDATE OF` list if it is already part of the era's temporal columns, resolving a "column specified more than once" error. The fix is generic and respects the `synchronize_valid_to_column` era metadata.
+
 - [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
 
 - [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.

@@ -79,6 +79,72 @@ SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
 SELECT sql_saga.drop_era('uk', 'p');
 DROP TABLE uk;
 
+-- Test for issue with duplicated column in UPDATE OF list for FK trigger
+CREATE TABLE t_uk (
+    id int,
+    valid_after date,
+    valid_to date
+);
+SELECT sql_saga.add_era('t_uk', 'valid_after', 'valid_to');
+SELECT sql_saga.add_unique_key('t_uk', ARRAY['id']);
+
+CREATE TABLE t_fk (
+    id int,
+    uk_id int,
+    valid_after date,
+    valid_to date
+);
+SELECT sql_saga.add_era('t_fk', 'valid_after', 'valid_to');
+
+-- This call failed in a downstream project because it generated:
+-- CREATE ... TRIGGER ... AFTER UPDATE OF uk_id, valid_after, valid_to, valid_to ON ...
+-- The bug is that 'valid_to' is added to the list twice if it's both the
+-- valid_until_column_name and a column named 'valid_to' exists.
+SAVEPOINT s_fk_error;
+SELECT sql_saga.add_foreign_key('t_fk', ARRAY['uk_id'], 'valid', 't_uk_id_valid');
+ROLLBACK TO SAVEPOINT s_fk_error;
+
+-- cleanup
+-- Since the transaction for creating the FK was rolled back, we can just
+-- clean up the tables and eras.
+SELECT sql_saga.drop_era('t_fk');
+DROP TABLE t_fk;
+SELECT sql_saga.drop_unique_key('t_uk', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('t_uk');
+DROP TABLE t_uk;
+
+
+-- Test generic synchronized column for FK trigger
+CREATE TABLE t_uk_gen (
+    id int,
+    valid_from date,
+    valid_until date,
+    valid_end_date date -- synchronized column
+);
+SELECT sql_saga.add_era('t_uk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+SELECT sql_saga.add_unique_key('t_uk_gen', ARRAY['id']);
+
+CREATE TABLE t_fk_gen (
+    id int,
+    uk_id int,
+    valid_from date,
+    valid_until date,
+    valid_end_date date -- synchronized column
+);
+SELECT sql_saga.add_era('t_fk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+
+-- This should succeed and create a trigger that watches valid_end_date
+SELECT sql_saga.add_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');
+
+-- cleanup
+SELECT sql_saga.drop_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid');
+SELECT sql_saga.drop_era('t_fk_gen');
+DROP TABLE t_fk_gen;
+SELECT sql_saga.drop_unique_key('t_uk_gen', ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('t_uk_gen');
+DROP TABLE t_uk_gen;
+
+
 -- Test case for bug with infinite parent validity
 CREATE TABLE legal_unit_bug (
     id INT NOT NULL,

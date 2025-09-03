@@ -436,15 +436,17 @@ BEGIN
     INTO foreign_columns_with_era_columns
     FROM unnest(fk_column_names || fk_era_row.valid_from_column_name || fk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
-    -- If a 'valid_to' column exists, add it to the list of columns that
-    -- trigger the fk_update_check. This handles cases where a BEFORE trigger
-    -- synchronizes valid_to and valid_until, ensuring validation fires correctly
-    -- without making the trigger an overly-broad row-level trigger.
-    IF EXISTS (
-        SELECT 1 FROM pg_catalog.pg_attribute
-        WHERE attrelid = fk_table_oid AND attname = 'valid_to' AND NOT attisdropped
-    ) THEN
-        foreign_columns_with_era_columns := foreign_columns_with_era_columns || ', ' || quote_ident('valid_to');
+    -- If a synchronized 'valid_to'-style column is defined for the era, add it
+    -- to the list of columns that trigger the fk_update_check. This is only
+    -- done if the column is not already part of the core era columns to avoid
+    -- duplication. This handles cases where a separate BEFORE trigger
+    -- synchronizes this column with valid_until, ensuring validation fires
+    -- correctly without making the trigger an overly-broad row-level trigger.
+    IF fk_era_row.synchronize_valid_to_column IS NOT NULL
+       AND fk_era_row.synchronize_valid_to_column <> fk_era_row.valid_from_column_name
+       AND fk_era_row.synchronize_valid_to_column <> fk_era_row.valid_until_column_name
+    THEN
+        foreign_columns_with_era_columns := foreign_columns_with_era_columns || ', ' || quote_ident(fk_era_row.synchronize_valid_to_column);
     END IF;
 
     SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
