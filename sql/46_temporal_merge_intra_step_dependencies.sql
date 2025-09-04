@@ -73,7 +73,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_1',
     p_id_columns               => '{id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_founding_id_column       => 'founding_id',
     p_update_source_with_assigned_entity_ids => true
@@ -148,7 +148,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_2',
     p_id_columns               => '{id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_founding_id_column       => 'founding_id',
     p_update_source_with_assigned_entity_ids => true
@@ -240,7 +240,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'v_source_3a',
     p_id_columns               => '{id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_founding_id_column       => 'founding_id',
     p_update_source_with_assigned_entity_ids => true
@@ -267,7 +267,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'v_source_3b',
     p_id_columns               => '{id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_founding_id_column       => 'founding_id',
     p_update_source_with_assigned_entity_ids => true

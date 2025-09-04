@@ -72,7 +72,7 @@ BEGIN
             p_id_columns        := identifier_columns::text[],
             p_ephemeral_columns := '{}'::text[],
             p_era_name          := info.era_name,
-            p_mode              := 'upsert_replace'::sql_saga.temporal_merge_mode
+            p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
         );
         DROP TABLE pg_temp.temporal_merge_feedback;
         DROP TABLE pg_temp.temporal_merge_plan;

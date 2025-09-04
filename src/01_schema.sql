@@ -223,11 +223,12 @@ COMMENT ON TABLE sql_saga.system_versioning IS 'A registry of tables with SYSTEM
 -- Types for temporal_merge
 DROP TYPE IF EXISTS sql_saga.temporal_merge_mode CASCADE;
 CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
-    'upsert_patch',
-    'upsert_replace',
-    'patch_only',
-    'replace_only',
-    'insert_only'
+    'MERGE_ENTITY_PATCH',
+    'MERGE_ENTITY_REPLACE',
+    'INSERT_NEW_ENTITIES',
+    'PATCH_FOR_PORTION_OF',
+    'REPLACE_FOR_PORTION_OF',
+    'DELETE_FOR_PORTION_OF'
 );
 COMMENT ON TYPE sql_saga.temporal_merge_mode IS 'Defines the behavior of the temporal_merge procedure, specifying how source data should be applied to the target table (e.g., insert and update, or only insert).';
 

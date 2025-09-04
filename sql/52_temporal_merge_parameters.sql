@@ -46,7 +46,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_gen_col_source'::regclass,
     p_id_columns        := ARRAY['id']::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'insert_only'::sql_saga.temporal_merge_mode
+    p_mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
 
 -- Verify that the generated column was computed correctly.
@@ -73,7 +73,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_mix_bug_source'::regclass,
     p_id_columns        := ARRAY['id']::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'upsert_replace'::sql_saga.temporal_merge_mode
+    p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
 -- Verify the plan does not contain chaotic operations.
@@ -110,7 +110,7 @@ BEGIN
         p_source_table      := 'tm_bad_params_source'::regclass,
         p_id_columns        := NULL,
         p_ephemeral_columns := '{}'::text[],
-        p_mode              := 'upsert_replace'::sql_saga.temporal_merge_mode
+        p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for NULL p_id_columns';
 EXCEPTION WHEN others THEN
@@ -126,7 +126,7 @@ BEGIN
         p_source_table      := 'tm_bad_params_source'::regclass,
         p_id_columns        := ARRAY[]::TEXT[],
         p_ephemeral_columns := '{}'::text[],
-        p_mode              := 'upsert_replace'::sql_saga.temporal_merge_mode
+        p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for empty p_id_columns';
 EXCEPTION WHEN others THEN
@@ -296,7 +296,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_no_data_cols_source'::regclass,
     p_id_columns        := ARRAY['id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'insert_only'
+    p_mode              := 'INSERT_NEW_ENTITIES'
 );
 
 -- Verify merge was successful and feedback is correct
@@ -335,7 +335,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_extra_cols_source'::regclass,
     p_id_columns        := ARRAY['id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'insert_only'
+    p_mode              := 'INSERT_NEW_ENTITIES'
 );
 
 -- Verify merge was successful
@@ -374,7 +374,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_founding_source'::regclass,
     p_id_columns        := ARRAY['entity_ident'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'insert_only',
+    p_mode              := 'INSERT_NEW_ENTITIES',
     p_founding_id_column := 'founding_group_id'::name
 );
 

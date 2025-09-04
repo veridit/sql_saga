@@ -23,7 +23,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_source_table      => 'source1'::regclass,
     p_id_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
-    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
 
@@ -34,7 +34,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_source_table      => 'source2'::regclass,
     p_id_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
-    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
 
@@ -45,7 +45,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_source_table      => 'source1'::regclass,
     p_id_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
-    p_mode              => 'upsert_patch'::sql_saga.temporal_merge_mode,
+    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
 

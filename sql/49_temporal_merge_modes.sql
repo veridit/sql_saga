@@ -40,7 +40,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 SELECT * FROM temp_source_1 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_1'::regclass, '{id}'::text[], '{}'::text[], 'upsert_patch'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_1'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
@@ -97,7 +97,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 SELECT * FROM temp_source_2 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_2'::regclass, '{id}'::text[], '{}'::text[], 'upsert_replace'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_2'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
@@ -144,7 +144,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 SELECT * FROM temp_source_3 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_3'::regclass, '{id}'::text[], '{}'::text[], 'patch_only'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_3'::regclass, '{id}'::text[], '{}'::text[], 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
@@ -189,7 +189,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 SELECT * FROM temp_source_4 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_4'::regclass, '{id}'::text[], '{}'::text[], 'replace_only'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_4'::regclass, '{id}'::text[], '{}'::text[], 'REPLACE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
@@ -234,7 +234,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to be merged ---'
 SELECT * FROM temp_source_5 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_5'::regclass, '{id}'::text[], '{}'::text[], 'insert_only'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_5'::regclass, '{id}'::text[], '{}'::text[], 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
@@ -276,7 +276,7 @@ SELECT * FROM tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 SELECT * FROM temp_source_6 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_6'::regclass, '{id}'::text[], '{}'::text[], 'upsert_patch'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge('tmm.target'::regclass, 'temp_source_6'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES

@@ -126,7 +126,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_1',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -181,7 +181,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_2',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -236,7 +236,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_3',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -287,7 +287,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_4',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -339,7 +339,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_5',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -391,7 +391,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_6',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -443,7 +443,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_7',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -495,7 +495,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_8',
     p_id_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );

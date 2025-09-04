@@ -49,7 +49,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'temp_source_1'::regclass,
     p_id_columns := '{id}'::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace',
+    p_mode := 'MERGE_ENTITY_REPLACE',
     p_delete_mode := 'DELETE_MISSING_TIMELINE'
 );
 
@@ -87,7 +87,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'temp_source_2'::regclass,
     p_id_columns := '{id}'::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace',
+    p_mode := 'MERGE_ENTITY_REPLACE',
     p_delete_mode := 'DELETE_MISSING_ENTITIES'
 );
 
@@ -125,7 +125,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'temp_source_3'::regclass,
     p_id_columns := '{id}'::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace',
+    p_mode := 'MERGE_ENTITY_REPLACE',
     p_delete_mode := 'DELETE_MISSING_TIMELINE_AND_ENTITIES'
 );
 

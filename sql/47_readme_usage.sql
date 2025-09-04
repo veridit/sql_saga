@@ -127,7 +127,7 @@ CALL sql_saga.temporal_merge(
     p_source_table => 'source_legal_unit',
     p_id_columns => '{id}',
     p_ephemeral_columns => '{}',
-    p_mode => 'upsert_replace',
+    p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
     p_founding_id_column => 'founding_id',
     p_update_source_with_assigned_entity_ids => true
@@ -159,7 +159,7 @@ CALL sql_saga.temporal_merge(
     p_source_table => 'source_establishment',
     p_id_columns => '{id}',
     p_ephemeral_columns => '{}',
-    p_mode => 'upsert_replace',
+    p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
     p_founding_id_column => 'founding_id'
 );

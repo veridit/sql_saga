@@ -59,7 +59,7 @@ CALL sql_saga.temporal_merge(
     p_source_table      := 'tm_bug_source'::regclass,
     p_id_columns        := '{}'::text[],
     p_ephemeral_columns := '{}'::text[],
-    p_mode              := 'insert_only'::sql_saga.temporal_merge_mode
+    p_mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
 -- Verify the merge was successful
 TABLE tm_bug_target;

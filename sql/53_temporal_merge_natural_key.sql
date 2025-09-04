@@ -72,7 +72,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'nk_source'::regclass,
     p_id_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
 \echo '--- INSERT: Expected Final State ---'
@@ -93,7 +93,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'nk_source'::regclass,
     p_id_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
 \echo '--- UPDATE: Expected Final State ---'
@@ -115,7 +115,7 @@ CALL sql_saga.temporal_merge(
     p_source_table := 'nk_source'::regclass,
     p_id_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'upsert_replace'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
 \echo '--- END-DATE: Expected Final State ---'

@@ -113,15 +113,15 @@ $$;
 \set ephemeral_cols '{edit_comment}'
 
 --------------------------------------------------------------------------------
--- Scenarios for UPSERT_PATCH (`insert_or_update`)
+-- Scenarios for MERGE_ENTITY_PATCH (`insert_or_update`)
 --------------------------------------------------------------------------------
 \echo '================================================================================'
-\echo 'Begin Scenarios for UPSERT_PATCH mode'
+\echo 'Begin Scenarios for MERGE_ENTITY_PATCH mode'
 \echo '================================================================================'
 
 --------------------------------------------------------------------------------
 \echo 'Scenario 1: Initial Insert of a new entity'
-\echo 'Mode: upsert_patch'
+\echo 'Mode: MERGE_ENTITY_PATCH'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 CREATE TEMP TABLE temp_source_1 (
@@ -140,7 +140,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_1',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
@@ -170,7 +170,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_1;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 2: `upsert_patch` with `starts` relation'
+\echo 'Scenario 2: `MERGE_ENTITY_PATCH` with `starts` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (2, 1, '2024-01-01', '2026-01-01', 'Original', 20, 'Original slice');
@@ -188,7 +188,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_2',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -218,7 +218,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_2;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 3: `upsert_patch` with `finishes` relation'
+\echo 'Scenario 3: `MERGE_ENTITY_PATCH` with `finishes` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (3, 1, '2024-01-01', '2026-01-01', 'Original', 30, 'Original slice');
@@ -236,7 +236,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_3',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -266,7 +266,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_3;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 4: `upsert_patch` with `during` relation'
+\echo 'Scenario 4: `MERGE_ENTITY_PATCH` with `during` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (4, 1, '2024-01-01', '2026-01-01', 'Original', 40, 'Original slice');
@@ -284,7 +284,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_4',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -316,7 +316,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_4;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 5: `upsert_patch` with `overlaps` relation'
+\echo 'Scenario 5: `MERGE_ENTITY_PATCH` with `overlaps` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (5, 1, '2024-01-01', '2025-01-01', 'Original', 50, 'Original slice');
@@ -334,7 +334,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_5',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -364,7 +364,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_5;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 6: `upsert_patch` with `overlapped by` relation'
+\echo 'Scenario 6: `MERGE_ENTITY_PATCH` with `overlapped by` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (6, 1, '2024-07-01', '2025-07-01', 'Original', 60, 'Original slice');
@@ -382,7 +382,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_6',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -412,7 +412,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_6;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 7: `upsert_patch` with `meets` relation'
+\echo 'Scenario 7: `MERGE_ENTITY_PATCH` with `meets` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (7, 1, '2025-01-01', '2026-01-01', 'Original', 70, 'Original slice');
@@ -430,7 +430,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_7',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -460,7 +460,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_7;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 8: `upsert_patch` with `met by` relation'
+\echo 'Scenario 8: `MERGE_ENTITY_PATCH` with `met by` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (8, 1, '2024-01-01', '2025-01-01', 'Original', 80, 'Original slice');
@@ -478,7 +478,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_8',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -508,7 +508,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_8;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 9: `upsert_patch` with `before` relation (non-contiguous)'
+\echo 'Scenario 9: `MERGE_ENTITY_PATCH` with `before` relation (non-contiguous)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (9, 1, '2026-01-01', '2027-01-01', 'Original', 90, 'Original slice');
@@ -526,7 +526,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_9',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -556,7 +556,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_9;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 10: `upsert_patch` with `after` relation (non-contiguous)'
+\echo 'Scenario 10: `MERGE_ENTITY_PATCH` with `after` relation (non-contiguous)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (10, 1, '2024-01-01', '2025-01-01', 'Original', 100, 'Original slice');
@@ -574,7 +574,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_10',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -604,7 +604,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_10;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 11: `upsert_patch` with `equals` relation'
+\echo 'Scenario 11: `MERGE_ENTITY_PATCH` with `equals` relation'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (11, 1, '2024-01-01', '2025-01-01', 'Original', 110, 'Original slice');
@@ -622,7 +622,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_11',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -651,11 +651,11 @@ DROP TABLE temp_source_11;
 
 --------------------------------------------------------------------------------
 \echo '================================================================================'
-\echo 'Begin Scenarios for UPSERT_REPLACE mode'
+\echo 'Begin Scenarios for MERGE_ENTITY_REPLACE mode'
 \echo '================================================================================'
 --------------------------------------------------------------------------------
-\echo 'Scenario 12: upsert_replace with starts relation'
-\echo 'Mode: upsert_replace'
+\echo 'Scenario 12: MERGE_ENTITY_REPLACE with starts relation'
+\echo 'Mode: MERGE_ENTITY_REPLACE'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (12, 1, '2024-01-01', '2026-01-01', 'Original', 20, 'Original slice');
@@ -674,7 +674,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_12',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -701,8 +701,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_12;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 13: upsert_replace with finishes relation'
-\echo 'Mode: upsert_replace'
+\echo 'Scenario 13: MERGE_ENTITY_REPLACE with finishes relation'
+\echo 'Mode: MERGE_ENTITY_REPLACE'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (13, 1, '2024-01-01', '2026-01-01', 'Original', 30, 'Original slice');
@@ -721,7 +721,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_13',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -748,8 +748,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_13;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 14: upsert_replace with during relation'
-\echo 'Mode: upsert_replace'
+\echo 'Scenario 14: MERGE_ENTITY_REPLACE with during relation'
+\echo 'Mode: MERGE_ENTITY_REPLACE'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (14, 1, '2024-01-01', '2026-01-01', 'Original', 40, 'Original slice');
@@ -768,7 +768,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_14',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -797,8 +797,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_14;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 15: upsert_replace with overlaps relation'
-\echo 'Mode: upsert_replace'
+\echo 'Scenario 15: MERGE_ENTITY_REPLACE with overlaps relation'
+\echo 'Mode: MERGE_ENTITY_REPLACE'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (15, 1, '2024-01-01', '2025-01-01', 'Original', 50, 'Original slice');
@@ -817,7 +817,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_15',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -844,8 +844,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_15;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 16: upsert_replace with equals relation'
-\echo 'Mode: upsert_replace'
+\echo 'Scenario 16: MERGE_ENTITY_REPLACE with equals relation'
+\echo 'Mode: MERGE_ENTITY_REPLACE'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (16, 1, '2024-01-01', '2025-01-01', 'Original', 110, 'Original slice');
@@ -864,7 +864,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_16',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -888,7 +888,7 @@ SELECT * FROM (VALUES
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 16 ORDER BY valid_from;
 DROP TABLE temp_source_16;
 
-\echo 'Scenario 17: `upsert_replace` with `equals` relation (Source NULL replaces existing value)'
+\echo 'Scenario 17: `MERGE_ENTITY_REPLACE` with `equals` relation (Source NULL replaces existing value)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment) VALUES (17, 1, '2024-01-01', '2025-01-01', 'Old Name', 10, 'Old Comment');
@@ -908,7 +908,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_17',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 
@@ -939,8 +939,8 @@ DROP TABLE temp_source_17;
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for _only modes (Filtering Behavior)'
 --------------------------------------------------------------------------------
-\echo 'Scenario 18: patch_only on non-existent entity'
-\echo 'Mode: patch_only'
+\echo 'Scenario 18: `PATCH_FOR_PORTION_OF` on non-existent entity'
+\echo 'Mode: PATCH_FOR_PORTION_OF'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -959,7 +959,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_18',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'patch_only',
+    p_mode                     => 'PATCH_FOR_PORTION_OF',
     p_era_name                 => 'valid'
 );
 SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
@@ -981,8 +981,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_18;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 19: replace_only on non-existent entity'
-\echo 'Mode: replace_only'
+\echo 'Scenario 19: `REPLACE_FOR_PORTION_OF` on non-existent entity'
+\echo 'Mode: REPLACE_FOR_PORTION_OF'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1001,7 +1001,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_19',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'replace_only',
+    p_mode                     => 'REPLACE_FOR_PORTION_OF',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1023,8 +1023,8 @@ DROP TABLE temp_source_19;
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for NULL handling in patch mode'
 --------------------------------------------------------------------------------
-\echo 'Scenario 20: upsert_patch with NULL source value (should NOT overwrite)'
-\echo 'Mode: upsert_patch'
+\echo 'Scenario 20: MERGE_ENTITY_PATCH with NULL source value (should NOT overwrite)'
+\echo 'Mode: MERGE_ENTITY_PATCH'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1044,7 +1044,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_20',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1069,8 +1069,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_20;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 21: patch_only with NULL source value (should NOT overwrite)'
-\echo 'Mode: patch_only'
+\echo 'Scenario 21: `PATCH_FOR_PORTION_OF` with NULL source value (should NOT overwrite)'
+\echo 'Mode: PATCH_FOR_PORTION_OF'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1090,7 +1090,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_21',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'patch_only',
+    p_mode                     => 'PATCH_FOR_PORTION_OF',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1117,8 +1117,8 @@ DROP TABLE temp_source_21;
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for Ephemeral Columns'
 --------------------------------------------------------------------------------
-\echo 'Scenario 22: upsert_patch with different ephemeral data (should UPDATE)'
-\echo 'Mode: upsert_patch'
+\echo 'Scenario 22: MERGE_ENTITY_PATCH with different ephemeral data (should UPDATE)'
+\echo 'Mode: MERGE_ENTITY_PATCH'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1138,7 +1138,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_22',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1163,8 +1163,8 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_22;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 23: upsert_patch with identical data including ephemeral (should be SKIPPED)'
-\echo 'Mode: upsert_patch'
+\echo 'Scenario 23: MERGE_ENTITY_PATCH with identical data including ephemeral (should be SKIPPED)'
+\echo 'Mode: MERGE_ENTITY_PATCH'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1184,7 +1184,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_23',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1211,8 +1211,8 @@ DROP TABLE temp_source_23;
 --------------------------------------------------------------------------------
 \echo 'Begin Scenarios for Multi-Row Source Data'
 --------------------------------------------------------------------------------
-\echo 'Scenario 24: upsert_patch with multiple disjoint source rows'
-\echo 'Mode: upsert_patch'
+\echo 'Scenario 24: MERGE_ENTITY_PATCH with multiple disjoint source rows'
+\echo 'Mode: MERGE_ENTITY_PATCH'
 --------------------------------------------------------------------------------
 -- Reset state
 CALL temporal_merge_test.reset_target();
@@ -1234,7 +1234,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_24',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 -- Verify plan
@@ -1275,7 +1275,7 @@ CALL temporal_merge_test.reset_target();
 CREATE TEMP TABLE temp_source_35 ( row_id INT, legal_unit_id INT, id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, employees INT, edit_comment TEXT ) ON COMMIT DROP;
 SAVEPOINT before_wrong_order;
 
-\echo '--- Stage 1: Prove that `patch_only` before `upsert_patch` is a non-operative action ---'
+\echo '--- Stage 1: Prove that `patch_only` before `MERGE_ENTITY_PATCH` is a non-operative action ---'
 INSERT INTO temp_source_35 VALUES (301, 1, 3, '2022-01-01', '2023-01-01', 'NewCo UPDATE', 15, 'Should not be inserted');
 
 \echo '--- Target: Initial State (before merge) ---'
@@ -1289,7 +1289,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'patch_only',
+    p_mode                     => 'PATCH_FOR_PORTION_OF',
     p_era_name                 => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
@@ -1302,8 +1302,8 @@ SELECT 0 as row_count WHERE NOT EXISTS (SELECT 1 FROM temporal_merge_test.establ
 SELECT count(*) as row_count FROM temporal_merge_test.establishment WHERE id = 3;
 ROLLBACK TO SAVEPOINT before_wrong_order;
 
-\echo '--- Stage 2: Prove that `upsert_patch`-then-`patch_only` succeeds ---'
-\echo '--- Orchestrator: Calling with `upsert_patch`... ---'
+\echo '--- Stage 2: Prove that `MERGE_ENTITY_PATCH`-then-`patch_only` succeeds ---'
+\echo '--- Orchestrator: Calling with `MERGE_ENTITY_PATCH`... ---'
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (301, 1, 3, '2021-01-01', '2022-01-01', 'NewCo INSERT', 10, 'Initial Insert');
 
@@ -1317,7 +1317,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1339,7 +1339,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_35',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'patch_only',
+    p_mode                     => 'PATCH_FOR_PORTION_OF',
     p_era_name                 => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1370,7 +1370,7 @@ SELECT count(*) AS row_count FROM temporal_merge_test.establishment WHERE id = 3
 \echo '================================================================================'
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 36: `upsert_patch` with consecutive, identical source rows (should merge into one operation)'
+\echo 'Scenario 36: `MERGE_ENTITY_PATCH` with consecutive, identical source rows (should merge into one operation)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 CREATE TEMP TABLE temp_source_36 (
@@ -1392,7 +1392,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_36',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1424,7 +1424,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_36;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 37: `upsert_patch` with three consecutive, identical source rows (should merge)'
+\echo 'Scenario 37: `MERGE_ENTITY_PATCH` with three consecutive, identical source rows (should merge)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 CREATE TEMP TABLE temp_source_37 (
@@ -1446,7 +1446,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_37',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1478,7 +1478,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_37;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 38: `upsert_patch` with two consecutive but DIFFERENT source rows (should NOT merge)'
+\echo 'Scenario 38: `MERGE_ENTITY_PATCH` with two consecutive but DIFFERENT source rows (should NOT merge)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 CREATE TEMP TABLE temp_source_38 (
@@ -1499,7 +1499,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_38',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1532,7 +1532,7 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 DROP TABLE temp_source_38;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 39: `upsert_patch` where source row is consecutive with existing target row (should merge/extend)'
+\echo 'Scenario 39: `MERGE_ENTITY_PATCH` where source row is consecutive with existing target row (should merge/extend)'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test.reset_target();
 INSERT INTO temporal_merge_test.establishment (id, legal_unit_id, valid_from, valid_until, name, employees) VALUES (7, 1, '2023-01-01', '2023-07-01', 'Existing Op', 60);
@@ -1553,7 +1553,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_39',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1663,7 +1663,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_40',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1735,7 +1735,7 @@ $$;
 \set ephemeral_cols '{}'
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 41: `upsert_patch` on a table using `synchronize_valid_to_until` trigger'
+\echo 'Scenario 41: `MERGE_ENTITY_PATCH` on a table using `synchronize_valid_to_until` trigger'
 --------------------------------------------------------------------------------
 CALL temporal_merge_test_vt.reset_target();
 -- Initial data in target. `valid_until` is set by the trigger.
@@ -1758,7 +1758,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_41',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -1852,7 +1852,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_42',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid'
 );
 
@@ -1964,7 +1964,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_43',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_patch',
+    p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid'
 );
 
@@ -2055,7 +2055,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_44',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
@@ -2136,7 +2136,7 @@ CALL sql_saga.temporal_merge(
     p_source_table             => 'temp_source_45',
     p_id_columns               => :'entity_id_cols'::TEXT[],
     p_ephemeral_columns        => '{}'::TEXT[],
-    p_mode                     => 'upsert_replace',
+    p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
     p_update_source_with_assigned_entity_ids => true
 );
