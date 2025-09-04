@@ -427,17 +427,22 @@ coalesced_final_segments AS (
             SUM(is_new_segment) OVER (PARTITION BY entity_id ORDER BY valid_from) as segment_group
         FROM (
             SELECT
-                ras.*,
+                *,
                 CASE
                     -- A new segment starts if there is a gap between it and the previous one,
                     -- or if the data payload changes. For [) intervals,
                     -- contiguity is defined as the previous `valid_until` being equal to the current `valid_from`.
-                    WHEN LAG(ras.valid_until) OVER (PARTITION BY ras.entity_id ORDER BY ras.valid_from) = ras.valid_from
-                     AND LAG(ras.data_payload - %5$L::text[]) OVER (PARTITION BY ras.entity_id ORDER BY ras.valid_from) IS NOT DISTINCT FROM (ras.data_payload - %5$L::text[])
+                    WHEN LAG(valid_until) OVER (PARTITION BY entity_id ORDER BY valid_from) = valid_from
+                     AND LAG(comparable_payload) OVER (PARTITION BY entity_id ORDER BY valid_from) IS NOT DISTINCT FROM comparable_payload
                     THEN 0 -- Not a new group (contiguous and same data)
                     ELSE 1 -- Is a new group (time gap or different data)
                 END as is_new_segment
-            FROM resolved_atomic_segments ras
+            FROM (
+                SELECT
+                    ras.*,
+                    (ras.data_payload - %5$L::text[]) as comparable_payload
+                FROM resolved_atomic_segments ras
+            ) with_comparable_payload
         ) with_new_segment_flag
     ) with_segment_group
     GROUP BY
