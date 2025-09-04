@@ -57,8 +57,8 @@ To simplify common interactions with temporal data, `sql_saga` provides two type
 ##### The `for_portion_of` View: Applying Changes to a Time Slice
 This view is a specialized tool that provides a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. It exists for one purpose: to apply a data change to a specific slice of an entity's timeline. The trigger will automatically split, update, and insert historical records to correctly reflect the change.
 
-- **`UPDATE`**: This is the only operation supported by the view. To use it, you must provide `valid_from` and `valid_until` in the `SET` clause, which act as parameters defining the time period to be changed.
-- **`INSERT`, `DELETE`, and simple `UPDATE`s (historical corrections) are not supported.** These operations should be performed directly on the base table. This specialized design ensures the view's purpose is clear and prevents accidental misuse.
+- **Surgical `UPDATE` is the only supported operation.** To use it, you must provide `valid_from` and `valid_until` in the `SET` clause, which act as parameters defining the time period to be changed.
+- **`INSERT`, `DELETE`, and simple `UPDATE`s (e.g., historical corrections) are intentionally not supported on the view.** These operations should be performed directly on the base table. `DELETE` is unsupported because standard SQL provides no way to pass the required `[from, until)` parameters to a `DELETE` trigger, unlike `UPDATE` which can use the `SET` clause for this purpose. This focused design ensures the view's purpose is clear and prevents accidental misuse.
 
 **Known Limitation:** The trigger for this view performs `DELETE` and `INSERT` operations that can create a transient, inconsistent state. If the base table is referenced by a temporal foreign key from another table, an `UPDATE` that creates a temporary gap in history may cause the foreign key check to fail.
 
@@ -336,11 +336,10 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   ```
 
 #### Era Management
-- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., p_synchronize_valid_to_column name DEFAULT NULL, p_synchronize_range_column name DEFAULT NULL, create_columns boolean DEFAULT false, p_add_defaults boolean DEFAULT true, p_add_bounds_check boolean DEFAULT true) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
+- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., p_synchronize_valid_to_column name DEFAULT NULL, p_synchronize_range_column name DEFAULT NULL, p_add_defaults boolean DEFAULT true, p_add_bounds_check boolean DEFAULT true) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
   - The `range_type` is automatically inferred from the column data types.
   - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `p_synchronize_valid_to_column` or `p_synchronize_range_column`. This also adds a `NOT NULL` constraint to the synchronized columns and creates a unified trigger to keep all temporal representations consistent.
   - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`).
-  - If `create_columns` is `true`, it will also create the `valid_from` and `valid_until` columns if they do not exist.
   - `p_add_defaults`: If `true` (the default), `sql_saga` will set `DEFAULT 'infinity'` on the `valid_until` column for data types that support it. This simplifies `INSERT` statements for open-ended periods. Set to `false` if you wish to manage default values manually.
   - `p_add_bounds_check`: If `true` (the default), `sql_saga` will add a `CHECK` constraint to ensure that `valid_from < valid_until`. For data types that support infinity, it also checks that `valid_from > '-infinity'`. Set to `false` to disable this check for advanced use cases where you need to manage temporal integrity at the application level.
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
