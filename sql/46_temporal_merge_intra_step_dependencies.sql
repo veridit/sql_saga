@@ -81,8 +81,8 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
-    (1, '{1}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-01-01'::DATE, '2023-06-01'::DATE, '{"name": "Initial Name", "edit_comment": "First slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (2, '{2}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-06-01'::DATE, '2023-12-31'::DATE, '{"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"}'::JSONB, NULL::sql_saga.allen_interval_relation)
+    (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-01-01'::DATE, '2023-06-01'::DATE, '{"name": "Initial Name", "edit_comment": "First slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (2, '{2}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-06-01'::DATE, '2023-12-31'::DATE, '{"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
@@ -90,8 +90,8 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
-    (1, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
-    (2, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT)
+    (1, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
+    (2, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -156,11 +156,11 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
-    (1, '{101}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2024-06-01'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (2, '{102}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-06-01'::DATE, '2024-09-01'::DATE, '{"name": "Entity 10 Update", "edit_comment": "E10-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (3, '{101}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-09-01'::DATE, '2024-12-31'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (4, '{201}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Entity 20 Initial", "edit_comment": "E20-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
-    (5, '{202}'::INT[], 'INSERT'::sql_saga.planner_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-07-01'::DATE, '2025-12-31'::DATE, '{"name": "Entity 20 New End", "edit_comment": "E20-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation)
+    (1, '{101}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2024-06-01'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (2, '{102}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-06-01'::DATE, '2024-09-01'::DATE, '{"name": "Entity 10 Update", "edit_comment": "E10-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (3, '{101}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-09-01'::DATE, '2024-12-31'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (4, '{201}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Entity 20 Initial", "edit_comment": "E20-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
+    (5, '{202}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-07-01'::DATE, '2025-12-31'::DATE, '{"name": "Entity 20 New End", "edit_comment": "E20-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
@@ -168,10 +168,10 @@ SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_v
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES
-    (101, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
-    (102, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
-    (201, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT),
-    (202, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_status, NULL::TEXT)
+    (101, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
+    (102, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
+    (201, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
+    (202, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
 ) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'

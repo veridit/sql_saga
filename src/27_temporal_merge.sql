@@ -9,7 +9,7 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL,
     p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
-) RETURNS SETOF sql_saga.temporal_plan_op
+) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
     v_plan_key_text TEXT;
@@ -106,18 +106,18 @@ BEGIN
             v_founding_id_select_expr := format('t.%I as founding_id,', p_founding_id_column);
             v_planner_entity_id_expr := format($$
                 CASE
-                    WHEN si.is_new_entity
-                    THEN si.entity_id || jsonb_build_object(%L, si.founding_id::text)
-                    ELSE si.entity_id
+                    WHEN sr.is_new_entity
+                    THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
+                    ELSE sr.entity_id
                 END
             $$, p_founding_id_column);
         ELSE
             v_founding_id_select_expr := format('t.%I as founding_id,', p_source_row_id_column);
             v_planner_entity_id_expr := format($$
                 CASE
-                    WHEN si.is_new_entity
-                    THEN si.entity_id || jsonb_build_object(%L, si.founding_id::text)
-                    ELSE si.entity_id
+                    WHEN sr.is_new_entity
+                    THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
+                    ELSE sr.entity_id
                 END
             $$, COALESCE(p_founding_id_column, p_source_row_id_column));
         END IF;
@@ -196,7 +196,7 @@ BEGIN
         IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
             v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
         ELSIF p_mode = 'DELETE_FOR_PORTION_OF' THEN
-            v_source_data_payload_expr := 'NULL::jsonb';
+            v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
         ELSE -- MERGE_ENTITY_REPLACE, REPLACE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
         END IF;
@@ -207,14 +207,9 @@ BEGIN
             -- This uses a simple diff join, resulting in a robust DELETE and INSERT plan for changes.
             v_diff_join_condition := 'f.f_from = t.t_from';
             v_plan_source_row_ids_expr := 'd.f_source_row_ids';
-            v_resolver_from := 'resolved_atomic_segments_with_payloads';
-            v_resolver_ctes := '';
-            -- In destructive mode, the final state is defined entirely by the source payload.
-            -- The v_source_data_payload_expr already correctly handles PATCH vs REPLACE semantics.
-            v_final_data_payload_expr := 's_data_payload';
         ELSE
             -- Non-destructive default mode: Merge timelines, preserving non-overlapping parts of the target.
-            -- This requires a complex diff join and special handling for payload inheritance.
+            -- This requires a complex diff join to correctly identify remainder slices.
             v_diff_join_condition := $$
                f.f_from = t.t_from
                OR (
@@ -229,40 +224,48 @@ BEGIN
                 d.f_source_row_ids,
                 MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
             )$$;
+        END IF;
 
-            IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
-                -- In PATCH modes, we inherit data from previous target segments to fill gaps.
-                v_resolver_ctes := $$,
-    segments_with_target_start AS (
-        SELECT
-            *,
-            (t_valid_from = valid_from) as is_target_start_segment
-        FROM resolved_atomic_segments_with_payloads
-    ),
-    payload_groups AS (
-        SELECT
-            *,
-            SUM(CASE WHEN is_target_start_segment THEN 1 ELSE 0 END) OVER (PARTITION BY entity_id ORDER BY valid_from) as payload_group
-        FROM segments_with_target_start
-    ),
-    resolved_atomic_segments_with_inherited_payload AS (
-        SELECT
-            *,
-            FIRST_VALUE(t_data_payload) OVER (PARTITION BY entity_id, payload_group ORDER BY valid_from) as inherited_t_data_payload
-        FROM payload_groups
-    )
+        -- Third, determine payload resolution logic based on the mode and timeline strategy.
+        IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
+            -- In PATCH modes, we inherit data from previous target segments to fill gaps.
+            v_resolver_ctes := $$,
+segments_with_target_start AS (
+    SELECT
+        *,
+        (t_valid_from = valid_from) as is_target_start_segment
+    FROM resolved_atomic_segments_with_payloads
+),
+payload_groups AS (
+    SELECT
+        *,
+        SUM(CASE WHEN is_target_start_segment THEN 1 ELSE 0 END) OVER (PARTITION BY entity_id ORDER BY valid_from) as payload_group
+    FROM segments_with_target_start
+),
+resolved_atomic_segments_with_inherited_payload AS (
+    SELECT
+        *,
+        FIRST_VALUE(t_data_payload) OVER (PARTITION BY entity_id, payload_group ORDER BY valid_from) as inherited_t_data_payload
+    FROM payload_groups
+)
 $$;
-                v_final_data_payload_expr := $$(CASE
-                    WHEN s_data_payload IS NOT NULL THEN (COALESCE(t_data_payload, inherited_t_data_payload, '{}'::jsonb) || s_data_payload)
-                    ELSE COALESCE(t_data_payload, inherited_t_data_payload)
-                END)$$;
-                v_resolver_from := 'resolved_atomic_segments_with_inherited_payload';
-            ELSE -- REPLACE and DELETE modes
-                -- In REPLACE/DELETE modes, we do not inherit. Gaps remain gaps.
-                v_resolver_ctes := '';
-                v_final_data_payload_expr := $$COALESCE(s_data_payload, t_data_payload)$$;
-                v_resolver_from := 'resolved_atomic_segments_with_payloads';
-            END IF;
+            v_resolver_from := 'resolved_atomic_segments_with_inherited_payload';
+            v_final_data_payload_expr := $$(CASE
+                WHEN s_data_payload IS NOT NULL THEN (COALESCE(t_data_payload, inherited_t_data_payload, '{}'::jsonb) || s_data_payload)
+                ELSE COALESCE(t_data_payload, inherited_t_data_payload)
+            END)$$;
+        ELSE -- REPLACE and DELETE modes
+            -- In REPLACE/DELETE modes, we do not inherit. Gaps remain gaps.
+            v_resolver_ctes := '';
+            v_resolver_from := 'resolved_atomic_segments_with_payloads';
+            v_final_data_payload_expr := $$CASE WHEN s_data_payload = '"__DELETE__"'::jsonb THEN NULL ELSE COALESCE(s_data_payload, t_data_payload) END$$;
+        END IF;
+
+        -- For destructive timeline mode, the final payload is always the source payload. This overrides any complex logic from above.
+        IF p_delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+             v_resolver_ctes := '';
+             v_resolver_from := 'resolved_atomic_segments_with_payloads';
+             v_final_data_payload_expr := 's_data_payload';
         END IF;
 
         -- Layer on optional destructive delete modes for missing entities.
@@ -307,31 +310,37 @@ target_rows AS (
     %20$s -- v_target_rows_filter
 ),
 source_rows AS (
+    SELECT
+        si.*,
+        (si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)) as target_entity_exists
+    FROM source_initial si
+),
+active_source_rows AS (
     -- Filter the initial source rows based on the operation mode.
     SELECT
-        si.source_row_id as source_row_id,
+        sr.source_row_id as source_row_id,
         -- If it's a new entity, synthesize a temporary unique ID by embedding the founding_id,
         -- so the planner can distinguish and group new entities.
         %17$s as entity_id,
-        si.valid_from,
-        si.valid_until,
-        si.data_payload
-    FROM source_initial si
+        sr.valid_from,
+        sr.valid_until,
+        sr.data_payload
+    FROM source_rows sr
     WHERE CASE %7$L::sql_saga.temporal_merge_mode
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
-        WHEN 'INSERT_NEW_ENTITIES' THEN si.entity_id NOT IN (SELECT tr.entity_id FROM target_rows tr)
+        WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
-        WHEN 'PATCH_FOR_PORTION_OF' THEN si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)
-        WHEN 'REPLACE_FOR_PORTION_OF' THEN si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)
-        WHEN 'DELETE_FOR_PORTION_OF' THEN si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)
+        WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
         ELSE false
     END
 ),
 all_rows AS (
-    SELECT entity_id, valid_from, valid_until FROM source_rows
+    SELECT entity_id, valid_from, valid_until FROM active_source_rows
     UNION ALL
     SELECT entity_id, valid_from, valid_until FROM target_rows
 ),
@@ -353,7 +362,7 @@ resolved_atomic_segments_with_payloads AS (
         seg.valid_until,
         t.t_valid_from,
         ( -- Find causal source row
-            SELECT sr.source_row_id FROM source_rows sr
+            SELECT sr.source_row_id FROM active_source_rows sr
             WHERE sr.entity_id = seg.entity_id
               AND (
                   %19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)
@@ -380,7 +389,7 @@ resolved_atomic_segments_with_payloads AS (
     ) t ON true
     LEFT JOIN LATERAL (
         SELECT sr.data_payload
-        FROM source_rows sr
+        FROM active_source_rows sr
         WHERE sr.entity_id = seg.entity_id
           AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(sr.valid_from, sr.valid_until)
         -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
@@ -454,7 +463,6 @@ diff AS (
             data_payload AS f_data,
             source_row_ids AS f_source_row_ids
         FROM coalesced_final_segments
-        WHERE data_payload IS NOT NULL
     ) f
     FULL OUTER JOIN
     (
@@ -468,24 +476,49 @@ diff AS (
     ON f.f_entity_id = t.t_entity_id AND (%11$s)
 ),
 plan AS (
-    SELECT
-        %12$s as source_row_ids,
-        CASE
-            WHEN d.f_data IS NULL THEN 'DELETE'::sql_saga.planner_action
-            WHEN d.t_data IS NULL THEN 'INSERT'::sql_saga.planner_action
-            WHEN d.f_data IS DISTINCT FROM d.t_data
-              OR d.f_from IS DISTINCT FROM d.t_from
-              OR d.f_until IS DISTINCT FROM d.t_until
-            THEN 'UPDATE'::sql_saga.planner_action
-            ELSE 'IDENTICAL'::sql_saga.planner_action
-        END as operation,
-        d.entity_id,
-        d.t_from as old_valid_from,
-        d.f_from as new_valid_from,
-        d.f_until as new_valid_until,
-        d.f_data as data,
-        d.relation
-    FROM diff d
+    (
+        SELECT
+            %12$s as source_row_ids,
+            CASE
+                -- If both final and target data are NULL, it's a gap in both. This is a SKIP_IDENTICAL operation.
+                -- This rule must come first to correctly handle intended gaps from DELETE_FOR_PORTION_OF mode.
+                WHEN d.f_data IS NULL AND d.t_data IS NULL THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+                WHEN d.f_data IS NULL AND d.t_data IS NOT NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN d.t_data IS NULL AND d.f_data IS NOT NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                WHEN d.relation = 'equals' AND d.f_data IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN d.f_data IS DISTINCT FROM d.t_data
+                  OR d.f_from IS DISTINCT FROM d.t_from
+                  OR d.f_until IS DISTINCT FROM d.t_until
+                THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
+                ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+            END as operation,
+            d.entity_id,
+            d.t_from as old_valid_from,
+            d.f_from as new_valid_from,
+            d.f_until as new_valid_until,
+            d.f_data as data,
+            d.relation
+        FROM diff d
+        WHERE d.f_source_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
+    )
+    UNION ALL
+    (
+        -- This part of the plan handles source rows that were filtered out by the main logic,
+        -- allowing the executor to provide accurate feedback.
+        SELECT
+            ARRAY[sr.source_row_id],
+            'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
+            sr.entity_id,
+            NULL, NULL, NULL, NULL, NULL
+        FROM source_rows sr
+        WHERE
+            CASE %7$L::sql_saga.temporal_merge_mode
+                WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                ELSE false
+            END
+    )
 )
 SELECT
     row_number() OVER (ORDER BY p.entity_id, COALESCE(p.new_valid_from, p.old_valid_from), p.operation DESC, (p.source_row_ids[1]))::BIGINT as plan_op_seq,
@@ -533,7 +566,7 @@ COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], tex
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
--- Unified Orchestrator Function
+-- Unified Executor Procedure
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
@@ -555,7 +588,6 @@ DECLARE
     v_all_cols_ident TEXT;
     v_all_cols_select TEXT;
     v_entity_key_join_clause TEXT;
-    v_all_source_row_ids INTEGER[];
     v_target_schema_name name;
     v_target_table_name_only name;
     v_valid_from_col name;
@@ -565,7 +597,15 @@ DECLARE
     v_insert_defaulted_columns TEXT[];
     v_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
+    v_entity_id_as_jsonb TEXT;
 BEGIN
+    -- Dynamically construct a jsonb object from the entity id columns to use as a single key.
+    SELECT
+        format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
+    INTO
+        v_entity_id_as_jsonb
+    FROM unnest(p_id_columns) AS col;
+
     v_internal_keys_to_remove := ARRAY[]::name[];
 
     IF p_founding_id_column IS NOT NULL THEN
@@ -577,7 +617,7 @@ BEGIN
     -- If the feedback table exists from a previous call in the same transaction,
     -- truncate it. Otherwise, create it.
     IF to_regclass('pg_temp.temporal_merge_feedback') IS NULL THEN
-        CREATE TEMP TABLE temporal_merge_feedback (LIKE sql_saga.temporal_merge_result) ON COMMIT DROP;
+        CREATE TEMP TABLE temporal_merge_feedback (LIKE sql_saga.temporal_merge_feedback) ON COMMIT DROP;
     ELSE
         TRUNCATE TABLE pg_temp.temporal_merge_feedback;
     END IF;
@@ -613,8 +653,6 @@ BEGIN
     SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = p_target_table AND attname = v_valid_from_col;
     SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = p_target_table AND attname = v_valid_until_col;
 
-    EXECUTE format('SELECT array_agg(%I) FROM %s', p_source_row_id_column, p_source_table::TEXT) INTO v_all_source_row_ids;
-
         -- Dynamically construct join clause for composite entity key.
         SELECT
             string_agg(format('t.%I = jpr_entity.%I', col, col), ' AND ')
@@ -625,7 +663,7 @@ BEGIN
         v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
         IF to_regclass('pg_temp.temporal_merge_plan') IS NULL THEN
-            CREATE TEMP TABLE temporal_merge_plan (LIKE sql_saga.temporal_plan_op, PRIMARY KEY (plan_op_seq)) ON COMMIT DROP;
+            CREATE TEMP TABLE temporal_merge_plan (LIKE sql_saga.temporal_merge_plan, PRIMARY KEY (plan_op_seq)) ON COMMIT DROP;
         ELSE
             TRUNCATE TABLE pg_temp.temporal_merge_plan;
         END IF;
@@ -982,33 +1020,67 @@ BEGIN
         SET CONSTRAINTS ALL IMMEDIATE;
 
         -- 4. Generate and store feedback
-        INSERT INTO temporal_merge_feedback
-            SELECT
-                s.source_row_id AS source_row_id,
-                COALESCE(jsonb_agg(DISTINCT (p_unnested.entity_ids - v_internal_keys_to_remove)) FILTER (WHERE p_unnested.entity_ids IS NOT NULL AND p_unnested.operation <> 'IDENTICAL'), '[]'::jsonb) AS target_entity_ids,
-                CASE
-                    -- APPLIED: at least one non-IDENTICAL operation
-                    WHEN bool_or(p_unnested.operation <> 'IDENTICAL') THEN 'APPLIED'::sql_saga.temporal_merge_status
-                    -- TARGET_NOT_FOUND: no operations, and in a mode that requires a target
-                    WHEN count(p_unnested.operation) = 0 AND p_mode IN ('PATCH_FOR_PORTION_OF', 'REPLACE_FOR_PORTION_OF', 'DELETE_FOR_PORTION_OF') THEN 'TARGET_NOT_FOUND'::sql_saga.temporal_merge_status
-                    -- SKIPPED: all other cases (all IDENTICAL ops, or no ops for insert_only/merge_entity_*)
-                    ELSE 'SKIPPED'::sql_saga.temporal_merge_status
-                END AS status,
-                NULL::TEXT AS error_message
-            FROM
-                (SELECT unnest(v_all_source_row_ids) as source_row_id) s
-            LEFT JOIN (
+        EXECUTE format($$
+            WITH
+            all_source_rows AS (
+                SELECT t.%2$I AS source_row_id FROM %1$s t
+            ),
+            plan_unnested AS (
                 SELECT unnest(p.source_row_ids) as source_row_id, p.plan_op_seq, p.entity_ids, p.operation
                 FROM temporal_merge_plan p
-            ) p_unnested ON s.source_row_id = p_unnested.source_row_id
-            GROUP BY
-                s.source_row_id
-            ORDER BY
-                s.source_row_id;
+            ),
+            feedback_groups AS (
+                SELECT
+                    asr.source_row_id,
+                    -- Aggregate all distinct operations for this source row.
+                    array_agg(DISTINCT pu.operation) FILTER (WHERE pu.operation IS NOT NULL) as operations,
+                    -- Aggregate all distinct entity IDs this source row touched.
+                    COALESCE(jsonb_agg(DISTINCT (pu.entity_ids - %3$L::text[])) FILTER (WHERE pu.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids
+                FROM all_source_rows asr
+                LEFT JOIN plan_unnested pu ON asr.source_row_id = pu.source_row_id
+                GROUP BY asr.source_row_id
+            )
+            INSERT INTO temporal_merge_feedback
+                SELECT
+                    fg.source_row_id,
+                    fg.target_entity_ids,
+                    CASE
+                        -- This CASE statement must be ordered from most to least specific to correctly classify outcomes.
+                        -- Any DML operation means the row was successfully APPLIED.
+                        WHEN 'INSERT'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                          OR 'UPDATE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                          OR 'DELETE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations)
+                        THEN 'APPLIED'::sql_saga.temporal_merge_feedback_status
+                        -- A plan to SKIP_NO_TARGET is translated to the final SKIPPED_NO_TARGET status, as this is an actionable issue.
+                        WHEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_NO_TARGET'::sql_saga.temporal_merge_feedback_status
+                        -- If all operations were to SKIP_IDENTICAL, this is a benign "no-op".
+                        WHEN fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action] THEN 'SKIPPED_IDENTICAL'::sql_saga.temporal_merge_feedback_status
+                        -- If a source row resulted in no plan operations, it was validly filtered by the mode (e.g., INSERT_NEW_ENTITIES on existing).
+                        WHEN fg.operations IS NULL THEN 'SKIPPED_FILTERED'::sql_saga.temporal_merge_feedback_status
+                        -- This is a safeguard. If the planner produces an unexpected combination of actions, we fail fast.
+                        ELSE 'ERROR'::sql_saga.temporal_merge_feedback_status
+                    END AS status,
+                    CASE
+                        WHEN 'INSERT'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'UPDATE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'DELETE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action] OR
+                             fg.operations IS NULL
+                        THEN NULL::TEXT
+                        ELSE 'Planner produced an unhandled combination of actions: ' || fg.operations::text
+                    END AS error_message
+                FROM feedback_groups fg
+                ORDER BY fg.source_row_id;
+        $$,
+            p_source_table::text,       -- 1
+            p_source_row_id_column,     -- 2
+            v_internal_keys_to_remove   -- 3
+        );
 
 END;
 $temporal_merge$;
 
 COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode) IS
-'Orchestrates a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
+'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

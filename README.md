@@ -186,7 +186,7 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
     - `'DELETE_MISSING_ENTITIES'`: Deletes entire entities. When used with `MERGE_ENTITY_*` modes, any entity in the target that is not present in the source is completely deleted.
     - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A combination of both destructive behaviors.
 
-  ##### Operation Feedback and Session State
+  ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 
   - **Caveat for Multi-Role Sessions:** Because temporary tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later by an unprivileged user, the second call may fail as the unprivileged user might not have permission to `TRUNCATE` the tables created by the superuser.
@@ -223,11 +223,11 @@ CREATE TABLE legal_unit (
 -- Explicitly enable synchronization for the 'valid_to' column.
 SELECT sql_saga.add_era('legal_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
 -- Add a predicated unique key (e.g., only active units must have a unique name).
 SELECT sql_saga.add_unique_key(
-    table_oid => 'legal_unit',
+    table_oid => 'legal_unit'::regclass,
     column_names => ARRAY['name'],
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
@@ -243,12 +243,12 @@ CREATE TABLE establishment (
   valid_until DATE
 );
 
-SELECT sql_saga.add_era('establishment'::regclass);
-SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_era(table_oid => 'establishment'::regclass);
+SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'establishment',
+    fk_table_oid => 'establishment'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_id_valid'
@@ -258,7 +258,7 @@ SELECT sql_saga.add_foreign_key(
 -- Note that fk_era_name is omitted for the standard table.
 CREATE TABLE projects (id serial primary key, name text, legal_unit_id int);
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'projects',
+    fk_table_oid => 'projects'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     unique_key_name => 'legal_unit_id_valid'
 );
@@ -275,12 +275,12 @@ SELECT sql_saga.drop_foreign_key(
 );
 -- For regular-to-temporal FKs, era_name is omitted.
 SELECT sql_saga.drop_foreign_key(
-    table_oid => 'projects',
+    table_oid => 'projects'::regclass,
     column_names => ARRAY['legal_unit_id']
 );
 
 SELECT sql_saga.drop_unique_key(
-    table_oid => 'establishment',
+    table_oid => 'establishment'::regclass,
     column_names => ARRAY['id'],
     era_name => 'valid'
 );
@@ -293,18 +293,18 @@ SELECT sql_saga.drop_era('establishment'::regclass);
 
 
 SELECT sql_saga.drop_unique_key(
-    table_oid => 'legal_unit',
+    table_oid => 'legal_unit'::regclass,
     column_names => ARRAY['id'],
     era_name => 'valid'
 );
 SELECT sql_saga.drop_unique_key(
-    table_oid => 'legal_unit',
+    table_oid => 'legal_unit'::regclass,
     column_names => ARRAY['legal_ident'],
     era_name => 'valid'
 );
 -- For predicated unique keys, the predicate is not needed for dropping.
 SELECT sql_saga.drop_unique_key(
-    table_oid => 'legal_unit',
+    table_oid => 'legal_unit'::regclass,
     column_names => ARRAY['name'],
     era_name => 'valid'
 );

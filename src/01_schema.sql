@@ -251,37 +251,52 @@ COMMENT ON TYPE sql_saga.temporal_merge_delete_mode IS
 - DELETE_MISSING_TIMELINE_AND_ENTITIES: A combination of both timeline and entity deletion.';
 
 DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_status AS ENUM ('APPLIED', 'SKIPPED', 'TARGET_NOT_FOUND', 'ERROR');
+    CREATE TYPE sql_saga.temporal_merge_feedback_status AS ENUM (
+        'APPLIED',
+        'SKIPPED_IDENTICAL',
+        'SKIPPED_FILTERED',
+        'SKIPPED_NO_TARGET',
+        'ERROR'
+    );
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
-COMMENT ON TYPE sql_saga.temporal_merge_status IS
-'Defines the possible return statuses for a row processed by `temporal_merge`.
+COMMENT ON TYPE sql_saga.temporal_merge_feedback_status IS
+'Defines the possible return statuses for a row processed by the `temporal_merge` executor.
 - APPLIED: The operation was successfully planned and executed, resulting in a change to the target table.
-- SKIPPED: A successful but non-operative outcome where the row was benignly skipped (e.g., an idempotent update, or an `insert_only` on a pre-existing entity).
-- TARGET_NOT_FOUND: A successful but non-operative outcome where a patch/replace operation could not find its target, signaling a potential data issue.
+- SKIPPED_IDENTICAL: A benign no-op where the source data was identical to the target data.
+- SKIPPED_FILTERED: A benign no-op where the source row was correctly filtered by the mode''s logic (e.g., an `INSERT_NEW_ENTITIES` for an entity that already exists).
+- SKIPPED_NO_TARGET: An actionable no-op where the operation failed because the target entity was not found. This signals a potential data quality issue.
 - ERROR: A catastrophic failure occurred. The transaction was rolled back, and the `error_message` column will be populated.';
 
 DO $$ BEGIN
-    CREATE TYPE sql_saga.planner_action AS ENUM ('INSERT', 'UPDATE', 'DELETE', 'IDENTICAL');
+    CREATE TYPE sql_saga.temporal_merge_plan_action AS ENUM (
+        'INSERT',
+        'UPDATE',
+        'DELETE',
+        'SKIP_IDENTICAL',
+        'SKIP_NO_TARGET'
+    );
 EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
-COMMENT ON TYPE sql_saga.planner_action IS
-'Represents the type of DML operation to be performed for a given time segment.
+COMMENT ON TYPE sql_saga.temporal_merge_plan_action IS
+'Represents the internal action to be taken for a given time segment, as determined by the planner.
+These values use a "future tense" convention (e.g., SKIP_...) as they represent a plan for an action, not a completed result.
 - INSERT: A new historical record will be inserted.
 - UPDATE: An existing historical record will be modified (typically by shortening its period).
 - DELETE: An existing historical record will be deleted.
-- IDENTICAL: An existing historical record is identical to the source data and requires no change. This is used by the planner to identify idempotent operations.';
+- SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
+- SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.';
 
--- Defines the structure for a single operation in a temporal execution plan.
+-- Defines the structure for a single row in a temporal execution plan.
 DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_plan_op AS (
+    CREATE TYPE sql_saga.temporal_merge_plan AS (
         plan_op_seq BIGINT,
         source_row_ids INTEGER[],
-        operation sql_saga.planner_action,
+        operation sql_saga.temporal_merge_plan_action,
         entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
         old_valid_from TEXT,
         new_valid_from TEXT,
@@ -293,12 +308,12 @@ EXCEPTION
     WHEN duplicate_object THEN null;
 END $$;
 
--- Defines the structure for a temporal merge operation result.
+-- Defines the structure for a temporal executor feedback result.
 DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_result AS (
+    CREATE TYPE sql_saga.temporal_merge_feedback AS (
         source_row_id INTEGER,
         target_entity_ids JSONB,
-        status sql_saga.temporal_merge_status,
+        status sql_saga.temporal_merge_feedback_status,
         error_message TEXT
     );
 EXCEPTION

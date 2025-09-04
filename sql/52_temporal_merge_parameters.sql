@@ -50,10 +50,10 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify that the generated column was computed correctly.
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES (1, 100, 200, '2024-01-01'::date, 'infinity'::date))
     AS t(id, value, value_x2, valid_from, valid_until);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_gen_col_target;
 ROLLBACK TO SAVEPOINT scenario_6;
 
@@ -77,22 +77,22 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify the plan does not contain chaotic operations.
-\echo '--- Orchestrator: Expected Plan ---'
+\echo '--- Executor: Expected Plan ---'
 SELECT * FROM (VALUES
-    (1, '{1}'::int[], 'INSERT'::sql_saga.planner_action, '{"id": 2}'::jsonb)
+    (1, '{1}'::int[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2}'::jsonb)
 ) AS t(plan_op_seq, source_row_ids, operation, entity_ids);
-\echo '--- Orchestrator: Actual Plan ---'
+\echo '--- Executor: Actual Plan ---'
 SELECT plan_op_seq, source_row_ids, operation, entity_ids
 FROM pg_temp.temporal_merge_plan
 ORDER BY plan_op_seq;
 
 -- Verify final state is correct.
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES
     (1, 'existing', '2023-01-01'::date, 'infinity'::date),
     (2, 'new', '2024-01-01'::date, 'infinity'::date)
 ) AS t(id, value, valid_from, valid_until);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_mix_bug_target ORDER BY id;
 ROLLBACK TO SAVEPOINT scenario_8;
 
@@ -197,15 +197,15 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify that the merge was successful and feedback works.
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES (1, 'A', '2024-01-01'::date, 'infinity'::date)) AS t(id, value, valid_from, valid_until);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_custom_rowid_target;
 
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (101, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
+\echo '--- Executor: Expected Feedback ---'
+SELECT * FROM (VALUES (101, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
     AS t(source_row_id, target_entity_ids, status);
-\echo '--- Orchestrator: Actual Feedback ---'
+\echo '--- Executor: Actual Feedback ---'
 SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback WHERE source_row_id = 101;
 ROLLBACK TO SAVEPOINT scenario_11;
 
@@ -213,13 +213,13 @@ SAVEPOINT scenario_12;
 -- Scenario 12: Test that `temporal_merge` fails if the default p_source_row_id_column ('row_id') does not exist.
 CREATE TABLE tm_no_rowid_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_from', 'valid_until');
-CREATE TEMP TABLE tm_no_rowid_source (some_other_pk int, id int, value text, valid_from date, valid_until date);
+CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, valid_from date, valid_until date);
 
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table      := 'tm_no_rowid_target'::regclass,
-        p_source_table      := 'tm_no_rowid_source'::regclass,
+        p_source_table      := 'tm_no_rowid_sources'::regclass,
         p_id_columns        := ARRAY['id'],
         p_ephemeral_columns := '{}'::text[]
         -- p_source_row_id_column is deliberately omitted to test the default
@@ -261,15 +261,15 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify merge was successful
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES (1, 'X', '2024-01-01'::date, 'infinity'::date)) AS t(unit_pk, some_value, period_begins, period_ends);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_weird_names;
 
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (1, '[{"unit_pk": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
+\echo '--- Executor: Expected Feedback ---'
+SELECT * FROM (VALUES (1, '[{"unit_pk": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
     AS t(source_row_id, target_entity_ids, status);
-\echo '--- Orchestrator: Actual Feedback ---'
+\echo '--- Executor: Actual Feedback ---'
 SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
 ROLLBACK TO SAVEPOINT scenario_13;
 
@@ -300,15 +300,15 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify merge was successful and feedback is correct
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES (1, '2024-01-01'::date, 'infinity'::date)) AS t(id, valid_from, valid_until);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_no_data_cols_target;
 
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (1, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_status))
+\echo '--- Executor: Expected Feedback ---'
+SELECT * FROM (VALUES (1, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
     AS t(source_row_id, target_entity_ids, status);
-\echo '--- Orchestrator: Actual Feedback ---'
+\echo '--- Executor: Actual Feedback ---'
 SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
 ROLLBACK TO SAVEPOINT scenario_14;
 
@@ -339,9 +339,9 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify merge was successful
-\echo '--- Orchestrator: Expected Final State ---'
+\echo '--- Executor: Expected Final State ---'
 SELECT * FROM (VALUES (1, 'A', '2024-01-01'::date, 'infinity'::date)) AS t(id, value, valid_from, valid_until);
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 TABLE tm_extra_cols_target;
 ROLLBACK TO SAVEPOINT scenario_15;
 
@@ -379,25 +379,25 @@ CALL sql_saga.temporal_merge(
 );
 
 -- Verify that a single new entity was created with two historical slices.
-\echo '--- Orchestrator: Expected Final State (A single entity with a consistent surrogate key) ---'
+\echo '--- Executor: Expected Final State (A single entity with a consistent surrogate key) ---'
 SELECT * FROM (VALUES
     (1, 'NEW_ENTITY_1', 'A', '2024-01-01'::date, '2024-06-01'::date),
     (1, 'NEW_ENTITY_1', 'B', '2024-06-01'::date, 'infinity'::date)
 ) AS t (id, entity_ident, value, valid_from, valid_until);
 
-\echo '--- Orchestrator: Actual Final State ---'
+\echo '--- Executor: Actual Final State ---'
 SELECT id, entity_ident, value, valid_from, valid_until
 FROM tm_founding_target
 ORDER BY valid_from;
 
 -- Verify that both source rows were associated with the same new entity.
-\echo '--- Orchestrator: Expected Feedback ---'
+\echo '--- Executor: Expected Feedback ---'
 SELECT * FROM (VALUES
     (1, '[{"id": 1, "entity_ident": "NEW_ENTITY_1"}]'::jsonb),
     (2, '[{"id": 1, "entity_ident": "NEW_ENTITY_1"}]'::jsonb)
 ) AS t (source_row_id, target_entity_ids);
 
-\echo '--- Orchestrator: Actual Feedback ---'
+\echo '--- Executor: Actual Feedback ---'
 SELECT source_row_id, target_entity_ids
 FROM pg_temp.temporal_merge_feedback
 ORDER BY source_row_id;

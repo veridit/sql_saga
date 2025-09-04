@@ -26,7 +26,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Medium Priority - Refactoring & API Improvements
 
 - [x] **Implement final `temporal_merge` API with unambiguous naming:** Refactor `temporal_merge` to use the final, approved `MERGE_ENTITY_*` naming scheme. Correct the planner logic to be strictly orthogonal, where `p_mode` controls non-destructive merge scope and `p_delete_mode` is the sole controller of destructive actions.
-- [ ] **Add focused test coverage for `..._FOR_PORTION_OF` modes:** Create a new test file dedicated to validating the behavior of `PATCH_FOR_PORTION_OF`, `REPLACE_FOR_PORTION_OF`, and `DELETE_FOR_PORTION_OF` to ensure the surgical correction logic is fully covered.
+- [x] **Add focused test coverage for `..._FOR_PORTION_OF` modes:** Create a new test file dedicated to validating the behavior of `PATCH_FOR_PORTION_OF`, `REPLACE_FOR_PORTION_OF`, and `DELETE_FOR_PORTION_OF` to ensure the surgical correction logic is fully covered.
 - [ ] **Add `DELETE` support to `for_portion_of` view:** Enhance the `for_portion_of` trigger to handle `DELETE` operations by calling `temporal_merge` with `DELETE_FOR_PORTION_OF`. The trigger should be optimized to create a temporary source table once per transaction and truncate it for subsequent calls.
 - [x] **Refactor default value handling to be metadata-driven**: Implemented a robust, metadata-driven strategy for default values. For simple eras, `add_era` sets `DEFAULT 'infinity'`. For eras with synchronized columns, a metadata flag instructs the trigger to programmatically apply the default on `INSERT`. This removes the brittle `'infinity'` heuristic and adds fail-fast consistency checks for `UPDATE` operations.
 
@@ -75,10 +75,10 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
-- [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main orchestrator procedure simple and readable.
+- [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main executor procedure simple and readable.
 - [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
 
-- [x] **Clarify `temporal_merge` feedback statuses:** Renamed the feedback status enums for clarity. The public status is now `temporal_merge_status` with values `APPLIED`, `SKIPPED`, `TARGET_NOT_FOUND`, and `ERROR`. The internal planner enum is now `planner_action` with `IDENTICAL` replacing `NOOP`.
+- [x] **Clarify `temporal_merge` naming convention:** Finalized a robust and consistent naming convention for the Planner/Executor architecture. All internal `temporal_merge` objects now use a hierarchical naming scheme (e.g., `temporal_merge_plan`, `temporal_merge_plan_action`). Renamed `SKIP_IDEMPOTENT` to `SKIP_IDENTICAL` for improved clarity.
 
 - [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
 

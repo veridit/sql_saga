@@ -51,22 +51,22 @@ CREATE TABLE readme.unit_with_range (
 -- Explicitly enable synchronization for the 'valid_to' column.
 SELECT sql_saga.add_era('readme.legal_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key('readme.legal_unit', ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key('readme.legal_unit', ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
 -- Add a predicated unique key (e.g., only active units must have a unique name).
 SELECT sql_saga.add_unique_key(
-    'readme.legal_unit',
+    table_oid => 'readme.legal_unit'::regclass,
     column_names => ARRAY['name'],
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
 
-SELECT sql_saga.add_era('readme.establishment', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('readme.establishment', ARRAY['id'], unique_key_name => 'establishment_id_valid');
-SELECT sql_saga.add_unique_key('readme.establishment', ARRAY['name'], unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'readme.establishment',
+    fk_table_oid => 'readme.establishment'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_id_valid'
@@ -75,13 +75,13 @@ SELECT sql_saga.add_foreign_key(
 -- Add a foreign key from a regular table to a temporal table.
 -- Note that fk_era_name is omitted for the regular table.
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'readme.projects',
+    fk_table_oid => 'readme.projects'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     unique_key_name => 'legal_unit_id_valid'
 );
 
-SELECT sql_saga.add_era('readme.unit_with_range', 'start_num', 'until_num', p_synchronize_range_column := 'num_range');
-SELECT sql_saga.add_unique_key('readme.unit_with_range', ARRAY['id'], unique_key_name => 'unit_with_range_id_valid');
+SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', p_synchronize_range_column := 'num_range');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], unique_key_name => 'unit_with_range_id_valid');
 
 \echo '--- Verification: Check metadata tables ---'
 SELECT table_schema, table_name, era_name FROM sql_saga.era WHERE table_schema = 'readme' ORDER BY table_name;
@@ -123,9 +123,9 @@ SELECT * FROM source_data ORDER BY row_id;
 CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, founding_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'readme.legal_unit',
-    p_source_table => 'source_legal_unit',
-    p_id_columns => '{id}',
+    p_target_table => 'readme.legal_unit'::regclass,
+    p_source_table => 'source_legal_unit'::regclass,
+    p_id_columns => '{id}'::text[],
     p_ephemeral_columns => '{}',
     p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
@@ -155,9 +155,9 @@ SELECT row_id, founding_id, entity_type, legal_unit_id, name FROM source_data OR
 CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, founding_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'readme.establishment',
-    p_source_table => 'source_establishment',
-    p_id_columns => '{id}',
+    p_target_table => 'readme.establishment'::regclass,
+    p_source_table => 'source_establishment'::regclass,
+    p_id_columns => '{id}'::text[],
     p_ephemeral_columns => '{}',
     p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
@@ -229,23 +229,23 @@ SELECT sql_saga.drop_current_view('readme.legal_unit'::regclass);
 SELECT sql_saga.drop_for_portion_of_view('readme.unit_with_range'::regclass);
 
 -- Foreign keys must be dropped before the unique keys they reference.
-SELECT sql_saga.drop_foreign_key('readme.establishment'::regclass, ARRAY['legal_unit_id'], 'valid');
+SELECT sql_saga.drop_foreign_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['legal_unit_id'], era_name => 'valid');
 -- For regular-to-temporal FKs, era_name is omitted.
-SELECT sql_saga.drop_foreign_key('readme.projects'::regclass, ARRAY['legal_unit_id']);
+SELECT sql_saga.drop_foreign_key(table_oid => 'readme.projects'::regclass, column_names => ARRAY['legal_unit_id']);
 
-SELECT sql_saga.drop_unique_key('readme.establishment'::regclass, ARRAY['id'], 'valid');
-SELECT sql_saga.drop_unique_key('readme.establishment'::regclass, ARRAY['name'], 'valid');
-SELECT sql_saga.drop_era('readme.establishment');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], era_name => 'valid');
+SELECT sql_saga.drop_era('readme.establishment'::regclass);
 
 
-SELECT sql_saga.drop_unique_key('readme.legal_unit'::regclass, ARRAY['id'], 'valid');
-SELECT sql_saga.drop_unique_key('readme.legal_unit'::regclass, ARRAY['legal_ident'], 'valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], era_name => 'valid');
 -- For predicated unique keys, the predicate is not needed for dropping.
-SELECT sql_saga.drop_unique_key('readme.legal_unit'::regclass, ARRAY['name'], 'valid');
-SELECT sql_saga.drop_era('readme.legal_unit');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['name'], era_name => 'valid');
+SELECT sql_saga.drop_era('readme.legal_unit'::regclass);
 
-SELECT sql_saga.drop_unique_key('readme.unit_with_range'::regclass, ARRAY['id'], 'valid');
-SELECT sql_saga.drop_era('readme.unit_with_range');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], era_name => 'valid');
+SELECT sql_saga.drop_era('readme.unit_with_range'::regclass);
 
 \echo '--- Verification: Check metadata tables are empty for this schema ---'
 -- These queries should return no rows. Any rows returned indicate a cleanup failure.
