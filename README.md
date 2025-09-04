@@ -22,11 +22,49 @@ In the context of this extension, a **Saga** represents the complete history of 
 
 ## Installation
 
-TODO: Build a docker image with postgres and the sql_saga extension.
+### With Docker
 
-TODO: Build an Ubuntu packate with sql_saga.
+You can build `sql_saga` from source within your own Docker image. Here is an example snippet to add to your `Dockerfile`, based on the official PostgreSQL image:
+
+```dockerfile
+# Start from your desired PostgreSQL version
+FROM postgres:16
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    postgresql-server-dev-$(pg_config --version | awk '{print $2}' | cut -d. -f1) \
+    && rm -rf /var/lib/apt/lists/*
+
+# Clone, build, and install sql_saga
+ARG sql_saga_release=main # Or a specific commit/tag/branch
+WORKDIR /tmp
+RUN git clone https://github.com/veridit/sql_saga.git && \
+  cd sql_saga && \
+  git checkout ${sql_saga_release} && \
+  make install && \
+  cd / && \
+  rm -rf /tmp/sql_saga
+```
+
+You can then build your image, for example:
+```bash
+docker build -t my-postgres-with-saga .
+```
+
+To use a specific version of `sql_saga`, you can use a build argument:
+```bash
+docker build --build-arg sql_saga_release=1ed0d06a90bc -t my-postgres-with-saga .
+```
+
+Once your database container is running, connect to your database and run:
 
 `CREATE EXTENSION sql_saga;`
+
+This will make all `sql_saga` functions and features available.
+
+TODO: Build an Ubuntu packate with sql_saga.
 
 ## Core Concepts
 

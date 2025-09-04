@@ -25,6 +25,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 ## Medium Priority - Refactoring & API Improvements
 
+- [x] **Add Docker installation instructions to README:** Added a comprehensive guide to `README.md` for building and installing `sql_saga` using Docker, based on usage in the `statbus` project.
 - [x] **Implement final `temporal_merge` API with unambiguous naming:** Refactor `temporal_merge` to use the final, approved `MERGE_ENTITY_*` naming scheme. Correct the planner logic to be strictly orthogonal, where `p_mode` controls non-destructive merge scope and `p_delete_mode` is the sole controller of destructive actions.
 - [x] **Add focused test coverage for `..._FOR_PORTION_OF` modes:** Create a new test file dedicated to validating the behavior of `PATCH_FOR_PORTION_OF`, `REPLACE_FOR_PORTION_OF`, and `DELETE_FOR_PORTION_OF` to ensure the surgical correction logic is fully covered.
 - [x] **Refactor default value handling to be metadata-driven**: Implemented a robust, metadata-driven strategy for default values. For simple eras, `add_era` sets `DEFAULT 'infinity'`. For eras with synchronized columns, a metadata flag instructs the trigger to programmatically apply the default on `INSERT`. This removes the brittle `'infinity'` heuristic and adds fail-fast consistency checks for `UPDATE` operations.
