@@ -425,7 +425,7 @@ coalesced_final_segments AS (
         MAX(valid_until) as valid_until,
         data_payload,
         -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
-        array_agg(DISTINCT source_row_id) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
+        array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
     FROM (
         SELECT
             *,
@@ -518,7 +518,7 @@ plan AS (
         -- This part of the plan handles source rows that were filtered out by the main logic,
         -- allowing the executor to provide accurate feedback.
         SELECT
-            ARRAY[sr.source_row_id],
+            ARRAY[sr.source_row_id::BIGINT],
             'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
             sr.entity_id,
             NULL, NULL, NULL, NULL, NULL
@@ -822,15 +822,22 @@ BEGIN
                         v_stage3_all_cols_ident TEXT;
                         v_stage3_all_cols_select TEXT;
                     BEGIN
-                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns.
-                        -- We can now safely insert all non-generated columns.
-                        WITH target_cols AS (
+                        -- Re-calculate column lists for Stage 3 to INCLUDE the surrogate key columns
+                        -- that were just generated, while still respecting other columns with defaults.
+                        WITH all_target_cols AS (
                             SELECT pa.attname
                             FROM pg_catalog.pg_attribute pa
                             WHERE pa.attrelid = p_target_table
                               AND pa.attnum > 0 AND NOT pa.attisdropped
                               AND pa.attgenerated = '' -- Exclude only generated columns
                               AND pa.attname NOT IN (v_valid_from_col, v_valid_until_col)
+                        ),
+                        cols_for_stage3 AS (
+                            -- All target columns that DON'T have a default...
+                            SELECT attname FROM all_target_cols WHERE attname <> ALL (v_insert_defaulted_columns)
+                            UNION ALL
+                            -- ...plus all ID columns (which might have defaults, but we now have values for them).
+                            SELECT id_col AS attname FROM unnest(p_id_columns) AS t(id_col)
                         )
                         SELECT
                             string_agg(format('%I', attname), ', '),
@@ -838,7 +845,7 @@ BEGIN
                         INTO
                             v_stage3_all_cols_ident,
                             v_stage3_all_cols_select
-                        FROM target_cols;
+                        FROM (SELECT DISTINCT attname FROM cols_for_stage3) c;
 
                         EXECUTE format($$
                             INSERT INTO %1$s (%2$s, %4$I, %5$I)

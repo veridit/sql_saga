@@ -295,7 +295,7 @@ These values use a "future tense" convention (e.g., SKIP_...) as they represent 
 DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_plan AS (
         plan_op_seq BIGINT,
-        source_row_ids INTEGER[],
+        source_row_ids BIGINT[],
         operation sql_saga.temporal_merge_plan_action,
         entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
         old_valid_from TEXT,
@@ -311,7 +311,7 @@ END $$;
 -- Defines the structure for a temporal executor feedback result.
 DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_feedback AS (
-        source_row_id INTEGER,
+        source_row_id BIGINT,
         target_entity_ids JSONB,
         status sql_saga.temporal_merge_feedback_status,
         error_message TEXT
