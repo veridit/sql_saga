@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Fix `MERGE_ENTITY_PATCH` to carry forward values for new entities:** Replaced the flawed payload inheritance logic for PATCH modes with a robust recursive CTE that correctly computes a "running payload". This ensures that when creating new entities from sparse source data, attribute values are correctly carried forward from one time slice to the next, aligning the implementation with the documented intent.
 - [x] **Design and implement `temporal_merge` deletion semantics:** Based on the architecture outlined in `docs/temporal_merge_delete_semantics.md`, added a new `p_delete_mode` parameter to `temporal_merge` to allow for opt-in destructive deletes. This enables "source as truth" synchronization for ETL processes while maintaining safe, non-destructive behavior by default.
 - [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
 - [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.

@@ -228,32 +228,39 @@ BEGIN
 
         -- Third, determine payload resolution logic based on the mode and timeline strategy.
         IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
-            -- In PATCH modes, we inherit data from previous target segments to fill gaps.
+            -- In PATCH modes, we need to compute a running payload that carries forward values
+            -- from one atomic segment to the next. A recursive CTE is the most robust way to do this.
             v_resolver_ctes := $$,
-segments_with_target_start AS (
+numbered_segments AS (
     SELECT
         *,
-        (t_valid_from = valid_from) as is_target_start_segment
+        row_number() OVER (PARTITION BY entity_id ORDER BY valid_from) as rn
     FROM resolved_atomic_segments_with_payloads
 ),
-payload_groups AS (
+running_payload_cte AS (
+    -- Anchor: The first segment for each entity. Its base payload is its own target payload, or empty.
     SELECT
-        *,
-        SUM(CASE WHEN is_target_start_segment THEN 1 ELSE 0 END) OVER (PARTITION BY entity_id ORDER BY valid_from) as payload_group
-    FROM segments_with_target_start
-),
-resolved_atomic_segments_with_inherited_payload AS (
+        s.*,
+        (COALESCE(s.t_data_payload, '{}'::jsonb) || COALESCE(s.s_data_payload, '{}'::jsonb)) AS data_payload
+    FROM numbered_segments s
+    WHERE s.rn = 1
+
+    UNION ALL
+
+    -- Recursive step: The next segment's payload is the previous segment's final payload,
+    -- potentially overridden by the current segment's target payload (if any), and then patched
+    -- with the current segment's source payload.
     SELECT
-        *,
-        FIRST_VALUE(t_data_payload) OVER (PARTITION BY entity_id, payload_group ORDER BY valid_from) as inherited_t_data_payload
-    FROM payload_groups
+        s.*,
+        (
+            COALESCE(s.t_data_payload, p.data_payload) || COALESCE(s.s_data_payload, '{}'::jsonb)
+        )::jsonb AS data_payload
+    FROM numbered_segments s
+    JOIN running_payload_cte p ON s.entity_id = p.entity_id AND s.rn = p.rn + 1
 )
 $$;
-            v_resolver_from := 'resolved_atomic_segments_with_inherited_payload';
-            v_final_data_payload_expr := $$(CASE
-                WHEN s_data_payload IS NOT NULL THEN (COALESCE(t_data_payload, inherited_t_data_payload, '{}'::jsonb) || s_data_payload)
-                ELSE COALESCE(t_data_payload, inherited_t_data_payload)
-            END)$$;
+            v_resolver_from := 'running_payload_cte';
+            v_final_data_payload_expr := 'data_payload';
         ELSE -- REPLACE and DELETE modes
             -- In REPLACE/DELETE modes, we do not inherit. Gaps remain gaps.
             v_resolver_ctes := '';
@@ -288,7 +295,7 @@ $$, v_resolver_from);
 
         -- 4. Construct and execute the main query to generate the execution plan.
         v_sql := format($SQL$
-WITH
+WITH RECURSIVE
 source_initial AS (
     SELECT
         t.%18$I as source_row_id,
