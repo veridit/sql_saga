@@ -90,6 +90,8 @@ CREATE TABLE etl.data_table (
     identity_seq int,
     -- Source data for legal unit
     lu_name text,
+    merge_statuses jsonb,
+    merge_errors jsonb,
     -- Source data for locations
     physical_address text,
     postal_address text,
@@ -140,6 +142,8 @@ BEGIN
             identity_seq as founding_id, -- Use identity_seq as the founding_id for new entities
             legal_unit_id AS id,   -- Map the writeback column to 'id'
             lu_name AS name,
+            merge_statuses,
+            merge_errors,
             valid_from,
             valid_until
         FROM etl.data_table WHERE row_id = ANY(%L::int[]);
@@ -153,7 +157,12 @@ BEGIN
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true
+        p_update_source_with_assigned_entity_ids => true,
+        p_update_source_with_feedback => true,
+        p_feedback_status_column => 'merge_statuses',
+        p_feedback_status_key => 'legal_unit',
+        p_feedback_error_column => 'merge_errors',
+        p_feedback_error_key => 'legal_unit'
     );
 
     -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_seq
@@ -181,6 +190,8 @@ BEGIN
             dt.legal_unit_id,
             'physical'::text as type,
             dt.physical_address as address,
+            dt.merge_statuses,
+            dt.merge_errors,
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
@@ -195,7 +206,12 @@ BEGIN
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true
+        p_update_source_with_assigned_entity_ids => true,
+        p_update_source_with_feedback => true,
+        p_feedback_status_column => 'merge_statuses',
+        p_feedback_status_key => 'physical_location',
+        p_feedback_error_column => 'merge_errors',
+        p_feedback_error_key => 'physical_location'
     );
 
     -- Back-propagate the generated physical_location_id
@@ -218,6 +234,8 @@ BEGIN
             dt.legal_unit_id,
             'postal'::text as type,
             dt.postal_address as address,
+            dt.merge_statuses,
+            dt.merge_errors,
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
@@ -232,7 +250,12 @@ BEGIN
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true
+        p_update_source_with_assigned_entity_ids => true,
+        p_update_source_with_feedback => true,
+        p_feedback_status_column => 'merge_statuses',
+        p_feedback_status_key => 'postal_location',
+        p_feedback_error_column => 'merge_errors',
+        p_feedback_error_key => 'postal_location'
     );
 
     -- Back-propagate the generated postal_location_id
@@ -267,6 +290,8 @@ BEGIN
                 dt.legal_unit_id,
                 %L as stat_definition_id,
                 dt.%I as value, -- Map the specific source value column
+                dt.merge_statuses,
+                dt.merge_errors,
                 dt.valid_from,
                 dt.valid_until
             FROM etl.data_table dt
@@ -289,7 +314,12 @@ BEGIN
             p_ephemeral_columns => '{}'::text[],
             p_mode => 'MERGE_ENTITY_PATCH',
             p_founding_id_column => 'founding_id',
-            p_update_source_with_assigned_entity_ids => true
+            p_update_source_with_assigned_entity_ids => true,
+            p_update_source_with_feedback => true,
+            p_feedback_status_column => 'merge_statuses',
+            p_feedback_status_key => v_stat_def.code,
+            p_feedback_error_column => 'merge_errors',
+            p_feedback_error_key => v_stat_def.code
         );
 
         -- Back-propagate the generated stat ID for the current statistic

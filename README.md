@@ -202,7 +202,7 @@ A foreign key from `projects.lead_employee_id` to `employees.id` ensures that an
 This validation is implemented using a `CHECK` constraint on the regular table, which calls a high-performance helper function created by `sql_saga`.
 
 #### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The API is designed to be orthogonal: `p_mode` controls the non-destructive merge behavior, and `p_delete_mode` provides optional, destructive overrides.
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE', p_update_source_with_feedback BOOLEAN DEFAULT false, p_feedback_status_column name DEFAULT NULL, p_feedback_status_key name DEFAULT NULL, p_feedback_error_column name DEFAULT NULL, p_feedback_error_key name DEFAULT NULL)`: A powerful, set-based procedure for performing `INSERT`, `UPDATE`, and `DELETE` operations on temporal tables from a source table. It is designed to solve complex data loading scenarios (e.g., idempotent imports, data corrections) in a single, efficient, and transactionally-safe statement. The API is designed to be orthogonal: `p_mode` controls the non-destructive merge behavior, and `p_delete_mode` provides optional, destructive overrides.
   - `p_target_table`: The temporal table to merge data into.
   - `p_source_table`: A table (usually temporary) containing the source data.
   - `p_id_columns`: An array of column names that form the conceptual entity identifier.
@@ -223,6 +223,11 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
     - `'DELETE_MISSING_TIMELINE'`: Enables "source-as-truth" timeline replacement. For any entity present in the source, any part of its timeline in the target that is **not** covered by the source's timeline will be **deleted**.
     - `'DELETE_MISSING_ENTITIES'`: Deletes entire entities. When used with `MERGE_ENTITY_*` modes, any entity in the target that is not present in the source is completely deleted.
     - `'DELETE_MISSING_TIMELINE_AND_ENTITIES'`: A combination of both destructive behaviors.
+  - `p_update_source_with_feedback`: If `true`, the procedure will update the source table with status and error feedback for each source row. Requires either status or error feedback columns to be set.
+  - `p_feedback_status_column`: The name of the `jsonb` column in the source table to write status messages to. If provided, `p_feedback_status_key` must also be set.
+  - `p_feedback_status_key`: The key within the `jsonb` status column where the status for this merge will be written.
+  - `p_feedback_error_column`: The name of the `jsonb` column in the source table to write error messages to. If provided, `p_feedback_error_key` must also be set.
+  - `p_feedback_error_key`: The key within the `jsonb` error column where the error message for this specific merge operation will be written.
 
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
@@ -403,7 +408,7 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.
 
 #### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE')`
+- `temporal_merge(p_target_table regclass, p_source_table regclass, p_id_columns TEXT[], p_ephemeral_columns TEXT[], p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH', p_era_name name DEFAULT 'valid', p_source_row_id_column name DEFAULT 'row_id', p_founding_id_column name DEFAULT NULL, p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false, p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE', p_update_source_with_feedback BOOLEAN DEFAULT false, p_feedback_status_column name DEFAULT NULL, p_feedback_status_key name DEFAULT NULL, p_feedback_error_column name DEFAULT NULL, p_feedback_error_key name DEFAULT NULL)`
 
 #### System Versioning (History Tables)
 - `add_system_versioning(table_oid regclass, history_table_name name DEFAULT NULL, view_name name DEFAULT NULL)`

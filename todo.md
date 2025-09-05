@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Refine `temporal_merge` feedback API for clarity and consistency:** Refactored the feedback parameters to use a consistent naming convention (`p_feedback_status_column`, `p_feedback_status_key`, etc.) and added validation to ensure feedback columns are of type `jsonb`, improving the API's robustness and ease of use.
 - [x] **Fix `temporal_merge` executor to respect `DEFAULT` values during multi-stage inserts:** Corrected the introspection logic for the "Smart Merge" `INSERT` to ensure columns with `DEFAULT` values are correctly excluded, allowing the database to generate their values as intended.
 - [x] **Fix `temporal_merge` planner to support `BIGINT` source row identifiers:** Changed the internal `temporal_merge_plan` and `temporal_merge_feedback` types to use `BIGINT` for source row identifiers, making the procedure robust to different integer types for source primary keys.
 - [x] **Fix `MERGE_ENTITY_PATCH` to carry forward values for new entities:** Replaced the flawed payload inheritance logic for PATCH modes with a robust recursive CTE that correctly computes a "running payload". This ensures that when creating new entities from sparse source data, attribute values are correctly carried forward from one time slice to the next, aligning the implementation with the documented intent.

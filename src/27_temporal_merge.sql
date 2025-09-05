@@ -589,7 +589,12 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_source_row_id_column name DEFAULT 'row_id',
     p_founding_id_column name DEFAULT NULL,
     p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false,
-    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
+    p_update_source_with_feedback BOOLEAN DEFAULT false,
+    p_feedback_status_column name DEFAULT NULL,
+    p_feedback_status_key name DEFAULT NULL,
+    p_feedback_error_column name DEFAULT NULL,
+    p_feedback_error_key name DEFAULT NULL
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
@@ -610,6 +615,7 @@ DECLARE
     v_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
     v_entity_id_as_jsonb TEXT;
+    v_feedback_set_clause TEXT;
 BEGIN
     -- Dynamically construct a jsonb object from the entity id columns to use as a single key.
     SELECT
@@ -1097,9 +1103,62 @@ BEGIN
             v_internal_keys_to_remove   -- 3
         );
 
+    IF p_update_source_with_feedback THEN
+        IF p_feedback_status_column IS NULL AND p_feedback_error_column IS NULL THEN
+            RAISE EXCEPTION 'When p_update_source_with_feedback is true, at least one feedback column (p_feedback_status_column or p_feedback_error_column) must be provided.';
+        END IF;
+
+        v_feedback_set_clause := '';
+
+        -- If a status column is provided, build its part of the SET clause
+        IF p_feedback_status_column IS NOT NULL THEN
+            IF p_feedback_status_key IS NULL THEN
+                RAISE EXCEPTION 'When p_feedback_status_column is provided, p_feedback_status_key must also be provided.';
+            END IF;
+
+            PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_feedback_status_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'p_feedback_status_column "%" does not exist in source table %s or is not of type jsonb', p_feedback_status_column, p_source_table::text;
+            END IF;
+
+            v_feedback_set_clause := v_feedback_set_clause || format(
+                '%I = COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.status)',
+                p_feedback_status_column, p_feedback_status_column, p_feedback_status_key
+            );
+        END IF;
+
+        -- If an error column is provided, build its part of the SET clause
+        IF p_feedback_error_column IS NOT NULL THEN
+            IF p_feedback_error_key IS NULL THEN
+                RAISE EXCEPTION 'When p_feedback_error_column is provided, p_feedback_error_key must also be provided.';
+            END IF;
+
+            PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_feedback_error_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'p_feedback_error_column "%" does not exist in source table %s or is not of type jsonb', p_feedback_error_column, p_source_table::text;
+            END IF;
+
+            IF v_feedback_set_clause <> '' THEN
+                v_feedback_set_clause := v_feedback_set_clause || ', ';
+            END IF;
+
+            v_feedback_set_clause := v_feedback_set_clause || format(
+                '%I = CASE WHEN f.error_message IS NOT NULL THEN COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.error_message) ELSE COALESCE(s.%I, ''{}''::jsonb) - %L END',
+                p_feedback_error_column, p_feedback_error_column, p_feedback_error_key, p_feedback_error_column, p_feedback_error_key
+            );
+        END IF;
+
+        EXECUTE format($$
+            UPDATE %1$s s
+            SET %2$s
+            FROM pg_temp.temporal_merge_feedback f
+            WHERE s.%3$I = f.source_row_id;
+        $$, p_source_table::text, v_feedback_set_clause, p_source_row_id_column);
+    END IF;
+
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name) IS
 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 
