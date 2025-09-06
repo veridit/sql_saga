@@ -108,7 +108,7 @@ CREATE TABLE sql_saga.system_time_era (
     excluded_column_names name[] NOT NULL DEFAULT '{}',
 
     PRIMARY KEY (table_schema, table_name, era_name),
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name),
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name) ON DELETE CASCADE,
 
     CHECK (era_name = 'system_time')
 );
@@ -128,7 +128,7 @@ CREATE TABLE sql_saga.unique_keys (
 
     PRIMARY KEY (unique_key_name),
 
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name)
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE
 );
 GRANT SELECT ON TABLE sql_saga.unique_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
@@ -163,7 +163,7 @@ CREATE TABLE sql_saga.foreign_keys (
     PRIMARY KEY (foreign_key_name),
 
     -- No longer possible to have a direct FK to sql_saga.era
-    FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys,
+    FOREIGN KEY (unique_key_name) REFERENCES sql_saga.unique_keys ON DELETE CASCADE,
 
     CHECK (delete_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
     CHECK (update_action NOT IN ('CASCADE', 'SET NULL', 'SET DEFAULT')),
@@ -204,7 +204,7 @@ CREATE TABLE sql_saga.system_versioning (
 
     PRIMARY KEY (table_schema, table_name),
 
-    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name),
+    FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name) ON DELETE CASCADE,
 
     CHECK (era_name = 'system_time'),
 

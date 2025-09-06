@@ -30,15 +30,39 @@ BEGIN
         -- This table was dropped. Cascade-delete its metadata and any dependent triggers on other tables.
         -- This logic mirrors drop_era(..., 'CASCADE', true) for a dropped table.
 
-        -- 1. For FKs that reference the dropped table, drop them completely.
-        -- We can call drop_foreign_key because it can look up the FK table by name and drop its triggers.
-        PERFORM sql_saga.drop_foreign_key_by_name(
-            format('%I.%I', fk.table_schema, fk.table_name)::regclass,
-            fk.foreign_key_name
-        )
-        FROM sql_saga.foreign_keys fk
-        JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
-        WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name);
+        -- 1. For FKs that reference the dropped table, drop their triggers.
+        -- The metadata will be cleaned up via ON DELETE CASCADE from the unique key.
+        DECLARE
+            fk_row record;
+            fk_table_oid regclass;
+        BEGIN
+            FOR fk_row IN
+                SELECT fk.*
+                FROM sql_saga.foreign_keys fk
+                JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
+                WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name)
+            LOOP
+                fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema, fk_row.table_name));
+                -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
+                IF fk_table_oid IS NOT NULL THEN
+                    IF fk_row.type = 'temporal_to_temporal' THEN
+                        IF fk_row.fk_insert_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_insert_trigger) THEN
+                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_insert_trigger, fk_table_oid);
+                        END IF;
+                        IF fk_row.fk_update_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_update_trigger) THEN
+                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_update_trigger, fk_table_oid);
+                        END IF;
+                    ELSE -- 'regular_to_temporal'
+                        IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
+                            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid, fk_row.fk_check_constraint);
+                        END IF;
+                        IF fk_row.fk_helper_function IS NOT NULL THEN
+                           EXECUTE format('DROP FUNCTION IF EXISTS %s', fk_row.fk_helper_function);
+                        END IF;
+                    END IF;
+                END IF;
+            END LOOP;
+        END;
 
         -- 2. For FKs ON the dropped table, remove triggers from the referenced UK table.
         DECLARE
@@ -50,9 +74,9 @@ BEGIN
                 FROM sql_saga.foreign_keys fk JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
                 WHERE (fk.table_schema, fk.table_name) = (r.schema_name, r.object_name)
             LOOP
-                uk_table_oid := format('%I.%I', fk_row.uk_schema, fk_row.uk_table)::regclass;
+                uk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.uk_schema, fk_row.uk_table));
                 -- Use DROP IF EXISTS because the UK table might have been dropped in the same command.
-                IF pg_catalog.to_regclass(uk_table_oid::text) IS NOT NULL THEN
+                IF uk_table_oid IS NOT NULL THEN
                     IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_update_trigger) THEN
                         EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_update_trigger, uk_table_oid);
                     END IF;

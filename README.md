@@ -229,6 +229,11 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - `p_feedback_error_column`: The name of the `jsonb` column in the source table to write error messages to. If provided, `p_feedback_error_key` must also be set.
   - `p_feedback_error_key`: The key within the `jsonb` error column where the error message for this specific merge operation will be written.
 
+  ##### The `INSERT -> UPDATE -> DELETE` Execution Strategy
+  To ensure correctness and compatibility with both temporal foreign keys and uniqueness constraints, the `temporal_merge` executor guarantees that all DML operations are performed in a specific order: all `INSERT`s are executed first, followed by all `UPDATE`s, and finally all `DELETE`s.
+
+  This strategy is critical for handling SCD Type 2 changes on a referenced table. By inserting the new version of a record *before* updating (shortening) the old one, it ensures that there is always at least one covering record for any dependent foreign keys. This prevents `AFTER` triggers from failing due to a transient gap in the timeline. To accommodate the temporary timeline overlap this creates, the procedure internally uses deferred constraints, which are checked only at the end of the operation when the timeline is once again consistent.
+
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 
