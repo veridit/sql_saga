@@ -79,6 +79,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
+- [x] **Enhance ETL architecture test to cover cross-batch stateful updates:** Improved the `56_temporal_merge-minimal-copying-architecture.sql` test to include a third batch with staggered updates to an entity from a previous batch, verifying that the minimal-copying ETL pattern correctly handles state across multiple, sequential batches.
+
 - [x] **Optimize `temporal_merge` with prepared statements:** Refactored the expensive planner query (`temporal_merge_plan`) to use hash-based prepared statement caching. This improves performance for repeated calls with the same parameters by avoiding redundant query planning and introspection, while keeping the main executor procedure simple and readable.
 - [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
 

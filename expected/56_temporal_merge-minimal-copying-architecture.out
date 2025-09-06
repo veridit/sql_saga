@@ -67,7 +67,10 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
     The same set of idempotent procedures are called by a driver for each
     batch of data in sequence. This demonstrates how the same ETL logic can
     process multiple, independent business entities in a clean, stateful, and
-    transactionally-safe way.
+    transactionally-safe way. A third batch is then processed that contains
+    a series of staggered updates to an entity from a previous batch,
+    demonstrating that the architecture correctly handles stateful,
+    multi-faceted updates across batches.
 ----------------------------------------------------------------------------
 $$ as doc;
                                        doc                                        
@@ -116,7 +119,10 @@ $$ as doc;
      The same set of idempotent procedures are called by a driver for each       +
      batch of data in sequence. This demonstrates how the same ETL logic can     +
      process multiple, independent business entities in a clean, stateful, and   +
-     transactionally-safe way.                                                   +
+     transactionally-safe way. A third batch is then processed that contains     +
+     a series of staggered updates to an entity from a previous batch,           +
+     demonstrating that the architecture correctly handles stateful,             +
+     multi-faceted updates across batches.                                       +
  ----------------------------------------------------------------------------    +
  
 (1 row)
@@ -229,7 +235,12 @@ INSERT INTO etl.data_table (row_id, identity_seq, lu_name, physical_address, pos
     -- Batch 2: SecondBiz Inc
     (6, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', '2024-08-01'),
     (7, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', '2024-11-01'),
-    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01');
+    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01'),
+    -- Batch 3: A staggered update to the entity from Batch 1, demonstrating cross-batch state.
+    (9,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', '2025-03-01'),
+    (10, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', '2025-05-01'),
+    (11, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', '2025-07-01'),
+    (12, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity');
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
 --- ETL Data Table: Initial State (all generated IDs are NULL) ---
 TABLE etl.data_table ORDER BY identity_seq, row_id;
@@ -240,10 +251,14 @@ TABLE etl.data_table ORDER BY identity_seq, row_id;
       3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |               |                      |                    |                   |                  |                | 
       4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |               |                      |                    |                   |                  |                | 
       5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |               |                      |                    |                   |                  |                | 
+      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |               |                      |                    |                   |                  |                | 
+     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |               |                      |                    |                   |                  |                | 
+     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |               |                      |                    |                   |                  |                | 
+     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |               |                      |                    |                   |                  |                | 
       6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                | 
       7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                | 
       8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                | 
-(8 rows)
+(12 rows)
 
 --------------------------------------------------------------------------------
 \echo '--- Step 3: Define ETL Driver Procedures ---'
@@ -480,10 +495,14 @@ TABLE etl.data_table ORDER BY identity_seq, row_id;
       3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
       4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
       5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
       6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                                                                                                                                        | 
       7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                                                                                                                                        | 
       8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                                                                                                                                        | 
-(8 rows)
+(12 rows)
 
 \echo '--- Processing Batch 2 (SecondBiz Inc) ---'
 --- Processing Batch 2 (SecondBiz Inc) ---
@@ -492,6 +511,32 @@ CALL etl.process_locations('{6, 7, 8}');
 CALL etl.process_stats('{6, 7, 8}');
 NOTICE:  Processing statistic: employees for row_ids {6,7,8}
 NOTICE:  Processing statistic: turnover for row_ids {6,7,8}
+\echo '--- ETL Data Table: After Batch 2 ---'
+--- ETL Data Table: After Batch 2 ---
+TABLE etl.data_table ORDER BY identity_seq, row_id;
+ row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
+--------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
+      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
+      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
+      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
+      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+(12 rows)
+
+\echo '--- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---'
+--- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---
+CALL etl.process_legal_units('{9, 10, 11, 12}');
+CALL etl.process_locations('{9, 10, 11, 12}');
+CALL etl.process_stats('{9, 10, 11, 12}');
+NOTICE:  Processing statistic: employees for row_ids {9,10,11,12}
+NOTICE:  Processing statistic: turnover for row_ids {9,10,11,12}
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 --- ETL Data Table: Final State (all generated IDs are populated) ---
 TABLE etl.data_table ORDER BY identity_seq, row_id;
@@ -502,10 +547,14 @@ TABLE etl.data_table ORDER BY identity_seq, row_id;
       3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
       4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
       5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 5 |                6 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                               | {}
+     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             3 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED"}                                                                                                              | {}
+     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             3 |                    5 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             3 |                    1 |                  6 |                 1 |                2 | {"legal_unit": "APPLIED", "postal_location": "APPLIED"}                                                                                | {}
       6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
       7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
       8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-(8 rows)
+(12 rows)
 
 \echo '--- Final Target States ---'
 --- Final Target States ---
@@ -515,9 +564,10 @@ TABLE etl.legal_unit ORDER BY id, valid_from;
  id |     name      | valid_from | valid_until 
 ----+---------------+------------+-------------
   1 | NewCo AS      | 2024-01-01 | 2024-05-01
-  1 | RenamedCo AS  | 2024-05-01 | 2025-01-01
+  1 | RenamedCo AS  | 2024-05-01 | 2025-03-01
   2 | SecondBiz Inc | 2024-02-15 | 2025-01-01
-(3 rows)
+  3 | FinalCo AS    | 2025-03-01 | infinity
+(4 rows)
 
 \echo '--- location ---'
 --- location ---
@@ -530,7 +580,9 @@ TABLE etl.location ORDER BY id, valid_from;
   3 |             2 | physical | 456 Innovation Dr | 2024-02-15 | 2024-08-01
   3 |             2 | physical | 789 Tech Pkwy     | 2024-08-01 | 2025-01-01
   4 |             2 | postal   | PO Box 999        | 2024-08-01 | 2025-01-01
-(6 rows)
+  5 |             3 | physical | 1 New Street      | 2025-05-01 | 2025-07-01
+  6 |             3 | postal   | PO Box 111        | 2025-07-01 | infinity
+(8 rows)
 
 \echo '--- stat_for_unit ---'
 --- stat_for_unit ---
@@ -548,7 +600,9 @@ TABLE etl.stat_for_unit ORDER BY id, valid_from;
   4 |             2 |                  2 | 250000 | 2024-02-15 | 2024-08-01
   4 |             2 |                  2 | 300000 | 2024-08-01 | 2024-11-01
   4 |             2 |                  2 | 320000 | 2024-11-01 | 2025-01-01
-(11 rows)
+  5 |             1 |                  1 |     15 | 2025-01-01 | 2025-03-01
+  6 |             1 |                  2 |  75000 | 2025-01-01 | 2025-03-01
+(13 rows)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

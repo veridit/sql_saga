@@ -44,7 +44,10 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
     The same set of idempotent procedures are called by a driver for each
     batch of data in sequence. This demonstrates how the same ETL logic can
     process multiple, independent business entities in a clean, stateful, and
-    transactionally-safe way.
+    transactionally-safe way. A third batch is then processed that contains
+    a series of staggered updates to an entity from a previous batch,
+    demonstrating that the architecture correctly handles stateful,
+    multi-faceted updates across batches.
 ----------------------------------------------------------------------------
 $$ as doc;
 
@@ -123,7 +126,12 @@ INSERT INTO etl.data_table (row_id, identity_seq, lu_name, physical_address, pos
     -- Batch 2: SecondBiz Inc
     (6, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', '2024-08-01'),
     (7, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', '2024-11-01'),
-    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01');
+    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01'),
+    -- Batch 3: A staggered update to the entity from Batch 1, demonstrating cross-batch state.
+    (9,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', '2025-03-01'),
+    (10, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', '2025-05-01'),
+    (11, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', '2025-07-01'),
+    (12, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity');
 
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
 TABLE etl.data_table ORDER BY identity_seq, row_id;
@@ -360,6 +368,14 @@ TABLE etl.data_table ORDER BY identity_seq, row_id;
 CALL etl.process_legal_units('{6, 7, 8}');
 CALL etl.process_locations('{6, 7, 8}');
 CALL etl.process_stats('{6, 7, 8}');
+
+\echo '--- ETL Data Table: After Batch 2 ---'
+TABLE etl.data_table ORDER BY identity_seq, row_id;
+
+\echo '--- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---'
+CALL etl.process_legal_units('{9, 10, 11, 12}');
+CALL etl.process_locations('{9, 10, 11, 12}');
+CALL etl.process_stats('{9, 10, 11, 12}');
 
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 TABLE etl.data_table ORDER BY identity_seq, row_id;
