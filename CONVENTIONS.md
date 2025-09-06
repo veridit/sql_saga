@@ -30,6 +30,10 @@ For file system operations and large-scale edits, prefer suggesting shell comman
   - **Rule:** Declare all variables at the beginning of a block (immediately after a `{`). Do not mix declarations and executable statements.
 - **PostgreSQL Coding Conventions:** Adhere to the formatting and naming conventions outlined in the official [PostgreSQL Documentation](https://www.postgresql.org/docs/current/source.html). This includes conventions for variable names, function names, and code layout.
 
+### psql Conventions
+- You **must** never add an `E` before the echo string, as it outputs. So instead of `echo E'...\n...'` you **must** use `echo '...\n...'`,
+  the `\n` works regardless.
+
 ### SQL Conventions
 - **Function/Procedure Definitions**:
     - Use the function/procedure name in the literal string quote for the body (e.g., `AS $my_function_name$`).
