@@ -22,7 +22,7 @@ The Solution:
   procedures that operate on a specific batch of source rows, identified by
   their `row_id`s. This test uses updatable TEMP VIEWs over the main data
   table to avoid data copying. When combined with `temporal_merge`'s
-  `p_update_source_with_assigned_entity_ids` parameter, this allows for a
+  `p_update_source_with_identity` parameter, this allows for a
   powerful pattern of "ID back-propagation".
 The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   This test demonstrates a robust "merge -> back-propagate -> merge" pattern
@@ -30,7 +30,7 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   sequentially across multiple batches of data.
   - **Intra-Step Propagation (within a batch):**
     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).
-       The key parameter `p_update_source_with_assigned_entity_ids` is set to
+       The key parameter `p_update_source_with_identity` is set to
        `true`, which writes the newly generated `legal_unit_id` back into the
        master data table for the processed source rows.
     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into
@@ -88,10 +88,11 @@ SELECT sql_saga.add_foreign_key(
 CREATE TABLE etl.data_table (
     row_id int primary key,
     identity_seq int,
+    -- Common temporal columns
+    valid_from date,
+    valid_until date,
     -- Source data for legal unit
     lu_name text,
-    merge_statuses jsonb,
-    merge_errors jsonb,
     -- Source data for locations
     physical_address text,
     postal_address text,
@@ -104,9 +105,9 @@ CREATE TABLE etl.data_table (
     postal_location_id int,
     employees_stat_id int,
     turnover_stat_id int,
-    -- Common temporal columns
-    valid_from date,
-    valid_until date
+    -- Feedback from temporal_merge
+    merge_statuses jsonb,
+    merge_errors jsonb
 );
 
 -- 2. Initial State: The data table has a sparse, staggered timeline for one new business.
@@ -153,11 +154,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.legal_unit',
         p_source_table => 'source_view_lu',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'legal_unit',
@@ -202,11 +203,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_phys',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'physical_location',
@@ -246,11 +247,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_post',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'postal_location',
@@ -310,11 +311,11 @@ BEGIN
         CALL sql_saga.temporal_merge(
             p_target_table => 'etl.stat_for_unit',
             p_source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
-            p_id_columns => '{id}'::text[],
+            p_identity_columns => '{id}'::text[],
             p_ephemeral_columns => '{}'::text[],
             p_mode => 'MERGE_ENTITY_PATCH',
-            p_founding_id_column => 'founding_id',
-            p_update_source_with_assigned_entity_ids => true,
+            p_identity_correlation_column => 'founding_id',
+            p_update_source_with_identity => true,
             p_update_source_with_feedback => true,
             p_feedback_status_column => 'merge_statuses',
             p_feedback_status_key => v_stat_def.code,

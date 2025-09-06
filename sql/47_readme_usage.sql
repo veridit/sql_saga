@@ -125,12 +125,12 @@ CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, founding_id
 CALL sql_saga.temporal_merge(
     p_target_table => 'readme.legal_unit'::regclass,
     p_source_table => 'source_legal_unit'::regclass,
-    p_id_columns => '{id}'::text[],
+    p_identity_columns => '{id}'::text[],
     p_ephemeral_columns => '{}',
     p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
-    p_founding_id_column => 'founding_id',
-    p_update_source_with_assigned_entity_ids => true
+    p_identity_correlation_column => 'founding_id',
+    p_update_source_with_identity => true
 );
 
 \echo '--- Verification: Feedback from temporal_merge ---'
@@ -157,11 +157,11 @@ CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, founding
 CALL sql_saga.temporal_merge(
     p_target_table => 'readme.establishment'::regclass,
     p_source_table => 'source_establishment'::regclass,
-    p_id_columns => '{id}'::text[],
+    p_identity_columns => '{id}'::text[],
     p_ephemeral_columns => '{}',
     p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
-    p_founding_id_column => 'founding_id'
+    p_identity_correlation_column => 'founding_id'
 );
 
 \echo '--- Verification: Feedback from temporal_merge ---'

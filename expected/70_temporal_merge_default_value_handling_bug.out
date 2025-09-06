@@ -129,13 +129,13 @@ INSERT INTO temp_stat_merge_source (
 CALL sql_saga.temporal_merge(
     p_target_table => 'repro.stat_for_unit',
     p_source_table => 'temp_stat_merge_source',
-    p_id_columns => ARRAY['id'],
+    p_identity_columns => ARRAY['id'],
     p_ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
     p_mode => 'MERGE_ENTITY_REPLACE',
     p_era_name => 'valid',
     p_source_row_id_column => 'synthetic_row_id',
-    p_founding_id_column => 'founding_key',
-    p_update_source_with_assigned_entity_ids => true
+    p_identity_correlation_column => 'founding_key',
+    p_update_source_with_identity => true
 );
 \echo '--- Verification: Check if data was inserted and created_at defaulted ---'
 --- Verification: Check if data was inserted and created_at defaulted ---

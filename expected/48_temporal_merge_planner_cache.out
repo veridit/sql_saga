@@ -51,7 +51,7 @@ CREATE TEMP TABLE source2 (row_id int, id int, valid_from date, valid_until date
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source1'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
@@ -66,7 +66,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source2'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
@@ -81,7 +81,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source1'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
@@ -189,7 +189,7 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
      ->  GroupAggregate
            Group Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.data_payload
            ->  Incremental Sort
-                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.data_payload, with_segment_group.source_row_id
+                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.data_payload, ((with_segment_group.source_row_id)::bigint)
                  Presorted Key: with_segment_group.entity_id
                  ->  Subquery Scan on with_segment_group
                        ->  WindowAgg

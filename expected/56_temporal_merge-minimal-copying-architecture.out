@@ -45,7 +45,7 @@ The Solution:
   procedures that operate on a specific batch of source rows, identified by
   their `row_id`s. This test uses updatable TEMP VIEWs over the main data
   table to avoid data copying. When combined with `temporal_merge`'s
-  `p_update_source_with_assigned_entity_ids` parameter, this allows for a
+  `p_update_source_with_identity` parameter, this allows for a
   powerful pattern of "ID back-propagation".
 The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   This test demonstrates a robust "merge -> back-propagate -> merge" pattern
@@ -53,7 +53,7 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   sequentially across multiple batches of data.
   - **Intra-Step Propagation (within a batch):**
     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).
-       The key parameter `p_update_source_with_assigned_entity_ids` is set to
+       The key parameter `p_update_source_with_identity` is set to
        `true`, which writes the newly generated `legal_unit_id` back into the
        master data table for the processed source rows.
     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into
@@ -94,7 +94,7 @@ $$ as doc;
    procedures that operate on a specific batch of source rows, identified by     +
    their `row_id`s. This test uses updatable TEMP VIEWs over the main data       +
    table to avoid data copying. When combined with `temporal_merge`'s            +
-   `p_update_source_with_assigned_entity_ids` parameter, this allows for a       +
+   `p_update_source_with_identity` parameter, this allows for a                  +
    powerful pattern of "ID back-propagation".                                    +
  The Mechanism: "Intra-Step and Inter-Batch ID Propagation"                      +
    This test demonstrates a robust "merge -> back-propagate -> merge" pattern    +
@@ -102,7 +102,7 @@ $$ as doc;
    sequentially across multiple batches of data.                                 +
    - **Intra-Step Propagation (within a batch):**                                +
      1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).   +
-        The key parameter `p_update_source_with_assigned_entity_ids` is set to   +
+        The key parameter `p_update_source_with_identity` is set to              +
         `true`, which writes the newly generated `legal_unit_id` back into the   +
         master data table for the processed source rows.                         +
      2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into  +
@@ -195,10 +195,11 @@ SELECT sql_saga.add_foreign_key(
 CREATE TABLE etl.data_table (
     row_id int primary key,
     identity_seq int,
+    -- Common temporal columns
+    valid_from date,
+    valid_until date,
     -- Source data for legal unit
     lu_name text,
-    merge_statuses jsonb,
-    merge_errors jsonb,
     -- Source data for locations
     physical_address text,
     postal_address text,
@@ -211,9 +212,9 @@ CREATE TABLE etl.data_table (
     postal_location_id int,
     employees_stat_id int,
     turnover_stat_id int,
-    -- Common temporal columns
-    valid_from date,
-    valid_until date
+    -- Feedback from temporal_merge
+    merge_statuses jsonb,
+    merge_errors jsonb
 );
 -- 2. Initial State: The data table has a sparse, staggered timeline for one new business.
 --    All rows share the same identity_seq. NULLs indicate that an attribute is
@@ -232,16 +233,16 @@ INSERT INTO etl.data_table (row_id, identity_seq, lu_name, physical_address, pos
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
 --- ETL Data Table: Initial State (all generated IDs are NULL) ---
 TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq |    lu_name    | merge_statuses | merge_errors | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | valid_from | valid_until 
---------+--------------+---------------+----------------+--------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+------------+-------------
-      1 |            1 | NewCo AS      |                |              | 123 Business Rd   |                |           |          |               |                      |                    |                   |                  | 2024-01-01 | 2024-03-01
-      2 |            1 |               |                |              | 123 Business Rd   | PO Box 456     |        10 |          |               |                      |                    |                   |                  | 2024-03-01 | 2024-05-01
-      3 |            1 | RenamedCo AS  |                |              | 123 Business Rd   | PO Box 456     |        10 |    50000 |               |                      |                    |                   |                  | 2024-05-01 | 2024-07-01
-      4 |            1 | RenamedCo AS  |                |              | 123 Business Rd   | PO Box 789     |        10 |    55000 |               |                      |                    |                   |                  | 2024-07-01 | 2024-09-01
-      5 |            1 | RenamedCo AS  |                |              | 123 Business Rd   | PO Box 789     |        12 |    60000 |               |                      |                    |                   |                  | 2024-09-01 | 2025-01-01
-      6 |            2 | SecondBiz Inc |                |              | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  | 2024-02-15 | 2024-08-01
-      7 |            2 |               |                |              | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  | 2024-08-01 | 2024-11-01
-      8 |            2 | SecondBiz Inc |                |              | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  | 2024-11-01 | 2025-01-01
+ row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | merge_statuses | merge_errors 
+--------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------+--------------
+      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |               |                      |                    |                   |                  |                | 
+      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |               |                      |                    |                   |                  |                | 
+      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |               |                      |                    |                   |                  |                | 
+      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |               |                      |                    |                   |                  |                | 
+      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |               |                      |                    |                   |                  |                | 
+      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                | 
+      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                | 
+      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                | 
 (8 rows)
 
 --------------------------------------------------------------------------------
@@ -270,11 +271,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.legal_unit',
         p_source_table => 'source_view_lu',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'legal_unit',
@@ -318,11 +319,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_phys',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'physical_location',
@@ -362,11 +363,11 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_post',
-        p_id_columns => '{id}',
+        p_identity_columns => '{id}',
         p_ephemeral_columns => '{}'::text[],
         p_mode => 'MERGE_ENTITY_PATCH',
-        p_founding_id_column => 'founding_id',
-        p_update_source_with_assigned_entity_ids => true,
+        p_identity_correlation_column => 'founding_id',
+        p_update_source_with_identity => true,
         p_update_source_with_feedback => true,
         p_feedback_status_column => 'merge_statuses',
         p_feedback_status_key => 'postal_location',
@@ -425,11 +426,11 @@ BEGIN
         CALL sql_saga.temporal_merge(
             p_target_table => 'etl.stat_for_unit',
             p_source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
-            p_id_columns => '{id}'::text[],
+            p_identity_columns => '{id}'::text[],
             p_ephemeral_columns => '{}'::text[],
             p_mode => 'MERGE_ENTITY_PATCH',
-            p_founding_id_column => 'founding_id',
-            p_update_source_with_assigned_entity_ids => true,
+            p_identity_correlation_column => 'founding_id',
+            p_update_source_with_identity => true,
             p_update_source_with_feedback => true,
             p_feedback_status_column => 'merge_statuses',
             p_feedback_status_key => v_stat_def.code,
@@ -472,16 +473,16 @@ NOTICE:  Processing statistic: turnover for row_ids {1,2,3,4,5}
 \echo '--- ETL Data Table: After Batch 1 ---'
 --- ETL Data Table: After Batch 1 ---
 TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq |    lu_name    |                                                             merge_statuses                                                             | merge_errors | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | valid_from | valid_until 
---------+--------------+---------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+------------+-------------
-      1 |            1 | NewCo AS      | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}           | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | 2024-01-01 | 2024-03-01
-      2 |            1 |               | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}           | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | 2024-03-01 | 2024-05-01
-      3 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-05-01 | 2024-07-01
-      4 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-07-01 | 2024-09-01
-      5 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-09-01 | 2025-01-01
-      6 |            2 | SecondBiz Inc |                                                                                                                                        |              | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  | 2024-02-15 | 2024-08-01
-      7 |            2 |               |                                                                                                                                        |              | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  | 2024-08-01 | 2024-11-01
-      8 |            2 | SecondBiz Inc |                                                                                                                                        |              | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  | 2024-11-01 | 2025-01-01
+ row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
+--------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
+      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
+      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                                                                                                                                        | 
+      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                                                                                                                                        | 
+      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                                                                                                                                        | 
 (8 rows)
 
 \echo '--- Processing Batch 2 (SecondBiz Inc) ---'
@@ -494,16 +495,16 @@ NOTICE:  Processing statistic: turnover for row_ids {6,7,8}
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 --- ETL Data Table: Final State (all generated IDs are populated) ---
 TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq |    lu_name    |                                                             merge_statuses                                                             | merge_errors | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | valid_from | valid_until 
---------+--------------+---------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+------------+-------------
-      1 |            1 | NewCo AS      | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}           | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | 2024-01-01 | 2024-03-01
-      2 |            1 |               | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}           | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | 2024-03-01 | 2024-05-01
-      3 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-05-01 | 2024-07-01
-      4 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-07-01 | 2024-09-01
-      5 |            1 | RenamedCo AS  | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | 2024-09-01 | 2025-01-01
-      6 |            2 | SecondBiz Inc | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}           | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | 2024-02-15 | 2024-08-01
-      7 |            2 |               | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | 2024-08-01 | 2024-11-01
-      8 |            2 | SecondBiz Inc | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}           | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | 2024-11-01 | 2025-01-01
+ row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
+--------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
+      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
+      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
+      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
 (8 rows)
 
 \echo '--- Final Target States ---'

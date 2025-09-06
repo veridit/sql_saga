@@ -5,7 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [x] **Refine `temporal_merge` feedback API for clarity and consistency:** Refactored the feedback parameters to use a consistent naming convention (`p_feedback_status_column`, `p_feedback_status_key`, etc.) and added validation to ensure feedback columns are of type `jsonb`, improving the API's robustness and ease of use.
+- [x] **Refine `temporal_merge` API for clarity and consistency:** Refactored the identity and feedback parameters to use a more intuitive and consistent naming convention (`p_identity_columns`, `p_source_row_id_column`, `p_identity_correlation_column`, etc.), improving the API's robustness and ease of use.
 - [x] **Fix `temporal_merge` executor to respect `DEFAULT` values during multi-stage inserts:** Corrected the introspection logic for the "Smart Merge" `INSERT` to ensure columns with `DEFAULT` values are correctly excluded, allowing the database to generate their values as intended.
 - [x] **Fix `temporal_merge` planner to support `BIGINT` source row identifiers:** Changed the internal `temporal_merge_plan` and `temporal_merge_feedback` types to use `BIGINT` for source row identifiers, making the procedure robust to different integer types for source primary keys.
 - [x] **Fix `MERGE_ENTITY_PATCH` to carry forward values for new entities:** Replaced the flawed payload inheritance logic for PATCH modes with a robust recursive CTE that correctly computes a "running payload". This ensures that when creating new entities from sparse source data, attribute values are correctly carried forward from one time slice to the next, aligning the implementation with the documented intent.
@@ -73,9 +73,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
     - **Phase 6: Deprecation & Finalization:**
         - [x] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
 
-- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_founding_id_column` to handle intra-batch dependencies for new entities.
+- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`p_source_row_id_column`) and implemented the `p_identity_correlation_column` to handle intra-batch dependencies for new entities.
 
-- [x] **Create a test suite for `temporal_merge` parameter edge cases:** The test `52_temporal_merge_parameters.sql` now provides comprehensive coverage for API parameter variations, including `NULL` and empty `p_id_columns`, non-existent column names, custom source row identifiers, and fully non-standard naming conventions.
+- [x] **Create a test suite for `temporal_merge` parameter edge cases:** The test `52_temporal_merge_parameters.sql` now provides comprehensive coverage for API parameter variations, including `NULL` and empty `p_identity_columns`, non-existent column names, custom source row identifiers, and fully non-standard naming conventions.
 
 - [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
 
@@ -84,13 +84,13 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 
 - [x] **Clarify `temporal_merge` naming convention:** Finalized a robust and consistent naming convention for the Planner/Executor architecture. All internal `temporal_merge` objects now use a hierarchical naming scheme (e.g., `temporal_merge_plan`, `temporal_merge_plan_action`). Renamed `SKIP_IDEMPOTENT` to `SKIP_IDENTICAL` for improved clarity.
 
-- [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
+- [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `p_identity_correlation_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
 
 - [x] **Remove obsolete legacy files:** Deleted unused source files (`periods.c`, `time_for_keys.c`, etc.) from the repository to reduce clutter and prevent confusion.
 
 - [x] **Make `temporal_merge` fully dynamic:** Analyzed `temporal_merge` for hardcoded column names. Verified through searches that all user-data columns are handled dynamically. The single identified "hardcoded" string is a private, internal implementation detail for state management, which is a correct design. No changes were needed.
 
-- [x] **Add option to back-fill generated IDs into source table:** Extended `temporal_merge` with a new parameter `p_update_source_with_assigned_entity_ids`. When `true`, the procedure will update the source table with any generated surrogate or composite key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
+- [x] **Add option to back-fill generated IDs into source table:** Extended `temporal_merge` with a new parameter `p_update_source_with_identity`. When `true`, the procedure will update the source table with any generated surrogate or composite key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
 
 - [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
 - [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.

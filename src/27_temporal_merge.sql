@@ -2,12 +2,12 @@
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_target_table regclass,
     p_source_table regclass,
-    p_id_columns TEXT[],
+    p_identity_columns TEXT[],
     p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name,
     p_source_row_id_column name DEFAULT 'row_id',
-    p_founding_id_column name DEFAULT NULL,
+    p_identity_correlation_column name DEFAULT NULL,
     p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
 ) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
@@ -21,8 +21,8 @@ DECLARE
     v_valid_until_col name;
 BEGIN
     -- An entity must be identifiable. Fail fast if no ID columns are provided.
-    IF p_id_columns IS NULL OR cardinality(p_id_columns) = 0 THEN
-        RAISE EXCEPTION 'p_id_columns must be a non-empty array of column names that form the entity identifier.';
+    IF p_identity_columns IS NULL OR cardinality(p_identity_columns) = 0 THEN
+        RAISE EXCEPTION 'p_identity_columns must be a non-empty array of column names that form the entity identifier.';
     END IF;
 
     -- Validate that provided column names exist.
@@ -31,10 +31,10 @@ BEGIN
         RAISE EXCEPTION 'p_source_row_id_column "%" does not exist in source table %s', p_source_row_id_column, p_source_table::text;
     END IF;
 
-    IF p_founding_id_column IS NOT NULL THEN
-        PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_founding_id_column AND NOT attisdropped AND attnum > 0;
+    IF p_identity_correlation_column IS NOT NULL THEN
+        PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_identity_correlation_column AND NOT attisdropped AND attnum > 0;
         IF NOT FOUND THEN
-            RAISE EXCEPTION 'p_founding_id_column "%" does not exist in source table %s', p_founding_id_column, p_source_table::text;
+            RAISE EXCEPTION 'p_identity_correlation_column "%" does not exist in source table %s', p_identity_correlation_column, p_source_table::text;
         END IF;
     END IF;
 
@@ -60,12 +60,12 @@ BEGIN
     v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
-        p_id_columns,
+        p_identity_columns,
         p_ephemeral_columns,
         p_mode,
         p_era_name,
         p_source_row_id_column,
-        COALESCE(p_founding_id_column, ''),
+        COALESCE(p_identity_correlation_column, ''),
         v_range_constructor,
         p_delete_mode
     );
@@ -98,19 +98,19 @@ BEGIN
         v_target_rows_filter TEXT;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
-        IF p_founding_id_column IS NOT NULL THEN
-            IF p_founding_id_column = ANY(p_id_columns) THEN
-                RAISE EXCEPTION 'p_founding_id_column (%) cannot be one of the p_id_columns (%)', p_founding_id_column, p_id_columns;
+        IF p_identity_correlation_column IS NOT NULL THEN
+            IF p_identity_correlation_column = ANY(p_identity_columns) THEN
+                RAISE EXCEPTION 'p_identity_correlation_column (%) cannot be one of the p_identity_columns (%)', p_identity_correlation_column, p_identity_columns;
             END IF;
 
-            v_founding_id_select_expr := format('t.%I as founding_id,', p_founding_id_column);
+            v_founding_id_select_expr := format('t.%I as founding_id,', p_identity_correlation_column);
             v_planner_entity_id_expr := format($$
                 CASE
                     WHEN sr.is_new_entity
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
-            $$, p_founding_id_column);
+            $$, p_identity_correlation_column);
         ELSE
             v_founding_id_select_expr := format('t.%I as founding_id,', p_source_row_id_column);
             v_planner_entity_id_expr := format($$
@@ -119,7 +119,7 @@ BEGIN
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
-            $$, COALESCE(p_founding_id_column, p_source_row_id_column));
+            $$, COALESCE(p_identity_correlation_column, p_source_row_id_column));
         END IF;
 
         -- Resolve table identifiers to be correctly quoted and schema-qualified.
@@ -140,7 +140,7 @@ BEGIN
             format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
         INTO
             v_entity_id_as_jsonb
-        FROM unnest(p_id_columns) AS col;
+        FROM unnest(p_identity_columns) AS col;
 
         -- 1. Dynamically get the list of common data columns from SOURCE and TARGET tables.
         WITH source_cols AS (
@@ -159,7 +159,7 @@ BEGIN
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND s.attname <> ALL(p_id_columns)
+              AND s.attname <> ALL(p_identity_columns)
         )
         SELECT
             format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), ''))
@@ -177,7 +177,7 @@ BEGIN
             COALESCE(string_agg(format('t.%I IS NULL', col), ' AND '), 'true')
         INTO
             v_entity_id_check_is_null_expr
-        FROM unnest(p_id_columns) AS col;
+        FROM unnest(p_identity_columns) AS col;
 
         -- Determine the scope of target entities to process based on the mode.
         -- By default, we optimize by only scanning target entities that are present in the source.
@@ -582,13 +582,13 @@ COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], tex
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
-    p_id_columns TEXT[],
+    p_identity_columns TEXT[],
     p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
     p_era_name name DEFAULT 'valid',
     p_source_row_id_column name DEFAULT 'row_id',
-    p_founding_id_column name DEFAULT NULL,
-    p_update_source_with_assigned_entity_ids BOOLEAN DEFAULT false,
+    p_identity_correlation_column name DEFAULT NULL,
+    p_update_source_with_identity BOOLEAN DEFAULT false,
     p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
     p_update_source_with_feedback BOOLEAN DEFAULT false,
     p_feedback_status_column name DEFAULT NULL,
@@ -622,12 +622,12 @@ BEGIN
         format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
     INTO
         v_entity_id_as_jsonb
-    FROM unnest(p_id_columns) AS col;
+    FROM unnest(p_identity_columns) AS col;
 
     v_internal_keys_to_remove := ARRAY[]::name[];
 
-    IF p_founding_id_column IS NOT NULL THEN
-        v_internal_keys_to_remove := v_internal_keys_to_remove || p_founding_id_column;
+    IF p_identity_correlation_column IS NOT NULL THEN
+        v_internal_keys_to_remove := v_internal_keys_to_remove || p_identity_correlation_column;
     ELSE
         v_internal_keys_to_remove := v_internal_keys_to_remove || p_source_row_id_column;
     END IF;
@@ -676,7 +676,7 @@ BEGIN
             string_agg(format('t.%I = jpr_entity.%I', col, col), ' AND ')
         INTO
             v_entity_key_join_clause
-        FROM unnest(p_id_columns) AS col;
+        FROM unnest(p_identity_columns) AS col;
 
         v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
@@ -690,12 +690,12 @@ BEGIN
         SELECT * FROM sql_saga.temporal_merge_plan(
             p_target_table             => p_target_table,
             p_source_table             => p_source_table,
-            p_id_columns               => p_id_columns,
+            p_identity_columns         => p_identity_columns,
             p_ephemeral_columns        => p_ephemeral_columns,
             p_mode                     => p_mode,
             p_era_name                 => p_era_name,
-            p_source_row_id_column     => p_source_row_id_column,
-            p_founding_id_column       => p_founding_id_column,
+            p_source_row_id_column    => p_source_row_id_column,
+            p_identity_correlation_column => p_identity_correlation_column,
             p_delete_mode              => p_delete_mode
         ) p;
 
@@ -714,19 +714,19 @@ BEGIN
             SELECT t.attname, t.atttypid
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND s.attname <> ALL(p_id_columns)
+              AND s.attname <> ALL(p_identity_columns)
         ),
         all_available_cols AS (
             SELECT c.attname, c.atttypid FROM common_data_cols c
             UNION ALL
             SELECT u.attname, t.atttypid
-            FROM unnest(p_id_columns) u(attname)
+            FROM unnest(p_identity_columns) u(attname)
             JOIN target_cols t ON u.attname = t.attname
         )
         SELECT
-            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
-            string_agg(format('jpr_data.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
-            string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_id_columns)),
+            string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(p_identity_columns)),
+            string_agg(format('jpr_data.%I', attname), ', ') FILTER (WHERE attname <> ALL(p_identity_columns)),
+            string_agg(format('%I = jpr_data.%I', attname, attname), ', ') FILTER (WHERE attname <> ALL(p_identity_columns)),
             string_agg(format('%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
             string_agg(format('jpr_all.%I', attname), ', ') FILTER (WHERE attname <> ALL(v_insert_defaulted_columns)),
             string_agg(format('(s.full_data->>%L)::%s', attname, format_type(atttypid, -1)), ', ')
@@ -758,10 +758,10 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT col FROM unnest(p_id_columns) as col
+                    SELECT col FROM unnest(p_identity_columns) as col
                     UNION
                     SELECT 'id'
-                    WHERE 'id' IN (SELECT attname FROM target_cols) AND 'id' <> ALL(p_id_columns)
+                    WHERE 'id' IN (SELECT attname FROM target_cols) AND 'id' <> ALL(p_identity_columns)
                 )
                 SELECT
                     format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
@@ -769,9 +769,9 @@ BEGIN
                     v_entity_id_update_jsonb_build
                 FROM feedback_id_cols;
 
-                -- If founding_id_column is used, we need the multi-stage "Smart Merge" process
-                IF p_founding_id_column IS NOT NULL AND
-                   (SELECT TRUE FROM temporal_merge_plan WHERE entity_ids ? p_founding_id_column LIMIT 1)
+                -- If identity_correlation_column is used, we need the multi-stage "Smart Merge" process
+                IF p_identity_correlation_column IS NOT NULL AND
+                   (SELECT TRUE FROM temporal_merge_plan WHERE entity_ids ? p_identity_correlation_column LIMIT 1)
                 THEN
                     CREATE TEMP TABLE temporal_merge_entity_id_map (founding_id TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
 
@@ -809,7 +809,7 @@ BEGIN
                         v_entity_id_update_jsonb_build, -- 4
                         v_valid_from_col,               -- 5
                         v_valid_until_col,              -- 6
-                        p_founding_id_column,           -- 7
+                        p_identity_correlation_column,           -- 7
                         v_valid_from_col_type,          -- 8
                         v_valid_until_col_type          -- 9
                     );
@@ -821,7 +821,7 @@ BEGIN
                         SET entity_ids = m.new_entity_ids || jsonb_build_object(%1$L, p.entity_ids->>%1$L)
                         FROM temporal_merge_entity_id_map m
                         WHERE p.entity_ids->>%1$L = m.founding_id;
-                    $$, p_founding_id_column);
+                    $$, p_identity_correlation_column);
 
                     -- Stage 3: Insert the remaining slices, which now have the correct foreign key.
                     DECLARE
@@ -843,7 +843,7 @@ BEGIN
                             SELECT attname FROM all_target_cols WHERE attname <> ALL (v_insert_defaulted_columns)
                             UNION ALL
                             -- ...plus all ID columns (which might have defaults, but we now have values for them).
-                            SELECT id_col AS attname FROM unnest(p_id_columns) AS t(id_col)
+                            SELECT id_col AS attname FROM unnest(p_identity_columns) AS t(id_col)
                         )
                         SELECT
                             string_agg(format('%I', attname), ', '),
@@ -874,7 +874,7 @@ BEGIN
                             v_stage3_all_cols_select,   -- 3
                             v_valid_from_col,           -- 4
                             v_valid_until_col,          -- 5
-                            p_founding_id_column,       -- 6
+                            p_identity_correlation_column,       -- 6
                             v_valid_from_col_type,      -- 7
                             v_valid_until_col_type      -- 8
                         );
@@ -934,7 +934,7 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT unnest(p_id_columns) as col
+                    SELECT unnest(p_identity_columns) as col
                     UNION
                     SELECT 'id'
                     WHERE 'id' IN (SELECT attname FROM target_cols)
@@ -981,13 +981,13 @@ BEGIN
         END IF;
 
         -- Back-fill source table with generated IDs if requested.
-        IF p_update_source_with_assigned_entity_ids THEN
+        IF p_update_source_with_identity THEN
             DECLARE
                 v_source_update_set_clause TEXT;
             BEGIN
                 -- Build a SET clause for all columns that are present in the entity_ids JSONB
                 -- AND exist as columns on the source table. This is robust to surrogate keys
-                -- that are not in p_id_columns.
+                -- that are not in p_identity_columns.
                 SELECT string_agg(
                     format('%I = (p.entity_ids->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
                     ', '

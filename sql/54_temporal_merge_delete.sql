@@ -48,7 +48,7 @@ TABLE source_1 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table      := 'tmd.target'::regclass,
     p_source_table      := 'source_1'::regclass,
-    p_id_columns        := '{id}'::text[],
+    p_identity_columns        := '{id}'::text[],
     p_ephemeral_columns := '{edit_comment}'::text[],
     p_mode              := 'MERGE_ENTITY_REPLACE',
     p_delete_mode       := 'DELETE_MISSING_TIMELINE',
@@ -89,7 +89,7 @@ TABLE source_2 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table      := 'tmd.target'::regclass,
     p_source_table      := 'source_2'::regclass,
-    p_id_columns        := '{id}'::text[],
+    p_identity_columns        := '{id}'::text[],
     p_ephemeral_columns := '{edit_comment}'::text[],
     p_mode              := 'MERGE_ENTITY_REPLACE',
     p_delete_mode       := 'DELETE_MISSING_ENTITIES',
@@ -132,7 +132,7 @@ TABLE source_3 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table      := 'tmd.target'::regclass,
     p_source_table      := 'source_3'::regclass,
-    p_id_columns        := '{id}'::text[],
+    p_identity_columns        := '{id}'::text[],
     p_ephemeral_columns := '{edit_comment}'::text[],
     p_mode              := 'MERGE_ENTITY_REPLACE',
     p_delete_mode       := 'DELETE_MISSING_TIMELINE_AND_ENTITIES',

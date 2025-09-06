@@ -51,7 +51,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_1 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_1'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_1'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -92,7 +92,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_2 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_2'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_2'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -132,7 +132,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_3 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_3'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_3'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -169,7 +169,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_4 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_4'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'REPLACE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_4'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'REPLACE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -206,7 +206,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_5 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_5'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_5'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -242,7 +242,7 @@ TABLE tmm.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_6 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_6'::regclass, p_id_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'DELETE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(p_target_table => 'tmm.target'::regclass, p_source_table => 'source_6'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'DELETE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;

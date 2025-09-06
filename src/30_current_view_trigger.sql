@@ -69,7 +69,7 @@ BEGIN
         CALL sql_saga.temporal_merge(
             p_target_table      := info.table_oid,
             p_source_table      := source_table_oid,
-            p_id_columns        := identifier_columns::text[],
+            p_identity_columns        := identifier_columns::text[],
             p_ephemeral_columns := '{}'::text[],
             p_era_name          := info.era_name,
             p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode

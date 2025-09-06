@@ -21,7 +21,7 @@ CREATE TEMP TABLE source2 (row_id int, id int, valid_from date, valid_until date
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source1'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
@@ -32,7 +32,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source2'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
@@ -43,7 +43,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source1'::regclass,
-    p_id_columns        => '{id}'::text[],
+    p_identity_columns        => '{id}'::text[],
     p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'

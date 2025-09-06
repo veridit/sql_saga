@@ -53,11 +53,11 @@ CREATE TEMP TABLE tm_bug_source (
 );
 INSERT INTO tm_bug_source VALUES (1, 1, 'new value', '2024-01-01', 'infinity');
 -- This call mimics a pure-insert scenario and should fail, then succeed after the fix.
--- Using an empty p_id_columns array is the key to reproducing the bug.
+-- Using an empty p_identity_columns array is the key to reproducing the bug.
 CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_bug_target'::regclass,
     p_source_table      := 'tm_bug_source'::regclass,
-    p_id_columns        := '{}'::text[],
+    p_identity_columns        := '{}'::text[],
     p_ephemeral_columns := '{}'::text[],
     p_mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
