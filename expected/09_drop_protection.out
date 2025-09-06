@@ -47,7 +47,7 @@ SELECT sql_saga.add_era('dp', 's', 'e', 'p', 'integerrange');
 SAVEPOINT s1;
 ALTER TABLE dp DROP COLUMN s; -- fails
 ERROR:  cannot drop column "public.dp.s" because it is part of the period "p"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 81 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 105 at RAISE
 ROLLBACK TO SAVEPOINT s1;
 SAVEPOINT s2;
 ALTER TABLE dp ALTER COLUMN s TYPE text; -- fails
@@ -57,7 +57,7 @@ ROLLBACK TO SAVEPOINT s2;
 SAVEPOINT s3;
 DROP TYPE integerrange; -- fails
 ERROR:  cannot drop rangetype "public.integerrange" because it is used in period "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 93 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 117 at RAISE
 ROLLBACK TO SAVEPOINT s3;
 /* api */
 ALTER TABLE dp ADD CONSTRAINT dp_pkey PRIMARY KEY (id);
@@ -70,17 +70,17 @@ SELECT sql_saga.add_for_portion_of_view('dp', 'p');
 SAVEPOINT s4;
 DROP VIEW dp__for_portion_of_p;
 ERROR:  cannot drop view "public.dp__for_portion_of_p", call "sql_saga.drop_for_portion_of_view()" instead
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 173 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 197 at RAISE
 ROLLBACK TO SAVEPOINT s4;
 SAVEPOINT s5;
 DROP TRIGGER for_portion_of_p ON dp__for_portion_of_p;
 ERROR:  cannot drop trigger "for_portion_of_p" on view "dp__for_portion_of_p" because it is part of an updatable view for era "p" on table "dp"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 185 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 209 at RAISE
 ROLLBACK TO SAVEPOINT s5;
 SAVEPOINT s6;
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 ERROR:  table "dp" must have a primary key or a single-column temporal unique key to support its updatable view for era "p"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 206 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 230 at RAISE
 ROLLBACK TO SAVEPOINT s6;
 SELECT sql_saga.drop_for_portion_of_view('dp', 'p');
  drop_for_portion_of_view 
@@ -102,12 +102,12 @@ SELECT sql_saga.add_unique_key('dp', ARRAY['id'], 'p', 'k', 'u', 'x');
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 241 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 265 at RAISE
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s8;
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
 ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 257 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 281 at RAISE
 ROLLBACK TO SAVEPOINT s8;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
@@ -129,22 +129,22 @@ SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_nam
 SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 274 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 299 at RAISE
 ROLLBACK TO SAVEPOINT s10;
 SAVEPOINT s11;
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 285 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 311 at RAISE
 ROLLBACK TO SAVEPOINT s11;
 SAVEPOINT s12;
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 297 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 323 at RAISE
 ROLLBACK TO SAVEPOINT s12;
 SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 309 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 335 at RAISE
 ROLLBACK TO SAVEPOINT s13;
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
  drop_foreign_key 

@@ -297,8 +297,9 @@ BEGIN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger
         FROM sql_saga.foreign_keys AS fk
         WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
+            SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
+        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.fk_insert_trigger, r.table_oid, r.foreign_key_name;
@@ -308,8 +309,9 @@ BEGIN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger
         FROM sql_saga.foreign_keys AS fk
         WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
+            SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
+        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
             r.fk_update_trigger, r.table_oid, r.foreign_key_name;
@@ -319,8 +321,8 @@ BEGIN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
+        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
@@ -331,8 +333,8 @@ BEGIN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_trigger AS t
+        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',

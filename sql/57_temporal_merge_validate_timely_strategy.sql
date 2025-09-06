@@ -259,4 +259,109 @@ TABLE ss.child ORDER BY id;
 
 DROP SCHEMA ss CASCADE;
 
+SELECT $$
+------------------------------------------------------------------------------------------
+Test: Validate Timely Strategy using temporal_merge
+Concept:
+  This final test provides an end-to-end validation, proving that the high-level
+  `temporal_merge` procedure correctly implements the `INSERT -> UPDATE` strategy that
+  was validated in the previous low-level tests.
+
+  It confirms that `temporal_merge` can be safely used to perform SCD Type 2
+  updates on tables that are referenced by temporal foreign keys, without causing
+  constraint violations.
+------------------------------------------------------------------------------------------
+$$ as doc;
+
+-- Use a new schema to isolate this test
+CREATE SCHEMA stm;
+
+--------------------------------------------------------------------------------
+-- 1. Setup: Use sql_saga functions and create a source table
+--------------------------------------------------------------------------------
+
+CREATE TABLE stm.parent (
+    id int NOT NULL,
+    value text,
+    valid_from date NOT NULL,
+    valid_until date NOT NULL
+);
+CREATE TABLE stm.child (
+    id int,
+    parent_id int,
+    valid_from date,
+    valid_until date
+);
+
+-- Register the tables and constraints with sql_saga
+SELECT sql_saga.add_era('stm.parent');
+SELECT sql_saga.add_unique_key('stm.parent', '{id}', unique_key_name => 'parent_uk_stm');
+SELECT sql_saga.add_era('stm.child');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'stm.child',
+    fk_column_names => '{parent_id}',
+    fk_era_name => 'valid',
+    unique_key_name => 'parent_uk_stm'
+);
+
+-- Source table for the SCD Type 2 change
+CREATE TABLE stm.source (
+    row_id int primary key,
+    id int,
+    value text,
+    valid_from date,
+    valid_until date
+);
+
+--------------------------------------------------------------------------------
+-- 2. Initial State (same as previous tests)
+--------------------------------------------------------------------------------
+
+INSERT INTO stm.parent VALUES (1, 'initial', '2024-01-01', 'infinity');
+INSERT INTO stm.child VALUES
+    (101, 1, '2024-01-01', '2024-05-01'),
+    (102, 1, '2024-05-01', 'infinity');
+-- The source data represents the change: from 2024-05-01 onwards, the value is 'updated'.
+INSERT INTO stm.source VALUES (1, 1, 'updated', '2024-05-01', 'infinity');
+
+
+\echo '--- Initial State (temporal_merge) ---'
+TABLE stm.parent;
+TABLE stm.child ORDER BY id;
+TABLE stm.source;
+
+--------------------------------------------------------------------------------
+-- 3. The Test: Perform SCD Type 2 update using temporal_merge
+--------------------------------------------------------------------------------
+\echo '\n--- Performing SCD Type 2 Update (temporal_merge) ---\n'
+
+BEGIN;
+
+CALL sql_saga.temporal_merge(
+    p_target_table => 'stm.parent',
+    p_source_table => 'stm.source',
+    p_identity_columns => '{id}',
+    p_ephemeral_columns => '{}',
+    p_mode => 'MERGE_ENTITY_PATCH'
+);
+
+\echo '--- temporal_merge plan ---'
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- temporal_merge feedback ---'
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+
+COMMIT;
+\echo '--- temporal_merge call completed successfully ---'
+
+--------------------------------------------------------------------------------
+-- 4. Verification: Final state is correct and consistent.
+--------------------------------------------------------------------------------
+\echo '\n--- Final State (temporal_merge) ---'
+\echo '--- parent ---'
+TABLE stm.parent ORDER BY valid_from;
+\echo '--- child ---'
+TABLE stm.child ORDER BY id;
+
+DROP SCHEMA stm CASCADE;
+
 \i sql/include/test_teardown.sql

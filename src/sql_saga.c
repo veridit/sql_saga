@@ -62,6 +62,9 @@
 
 PG_MODULE_MAGIC;
 
+/* Forward declarations for static functions */
+static void cache_cleanup_callback(XactEvent event, void *arg);
+
 /* Define some SQLSTATEs that might not exist */
 #if (PG_VERSION_NUM < 100000)
 #define ERRCODE_GENERATED_ALWAYS MAKE_SQLSTATE('4','2','8','C','9')
@@ -110,7 +113,7 @@ CreateInsertHistoryPlanHash(void)
 
 typedef struct FkValidationPlan
 {
-	char		fk_name[NAMEDATALEN];
+	Oid			trigger_oid;	/* the hash key; must be first */
 	SPIPlanPtr	plan;
 	int			nargs;
 	Oid			argtypes[MAX_FK_COLS + 2]; /* FK cols + range start/end */
@@ -118,6 +121,29 @@ typedef struct FkValidationPlan
 } FkValidationPlan;
 
 static HTAB *fk_plan_cache = NULL;
+static HTAB *uk_delete_plan_cache = NULL;
+static HTAB *uk_update_plan_cache = NULL;
+static bool cache_callback_registered = false;
+
+static void
+cache_cleanup_callback(XactEvent event, void *arg)
+{
+	/*
+	 * On transaction end, reset the static pointers to our caches. The memory
+	 * holding the hash tables will be freed automatically because it was
+	 * allocated in CurTransactionContext. If we don't reset these pointers,
+	 * the next transaction will try to use a dangling pointer, leading to a
+	 * crash or other undefined behavior.
+	 */
+	if (event == XACT_EVENT_ABORT || event == XACT_EVENT_COMMIT)
+	{
+		fk_plan_cache = NULL;
+		uk_delete_plan_cache = NULL;
+		uk_update_plan_cache = NULL;
+		cache_callback_registered = false;
+	}
+}
+
 
 static void
 init_fk_plan_cache(void)
@@ -127,15 +153,19 @@ init_fk_plan_cache(void)
 	if (fk_plan_cache)
 		return;
 
+	if (!cache_callback_registered)
+	{
+		RegisterXactCallback(cache_cleanup_callback, NULL);
+		cache_callback_registered = true;
+	}
+
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize = NAMEDATALEN;
+	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(FkValidationPlan);
 	/* Lifetime of cache is transaction */
 	ctl.hcxt = CurTransactionContext;
-	fk_plan_cache = hash_create("sql_saga fk validation plan cache", 16, &ctl, HASH_ELEM | HASH_STRINGS);
+	fk_plan_cache = hash_create("sql_saga fk validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
 }
-
-static HTAB *uk_delete_plan_cache = NULL;
 
 static void
 init_uk_delete_plan_cache(void)
@@ -145,18 +175,24 @@ init_uk_delete_plan_cache(void)
 	if (uk_delete_plan_cache)
 		return;
 
+	if (!cache_callback_registered)
+	{
+		RegisterXactCallback(cache_cleanup_callback, NULL);
+		cache_callback_registered = true;
+	}
+
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize = NAMEDATALEN;
+	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(FkValidationPlan); /* Reusing struct */
 	ctl.hcxt = CurTransactionContext;
-	uk_delete_plan_cache = hash_create("sql_saga uk delete validation plan cache", 16, &ctl, HASH_ELEM | HASH_STRINGS);
+	uk_delete_plan_cache = hash_create("sql_saga uk delete validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
 }
 
 #define MAX_UK_UPDATE_PLAN_ARGS (2 * MAX_FK_COLS + 4)
 
 typedef struct UkUpdateValidationPlan
 {
-	char		fk_name[NAMEDATALEN];
+	Oid			trigger_oid;	/* the hash key; must be first */
 	SPIPlanPtr	plan;
 	int			nargs;
 	Oid			argtypes[MAX_UK_UPDATE_PLAN_ARGS];
@@ -164,8 +200,6 @@ typedef struct UkUpdateValidationPlan
 	int			param_attnums_old[MAX_FK_COLS + 2];
 	int			param_attnums_new[MAX_FK_COLS + 2];
 } UkUpdateValidationPlan;
-
-static HTAB *uk_update_plan_cache = NULL;
 
 static void
 init_uk_update_plan_cache(void)
@@ -175,11 +209,17 @@ init_uk_update_plan_cache(void)
 	if (uk_update_plan_cache)
 		return;
 
+	if (!cache_callback_registered)
+	{
+		RegisterXactCallback(cache_cleanup_callback, NULL);
+		cache_callback_registered = true;
+	}
+
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize = NAMEDATALEN;
+	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(UkUpdateValidationPlan);
 	ctl.hcxt = CurTransactionContext;
-	uk_update_plan_cache = hash_create("sql_saga uk update validation plan cache", 16, &ctl, HASH_ELEM | HASH_STRINGS);
+	uk_update_plan_cache = hash_create("sql_saga uk update validation plan cache", 16, &ctl, HASH_ELEM | HASH_BLOBS);
 }
 
 static SPIPlanPtr get_range_type_plan = NULL;
@@ -683,7 +723,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		elog(ERROR, "SPI_connect failed");
 
 	init_fk_plan_cache();
-	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, foreign_key_name, HASH_ENTER, &found);
+	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 	
 	if (!found)
 	{
@@ -950,7 +990,7 @@ fk_update_check_c(PG_FUNCTION_ARGS)
 		elog(ERROR, "SPI_connect failed");
 
 	init_fk_plan_cache();
-	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, foreign_key_name, HASH_ENTER, &found);
+	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 	
 	if (!found)
 	{
@@ -1217,7 +1257,7 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 		elog(ERROR, "SPI_connect failed");
 
 	init_uk_delete_plan_cache();
-	plan_entry = (FkValidationPlan *) hash_search(uk_delete_plan_cache, foreign_key_name, HASH_ENTER, &found);
+	plan_entry = (FkValidationPlan *) hash_search(uk_delete_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 
 	if (!found)
 	{
@@ -1460,7 +1500,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		elog(ERROR, "SPI_connect failed");
 
 	init_uk_update_plan_cache();
-	plan_entry = (UkUpdateValidationPlan *) hash_search(uk_update_plan_cache, foreign_key_name, HASH_ENTER, &found);
+	plan_entry = (UkUpdateValidationPlan *) hash_search(uk_update_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
 
 	if (!found)
 	{
