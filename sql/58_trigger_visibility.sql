@@ -146,10 +146,32 @@ ROLLBACK TO SAVEPOINT shrink_grow;
 \echo '\n-- 6b: Grow then Shrink (Correct Order) --'
 \echo '-- We update id=6 to start at 150. This creates a temporary overlap from 150 to 200.'
 \echo '-- The deferred EXCLUDE constraint allows this. An FK check here would pass.'
+SAVEPOINT pre_6b_and_6c;
 UPDATE mvcc_test.t SET valid_from = 150 WHERE id = 6;
 \echo '\n-- We update id=5 to end at 150, resolving the overlap. The AFTER trigger'
 \echo '-- for this statement sees a continuous, valid timeline.'
 UPDATE mvcc_test.t SET valid_until = 150 WHERE id = 5;
+ROLLBACK TO pre_6b_and_6c;
+
+\echo '\n-- 6c: Ordered Multi-row UPDATE (Correct Order) --'
+\echo '-- We perform both updates in a single statement, using a FROM clause'
+\echo '-- with ORDER BY to force the "grow" operation to happen first.'
+UPDATE mvcc_test.t
+SET
+    valid_from = u.new_valid_from,
+    valid_until = u.new_valid_until
+FROM (
+    SELECT
+        id,
+        CASE id WHEN 6 THEN 150 ELSE valid_from END AS new_valid_from,
+        CASE id WHEN 5 THEN 150 ELSE valid_until END AS new_valid_until,
+        -- Order growths (1) before shrinks (2)
+        CASE id WHEN 6 THEN 1 ELSE 2 END AS op_order
+    FROM mvcc_test.t
+    WHERE id IN (5, 6)
+    ORDER BY op_order
+) AS u
+WHERE mvcc_test.t.id = u.id;
 
 COMMIT;
 
