@@ -40,6 +40,21 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
     3. Subsequent procedures call `temporal_merge` for each dependent entity
        (e.g., `location`, `stat_for_unit`). These calls succeed because the
        required foreign keys are now present in the source data.
+  - **Handling Different Data Models:**
+    The example is extended to show several other common patterns:
+    1. **Non-Temporal Identifiers:** An `ident` table stores external
+       identifiers (e.g., tax numbers) that are considered stable over
+       time and reference a temporal entity. This table is managed with a
+       standard SQL `MERGE` statement.
+    2. **Temporal Data with Natural Keys:** An `activity` table is temporal
+       but uses a composite natural key instead of a surrogate `id`. This
+       is managed with `temporal_merge` configured for natural keys and no
+       identity writeback.
+    3. **Ephemeral Metadata Columns:** A `comment` column is added to all
+       temporal tables and populated from the source. It is passed to
+       `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures
+       that changes to the comment update the existing historical record
+       without creating a new one, correctly treating it as non-business metadata.
   - **Inter-Batch Propagation ("Current State" ETL Pattern):**
     The test simulates a common ETL pattern where incoming data represents
     the "current state" of an entity, valid from a certain point until
@@ -58,33 +73,71 @@ CREATE SCHEMA etl;
 
 BEGIN;
 
--- Stat Definition table (not temporal)
+-- Reference tables (not temporal)
 CREATE TABLE etl.stat_definition (id int primary key, code text unique);
 INSERT INTO etl.stat_definition VALUES (1, 'employees'), (2, 'turnover');
 
+CREATE TABLE etl.ident_type (id int primary key, code text unique);
+INSERT INTO etl.ident_type VALUES (1, 'tax'), (2, 'ssn');
+
+CREATE TABLE etl.activity_type (id int primary key, code text unique);
+INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
+
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, valid_from date, valid_until date);
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.legal_unit');
-SELECT sql_saga.add_unique_key('etl.legal_unit', '{id}');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+
+-- External Identifiers table (not temporal)
+CREATE TABLE etl.ident (
+    id serial primary key,
+    legal_unit_id int not null,
+    ident_type_id int not null references etl.ident_type(id),
+    ident_value text not null,
+    UNIQUE (legal_unit_id, ident_type_id) -- An entity can only have one of each type
+);
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'etl.ident'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    unique_key_name => 'legal_unit_id_valid'
+);
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, valid_from date, valid_until date);
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.location');
-SELECT sql_saga.add_unique_key('etl.location', '{id}');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], unique_key_name => 'location_id_valid');
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'etl.location',
-    fk_column_names => '{legal_unit_id}',
+    fk_table_oid => 'etl.location'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_id_valid'
 );
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, valid_from date, valid_until date);
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.stat_for_unit');
-SELECT sql_saga.add_unique_key('etl.stat_for_unit', '{id}');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'stat_for_unit_id_valid');
 SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'etl.stat_for_unit',
-    fk_column_names => '{legal_unit_id}',
+    fk_table_oid => 'etl.stat_for_unit'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
+);
+
+-- Activity table (temporal, with a composite natural key)
+CREATE TABLE etl.activity (
+    legal_unit_id int,
+    activity_type_id int,
+    comment text,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('etl.activity');
+-- The "unique key" for a natural-key table is the set of natural key columns.
+SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'etl.activity'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_id_valid'
 );
@@ -97,12 +150,17 @@ CREATE TABLE etl.data_table (
     -- Common temporal columns
     valid_from date,
     valid_until date,
+    -- Ephemeral metadata
+    comment text,
+    -- Source data for external identifiers
+    tax_ident text,
     -- Source data for legal unit
     lu_name text,
     -- Source data for locations
     physical_address text,
     postal_address text,
-    -- Source data for stats
+    -- Source data for activities and stats
+    activity_code text,
     employees int,
     turnover int,
     -- Columns to be populated by the ETL process
@@ -122,32 +180,25 @@ CREATE TABLE etl.data_table (
 --    NULLs indicate that an attribute is either unknown or unchanged in that time slice.
 --    As the data comes in they all last until further notice, i.e. until infinity,
 --    but, as new data appear for a target table, the old will get cut off.
-INSERT INTO etl.data_table (row_id, batch, identity_correlation, lu_name, physical_address, postal_address, employees, turnover, valid_from, valid_until) VALUES
+INSERT INTO etl.data_table (row_id, batch, identity_correlation, comment, tax_ident, lu_name, physical_address, postal_address, activity_code, employees, turnover, valid_from, valid_until) VALUES
     -- Batch 1: NewCo AS
-    -- Expect creation of a legal_unit and backfill of legal_unit_id, and a physical_location.
-    (1, 1, 1, 'NewCo AS',      '123 Business Rd', NULL,          NULL,  NULL, '2024-01-01', 'infinity'),
-    -- Expect no change to legal_unit nor physical location, but an insert of postal_location and employees.
-    (2, 1, 1, NULL,            NULL,              'PO Box 456',  10,    NULL, '2024-03-01', 'infinity'),
-    -- Expect name update of legal_unit and an insert of turnover.
-    (3, 1, 1, 'RenamedCo AS',  NULL,              NULL,          NULL, 50000, '2024-05-01', 'infinity'),
-    -- Expect update of postal_address and turnover.
-    (4, 1, 1, NULL,            NULL,              'PO Box 789',  NULL, 55000, '2024-07-01', 'infinity'),
-    -- Expect update of employees and turnover.
-    (5, 1, 1, NULL,            NULL,              NULL,          12, 60000, '2024-09-01', 'infinity'),
+    (1, 1, 1, 'Initial load', 'TAX111', 'NewCo AS',      '123 Business Rd', NULL,           'manufacturing', NULL,   NULL, '2024-01-01', 'infinity'),
+    (2, 1, 1, 'Postal address added', NULL,     NULL,            NULL,              'PO Box 456',   NULL,            10,     NULL, '2024-03-01', 'infinity'),
+    (3, 1, 1, 'Company rename', 'TAX222', 'RenamedCo AS',  NULL,              NULL,           'retail',        NULL,  50000, '2024-05-01', 'infinity'),
+    (4, 1, 1, 'Updated postal address', NULL,     NULL,            NULL,              'PO Box 789',   NULL,            NULL,  55000, '2024-07-01', 'infinity'),
+    (5, 1, 1, 'Staff and turnover update', NULL,     NULL,            NULL,              NULL,           'manufacturing', 12,    60000, '2024-09-01', 'infinity'),
     -- Batch 2: SecondBiz Inc
-    (6, 2, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', 'infinity'),
-    (7, 2, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', 'infinity'),
-    (8, 2, 2, 'SecondBiz Inc', NULL,              NULL,                60, 320000, '2024-11-01', 'infinity'),
+    (6, 2, 2, 'Initial load', 'TAX333', 'SecondBiz Inc', '456 Innovation Dr', NULL,         'retail',        50,   250000, '2024-02-15', 'infinity'),
+    (7, 2, 2, 'Address update', NULL,     NULL,            '789 Tech Pkwy',   'PO Box 999',   NULL,            55,   300000, '2024-08-01', 'infinity'),
+    (8, 2, 2, 'Staff update', NULL,     'SecondBiz Inc', NULL,              NULL,           NULL,            60,   320000, '2024-11-01', 'infinity'),
     -- Batch 3: A staggered update to the entity from Batch 1, demonstrating cross-batch state.
-    (9, 3,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', 'infinity'),
-    (10, 3, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', 'infinity'),
-    (11, 3, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', 'infinity'),
-    (12, 3, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity'),
+    (9, 3,  1, 'Annual staff update', NULL,     NULL,            NULL,              NULL,           NULL,            15,    75000, '2025-01-01', 'infinity'),
+    (10, 3, 1, 'Final rename', 'TAX444', 'FinalCo AS',    NULL,              NULL,           NULL,            NULL,   NULL, '2025-03-01', 'infinity'),
+    (11, 3, 1, 'New physical address', NULL,     NULL,            '1 New Street',    NULL,           'retail',        NULL,   NULL, '2025-05-01', 'infinity'),
+    (12, 3, 1, 'New postal address', NULL,     NULL,            NULL,              'PO Box 111',   NULL,            NULL,   NULL, '2025-07-01', 'infinity'),
     -- Batch 4: A batch of no-change operations.
-    -- No change to anything because it's a PATCH with only NULLs for an existing entity.
-    (13, 4, 1, NULL,         NULL,              NULL,         NULL, NULL, '2025-07-01', 'infinity'),
-    -- No change to anything because it's identical to the previous state.
-    (14, 4, 1, 'FinalCo AS', '1 New Street',    'PO Box 111' , 15, 75000, '2025-07-01', 'infinity');
+    (13, 4, 1, 'No-op, filtered', NULL,     NULL,            NULL,              NULL,           NULL,            NULL,   NULL, '2025-07-01', 'infinity'),
+    (14, 4, 1, 'No-op, identical', 'TAX444', 'FinalCo AS',    '1 New Street',    'PO Box 111',   'retail',        15,    75000, '2025-07-01', 'infinity');
 
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
 TABLE etl.data_table ORDER BY identity_correlation, row_id;
@@ -167,19 +218,20 @@ BEGIN
             identity_correlation as founding_id, -- Use identity_correlation as the founding_id for new entities
             legal_unit_id AS id,   -- Map the writeback column to 'id'
             lu_name AS name,
+            comment,
             merge_statuses,
             merge_errors,
             valid_from,
             valid_until
-        FROM etl.data_table WHERE batch = %L;
+        FROM etl.data_table WHERE batch = %L AND lu_name IS NOT NULL;
     $$, p_batch_id);
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.legal_unit',
         p_source_table => 'source_view_lu',
-        p_identity_columns => '{id}',
-        p_ephemeral_columns => '{}'::text[],
+        p_identity_columns => ARRAY['id'],
+        p_ephemeral_columns => ARRAY['comment'],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_identity_correlation_column => 'founding_id',
         p_update_source_with_identity => true,
@@ -215,6 +267,7 @@ BEGIN
             dt.legal_unit_id,
             'physical'::text as type,
             dt.physical_address as address,
+            dt.comment,
             dt.merge_statuses,
             dt.merge_errors,
             dt.valid_from,
@@ -227,8 +280,8 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_phys',
-        p_identity_columns => '{id}',
-        p_ephemeral_columns => '{}'::text[],
+        p_identity_columns => ARRAY['id'],
+        p_ephemeral_columns => ARRAY['comment'],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_identity_correlation_column => 'founding_id',
         p_update_source_with_identity => true,
@@ -259,6 +312,7 @@ BEGIN
             dt.legal_unit_id,
             'postal'::text as type,
             dt.postal_address as address,
+            dt.comment,
             dt.merge_statuses,
             dt.merge_errors,
             dt.valid_from,
@@ -271,8 +325,8 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_post',
-        p_identity_columns => '{id}',
-        p_ephemeral_columns => '{}'::text[],
+        p_identity_columns => ARRAY['id'],
+        p_ephemeral_columns => ARRAY['comment'],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_identity_correlation_column => 'founding_id',
         p_update_source_with_identity => true,
@@ -315,6 +369,7 @@ BEGIN
                 dt.legal_unit_id,
                 %L as stat_definition_id,
                 dt.%I as value, -- Map the specific source value column
+                dt.comment,
                 dt.merge_statuses,
                 dt.merge_errors,
                 dt.valid_from,
@@ -335,8 +390,8 @@ BEGIN
         CALL sql_saga.temporal_merge(
             p_target_table => 'etl.stat_for_unit',
             p_source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
-            p_identity_columns => '{id}'::text[],
-            p_ephemeral_columns => '{}'::text[],
+            p_identity_columns => ARRAY['id'],
+            p_ephemeral_columns => ARRAY['comment'],
             p_mode => 'MERGE_ENTITY_PATCH',
             p_identity_correlation_column => 'founding_id',
             p_update_source_with_identity => true,
@@ -369,6 +424,117 @@ BEGIN
 END;
 $procedure$;
 
+CREATE PROCEDURE etl.process_idents(p_batch_id int)
+LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_ident_type RECORD;
+    v_column_name TEXT;
+    v_sql TEXT;
+BEGIN
+    -- This procedure demonstrates a dynamic, metadata-driven approach.
+    -- It iterates through the known identifier types and checks if a
+    -- corresponding column exists in the source data table before processing.
+    FOR v_ident_type IN SELECT * FROM etl.ident_type LOOP
+        v_column_name := v_ident_type.code || '_ident';
+
+        IF EXISTS (
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'etl'
+              AND table_name = 'data_table'
+              AND column_name = v_column_name
+        ) THEN
+            RAISE NOTICE 'Processing identifier type: % (column: %)', v_ident_type.code, v_column_name;
+
+            -- Dynamically build and execute the MERGE statement for this identifier type.
+            v_sql := format(
+                $SQL$
+                MERGE INTO etl.ident AS t
+                USING (
+                    -- The source data is temporal, but the target `ident` table is not.
+                    -- We must therefore select only the latest value for each conceptual entity.
+                    SELECT DISTINCT ON (dt.identity_correlation)
+                        dt.legal_unit_id,
+                        %1$L::integer AS ident_type_id, /* %1$L: v_ident_type.id */
+                        dt.%2$I AS ident_value          /* %2$I: v_column_name */
+                    FROM etl.data_table dt
+                    WHERE dt.batch = %3$L::integer      /* %3$L: p_batch_id */
+                      AND dt.legal_unit_id IS NOT NULL
+                      AND dt.%2$I IS NOT NULL           /* %2$I: v_column_name */
+                    ORDER BY dt.identity_correlation, dt.valid_from DESC
+                ) AS s
+                ON t.legal_unit_id = s.legal_unit_id AND t.ident_type_id = s.ident_type_id
+                WHEN MATCHED AND t.ident_value IS DISTINCT FROM s.ident_value THEN
+                    UPDATE SET ident_value = s.ident_value
+                WHEN NOT MATCHED THEN
+                    INSERT (legal_unit_id, ident_type_id, ident_value)
+                    VALUES (s.legal_unit_id, s.ident_type_id, s.ident_value);
+                $SQL$,
+                v_ident_type.id,
+                v_column_name,
+                p_batch_id
+            );
+            EXECUTE v_sql;
+        END IF;
+    END LOOP;
+END;
+$procedure$;
+
+CREATE PROCEDURE etl.process_activities(p_batch_id int)
+LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_activity_type RECORD;
+    v_view_sql TEXT;
+BEGIN
+    FOR v_activity_type IN SELECT * FROM etl.activity_type LOOP
+        -- Only process if there's data for this activity type in the current batch
+        IF EXISTS (SELECT 1 FROM etl.data_table WHERE batch = p_batch_id AND activity_code = v_activity_type.code) THEN
+            RAISE NOTICE 'Processing activity type: % for batch %', v_activity_type.code, p_batch_id;
+
+            -- Create a simple, updatable view by removing the JOIN and adding the
+            -- activity_type_id as a literal. This makes the view updatable
+            -- for the feedback columns.
+            v_view_sql := format(
+                $SQL$
+                CREATE OR REPLACE TEMP VIEW source_view_activity AS
+                SELECT
+                    row_id,
+                    legal_unit_id,
+                    %L::integer as activity_type_id,
+                    comment,
+                    merge_statuses,
+                    merge_errors,
+                    valid_from,
+                    valid_until
+                FROM etl.data_table
+                WHERE batch = %L AND activity_code = %L;
+                $SQL$,
+                v_activity_type.id,
+                p_batch_id,
+                v_activity_type.code
+            );
+            EXECUTE v_view_sql;
+
+            -- Call temporal_merge on a table with a natural key.
+            -- Note that `p_update_source_with_identity` is false, as there is no
+            -- surrogate key to write back.
+            CALL sql_saga.temporal_merge(
+                p_target_table => 'etl.activity'::regclass,
+                p_source_table => 'source_view_activity'::regclass,
+                p_identity_columns => ARRAY['legal_unit_id', 'activity_type_id'],
+                p_ephemeral_columns => ARRAY['comment'],
+                p_mode => 'MERGE_ENTITY_PATCH',
+                p_update_source_with_identity => false,
+                p_update_source_with_feedback => true,
+                p_feedback_status_column => 'merge_statuses',
+                p_feedback_status_key => 'activity',
+                p_feedback_error_column => 'merge_errors',
+                p_feedback_error_key => 'activity'
+            );
+        END IF;
+    END LOOP;
+END;
+$procedure$;
+
 --------------------------------------------------------------------------------
 \echo '--- Step 4: Run ETL Driver for Batches ---'
 --------------------------------------------------------------------------------
@@ -385,14 +551,19 @@ BEGIN
     ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
     ALTER TABLE etl.location DISABLE TRIGGER USER;
     ALTER TABLE etl.stat_for_unit DISABLE TRIGGER USER;
+    ALTER TABLE etl.activity DISABLE TRIGGER USER;
 
     CALL etl.process_legal_units(p_batch_id);
+    -- These procedures depend on the legal_unit_id being populated.
     CALL etl.process_locations(p_batch_id);
     CALL etl.process_stats(p_batch_id);
+    CALL etl.process_idents(p_batch_id);
+    CALL etl.process_activities(p_batch_id);
 
     ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
     ALTER TABLE etl.location ENABLE TRIGGER USER;
     ALTER TABLE etl.stat_for_unit ENABLE TRIGGER USER;
+    ALTER TABLE etl.activity ENABLE TRIGGER USER;
 END;
 $procedure$;
 
@@ -416,6 +587,10 @@ TABLE etl.legal_unit ORDER BY id, valid_from;
 TABLE etl.location ORDER BY id, valid_from;
 \echo '--- stat_for_unit ---'
 TABLE etl.stat_for_unit ORDER BY id, valid_from;
+\echo '--- ident (non-temporal) ---'
+TABLE etl.ident ORDER BY id;
+\echo '--- activity (temporal, natural key) ---'
+TABLE etl.activity ORDER BY legal_unit_id, activity_type_id, valid_from;
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

@@ -206,7 +206,7 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - `p_target_table`: The temporal table to merge data into.
   - `p_source_table`: A table (usually temporary) containing the source data.
   - `p_identity_columns`: An array of column names that form the conceptual, permanent entity identifier.
-  - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated (e.g., `edit_comment`).
+  - `p_ephemeral_columns`: An array of column names that should not be considered when comparing for data changes, but whose values should still be updated. This is ideal for metadata like `edit_comment` or `batch_id` that should be attached to a historical record without creating a new version of that record if only the metadata changes.
   - `p_mode`: Controls the scope and payload semantics of the merge. By default, all modes are non-destructive to the timeline.
     - `'MERGE_ENTITY_PATCH'`: (Default) Merges the source timeline with the target entity's full timeline, patching data for overlapping periods. This mode correctly handles sparse source data by "carrying forward" the last known value for any attribute that is `NULL` in a subsequent source row. It preserves non-overlapping parts of the target timeline.
     - `'MERGE_ENTITY_REPLACE'`: Merges the source timeline with the target entity's full timeline, replacing data for overlapping periods. Preserves non-overlapping parts of the target timeline.
