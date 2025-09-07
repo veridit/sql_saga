@@ -56,8 +56,8 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
 (0 rows)
 
 \echo '--- Call planner for source2 ---'
@@ -71,8 +71,8 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
 (0 rows)
 
 \echo '--- Call planner for source1 again ---'
@@ -86,8 +86,8 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
 (0 rows)
 
 \echo '--- Verify that two distinct plans are cached ---'
@@ -114,8 +114,8 @@ WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%'
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 -- ...and then execute the actual command we captured.
 :explain_command
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
  Sort
    Sort Key: (row_number() OVER (?))
    CTE source_initial
@@ -200,22 +200,23 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                                ->  CTE Scan on running_payload_cte
    ->  WindowAgg
          ->  Incremental Sort
-               Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), (COALESCE(coalesced_final_segments.valid_from, target_rows.valid_from)), (CASE WHEN ((coalesced_final_segments.data_payload IS NULL) AND (target_rows.data_payload IS NULL)) THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action WHEN ((coalesced_final_segments.data_payload IS NULL) AND (target_rows.data_payload IS NOT NULL)) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN ((target_rows.data_payload IS NULL) AND (coalesced_final_segments.data_payload IS NOT NULL)) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN ((sql_saga.allen_get_relation(coalesced_final_segments.valid_from, coalesced_final_segments.valid_until, target_rows.valid_from, target_rows.valid_until) = 'equals'::sql_saga.allen_interval_relation) AND (coalesced_final_segments.data_payload IS NULL)) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN ((coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload) OR (coalesced_final_segments.valid_from IS DISTINCT FROM target_rows.valid_from) OR (coalesced_final_segments.valid_until IS DISTINCT FROM target_rows.valid_until)) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END) DESC, ((COALESCE(coalesced_final_segments.source_row_ids, max(coalesced_final_segments.source_row_ids) OVER (?)))[1])
-               Presorted Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id))
+               Sort Key: "*SELECT* 1".entity_id, "*SELECT* 1".operation, (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".source_row_ids[1])
+               Presorted Key: "*SELECT* 1".entity_id
                ->  Result
-                     ->  WindowAgg
-                           ->  Sort
-                                 Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
-                                 ->  Hash Full Join
-                                       Hash Cond: (target_rows.entity_id = coalesced_final_segments.entity_id)
-                                       Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 13).col1) AND (target_rows.valid_from = (hashed SubPlan 13).col2))))))
-                                       Filter: ((coalesced_final_segments.source_row_ids IS NOT NULL) OR (target_rows.data_payload IS NOT NULL))
-                                       ->  CTE Scan on target_rows
-                                       ->  Hash
-                                             ->  CTE Scan on coalesced_final_segments
-                                       SubPlan 13
-                                         ->  CTE Scan on coalesced_final_segments f_inner
-(99 rows)
+                     ->  Subquery Scan on "*SELECT* 1"
+                           ->  WindowAgg
+                                 ->  Sort
+                                       Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
+                                       ->  Hash Full Join
+                                             Hash Cond: (target_rows.entity_id = coalesced_final_segments.entity_id)
+                                             Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 13).col1) AND (target_rows.valid_from = (hashed SubPlan 13).col2))))))
+                                             Filter: ((coalesced_final_segments.source_row_ids IS NOT NULL) OR (target_rows.data_payload IS NOT NULL))
+                                             ->  CTE Scan on target_rows
+                                             ->  Hash
+                                                   ->  CTE Scan on coalesced_final_segments
+                                             SubPlan 13
+                                               ->  CTE Scan on coalesced_final_segments f_inner
+(100 rows)
 
 SET client_min_messages TO NOTICE;
 ROLLBACK;

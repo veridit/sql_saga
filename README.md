@@ -234,6 +234,34 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 
   This strategy is critical for handling SCD Type 2 changes on a referenced table. By inserting the new version of a record *before* updating (shortening) the old one, it ensures that there is always at least one covering record for any dependent foreign keys. This prevents `AFTER` triggers from failing due to a transient gap in the timeline. To accommodate the temporary timeline overlap this creates, the procedure internally uses deferred constraints, which are checked only at the end of the operation when the timeline is once again consistent.
 
+  **Known Limitation:** This strategy guarantees consistency for operations *within a single `temporal_merge` call*. However, it does not apply to inconsistencies created *between multiple, separate procedure calls* within the same transaction. This is a crucial consideration for complex ETL processes.
+
+  The core issue is that the correct processing order for parent/child tables depends on the type of operation:
+  - **For `INSERT`s:** You must process the parent table first to generate the ID that the child table will reference.
+  - **For timeline-shrinking `UPDATE`s:** You must process the child table first. If you shorten the parent's timeline first, its `AFTER UPDATE` trigger will fire and see that the still-long child timeline is no longer covered, causing a foreign key violation.
+
+  Since a single ETL batch can contain both `INSERT`s and `UPDATE`s, there is no single fixed processing order that is always correct. The standard and most robust solution for this pattern is to **temporarily disable all relevant foreign key triggers** for the duration of the batch transaction. This allows the transaction to reach a temporarily inconsistent state, with the guarantee that the database's deferred uniqueness constraints on each table will still ensure the final state of each timeline is internally consistent.
+
+  **Example: Disabling Triggers for a Batch Operation**
+  ```sql
+  BEGIN;
+  -- Disable all relevant foreign key triggers.
+  ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
+  ALTER TABLE etl.location DISABLE TRIGGER USER;
+  -- ...disable triggers on other dependent tables...
+
+  -- Process all changes in their logical order.
+  CALL etl.process_legal_units(p_batch_id);
+  CALL etl.process_locations(p_batch_id);
+  -- ...process other dependent tables...
+
+  -- Re-enable the triggers. The final state is now consistent.
+  ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
+  ALTER TABLE etl.location ENABLE TRIGGER USER;
+  -- ...enable triggers on other dependent tables...
+  COMMIT;
+  ```
+
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 

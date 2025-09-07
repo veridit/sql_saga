@@ -1287,6 +1287,66 @@ uk_delete_check_c(PG_FUNCTION_ARGS)
 
 		initStringInfo(&where_buf);
 
+		/*
+		 * PRINCIPLE OF OPERATION FOR TEMPORAL FK ON DELETE
+		 *
+		 * This is an AFTER ROW DELETE trigger. As established by the
+		 * `58_trigger_visibility.sql` test, the MVCC snapshot visible to this
+		 * trigger's queries does NOT include the row that was just deleted.
+		 * While the `OLD` row data is available to the trigger function
+		 * itself, it is not visible to any SQL queries it executes.
+		 *
+		 * The trigger's purpose is to ensure this deletion does not "orphan"
+		 * any rows in a referencing table. An orphan is a row in the FK
+		 * table whose validity period is no longer fully covered by the
+		 * timeline of the entity it references in the UK table.
+		 *
+		 * --- EXAMPLE ---
+		 * UK Table: employees(id, name, valid_from, valid_until)
+		 *   (1, 'Alice', '2022-01-01', '2023-01-01')
+		 *   (1, 'Alice', '2023-01-01', 'infinity')
+		 *
+		 * FK Table: projects(pid, employee_id, valid_from, valid_until)
+		 *   (101, 1, '2022-06-01', '2023-06-01')
+		 *
+		 * Scenario: A user executes `DELETE FROM employees WHERE id = 1 AND valid_from = '2023-01-01';`
+		 * This would leave project 101 uncovered from 2023-01-01 to 2023-06-01.
+		 *
+		 * --- QUERY VALIDATION LOGIC ---
+		 * 1. (Outer Query) Find Potentially Orphaned Rows:
+		 *    `SELECT EXISTS (SELECT 1 FROM projects AS fk WHERE fk.employee_id = $1 ...)`
+		 *    This finds all FK rows that reference the entity being changed
+		 *    (e.g., project 101).
+		 *
+		 * 2. (Subquery) Check Timeline Coverage:
+		 *    `... COALESCE(NOT (SELECT sql_saga.covers_without_gaps(...) ...), true)`
+		 *    For each FK row found, this subquery checks if its timeline is
+		 *    still covered by the UK entity's timeline *after* the deletion.
+		 *
+		 *    2.1. Construct Post-Delete State:
+		 *         `... FROM employees AS uk WHERE fk.employee_id = uk.id ...`
+		 *         The `covers_without_gaps` aggregate is fed all rows for the
+		 *         UK entity from the current MVCC snapshot. Since the row has
+		 *         already been deleted from the snapshot, this query correctly
+		 *         retrieves the "post-delete" state of the timeline.
+		 *         - Example: The aggregate receives only `(1, 'Alice', '2022-01-01', '2023-01-01')`.
+		 *
+		 *    2.2. Perform Coverage Check:
+		 *         `covers_without_gaps('[2022-01-01, 2023-01-01)', '[2022-06-01, 2023-06-01)')`
+		 *         The project's period `[2022-06-01, 2023-06-01)` is NOT fully
+		 *         covered by the remaining UK period `[2022-01-01, 2023-01-01)`.
+		 *         The function returns `false`.
+		 *
+		 * 3. (Boolean Logic) Determine Violation:
+		 *    - `NOT(false)` becomes `true`.
+		 *    - `COALESCE(true, true)` returns `true`, indicating a violation.
+		 *
+		 * --- ROLE OF COALESCE(..., true) ---
+		 * If `covers_without_gaps` receives zero rows from its subquery (e.g.,
+		 * the last timeline segment for a UK entity was deleted), it returns
+		 * `NULL`. `COALESCE(NOT(NULL), true)` correctly turns this into a
+		 * violation, preventing orphans.
+		 */
 		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
 		{
 			StringInfoData join_buf, exclude_buf;
@@ -1530,6 +1590,74 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 		
 		initStringInfo(&where_buf);
 
+		/*
+		 * PRINCIPLE OF OPERATION FOR TEMPORAL FK ON UPDATE
+		 *
+		 * This is an AFTER ROW UPDATE trigger. The MVCC snapshot visible to
+		 * this trigger's queries includes the NEW version of the updated row,
+		 * but does NOT include the OLD version. This is the crucial challenge
+		 * this trigger must solve. A simple query against the UK table would
+		 * be checking coverage against an incomplete timeline.
+		 *
+		 * --- EXAMPLE ---
+		 * UK Table: employees(id, name, valid_from, valid_until)
+		 *   (1, 'Alice', '2022-01-01', '2023-01-01')
+		 *   (1, 'Alice', '2023-01-01', 'infinity')  <- This row will be updated
+		 *
+		 * FK Table: projects(pid, employee_id, valid_from, valid_until)
+		 *   (101, 1, '2022-06-01', '2023-06-01')
+		 *
+		 * Scenario: A user executes `UPDATE employees SET valid_from = '2023-02-01'
+		 * WHERE id = 1 AND valid_from = '2023-01-01';` This would create a gap
+		 * in Alice's timeline from '2023-01-01' to '2023-02-01'.
+		 *
+		 * --- QUERY VALIDATION LOGIC ---
+		 * The validation query must check coverage against a "simulated"
+		 * state of the UK table that represents the complete timeline of the
+		 * entity *as if the update had occurred correctly*.
+		 *
+		 * 1. (Outer Query) Find Potentially Orphaned Rows:
+		 *    `SELECT EXISTS (SELECT 1 FROM projects AS fk WHERE fk.employee_id = $1 ...)`
+		 *    - Example: Finds project 101.
+		 *
+		 * 2. (Subquery) Check Timeline Coverage Against Simulated State:
+		 *    The core of the logic is the `FROM` clause for the
+		 *    `covers_without_gaps` aggregate, which constructs the
+		 *    simulated post-update timeline via a UNION.
+		 *
+		 *    2.1. Get Unchanged Rows from MVCC Snapshot:
+		 *         `(SELECT ... FROM employees AS uk WHERE ... AND NOT (uk.id = $1 AND ...))`
+		 *         This selects all timeline segments for the entity from the
+		 *         current MVCC snapshot, but it explicitly EXCLUDES the OLD
+		 *         version of the row being updated (passed in from `old_row`).
+		 *         Since the snapshot already contains the NEW version, this
+		 *         effectively gathers all rows *not* involved in this specific
+		 *         UPDATE.
+		 *         - Example: The snapshot contains `(1, 'Alice', '2023-02-01', 'infinity')` (NEW)
+		 *           and `(1, 'Alice', '2022-01-01', '2023-01-01')`. The `NOT (...)`
+		 *           clause excludes the OLD version (`... valid_from = '2023-01-01' ...`).
+		 *           The result of this SELECT is `(1, 'Alice', '2022-01-01', '2023-01-01')`
+		 *
+		 *    2.2. Add the New Row Version via UNION:
+		 *         `... UNION ALL SELECT $4, $5, $6`
+		 *         This adds the NEW version of the updated row to the set,
+		 *         passed in as parameters from the `new_row` HeapTuple.
+		 *         - Example: Adds `(1, 'Alice', '2023-02-01', 'infinity')`.
+		 *
+		 *    2.3. The Simulated Timeline:
+		 *         The result of the UNION is the complete, simulated timeline
+		 *         for the entity as it exists after the update.
+		 *         - Example: The aggregate receives two rows:
+		 *           `(1, 'Alice', '2022-01-01', '2023-01-01')`
+		 *           `(1, 'Alice', '2023-02-01', 'infinity')`
+		 *         This set correctly represents the timeline with the gap.
+		 *
+		 *    2.4. Perform Coverage Check:
+		 *         The aggregate checks if this simulated timeline covers the
+		 *         project's period `[2022-06-01, 2023-06-01)`. It does not.
+		 *         The function returns `false`, which is negated to `true` to
+		 *         signal a violation.
+		 */
 		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
 		{
 			StringInfoData exclude_buf, union_buf, select_list_buf, alias_buf, join_buf;
@@ -1661,45 +1789,73 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 
 	/* Execute validation query */
 	{
-		Datum values[MAX_UK_UPDATE_PLAN_ARGS];
-		char nulls[MAX_UK_UPDATE_PLAN_ARGS];
-		int i, param_idx = 0;
-		bool keys_are_equal = true;
+		Datum		values[MAX_UK_UPDATE_PLAN_ARGS];
+		char		nulls[MAX_UK_UPDATE_PLAN_ARGS];
+		int			i,
+					param_idx = 0;
 
-		/* Check if key columns changed. If not, no violation is possible. */
-		for (i = 0; i < plan_entry->num_uk_cols; i++)
+		if (strcmp(fk_type, "temporal_to_temporal") == 0)	/* Temporal FK */
 		{
-			Datum old_val, new_val;
-			bool old_isnull, new_isnull;
-			old_val = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &old_isnull);
-			new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
+			bool		keys_are_equal = true;
 
-			if (old_isnull != new_isnull ||
-				(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attlen)))
+			for (i = 0; i < plan_entry->num_uk_cols + 2; i++)
 			{
-				keys_are_equal = false;
-				break;
-			}
-		}
+				Datum		old_val,
+							new_val;
+				bool		old_isnull,
+							new_isnull;
 
-		if (strcmp(fk_type, "temporal_to_temporal") == 0) /* Temporal FK */
-		{
-			for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
-				values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
-				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+				old_val = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &old_isnull);
+				new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
+
+				if (old_isnull != new_isnull ||
+					(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i] - 1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i] - 1].attlen)))
+				{
+					keys_are_equal = false;
+					break;
+				}
 			}
-			for (i = 0; i < plan_entry->num_uk_cols + 2; i++) {
+			if (keys_are_equal)
+			{
+				SPI_finish();
+				return PointerGetDatum(rettuple);
+			}
+
+			for (i = 0; i < plan_entry->num_uk_cols + 2; i++)
+			{
+				values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
+				nulls[param_idx] = isnull ? 'n' : ' ';
+				param_idx++;
+			}
+			for (i = 0; i < plan_entry->num_uk_cols + 2; i++)
+			{
 				values[param_idx] = heap_getattr(new_row, plan_entry->param_attnums_new[i], tupdesc, &isnull);
-				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+				nulls[param_idx] = isnull ? 'n' : ' ';
+				param_idx++;
 			}
 		}
-		else /* Regular FK */
+		else	/* Regular FK */
 		{
+			bool keys_are_equal = true;
+			for (i = 0; i < plan_entry->num_uk_cols; i++)
+			{
+				Datum old_val, new_val;
+				bool old_isnull, new_isnull;
+				old_val = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &old_isnull);
+				new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
+
+				if (old_isnull != new_isnull ||
+					(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attlen)))
+				{
+					keys_are_equal = false;
+					break;
+				}
+			}
 			if (keys_are_equal) { SPI_finish(); return PointerGetDatum(rettuple); }
 
 			for (i = 0; i < plan_entry->num_uk_cols; i++) {
-				values[param_idx] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
-				nulls[param_idx] = isnull ? 'n' : ' '; param_idx++;
+				values[i] = heap_getattr(old_row, plan_entry->param_attnums_old[i], tupdesc, &isnull);
+				nulls[i] = isnull ? 'n' : ' ';
 			}
 		}
 

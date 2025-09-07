@@ -58,72 +58,76 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
        master data table for the processed source rows.
     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into
        *all* other rows in the master data table that belong to the same
-       conceptual entity (identified by `identity_seq`). This ensures foreign
+       conceptual entity (identified by `identity_correlation`). This ensures foreign
        keys are available for dependent entities in the next step.
     3. Subsequent procedures call `temporal_merge` for each dependent entity
        (e.g., `location`, `stat_for_unit`). These calls succeed because the
        required foreign keys are now present in the source data.
-  - **Inter-Batch Propagation (across batches):**
+  - **Inter-Batch Propagation ("Current State" ETL Pattern):**
+    The test simulates a common ETL pattern where incoming data represents
+    the "current state" of an entity, valid from a certain point until
+    further notice (`infinity`). Each new batch of data for an existing
+    entity "cuts off" the previous timeline and establishes a new current
+    state.
     The same set of idempotent procedures are called by a driver for each
     batch of data in sequence. This demonstrates how the same ETL logic can
-    process multiple, independent business entities in a clean, stateful, and
-    transactionally-safe way. A third batch is then processed that contains
-    a series of staggered updates to an entity from a previous batch,
-    demonstrating that the architecture correctly handles stateful,
-    multi-faceted updates across batches.
+    process multiple, independent business entities and their subsequent
+    updates in a clean, stateful, and transactionally-safe way.
 ----------------------------------------------------------------------------
 $$ as doc;
-                                       doc                                        
-----------------------------------------------------------------------------------
-                                                                                 +
- ----------------------------------------------------------------------------    +
- Test: `temporal_merge` with Updatable View for Minimal-Copying ETL              +
- Concept:                                                                        +
-   This test demonstrates an advanced ETL architecture that minimizes data       +
-   copying and simplifies calling code by leveraging updatable views and a       +
-   procedural, batch-driven approach. The example shows a multi-step process     +
-   where dependent entities (locations, statistics) are created after their      +
-   parent (legal unit), with generated IDs being written back to the master      +
-   data table at each step.                                                      +
- The Problem:                                                                    +
-   ETL procedures often prepare data in a temporary table, call                  +
-   `temporal_merge`, and then have a separate, boilerplate step to join          +
-   the `temporal_merge_feedback` table back to the main ETL data table           +
-   to update it with generated IDs, statuses, and error messages. This becomes   +
-   especially complex when processing dependent entities (e.g. locations that    +
-   require a `legal_unit_id`) within the same batch, and across multiple batches.+
- The Solution:                                                                   +
-   Instead of a monolithic script, the ETL logic is encapsulated in idempotent   +
-   procedures that operate on a specific batch of source rows, identified by     +
-   their `row_id`s. This test uses updatable TEMP VIEWs over the main data       +
-   table to avoid data copying. When combined with `temporal_merge`'s            +
-   `p_update_source_with_identity` parameter, this allows for a                  +
-   powerful pattern of "ID back-propagation".                                    +
- The Mechanism: "Intra-Step and Inter-Batch ID Propagation"                      +
-   This test demonstrates a robust "merge -> back-propagate -> merge" pattern    +
-   for handling dependent entities, and shows how this pattern can be applied    +
-   sequentially across multiple batches of data.                                 +
-   - **Intra-Step Propagation (within a batch):**                                +
-     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).   +
-        The key parameter `p_update_source_with_identity` is set to              +
-        `true`, which writes the newly generated `legal_unit_id` back into the   +
-        master data table for the processed source rows.                         +
-     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into  +
-        *all* other rows in the master data table that belong to the same        +
-        conceptual entity (identified by `identity_seq`). This ensures foreign   +
-        keys are available for dependent entities in the next step.              +
-     3. Subsequent procedures call `temporal_merge` for each dependent entity    +
-        (e.g., `location`, `stat_for_unit`). These calls succeed because the     +
-        required foreign keys are now present in the source data.                +
-   - **Inter-Batch Propagation (across batches):**                               +
-     The same set of idempotent procedures are called by a driver for each       +
-     batch of data in sequence. This demonstrates how the same ETL logic can     +
-     process multiple, independent business entities in a clean, stateful, and   +
-     transactionally-safe way. A third batch is then processed that contains     +
-     a series of staggered updates to an entity from a previous batch,           +
-     demonstrating that the architecture correctly handles stateful,             +
-     multi-faceted updates across batches.                                       +
- ----------------------------------------------------------------------------    +
+                                          doc                                          
+---------------------------------------------------------------------------------------
+                                                                                      +
+ ----------------------------------------------------------------------------         +
+ Test: `temporal_merge` with Updatable View for Minimal-Copying ETL                   +
+ Concept:                                                                             +
+   This test demonstrates an advanced ETL architecture that minimizes data            +
+   copying and simplifies calling code by leveraging updatable views and a            +
+   procedural, batch-driven approach. The example shows a multi-step process          +
+   where dependent entities (locations, statistics) are created after their           +
+   parent (legal unit), with generated IDs being written back to the master           +
+   data table at each step.                                                           +
+ The Problem:                                                                         +
+   ETL procedures often prepare data in a temporary table, call                       +
+   `temporal_merge`, and then have a separate, boilerplate step to join               +
+   the `temporal_merge_feedback` table back to the main ETL data table                +
+   to update it with generated IDs, statuses, and error messages. This becomes        +
+   especially complex when processing dependent entities (e.g. locations that         +
+   require a `legal_unit_id`) within the same batch, and across multiple batches.     +
+ The Solution:                                                                        +
+   Instead of a monolithic script, the ETL logic is encapsulated in idempotent        +
+   procedures that operate on a specific batch of source rows, identified by          +
+   their `row_id`s. This test uses updatable TEMP VIEWs over the main data            +
+   table to avoid data copying. When combined with `temporal_merge`'s                 +
+   `p_update_source_with_identity` parameter, this allows for a                       +
+   powerful pattern of "ID back-propagation".                                         +
+ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"                           +
+   This test demonstrates a robust "merge -> back-propagate -> merge" pattern         +
+   for handling dependent entities, and shows how this pattern can be applied         +
+   sequentially across multiple batches of data.                                      +
+   - **Intra-Step Propagation (within a batch):**                                     +
+     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).        +
+        The key parameter `p_update_source_with_identity` is set to                   +
+        `true`, which writes the newly generated `legal_unit_id` back into the        +
+        master data table for the processed source rows.                              +
+     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into       +
+        *all* other rows in the master data table that belong to the same             +
+        conceptual entity (identified by `identity_correlation`). This ensures foreign+
+        keys are available for dependent entities in the next step.                   +
+     3. Subsequent procedures call `temporal_merge` for each dependent entity         +
+        (e.g., `location`, `stat_for_unit`). These calls succeed because the          +
+        required foreign keys are now present in the source data.                     +
+   - **Inter-Batch Propagation ("Current State" ETL Pattern):**                       +
+     The test simulates a common ETL pattern where incoming data represents           +
+     the "current state" of an entity, valid from a certain point until               +
+     further notice (`infinity`). Each new batch of data for an existing              +
+     entity "cuts off" the previous timeline and establishes a new current            +
+     state.                                                                           +
+     The same set of idempotent procedures are called by a driver for each            +
+     batch of data in sequence. This demonstrates how the same ETL logic can          +
+     process multiple, independent business entities and their subsequent             +
+     updates in a clean, stateful, and transactionally-safe way.                      +
+ ----------------------------------------------------------------------------         +
  
 (1 row)
 
@@ -200,7 +204,8 @@ SELECT sql_saga.add_foreign_key(
 -- The master ETL data table. In a real system, this would be a partitioned table.
 CREATE TABLE etl.data_table (
     row_id int primary key,
-    identity_seq int,
+    batch int not null,
+    identity_correlation int,
     -- Common temporal columns
     valid_from date,
     valid_until date,
@@ -222,49 +227,64 @@ CREATE TABLE etl.data_table (
     merge_statuses jsonb,
     merge_errors jsonb
 );
--- 2. Initial State: The data table has a sparse, staggered timeline for one new business.
---    All rows share the same identity_seq. NULLs indicate that an attribute is
---    either unknown or unchanged in that time slice.
-INSERT INTO etl.data_table (row_id, identity_seq, lu_name, physical_address, postal_address, employees, turnover, valid_from, valid_until) VALUES
+-- 2. Initial State: The data table has a sparse, staggered timeline for multiple businesses across multiple batches.
+--    The identity_correlation identifies the *same* entity, so it must be returned on insert and backfilled by temporal_merge
+--    and backfilled across batches by the caller.
+--    NULLs indicate that an attribute is either unknown or unchanged in that time slice.
+--    As the data comes in they all last until further notice, i.e. until infinity,
+--    but, as new data appear for a target table, the old will get cut off.
+INSERT INTO etl.data_table (row_id, batch, identity_correlation, lu_name, physical_address, postal_address, employees, turnover, valid_from, valid_until) VALUES
     -- Batch 1: NewCo AS
-    (1, 1, 'NewCo AS',      '123 Business Rd', NULL,          NULL,  NULL, '2024-01-01', '2024-03-01'),
-    (2, 1, NULL,            '123 Business Rd', 'PO Box 456',  10,    NULL, '2024-03-01', '2024-05-01'),
-    (3, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 456',  10, 50000, '2024-05-01', '2024-07-01'),
-    (4, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 789',  10, 55000, '2024-07-01', '2024-09-01'),
-    (5, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 789',  12, 60000, '2024-09-01', '2025-01-01'),
+    -- Expect creation of a legal_unit and backfill of legal_unit_id, and a physical_location.
+    (1, 1, 1, 'NewCo AS',      '123 Business Rd', NULL,          NULL,  NULL, '2024-01-01', 'infinity'),
+    -- Expect no change to legal_unit nor physical location, but an insert of postal_location and employees.
+    (2, 1, 1, NULL,            NULL,              'PO Box 456',  10,    NULL, '2024-03-01', 'infinity'),
+    -- Expect name update of legal_unit and an insert of turnover.
+    (3, 1, 1, 'RenamedCo AS',  NULL,              NULL,          NULL, 50000, '2024-05-01', 'infinity'),
+    -- Expect update of postal_address and turnover.
+    (4, 1, 1, NULL,            NULL,              'PO Box 789',  NULL, 55000, '2024-07-01', 'infinity'),
+    -- Expect update of employees and turnover.
+    (5, 1, 1, NULL,            NULL,              NULL,          12, 60000, '2024-09-01', 'infinity'),
     -- Batch 2: SecondBiz Inc
-    (6, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', '2024-08-01'),
-    (7, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', '2024-11-01'),
-    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01'),
+    (6, 2, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', 'infinity'),
+    (7, 2, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', 'infinity'),
+    (8, 2, 2, 'SecondBiz Inc', NULL,              NULL,                60, 320000, '2024-11-01', 'infinity'),
     -- Batch 3: A staggered update to the entity from Batch 1, demonstrating cross-batch state.
-    (9,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', '2025-03-01'),
-    (10, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', '2025-05-01'),
-    (11, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', '2025-07-01'),
-    (12, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity');
+    (9, 3,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', 'infinity'),
+    (10, 3, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', 'infinity'),
+    (11, 3, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', 'infinity'),
+    (12, 3, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity'),
+    -- Batch 4: A batch of no-change operations.
+    -- No change to anything because it's a PATCH with only NULLs for an existing entity.
+    (13, 4, 1, NULL,         NULL,              NULL,         NULL, NULL, '2025-07-01', 'infinity'),
+    -- No change to anything because it's identical to the previous state.
+    (14, 4, 1, 'FinalCo AS', '1 New Street',    'PO Box 111' , 15, 75000, '2025-07-01', 'infinity');
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
 --- ETL Data Table: Initial State (all generated IDs are NULL) ---
-TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | merge_statuses | merge_errors 
---------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------+--------------
-      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |               |                      |                    |                   |                  |                | 
-      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |               |                      |                    |                   |                  |                | 
-      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |               |                      |                    |                   |                  |                | 
-      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |               |                      |                    |                   |                  |                | 
-      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |               |                      |                    |                   |                  |                | 
-      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |               |                      |                    |                   |                  |                | 
-     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |               |                      |                    |                   |                  |                | 
-     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |               |                      |                    |                   |                  |                | 
-     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |               |                      |                    |                   |                  |                | 
-      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                | 
-      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                | 
-      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                | 
-(12 rows)
+TABLE etl.data_table ORDER BY identity_correlation, row_id;
+ row_id | batch | identity_correlation | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id | merge_statuses | merge_errors 
+--------+-------+----------------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------+--------------
+      1 |     1 |                    1 | 2024-01-01 | infinity    | NewCo AS      | 123 Business Rd   |                |           |          |               |                      |                    |                   |                  |                | 
+      2 |     1 |                    1 | 2024-03-01 | infinity    |               |                   | PO Box 456     |        10 |          |               |                      |                    |                   |                  |                | 
+      3 |     1 |                    1 | 2024-05-01 | infinity    | RenamedCo AS  |                   |                |           |    50000 |               |                      |                    |                   |                  |                | 
+      4 |     1 |                    1 | 2024-07-01 | infinity    |               |                   | PO Box 789     |           |    55000 |               |                      |                    |                   |                  |                | 
+      5 |     1 |                    1 | 2024-09-01 | infinity    |               |                   |                |        12 |    60000 |               |                      |                    |                   |                  |                | 
+      9 |     3 |                    1 | 2025-01-01 | infinity    |               |                   |                |        15 |    75000 |               |                      |                    |                   |                  |                | 
+     10 |     3 |                    1 | 2025-03-01 | infinity    | FinalCo AS    |                   |                |           |          |               |                      |                    |                   |                  |                | 
+     11 |     3 |                    1 | 2025-05-01 | infinity    |               | 1 New Street      |                |           |          |               |                      |                    |                   |                  |                | 
+     12 |     3 |                    1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |               |                      |                    |                   |                  |                | 
+     13 |     4 |                    1 | 2025-07-01 | infinity    |               |                   |                |           |          |               |                      |                    |                   |                  |                | 
+     14 |     4 |                    1 | 2025-07-01 | infinity    | FinalCo AS    | 1 New Street      | PO Box 111     |        15 |    75000 |               |                      |                    |                   |                  |                | 
+      6 |     2 |                    2 | 2024-02-15 | infinity    | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                | 
+      7 |     2 |                    2 | 2024-08-01 | infinity    |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                | 
+      8 |     2 |                    2 | 2024-11-01 | infinity    | SecondBiz Inc |                   |                |        60 |   320000 |               |                      |                    |                   |                  |                | 
+(14 rows)
 
 --------------------------------------------------------------------------------
 \echo '--- Step 3: Define ETL Driver Procedures ---'
 --- Step 3: Define ETL Driver Procedures ---
 --------------------------------------------------------------------------------
-CREATE PROCEDURE etl.process_legal_units(p_row_ids int[])
+CREATE PROCEDURE etl.process_legal_units(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 BEGIN
     -- Create a view for the legal unit batch
@@ -272,15 +292,15 @@ BEGIN
         CREATE OR REPLACE TEMP VIEW source_view_lu AS
         SELECT
             row_id,
-            identity_seq as founding_id, -- Use identity_seq as the founding_id for new entities
+            identity_correlation as founding_id, -- Use identity_correlation as the founding_id for new entities
             legal_unit_id AS id,   -- Map the writeback column to 'id'
             lu_name AS name,
             merge_statuses,
             merge_errors,
             valid_from,
             valid_until
-        FROM etl.data_table WHERE row_id = ANY(%L::int[]);
-    $$, p_row_ids);
+        FROM etl.data_table WHERE batch = %L;
+    $$, p_batch_id);
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
@@ -298,18 +318,18 @@ BEGIN
         p_feedback_error_key => 'legal_unit'
     );
 
-    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_seq
+    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_correlation
     UPDATE etl.data_table dt
     SET legal_unit_id = sub.legal_unit_id
     FROM (
-        SELECT DISTINCT identity_seq, legal_unit_id
+        SELECT DISTINCT identity_correlation, legal_unit_id
         FROM etl.data_table
-        WHERE legal_unit_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE legal_unit_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.legal_unit_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.legal_unit_id IS NULL;
 END;
 $procedure$;
-CREATE PROCEDURE etl.process_locations(p_row_ids int[])
+CREATE PROCEDURE etl.process_locations(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 BEGIN
     -- Create a view for the physical locations batch.
@@ -317,7 +337,7 @@ BEGIN
         CREATE OR REPLACE TEMP VIEW source_view_loc_phys AS
         SELECT
             dt.row_id,
-            dt.identity_seq as founding_id,
+            dt.identity_correlation as founding_id,
             dt.physical_location_id AS id,
             dt.legal_unit_id,
             'physical'::text as type,
@@ -327,8 +347,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.row_id = ANY(%L::int[]) AND dt.physical_address IS NOT NULL;
-    $$, p_row_ids);
+        WHERE dt.batch = %L AND dt.physical_address IS NOT NULL;
+    $$, p_batch_id);
 
     -- Merge physical locations
     CALL sql_saga.temporal_merge(
@@ -350,18 +370,18 @@ BEGIN
     UPDATE etl.data_table dt
     SET physical_location_id = sub.physical_location_id
     FROM (
-        SELECT DISTINCT identity_seq, physical_location_id
+        SELECT DISTINCT identity_correlation, physical_location_id
         FROM etl.data_table
-        WHERE physical_location_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE physical_location_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.physical_location_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.physical_location_id IS NULL;
 
     -- Create a view for the postal locations batch.
     EXECUTE format($$
         CREATE OR REPLACE TEMP VIEW source_view_loc_post AS
         SELECT
             dt.row_id,
-            dt.identity_seq as founding_id,
+            dt.identity_correlation as founding_id,
             dt.postal_location_id AS id,
             dt.legal_unit_id,
             'postal'::text as type,
@@ -371,8 +391,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.row_id = ANY(%L::int[]) AND dt.postal_address IS NOT NULL;
-    $$, p_row_ids);
+        WHERE dt.batch = %L AND dt.postal_address IS NOT NULL;
+    $$, p_batch_id);
 
     -- Merge postal locations
     CALL sql_saga.temporal_merge(
@@ -394,21 +414,21 @@ BEGIN
     UPDATE etl.data_table dt
     SET postal_location_id = sub.postal_location_id
     FROM (
-        SELECT DISTINCT identity_seq, postal_location_id
+        SELECT DISTINCT identity_correlation, postal_location_id
         FROM etl.data_table
-        WHERE postal_location_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE postal_location_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.postal_location_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.postal_location_id IS NULL;
 END;
 $procedure$;
-CREATE PROCEDURE etl.process_stats(p_row_ids int[])
+CREATE PROCEDURE etl.process_stats(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_stat_def RECORD;
     v_view_sql TEXT;
 BEGIN
     FOR v_stat_def IN SELECT * FROM etl.stat_definition LOOP
-        RAISE NOTICE 'Processing statistic: % for row_ids %', v_stat_def.code, p_row_ids;
+        RAISE NOTICE 'Processing statistic: % for batch %', v_stat_def.code, p_batch_id;
 
         -- Dynamically create a view for the current statistic's batch
         v_view_sql := format(
@@ -416,7 +436,7 @@ BEGIN
             CREATE OR REPLACE TEMP VIEW source_view_stat_%s AS
             SELECT
                 dt.row_id,
-                dt.identity_seq as founding_id,
+                dt.identity_correlation as founding_id,
                 dt.%I AS id, -- Map the specific writeback ID column
                 dt.legal_unit_id,
                 %L as stat_definition_id,
@@ -426,13 +446,13 @@ BEGIN
                 dt.valid_from,
                 dt.valid_until
             FROM etl.data_table dt
-            WHERE dt.row_id = ANY(%L::int[]) AND dt.%I IS NOT NULL;
+            WHERE dt.batch = %L AND dt.%I IS NOT NULL;
             $SQL$,
             v_stat_def.code, -- Suffix for unique view name
             format('%s_stat_id', v_stat_def.code), -- e.g., employees_stat_id
             v_stat_def.id,
             v_stat_def.code, -- e.g., employees
-            p_row_ids,
+            p_batch_id,
             v_stat_def.code
         );
         EXECUTE v_view_sql;
@@ -459,16 +479,16 @@ BEGIN
             UPDATE etl.data_table dt
             SET %I = sub.id
             FROM (
-                SELECT DISTINCT identity_seq, %I AS id
+                SELECT DISTINCT identity_correlation, %I AS id
                 FROM etl.data_table
-                WHERE %I IS NOT NULL AND row_id = ANY(%L::int[])
+                WHERE %I IS NOT NULL AND batch = %L
             ) AS sub
-            WHERE dt.identity_seq = sub.identity_seq AND dt.%I IS NULL;
+            WHERE dt.identity_correlation = sub.identity_correlation AND dt.%I IS NULL;
             $SQL$,
             format('%s_stat_id', v_stat_def.code),
             format('%s_stat_id', v_stat_def.code),
             format('%s_stat_id', v_stat_def.code),
-            p_row_ids,
+            p_batch_id,
             format('%s_stat_id', v_stat_def.code)
         );
     END LOOP;
@@ -478,83 +498,70 @@ $procedure$;
 \echo '--- Step 4: Run ETL Driver for Batches ---'
 --- Step 4: Run ETL Driver for Batches ---
 --------------------------------------------------------------------------------
-\echo '--- Processing Batch 1 (NewCo AS) ---'
---- Processing Batch 1 (NewCo AS) ---
-CALL etl.process_legal_units('{1, 2, 3, 4, 5}');
-CALL etl.process_locations('{1, 2, 3, 4, 5}');
-CALL etl.process_stats('{1, 2, 3, 4, 5}');
-NOTICE:  Processing statistic: employees for row_ids {1,2,3,4,5}
-NOTICE:  Processing statistic: turnover for row_ids {1,2,3,4,5}
-\echo '--- ETL Data Table: After Batch 1 ---'
---- ETL Data Table: After Batch 1 ---
-TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
---------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
-      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
-      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
-      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |               |                      |                    |                   |                  |                                                                                                                                        | 
-      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |               |                      |                    |                   |                  |                                                                                                                                        | 
-      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |               |                      |                    |                   |                  |                                                                                                                                        | 
-(12 rows)
+CREATE PROCEDURE etl.run_batch(p_batch_id int)
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    RAISE NOTICE '--- Processing Batch % ---', p_batch_id;
 
-\echo '--- Processing Batch 2 (SecondBiz Inc) ---'
---- Processing Batch 2 (SecondBiz Inc) ---
-CALL etl.process_legal_units('{6, 7, 8}');
-CALL etl.process_locations('{6, 7, 8}');
-CALL etl.process_stats('{6, 7, 8}');
-NOTICE:  Processing statistic: employees for row_ids {6,7,8}
-NOTICE:  Processing statistic: turnover for row_ids {6,7,8}
-\echo '--- ETL Data Table: After Batch 2 ---'
---- ETL Data Table: After Batch 2 ---
-TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
---------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
-      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
-      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
-      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                        | 
-      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
-      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-(12 rows)
+    -- For complex, multi-step ETL processes, the standard and most robust
+    -- solution is to temporarily disable all relevant foreign key triggers
+    -- for the duration of the batch transaction. This allows the transaction
+    -- to reach a temporarily inconsistent state between procedure calls,
+    -- with the guarantee that the final state will be consistent.
+    ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
+    ALTER TABLE etl.location DISABLE TRIGGER USER;
+    ALTER TABLE etl.stat_for_unit DISABLE TRIGGER USER;
 
-\echo '--- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---'
---- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---
-CALL etl.process_legal_units('{9, 10, 11, 12}');
-CALL etl.process_locations('{9, 10, 11, 12}');
-CALL etl.process_stats('{9, 10, 11, 12}');
-NOTICE:  Processing statistic: employees for row_ids {9,10,11,12}
-NOTICE:  Processing statistic: turnover for row_ids {9,10,11,12}
+    CALL etl.process_legal_units(p_batch_id);
+    CALL etl.process_locations(p_batch_id);
+    CALL etl.process_stats(p_batch_id);
+
+    ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
+    ALTER TABLE etl.location ENABLE TRIGGER USER;
+    ALTER TABLE etl.stat_for_unit ENABLE TRIGGER USER;
+END;
+$procedure$;
+DO $do$
+DECLARE
+    v_batch_id int;
+BEGIN
+    FOR v_batch_id IN SELECT DISTINCT batch FROM etl.data_table ORDER BY batch LOOP
+        CALL etl.run_batch(v_batch_id);
+    END LOOP;
+END;
+$do$;
+NOTICE:  --- Processing Batch 1 ---
+NOTICE:  Processing statistic: employees for batch 1
+NOTICE:  Processing statistic: turnover for batch 1
+NOTICE:  --- Processing Batch 2 ---
+NOTICE:  Processing statistic: employees for batch 2
+NOTICE:  Processing statistic: turnover for batch 2
+NOTICE:  --- Processing Batch 3 ---
+NOTICE:  Processing statistic: employees for batch 3
+NOTICE:  Processing statistic: turnover for batch 3
+NOTICE:  --- Processing Batch 4 ---
+NOTICE:  Processing statistic: employees for batch 4
+NOTICE:  Processing statistic: turnover for batch 4
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 --- ETL Data Table: Final State (all generated IDs are populated) ---
-TABLE etl.data_table ORDER BY identity_seq, row_id;
- row_id | identity_seq | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
---------+--------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
-      1 |            1 | 2024-01-01 | 2024-03-01  | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
-      2 |            1 | 2024-03-01 | 2024-05-01  |               | 123 Business Rd   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                        | {}
-      3 |            1 | 2024-05-01 | 2024-07-01  | RenamedCo AS  | 123 Business Rd   | PO Box 456     |        10 |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      4 |            1 | 2024-07-01 | 2024-09-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        10 |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      5 |            1 | 2024-09-01 | 2025-01-01  | RenamedCo AS  | 123 Business Rd   | PO Box 789     |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      9 |            1 | 2025-01-01 | 2025-03-01  |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 5 |                6 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                               | {}
-     10 |            1 | 2025-03-01 | 2025-05-01  | FinalCo AS    |                   |                |           |          |             3 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED"}                                                                                                              | {}
-     11 |            1 | 2025-05-01 | 2025-07-01  |               | 1 New Street      |                |           |          |             3 |                    5 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
-     12 |            1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             3 |                    1 |                  6 |                 1 |                2 | {"legal_unit": "APPLIED", "postal_location": "APPLIED"}                                                                                | {}
-      6 |            2 | 2024-02-15 | 2024-08-01  | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
-      7 |            2 | 2024-08-01 | 2024-11-01  |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      8 |            2 | 2024-11-01 | 2025-01-01  | SecondBiz Inc | 789 Tech Pkwy     | PO Box 999     |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-(12 rows)
+TABLE etl.data_table ORDER BY identity_correlation, row_id;
+ row_id | batch | identity_correlation | valid_from | valid_until |    lu_name    | physical_address  | postal_address | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                             merge_statuses                                                             | merge_errors 
+--------+-------+----------------------+------------+-------------+---------------+-------------------+----------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+----------------------------------------------------------------------------------------------------------------------------------------+--------------
+      1 |     1 |                    1 | 2024-01-01 | infinity    | NewCo AS      | 123 Business Rd   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+      2 |     1 |                    1 | 2024-03-01 | infinity    |               |                   | PO Box 456     |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED"}                                                        | {}
+      3 |     1 |                    1 | 2024-05-01 | infinity    | RenamedCo AS  |                   |                |           |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "legal_unit": "APPLIED"}                                                                                       | {}
+      4 |     1 |                    1 | 2024-07-01 | infinity    |               |                   | PO Box 789     |           |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED"}                                                         | {}
+      5 |     1 |                    1 | 2024-09-01 | infinity    |               |                   |                |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                               | {}
+      9 |     3 |                    1 | 2025-01-01 | infinity    |               |                   |                |        15 |    75000 |             1 |                    1 |                  2 |                 5 |                6 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                               | {}
+     10 |     3 |                    1 | 2025-03-01 | infinity    | FinalCo AS    |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED"}                                                                                                              | {}
+     11 |     3 |                    1 | 2025-05-01 | infinity    |               | 1 New Street      |                |           |          |             3 |                    5 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
+     12 |     3 |                    1 | 2025-07-01 | infinity    |               |                   | PO Box 111     |           |          |             4 |                    1 |                  6 |                 1 |                2 | {"legal_unit": "APPLIED", "postal_location": "APPLIED"}                                                                                | {}
+     13 |     4 |                    1 | 2025-07-01 | infinity    |               |                   |                |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "SKIPPED_FILTERED"}                                                                                                     | {}
+     14 |     4 |                    1 | 2025-07-01 | infinity    | FinalCo AS    | 1 New Street      | PO Box 111     |        15 |    75000 |             5 |                    7 |                  8 |                 7 |                8 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      6 |     2 |                    2 | 2024-02-15 | infinity    | SecondBiz Inc | 456 Innovation Dr |                |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
+      7 |     2 |                    2 | 2024-08-01 | infinity    |               | 789 Tech Pkwy     | PO Box 999     |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
+      8 |     2 |                    2 | 2024-11-01 | infinity    | SecondBiz Inc |                   |                |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                               | {}
+(14 rows)
 
 \echo '--- Final Target States ---'
 --- Final Target States ---
@@ -565,24 +572,28 @@ TABLE etl.legal_unit ORDER BY id, valid_from;
 ----+---------------+------------+-------------
   1 | NewCo AS      | 2024-01-01 | 2024-05-01
   1 | RenamedCo AS  | 2024-05-01 | 2025-03-01
-  2 | SecondBiz Inc | 2024-02-15 | 2025-01-01
-  3 | FinalCo AS    | 2025-03-01 | infinity
-(4 rows)
+  2 | SecondBiz Inc | 2024-02-15 | infinity
+  3 | FinalCo AS    | 2025-03-01 | 2025-05-01
+  4 | RenamedCo AS  | 2025-05-01 | infinity
+  5 | FinalCo AS    | 2025-07-01 | infinity
+(6 rows)
 
 \echo '--- location ---'
 --- location ---
 TABLE etl.location ORDER BY id, valid_from;
  id | legal_unit_id |   type   |      address      | valid_from | valid_until 
 ----+---------------+----------+-------------------+------------+-------------
-  1 |             1 | physical | 123 Business Rd   | 2024-01-01 | 2025-01-01
+  1 |             1 | physical | 123 Business Rd   | 2024-01-01 | 2025-05-01
   2 |             1 | postal   | PO Box 456        | 2024-03-01 | 2024-07-01
-  2 |             1 | postal   | PO Box 789        | 2024-07-01 | 2025-01-01
+  2 |             1 | postal   | PO Box 789        | 2024-07-01 | 2025-07-01
   3 |             2 | physical | 456 Innovation Dr | 2024-02-15 | 2024-08-01
-  3 |             2 | physical | 789 Tech Pkwy     | 2024-08-01 | 2025-01-01
-  4 |             2 | postal   | PO Box 999        | 2024-08-01 | 2025-01-01
-  5 |             3 | physical | 1 New Street      | 2025-05-01 | 2025-07-01
-  6 |             3 | postal   | PO Box 111        | 2025-07-01 | infinity
-(8 rows)
+  3 |             2 | physical | 789 Tech Pkwy     | 2024-08-01 | infinity
+  4 |             2 | postal   | PO Box 999        | 2024-08-01 | infinity
+  5 |             3 | physical | 1 New Street      | 2025-05-01 | infinity
+  6 |             4 | postal   | PO Box 111        | 2025-07-01 | infinity
+  7 |             5 | physical | 1 New Street      | 2025-07-01 | infinity
+  8 |             5 | postal   | PO Box 111        | 2025-07-01 | infinity
+(10 rows)
 
 \echo '--- stat_for_unit ---'
 --- stat_for_unit ---
@@ -596,13 +607,15 @@ TABLE etl.stat_for_unit ORDER BY id, valid_from;
   2 |             1 |                  2 |  60000 | 2024-09-01 | 2025-01-01
   3 |             2 |                  1 |     50 | 2024-02-15 | 2024-08-01
   3 |             2 |                  1 |     55 | 2024-08-01 | 2024-11-01
-  3 |             2 |                  1 |     60 | 2024-11-01 | 2025-01-01
+  3 |             2 |                  1 |     60 | 2024-11-01 | infinity
   4 |             2 |                  2 | 250000 | 2024-02-15 | 2024-08-01
   4 |             2 |                  2 | 300000 | 2024-08-01 | 2024-11-01
-  4 |             2 |                  2 | 320000 | 2024-11-01 | 2025-01-01
-  5 |             1 |                  1 |     15 | 2025-01-01 | 2025-03-01
-  6 |             1 |                  2 |  75000 | 2025-01-01 | 2025-03-01
-(13 rows)
+  4 |             2 |                  2 | 320000 | 2024-11-01 | infinity
+  5 |             1 |                  1 |     15 | 2025-01-01 | infinity
+  6 |             1 |                  2 |  75000 | 2025-01-01 | infinity
+  7 |             5 |                  1 |     15 | 2025-07-01 | infinity
+  8 |             5 |                  2 |  75000 | 2025-07-01 | infinity
+(15 rows)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

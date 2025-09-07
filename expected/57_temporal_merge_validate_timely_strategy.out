@@ -567,16 +567,16 @@ CALL sql_saga.temporal_merge(
 );
 \echo '--- temporal_merge plan ---'
 --- temporal_merge plan ---
-TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |         data         | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+----------------------+----------
-           1 | {1}            | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-05-01      | {"value": "initial"} | starts
-           2 | {1}            | INSERT    | {"id": 1}  |                | 2024-05-01     | infinity        | {"value": "updated"} | 
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data         | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+----------------------+----------
+           1 | {1}            | INSERT    |                        | {"id": 1}  |                |                 | 2024-05-01     | infinity        | {"value": "updated"} | 
+           2 | {1}            | UPDATE    | SHRINK                 | {"id": 1}  | 2024-01-01     | infinity        | 2024-01-01     | 2024-05-01      | {"value": "initial"} | starts
 (2 rows)
 
 \echo '--- temporal_merge feedback ---'
 --- temporal_merge feedback ---
-TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
              1 | [{"id": 1}]       | APPLIED | 

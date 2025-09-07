@@ -283,13 +283,35 @@ EXCEPTION
 END $$;
 
 COMMENT ON TYPE sql_saga.temporal_merge_plan_action IS
-'Represents the internal action to be taken for a given time segment, as determined by the planner.
+'Represents the internal DML action to be taken by the executor for a given atomical time segment, as determined by the planner.
 These values use a "future tense" convention (e.g., SKIP_...) as they represent a plan for an action, not a completed result.
+The order of these values is critical, as it defines the execution order when sorting the plan:
+INSERTs must happen before UPDATEs, which must happen before DELETEs to ensure foreign key consistency,
+that is check on the intermediate MVCC snapshots between the changes in the same transaction.
 - INSERT: A new historical record will be inserted.
 - UPDATE: An existing historical record will be modified (typically by shortening its period).
 - DELETE: An existing historical record will be deleted.
 - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
 - SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.';
+
+-- Defines the effect of an UPDATE on a timeline, used for ordering DML.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.temporal_merge_update_effect AS ENUM (
+        'GROW',   -- The new period is a superset of the old one.
+        'SHRINK', -- The new period is a subset of the old one.
+        'MOVE',   -- The period shifts without being a pure grow or shrink.
+        'NONE'    -- The period is unchanged (a data-only update).
+    );
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+COMMENT ON TYPE sql_saga.temporal_merge_update_effect IS
+'Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations to ensure temporal integrity.
+- GROW: The new period is a superset of the old one. These are executed first.
+- SHRINK: The new period is a subset of the old one. These are executed after GROWs.
+- MOVE: The period shifts without being a pure grow or shrink. Also executed after GROWs.
+- NONE: The period is unchanged (a data-only update).';
 
 -- Defines the structure for a single row in a temporal execution plan.
 DO $$ BEGIN
@@ -297,8 +319,10 @@ DO $$ BEGIN
         plan_op_seq BIGINT,
         source_row_ids BIGINT[],
         operation sql_saga.temporal_merge_plan_action,
+        timeline_update_effect sql_saga.temporal_merge_update_effect,
         entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
         old_valid_from TEXT,
+        old_valid_until TEXT,
         new_valid_from TEXT,
         new_valid_until TEXT,
         data JSONB,

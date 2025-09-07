@@ -487,7 +487,7 @@ diff AS (
     ) t
     ON f.f_entity_id = t.t_entity_id AND (%11$s)
 ),
-plan AS (
+plan_with_op AS (
     (
         SELECT
             %12$s as source_row_ids,
@@ -506,6 +506,7 @@ plan AS (
             END as operation,
             d.entity_id,
             d.t_from as old_valid_from,
+            d.t_until as old_valid_until,
             d.f_from as new_valid_from,
             d.f_until as new_valid_until,
             d.f_data as data,
@@ -521,7 +522,7 @@ plan AS (
             ARRAY[sr.source_row_id::BIGINT],
             'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
             sr.entity_id,
-            NULL, NULL, NULL, NULL, NULL
+            NULL, NULL, NULL, NULL, NULL, NULL
         FROM source_rows sr
         WHERE
             CASE %7$L::sql_saga.temporal_merge_mode
@@ -531,13 +532,27 @@ plan AS (
                 ELSE false
             END
     )
+),
+plan AS (
+    SELECT
+        *,
+        CASE
+            WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from <= p.old_valid_from AND p.new_valid_until >= p.old_valid_until THEN 'GROW'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from >= p.old_valid_from AND p.new_valid_until <= p.old_valid_until THEN 'SHRINK'::sql_saga.temporal_merge_update_effect
+            ELSE 'MOVE'::sql_saga.temporal_merge_update_effect
+        END AS timeline_update_effect
+    FROM plan_with_op p
 )
 SELECT
-    row_number() OVER (ORDER BY p.entity_id, COALESCE(p.new_valid_from, p.old_valid_from), p.operation DESC, (p.source_row_ids[1]))::BIGINT as plan_op_seq,
+    row_number() OVER (ORDER BY p.entity_id, p.operation, p.timeline_update_effect, COALESCE(p.new_valid_from, p.old_valid_from), (p.source_row_ids[1]))::BIGINT as plan_op_seq,
     p.source_row_ids,
     p.operation,
+    p.timeline_update_effect,
     p.entity_id AS entity_ids,
     p.old_valid_from::TEXT,
+    p.old_valid_until::TEXT,
     p.new_valid_from::TEXT,
     p.new_valid_until::TEXT,
     p.data,
@@ -698,6 +713,21 @@ BEGIN
             p_identity_correlation_column => p_identity_correlation_column,
             p_delete_mode              => p_delete_mode
         ) p;
+
+        -- Conditionally output the plan for debugging, without adding a parameter.
+        DECLARE
+            v_current_log_level TEXT;
+            v_plan_rec RECORD;
+        BEGIN
+            SHOW client_min_messages INTO v_current_log_level;
+            IF v_current_log_level ILIKE 'debug%' THEN
+                RAISE DEBUG '--- temporal_merge plan for % ---', p_target_table;
+                RAISE DEBUG '(plan_op_seq,source_row_ids,operation,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)';
+                FOR v_plan_rec IN SELECT * FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
+                    RAISE DEBUG '%', v_plan_rec;
+                END LOOP;
+            END IF;
+        END;
 
         -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
         WITH source_cols AS (
@@ -867,7 +897,8 @@ BEGIN
                                     ORDER BY p_inner.entity_ids->>%6$L, p_inner.plan_op_seq
                                 ) AS founding_ops
                                 WHERE founding_ops.plan_op_seq = p.plan_op_seq
-                              );
+                              )
+                            ORDER BY p.plan_op_seq;
                         $$,
                             v_target_table_ident,       -- 1
                             v_stage3_all_cols_ident,    -- 2
@@ -894,6 +925,7 @@ BEGIN
                                 p.entity_ids || p.data as full_data
                             FROM temporal_merge_plan p
                             WHERE p.operation = 'INSERT'
+                            ORDER BY p.plan_op_seq
                         ),
                         inserted_rows AS (
                             MERGE INTO %1$s t
@@ -1021,18 +1053,23 @@ BEGIN
             END;
         END IF;
 
-        -- 2. Execute UPDATE operations
+        -- 2. Execute UPDATE operations.
+        -- As proven by test 58, we can use a single, ordered UPDATE statement.
+        -- The ORDER BY on the plan's sequence number ensures that "grow"
+        -- operations are processed before "shrink" or "move" operations,
+        -- preventing transient gaps that would violate foreign key constraints.
         IF v_update_set_clause IS NOT NULL THEN
             EXECUTE format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
-                FROM temporal_merge_plan p,
+                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
                      LATERAL jsonb_populate_record(null::%1$s, p.data) AS jpr_data,
                      LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE p.operation = 'UPDATE' AND %3$s AND t.%4$I = p.old_valid_from::%6$s;
+                WHERE %3$s AND t.%4$I = p.old_valid_from::%6$s;
             $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
         ELSIF v_all_cols_ident IS NOT NULL THEN
             EXECUTE format($$ UPDATE %1$s t SET %3$I = p.new_valid_from::%5$s, %4$I = p.new_valid_until::%6$s
-                FROM temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE p.operation = 'UPDATE' AND %2$s AND t.%3$I = p.old_valid_from::%5$s;
+                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
+                     LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+                WHERE %2$s AND t.%3$I = p.old_valid_from::%5$s;
             $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
         END IF;
 
@@ -1102,6 +1139,21 @@ BEGIN
             p_source_row_id_column,     -- 2
             v_internal_keys_to_remove   -- 3
         );
+
+    -- Conditionally output the feedback for debugging.
+    DECLARE
+        v_current_log_level TEXT;
+        v_feedback_rec RECORD;
+    BEGIN
+        SHOW client_min_messages INTO v_current_log_level;
+        IF v_current_log_level ILIKE 'debug%' THEN
+            RAISE DEBUG '--- temporal_merge feedback for % ---', p_target_table;
+            RAISE DEBUG '(source_row_id,target_entity_ids,status,error_message)';
+            FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+                RAISE DEBUG '%', v_feedback_rec;
+            END LOOP;
+        END IF;
+    END;
 
     IF p_update_source_with_feedback THEN
         IF p_feedback_status_column IS NULL AND p_feedback_error_column IS NULL THEN

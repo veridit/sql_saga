@@ -35,19 +35,21 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
        master data table for the processed source rows.
     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into
        *all* other rows in the master data table that belong to the same
-       conceptual entity (identified by `identity_seq`). This ensures foreign
+       conceptual entity (identified by `identity_correlation`). This ensures foreign
        keys are available for dependent entities in the next step.
     3. Subsequent procedures call `temporal_merge` for each dependent entity
        (e.g., `location`, `stat_for_unit`). These calls succeed because the
        required foreign keys are now present in the source data.
-  - **Inter-Batch Propagation (across batches):**
+  - **Inter-Batch Propagation ("Current State" ETL Pattern):**
+    The test simulates a common ETL pattern where incoming data represents
+    the "current state" of an entity, valid from a certain point until
+    further notice (`infinity`). Each new batch of data for an existing
+    entity "cuts off" the previous timeline and establishes a new current
+    state.
     The same set of idempotent procedures are called by a driver for each
     batch of data in sequence. This demonstrates how the same ETL logic can
-    process multiple, independent business entities in a clean, stateful, and
-    transactionally-safe way. A third batch is then processed that contains
-    a series of staggered updates to an entity from a previous batch,
-    demonstrating that the architecture correctly handles stateful,
-    multi-faceted updates across batches.
+    process multiple, independent business entities and their subsequent
+    updates in a clean, stateful, and transactionally-safe way.
 ----------------------------------------------------------------------------
 $$ as doc;
 
@@ -90,7 +92,8 @@ SELECT sql_saga.add_foreign_key(
 -- The master ETL data table. In a real system, this would be a partitioned table.
 CREATE TABLE etl.data_table (
     row_id int primary key,
-    identity_seq int,
+    batch int not null,
+    identity_correlation int,
     -- Common temporal columns
     valid_from date,
     valid_until date,
@@ -113,34 +116,47 @@ CREATE TABLE etl.data_table (
     merge_errors jsonb
 );
 
--- 2. Initial State: The data table has a sparse, staggered timeline for one new business.
---    All rows share the same identity_seq. NULLs indicate that an attribute is
---    either unknown or unchanged in that time slice.
-INSERT INTO etl.data_table (row_id, identity_seq, lu_name, physical_address, postal_address, employees, turnover, valid_from, valid_until) VALUES
+-- 2. Initial State: The data table has a sparse, staggered timeline for multiple businesses across multiple batches.
+--    The identity_correlation identifies the *same* entity, so it must be returned on insert and backfilled by temporal_merge
+--    and backfilled across batches by the caller.
+--    NULLs indicate that an attribute is either unknown or unchanged in that time slice.
+--    As the data comes in they all last until further notice, i.e. until infinity,
+--    but, as new data appear for a target table, the old will get cut off.
+INSERT INTO etl.data_table (row_id, batch, identity_correlation, lu_name, physical_address, postal_address, employees, turnover, valid_from, valid_until) VALUES
     -- Batch 1: NewCo AS
-    (1, 1, 'NewCo AS',      '123 Business Rd', NULL,          NULL,  NULL, '2024-01-01', '2024-03-01'),
-    (2, 1, NULL,            '123 Business Rd', 'PO Box 456',  10,    NULL, '2024-03-01', '2024-05-01'),
-    (3, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 456',  10, 50000, '2024-05-01', '2024-07-01'),
-    (4, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 789',  10, 55000, '2024-07-01', '2024-09-01'),
-    (5, 1, 'RenamedCo AS',  '123 Business Rd', 'PO Box 789',  12, 60000, '2024-09-01', '2025-01-01'),
+    -- Expect creation of a legal_unit and backfill of legal_unit_id, and a physical_location.
+    (1, 1, 1, 'NewCo AS',      '123 Business Rd', NULL,          NULL,  NULL, '2024-01-01', 'infinity'),
+    -- Expect no change to legal_unit nor physical location, but an insert of postal_location and employees.
+    (2, 1, 1, NULL,            NULL,              'PO Box 456',  10,    NULL, '2024-03-01', 'infinity'),
+    -- Expect name update of legal_unit and an insert of turnover.
+    (3, 1, 1, 'RenamedCo AS',  NULL,              NULL,          NULL, 50000, '2024-05-01', 'infinity'),
+    -- Expect update of postal_address and turnover.
+    (4, 1, 1, NULL,            NULL,              'PO Box 789',  NULL, 55000, '2024-07-01', 'infinity'),
+    -- Expect update of employees and turnover.
+    (5, 1, 1, NULL,            NULL,              NULL,          12, 60000, '2024-09-01', 'infinity'),
     -- Batch 2: SecondBiz Inc
-    (6, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', '2024-08-01'),
-    (7, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', '2024-11-01'),
-    (8, 2, 'SecondBiz Inc', '789 Tech Pkwy',   'PO Box 999',        60, 320000, '2024-11-01', '2025-01-01'),
+    (6, 2, 2, 'SecondBiz Inc', '456 Innovation Dr', NULL,              50, 250000, '2024-02-15', 'infinity'),
+    (7, 2, 2, NULL,            '789 Tech Pkwy',   'PO Box 999',        55, 300000, '2024-08-01', 'infinity'),
+    (8, 2, 2, 'SecondBiz Inc', NULL,              NULL,                60, 320000, '2024-11-01', 'infinity'),
     -- Batch 3: A staggered update to the entity from Batch 1, demonstrating cross-batch state.
-    (9,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', '2025-03-01'),
-    (10, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', '2025-05-01'),
-    (11, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', '2025-07-01'),
-    (12, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity');
+    (9, 3,  1, NULL,         NULL,              NULL,         15, 75000, '2025-01-01', 'infinity'),
+    (10, 3, 1, 'FinalCo AS', NULL,              NULL,         NULL, NULL, '2025-03-01', 'infinity'),
+    (11, 3, 1, NULL,         '1 New Street',    NULL,         NULL, NULL, '2025-05-01', 'infinity'),
+    (12, 3, 1, NULL,         NULL,              'PO Box 111', NULL, NULL, '2025-07-01', 'infinity'),
+    -- Batch 4: A batch of no-change operations.
+    -- No change to anything because it's a PATCH with only NULLs for an existing entity.
+    (13, 4, 1, NULL,         NULL,              NULL,         NULL, NULL, '2025-07-01', 'infinity'),
+    -- No change to anything because it's identical to the previous state.
+    (14, 4, 1, 'FinalCo AS', '1 New Street',    'PO Box 111' , 15, 75000, '2025-07-01', 'infinity');
 
 \echo '--- ETL Data Table: Initial State (all generated IDs are NULL) ---'
-TABLE etl.data_table ORDER BY identity_seq, row_id;
+TABLE etl.data_table ORDER BY identity_correlation, row_id;
 
 --------------------------------------------------------------------------------
 \echo '--- Step 3: Define ETL Driver Procedures ---'
 --------------------------------------------------------------------------------
 
-CREATE PROCEDURE etl.process_legal_units(p_row_ids int[])
+CREATE PROCEDURE etl.process_legal_units(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 BEGIN
     -- Create a view for the legal unit batch
@@ -148,15 +164,15 @@ BEGIN
         CREATE OR REPLACE TEMP VIEW source_view_lu AS
         SELECT
             row_id,
-            identity_seq as founding_id, -- Use identity_seq as the founding_id for new entities
+            identity_correlation as founding_id, -- Use identity_correlation as the founding_id for new entities
             legal_unit_id AS id,   -- Map the writeback column to 'id'
             lu_name AS name,
             merge_statuses,
             merge_errors,
             valid_from,
             valid_until
-        FROM etl.data_table WHERE row_id = ANY(%L::int[]);
-    $$, p_row_ids);
+        FROM etl.data_table WHERE batch = %L;
+    $$, p_batch_id);
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
@@ -174,19 +190,19 @@ BEGIN
         p_feedback_error_key => 'legal_unit'
     );
 
-    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_seq
+    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_correlation
     UPDATE etl.data_table dt
     SET legal_unit_id = sub.legal_unit_id
     FROM (
-        SELECT DISTINCT identity_seq, legal_unit_id
+        SELECT DISTINCT identity_correlation, legal_unit_id
         FROM etl.data_table
-        WHERE legal_unit_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE legal_unit_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.legal_unit_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.legal_unit_id IS NULL;
 END;
 $procedure$;
 
-CREATE PROCEDURE etl.process_locations(p_row_ids int[])
+CREATE PROCEDURE etl.process_locations(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 BEGIN
     -- Create a view for the physical locations batch.
@@ -194,7 +210,7 @@ BEGIN
         CREATE OR REPLACE TEMP VIEW source_view_loc_phys AS
         SELECT
             dt.row_id,
-            dt.identity_seq as founding_id,
+            dt.identity_correlation as founding_id,
             dt.physical_location_id AS id,
             dt.legal_unit_id,
             'physical'::text as type,
@@ -204,8 +220,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.row_id = ANY(%L::int[]) AND dt.physical_address IS NOT NULL;
-    $$, p_row_ids);
+        WHERE dt.batch = %L AND dt.physical_address IS NOT NULL;
+    $$, p_batch_id);
 
     -- Merge physical locations
     CALL sql_saga.temporal_merge(
@@ -227,18 +243,18 @@ BEGIN
     UPDATE etl.data_table dt
     SET physical_location_id = sub.physical_location_id
     FROM (
-        SELECT DISTINCT identity_seq, physical_location_id
+        SELECT DISTINCT identity_correlation, physical_location_id
         FROM etl.data_table
-        WHERE physical_location_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE physical_location_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.physical_location_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.physical_location_id IS NULL;
 
     -- Create a view for the postal locations batch.
     EXECUTE format($$
         CREATE OR REPLACE TEMP VIEW source_view_loc_post AS
         SELECT
             dt.row_id,
-            dt.identity_seq as founding_id,
+            dt.identity_correlation as founding_id,
             dt.postal_location_id AS id,
             dt.legal_unit_id,
             'postal'::text as type,
@@ -248,8 +264,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.row_id = ANY(%L::int[]) AND dt.postal_address IS NOT NULL;
-    $$, p_row_ids);
+        WHERE dt.batch = %L AND dt.postal_address IS NOT NULL;
+    $$, p_batch_id);
 
     -- Merge postal locations
     CALL sql_saga.temporal_merge(
@@ -271,22 +287,22 @@ BEGIN
     UPDATE etl.data_table dt
     SET postal_location_id = sub.postal_location_id
     FROM (
-        SELECT DISTINCT identity_seq, postal_location_id
+        SELECT DISTINCT identity_correlation, postal_location_id
         FROM etl.data_table
-        WHERE postal_location_id IS NOT NULL AND row_id = ANY(p_row_ids)
+        WHERE postal_location_id IS NOT NULL AND batch = p_batch_id
     ) AS sub
-    WHERE dt.identity_seq = sub.identity_seq AND dt.postal_location_id IS NULL;
+    WHERE dt.identity_correlation = sub.identity_correlation AND dt.postal_location_id IS NULL;
 END;
 $procedure$;
 
-CREATE PROCEDURE etl.process_stats(p_row_ids int[])
+CREATE PROCEDURE etl.process_stats(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_stat_def RECORD;
     v_view_sql TEXT;
 BEGIN
     FOR v_stat_def IN SELECT * FROM etl.stat_definition LOOP
-        RAISE NOTICE 'Processing statistic: % for row_ids %', v_stat_def.code, p_row_ids;
+        RAISE NOTICE 'Processing statistic: % for batch %', v_stat_def.code, p_batch_id;
 
         -- Dynamically create a view for the current statistic's batch
         v_view_sql := format(
@@ -294,7 +310,7 @@ BEGIN
             CREATE OR REPLACE TEMP VIEW source_view_stat_%s AS
             SELECT
                 dt.row_id,
-                dt.identity_seq as founding_id,
+                dt.identity_correlation as founding_id,
                 dt.%I AS id, -- Map the specific writeback ID column
                 dt.legal_unit_id,
                 %L as stat_definition_id,
@@ -304,13 +320,13 @@ BEGIN
                 dt.valid_from,
                 dt.valid_until
             FROM etl.data_table dt
-            WHERE dt.row_id = ANY(%L::int[]) AND dt.%I IS NOT NULL;
+            WHERE dt.batch = %L AND dt.%I IS NOT NULL;
             $SQL$,
             v_stat_def.code, -- Suffix for unique view name
             format('%s_stat_id', v_stat_def.code), -- e.g., employees_stat_id
             v_stat_def.id,
             v_stat_def.code, -- e.g., employees
-            p_row_ids,
+            p_batch_id,
             v_stat_def.code
         );
         EXECUTE v_view_sql;
@@ -337,16 +353,16 @@ BEGIN
             UPDATE etl.data_table dt
             SET %I = sub.id
             FROM (
-                SELECT DISTINCT identity_seq, %I AS id
+                SELECT DISTINCT identity_correlation, %I AS id
                 FROM etl.data_table
-                WHERE %I IS NOT NULL AND row_id = ANY(%L::int[])
+                WHERE %I IS NOT NULL AND batch = %L
             ) AS sub
-            WHERE dt.identity_seq = sub.identity_seq AND dt.%I IS NULL;
+            WHERE dt.identity_correlation = sub.identity_correlation AND dt.%I IS NULL;
             $SQL$,
             format('%s_stat_id', v_stat_def.code),
             format('%s_stat_id', v_stat_def.code),
             format('%s_stat_id', v_stat_def.code),
-            p_row_ids,
+            p_batch_id,
             format('%s_stat_id', v_stat_def.code)
         );
     END LOOP;
@@ -356,29 +372,42 @@ $procedure$;
 --------------------------------------------------------------------------------
 \echo '--- Step 4: Run ETL Driver for Batches ---'
 --------------------------------------------------------------------------------
-\echo '--- Processing Batch 1 (NewCo AS) ---'
-CALL etl.process_legal_units('{1, 2, 3, 4, 5}');
-CALL etl.process_locations('{1, 2, 3, 4, 5}');
-CALL etl.process_stats('{1, 2, 3, 4, 5}');
+CREATE PROCEDURE etl.run_batch(p_batch_id int)
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    RAISE NOTICE '--- Processing Batch % ---', p_batch_id;
 
-\echo '--- ETL Data Table: After Batch 1 ---'
-TABLE etl.data_table ORDER BY identity_seq, row_id;
+    -- For complex, multi-step ETL processes, the standard and most robust
+    -- solution is to temporarily disable all relevant foreign key triggers
+    -- for the duration of the batch transaction. This allows the transaction
+    -- to reach a temporarily inconsistent state between procedure calls,
+    -- with the guarantee that the final state will be consistent.
+    ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
+    ALTER TABLE etl.location DISABLE TRIGGER USER;
+    ALTER TABLE etl.stat_for_unit DISABLE TRIGGER USER;
 
-\echo '--- Processing Batch 2 (SecondBiz Inc) ---'
-CALL etl.process_legal_units('{6, 7, 8}');
-CALL etl.process_locations('{6, 7, 8}');
-CALL etl.process_stats('{6, 7, 8}');
+    CALL etl.process_legal_units(p_batch_id);
+    CALL etl.process_locations(p_batch_id);
+    CALL etl.process_stats(p_batch_id);
 
-\echo '--- ETL Data Table: After Batch 2 ---'
-TABLE etl.data_table ORDER BY identity_seq, row_id;
+    ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
+    ALTER TABLE etl.location ENABLE TRIGGER USER;
+    ALTER TABLE etl.stat_for_unit ENABLE TRIGGER USER;
+END;
+$procedure$;
 
-\echo '--- Processing Batch 3 (Update to NewCo AS / RenamedCo AS) ---'
-CALL etl.process_legal_units('{9, 10, 11, 12}');
-CALL etl.process_locations('{9, 10, 11, 12}');
-CALL etl.process_stats('{9, 10, 11, 12}');
+DO $do$
+DECLARE
+    v_batch_id int;
+BEGIN
+    FOR v_batch_id IN SELECT DISTINCT batch FROM etl.data_table ORDER BY batch LOOP
+        CALL etl.run_batch(v_batch_id);
+    END LOOP;
+END;
+$do$;
 
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
-TABLE etl.data_table ORDER BY identity_seq, row_id;
+TABLE etl.data_table ORDER BY identity_correlation, row_id;
 
 \echo '--- Final Target States ---'
 \echo '--- legal_unit ---'

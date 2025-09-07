@@ -346,9 +346,9 @@ CALL sql_saga.temporal_merge(
 );
 
 \echo '--- temporal_merge plan ---'
-TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 \echo '--- temporal_merge feedback ---'
-TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 COMMIT;
 \echo '--- temporal_merge call completed successfully ---'

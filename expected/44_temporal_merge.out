@@ -193,7 +193,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                            | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------------+----------
            1 | {101}          | INSERT    | {"id": 1}  |                | 2024-01-01     | 2025-01-01      | {"name": "New EST", "employees": 10, "edit_comment": "Initial Insert", "legal_unit_id": 1} | 
@@ -281,11 +281,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {102}          | UPDATE    | {"id": 2}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 25, "edit_comment": "Starts patch", "legal_unit_id": 1}    | starts
-           2 | {102}          | INSERT    | {"id": 2}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           1 | {102}          | INSERT    | {"id": 2}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           2 | {102}          | UPDATE    | {"id": 2}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 25, "edit_comment": "Starts patch", "legal_unit_id": 1}    | starts
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -373,11 +373,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {103}          | UPDATE    | {"id": 3}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
-           2 | {103}          | INSERT    | {"id": 3}  |                | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 35, "edit_comment": "Finishes patch", "legal_unit_id": 1}  | 
+           1 | {103}          | INSERT    | {"id": 3}  |                | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 35, "edit_comment": "Finishes patch", "legal_unit_id": 1}  | 
+           2 | {103}          | UPDATE    | {"id": 3}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -467,12 +467,12 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {104}          | UPDATE    | {"id": 4}  | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
-           2 | {104}          | INSERT    | {"id": 4}  |                | 2024-07-01     | 2025-01-01      | {"name": "Patched", "employees": 45, "edit_comment": "During patch", "legal_unit_id": 1}    | 
-           3 | {104}          | INSERT    | {"id": 4}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           1 | {104}          | INSERT    | {"id": 4}  |                | 2024-07-01     | 2025-01-01      | {"name": "Patched", "employees": 45, "edit_comment": "During patch", "legal_unit_id": 1}    | 
+           2 | {104}          | INSERT    | {"id": 4}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           3 | {104}          | UPDATE    | {"id": 4}  | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -563,11 +563,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {105}          | UPDATE    | {"id": 5}  | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
-           2 | {105}          | INSERT    | {"id": 5}  |                | 2024-07-01     | 2025-07-01      | {"name": "Patched", "employees": 55, "edit_comment": "Overlaps patch", "legal_unit_id": 1}  | 
+           1 | {105}          | INSERT    | {"id": 5}  |                | 2024-07-01     | 2025-07-01      | {"name": "Patched", "employees": 55, "edit_comment": "Overlaps patch", "legal_unit_id": 1}  | 
+           2 | {105}          | UPDATE    | {"id": 5}  | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -655,11 +655,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                              data                                               | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------
-           2 | {106}          | UPDATE    | {"id": 6}  | 2024-07-01     | 2025-01-01     | 2025-07-01      | {"name": "Original", "employees": 60, "edit_comment": "Original slice", "legal_unit_id": 1}     | finishes
            1 | {106}          | INSERT    | {"id": 6}  |                | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 65, "edit_comment": "Overlapped by patch", "legal_unit_id": 1} | 
+           2 | {106}          | UPDATE    | {"id": 6}  | 2024-07-01     | 2025-01-01     | 2025-07-01      | {"name": "Original", "employees": 60, "edit_comment": "Original slice", "legal_unit_id": 1}     | finishes
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -842,8 +842,8 @@ SELECT * FROM (VALUES
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+----------------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 |                | SKIP_IDENTICAL | {"id": 8}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 80, "edit_comment": "Original slice", "legal_unit_id": 1} | equals
-           2 | {108}          | INSERT         | {"id": 8}  |                | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 85, "edit_comment": "Met by patch", "legal_unit_id": 1}    | 
+           1 | {108}          | INSERT         | {"id": 8}  |                | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 85, "edit_comment": "Met by patch", "legal_unit_id": 1}    | 
+           2 |                | SKIP_IDENTICAL | {"id": 8}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 80, "edit_comment": "Original slice", "legal_unit_id": 1} | equals
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1026,8 +1026,8 @@ SELECT * FROM (VALUES
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                             data                                             | relation 
 -------------+----------------+----------------+------------+----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------
-           1 |                | SKIP_IDENTICAL | {"id": 10} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 100, "edit_comment": "Original slice", "legal_unit_id": 1} | equals
-           2 | {110}          | INSERT         | {"id": 10} |                | 2025-01-02     | 2026-01-01      | {"name": "Patched", "employees": 105, "edit_comment": "After patch", "legal_unit_id": 1}     | 
+           1 | {110}          | INSERT         | {"id": 10} |                | 2025-01-02     | 2026-01-01      | {"name": "Patched", "employees": 105, "edit_comment": "After patch", "legal_unit_id": 1}     | 
+           2 |                | SKIP_IDENTICAL | {"id": 10} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 100, "edit_comment": "Original slice", "legal_unit_id": 1} | equals
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1113,7 +1113,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                           data                                            | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------------------------------------------------------------------------+----------
            1 | {111}          | UPDATE    | {"id": 11} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 115, "edit_comment": "Equals patch", "legal_unit_id": 1} | equals
@@ -1212,11 +1212,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {112}          | UPDATE    | {"id": 12} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 25, "edit_comment": "Starts replace", "legal_unit_id": 1} | starts
-           2 | {112}          | INSERT    | {"id": 12} |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           1 | {112}          | INSERT    | {"id": 12} |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           2 | {112}          | UPDATE    | {"id": 12} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 25, "edit_comment": "Starts replace", "legal_unit_id": 1} | starts
 (2 rows)
 
 -- Verify feedback
@@ -1310,11 +1310,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                             data                                              | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------
-           1 | {113}          | UPDATE    | {"id": 13} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1}   | starts
-           2 | {113}          | INSERT    | {"id": 13} |                | 2025-01-01     | 2026-01-01      | {"name": "Replaced", "employees": 35, "edit_comment": "Finishes replace", "legal_unit_id": 1} | 
+           1 | {113}          | INSERT    | {"id": 13} |                | 2025-01-01     | 2026-01-01      | {"name": "Replaced", "employees": 35, "edit_comment": "Finishes replace", "legal_unit_id": 1} | 
+           2 | {113}          | UPDATE    | {"id": 13} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1}   | starts
 (2 rows)
 
 -- Verify feedback
@@ -1410,12 +1410,12 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {114}          | UPDATE    | {"id": 14} | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
-           2 | {114}          | INSERT    | {"id": 14} |                | 2024-07-01     | 2025-01-01      | {"name": "Replaced", "employees": 45, "edit_comment": "During replace", "legal_unit_id": 1} | 
-           3 | {114}          | INSERT    | {"id": 14} |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           1 | {114}          | INSERT    | {"id": 14} |                | 2024-07-01     | 2025-01-01      | {"name": "Replaced", "employees": 45, "edit_comment": "During replace", "legal_unit_id": 1} | 
+           2 | {114}          | INSERT    | {"id": 14} |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           3 | {114}          | UPDATE    | {"id": 14} | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
 (3 rows)
 
 -- Verify feedback
@@ -1512,11 +1512,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                             data                                              | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------
-           1 | {115}          | UPDATE    | {"id": 15} | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1}   | starts
-           2 | {115}          | INSERT    | {"id": 15} |                | 2024-07-01     | 2025-07-01      | {"name": "Replaced", "employees": 55, "edit_comment": "Overlaps replace", "legal_unit_id": 1} | 
+           1 | {115}          | INSERT    | {"id": 15} |                | 2024-07-01     | 2025-07-01      | {"name": "Replaced", "employees": 55, "edit_comment": "Overlaps replace", "legal_unit_id": 1} | 
+           2 | {115}          | UPDATE    | {"id": 15} | 2024-01-01     | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1}   | starts
 (2 rows)
 
 -- Verify feedback
@@ -1608,7 +1608,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                             data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------
            1 | {116}          | UPDATE    | {"id": 16} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 115, "edit_comment": "Equals replace", "legal_unit_id": 1} | equals
@@ -1697,7 +1697,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
            1 | {117}          | UPDATE    | {"id": 17} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": null, "employees": null, "edit_comment": "Replaced with NULL", "legal_unit_id": 1} | equals
@@ -1792,13 +1792,13 @@ SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temp
 \echo '--- Planner: Expected Plan (Empty since not found) ---'
 --- Planner: Expected Plan (Empty since not found) ---
 SELECT * FROM pg_temp.temporal_merge_plan WHERE FALSE;
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
 (0 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
 -------------+----------------+----------------+------------+----------------+----------------+-----------------+------+----------
            1 | {118}          | SKIP_NO_TARGET | {"id": 18} |                |                |                 |      | 
@@ -1871,13 +1871,13 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan (Empty since not found) ---'
 --- Planner: Expected Plan (Empty since not found) ---
 SELECT * FROM pg_temp.temporal_merge_plan WHERE FALSE;
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------+----------------+----------------+-----------------+------+----------
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
 (0 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until | data | relation 
 -------------+----------------+----------------+------------+----------------+----------------+-----------------+------+----------
            1 | {119}          | SKIP_NO_TARGET | {"id": 19} |                |                |                 |      | 
@@ -1964,7 +1964,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                               data                                                | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------
            1 | {120}          | UPDATE    | {"id": 20} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} | equals
@@ -2057,7 +2057,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                               data                                                | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------
            1 | {121}          | UPDATE    | {"id": 21} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} | equals
@@ -2153,7 +2153,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                         | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------
            1 | {122}          | UPDATE    | {"id": 22} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} | equals
@@ -2246,7 +2246,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                          | relation 
 -------------+----------------+----------------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------+----------
            1 | {123}          | SKIP_IDENTICAL | {"id": 23} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "Same Comment", "legal_unit_id": 1} | equals
@@ -2354,10 +2354,10 @@ SELECT * FROM (VALUES
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                            data                                             | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------
-           1 | {124}          | UPDATE    | {"id": 24} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
-           2 | {124}          | INSERT    | {"id": 24} |                | 2025-01-01     | 2026-01-01      | {"name": "Patch 1", "employees": 15, "edit_comment": "First patch", "legal_unit_id": 1}     | 
-           3 | {125}          | INSERT    | {"id": 24} |                | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | 
-           4 | {125}          | INSERT    | {"id": 24} |                | 2027-01-01     | 2028-01-01      | {"name": "Patch 2", "employees": 20, "edit_comment": "Second patch", "legal_unit_id": 1}    | 
+           1 | {124}          | INSERT    | {"id": 24} |                | 2025-01-01     | 2026-01-01      | {"name": "Patch 1", "employees": 15, "edit_comment": "First patch", "legal_unit_id": 1}     | 
+           2 | {125}          | INSERT    | {"id": 24} |                | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           3 | {125}          | INSERT    | {"id": 24} |                | 2027-01-01     | 2028-01-01      | {"name": "Patch 2", "employees": 20, "edit_comment": "Second patch", "legal_unit_id": 1}    | 
+           4 | {124}          | UPDATE    | {"id": 24} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | starts
 (4 rows)
 
 -- Verify feedback
@@ -2665,7 +2665,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                              data                              | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+----------------------------------------------------------------+----------
            1 | {401,402}      | INSERT    | {"id": 4}  |                | 2023-01-02     | 2024-01-01      | {"name": "Continuous Op", "employees": 20, "legal_unit_id": 1} | 
@@ -2761,7 +2761,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                              data                              | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+----------------------------------------------------------------+----------
            1 | {501,502,503}  | INSERT    | {"id": 5}  |                | 2023-01-02     | 2023-10-01      | {"name": "Three-part Op", "employees": 30, "legal_unit_id": 1} | 
@@ -2958,7 +2958,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                             data                             |  relation  
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+--------------------------------------------------------------+------------
            1 | {701}          | UPDATE    | {"id": 7}  | 2023-01-01     | 2023-01-01     | 2024-01-01      | {"name": "Existing Op", "employees": 60, "legal_unit_id": 1} | started by
@@ -3102,7 +3102,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                              data                                               | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------
            1 | {801}          | INSERT    | {"id": 40} |                | 2024-01-01     | 2025-01-01      | {"name": "Default Test", "employees": 10, "edit_comment": "Default Insert", "legal_unit_id": 1} | 
@@ -3233,11 +3233,11 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {901}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Patched", "valid_to": "2024-12-31"}  | starts
-           2 | {901}          | INSERT    | {"id": 1}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "valid_to": "2025-12-31"} | 
+           1 | {901}          | INSERT    | {"id": 1}  |                | 2025-01-01     | 2026-01-01      | {"name": "Original", "valid_to": "2025-12-31"} | 
+           2 | {901}          | UPDATE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Patched", "valid_to": "2024-12-31"}  | starts
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -3668,7 +3668,7 @@ SELECT * FROM (VALUES
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |           data            | relation 
 -------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------+----------
            1 | {1001}         | INSERT    | {"id": 1}  |                | 2024-01-01     | 2025-01-01      | {"name": "Serial Widget"} | 

@@ -139,7 +139,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -194,7 +194,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -249,7 +249,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -298,7 +298,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -350,7 +350,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -402,7 +402,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (104, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -454,7 +454,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (105, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -506,7 +506,7 @@ SELECT * FROM (VALUES
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan;
+SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);

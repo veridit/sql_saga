@@ -102,11 +102,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                data                                 |  relation  
--------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------+------------
-           1 | {101}          | DELETE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-02-01      |                                                                     | equals
-           2 | {101}          | UPDATE    | {"id": 1}  | 2024-02-01     | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} | started by
-           3 | {101}          | DELETE    | {"id": 1}  | 2024-04-01     | 2024-04-01     | 2024-05-01      |                                                                     | equals
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 |  relation  
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+------------
+           1 | {101}          | UPDATE    | GROW                   | {"id": 1}  | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} | started by
+           2 | {101}          | DELETE    |                        | {"id": 1}  | 2024-01-01     | 2024-02-01      | 2024-01-01     | 2024-02-01      |                                                                     | equals
+           3 | {101}          | DELETE    |                        | {"id": 1}  | 2024-04-01     | 2024-05-01      | 2024-04-01     | 2024-05-01      |                                                                     | equals
 (3 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -184,14 +184,14 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                          data                          | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+--------------------------------------------------------+----------
-           1 |                | SKIP_IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-02-01      | {"value": "A1", "edit_comment": "Slice 1"}             | equals
-           2 | {201}          | UPDATE         | {"id": 1}  | 2024-02-01     | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | starts
-           3 | {201}          | INSERT         | {"id": 1}  |                | 2024-02-10     | 2024-02-20      | {"value": "A2-patch", "edit_comment": "Patch S2"}      | 
-           4 | {201}          | INSERT         | {"id": 1}  |                | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | 
-           5 |                | SKIP_IDENTICAL | {"id": 1}  | 2024-04-01     | 2024-04-01     | 2024-05-01      | {"value": "A3", "edit_comment": "Slice 3 (After Gap)"} | equals
-           6 |                | DELETE         | {"id": 2}  | 2023-01-01     | 2023-01-01     | 2026-01-01      |                                                        | equals
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                          data                          | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------+----------
+           1 | {201}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-10     | 2024-02-20      | {"value": "A2-patch", "edit_comment": "Patch S2"}      | 
+           2 | {201}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | 
+           3 | {201}          | UPDATE         | SHRINK                 | {"id": 1}  | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | starts
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2024-02-01      | 2024-01-01     | 2024-02-01      | {"value": "A1", "edit_comment": "Slice 1"}             | equals
+           5 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-04-01     | 2024-05-01      | 2024-04-01     | 2024-05-01      | {"value": "A3", "edit_comment": "Slice 3 (After Gap)"} | equals
+           6 |                | DELETE         |                        | {"id": 2}  | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2026-01-01      |                                                        | equals
 (6 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -278,12 +278,12 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                data                                 |  relation  
--------------+----------------+-----------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------+------------
-           1 | {301}          | DELETE    | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2024-02-01      |                                                                     | equals
-           2 | {301}          | UPDATE    | {"id": 1}  | 2024-02-01     | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} | started by
-           3 | {301}          | DELETE    | {"id": 1}  | 2024-04-01     | 2024-04-01     | 2024-05-01      |                                                                     | equals
-           4 |                | DELETE    | {"id": 2}  | 2023-01-01     | 2023-01-01     | 2026-01-01      |                                                                     | equals
+ plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 |  relation  
+-------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+------------
+           1 | {301}          | UPDATE    | GROW                   | {"id": 1}  | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} | started by
+           2 | {301}          | DELETE    |                        | {"id": 1}  | 2024-01-01     | 2024-02-01      | 2024-01-01     | 2024-02-01      |                                                                     | equals
+           3 | {301}          | DELETE    |                        | {"id": 1}  | 2024-04-01     | 2024-05-01      | 2024-04-01     | 2024-05-01      |                                                                     | equals
+           4 |                | DELETE    |                        | {"id": 2}  | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2026-01-01      |                                                                     | equals
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'

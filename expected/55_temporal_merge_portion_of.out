@@ -102,12 +102,12 @@ CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass,
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                     data                                     | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+------------------------------------------------------------------------------+----------
-           1 | {101}          | UPDATE         | {"id": 1}  | 2021-01-01     | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                             | starts
-           2 | {101}          | INSERT         | {"id": 1}  |                | 2021-07-01     | 2022-07-01      | {"payload": "Patched-Straddle", "edit_comment": "Surgical Patch Straddling"} | 
-           3 | {101}          | UPDATE         | {"id": 1}  | 2022-01-01     | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                             | finishes
-           4 |                | SKIP_IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}                              | equals
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                     data                                     | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------+----------
+           1 | {101}          | INSERT         |                        | {"id": 1}  |                |                 | 2021-07-01     | 2022-07-01      | {"payload": "Patched-Straddle", "edit_comment": "Surgical Patch Straddling"} | 
+           2 | {101}          | UPDATE         | SHRINK                 | {"id": 1}  | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                             | starts
+           3 | {101}          | UPDATE         | SHRINK                 | {"id": 1}  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                             | finishes
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}                              | equals
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -178,12 +178,12 @@ CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass,
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                      data                                       | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------
-           1 | {201}          | UPDATE         | {"id": 1}  | 2021-01-01     | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                                | starts
-           2 | {201}          | INSERT         | {"id": 1}  |                | 2021-07-01     | 2022-07-01      | {"payload": "Replaced-Straddle", "edit_comment": "Surgical Replace Straddling"} | 
-           3 | {201}          | UPDATE         | {"id": 1}  | 2022-01-01     | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                                | finishes
-           4 |                | SKIP_IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}                                 | equals
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------
+           1 | {201}          | INSERT         |                        | {"id": 1}  |                |                 | 2021-07-01     | 2022-07-01      | {"payload": "Replaced-Straddle", "edit_comment": "Surgical Replace Straddling"} | 
+           2 | {201}          | UPDATE         | SHRINK                 | {"id": 1}  | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                                | starts
+           3 | {201}          | UPDATE         | SHRINK                 | {"id": 1}  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                                | finishes
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}                                 | equals
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -254,12 +254,12 @@ CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass,
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                       data                       | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+--------------------------------------------------+----------
-           1 | {301}          | UPDATE         | {"id": 1}  | 2021-01-01     | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"} | starts
-           2 | {301}          | SKIP_IDENTICAL | {"id": 1}  |                | 2021-07-01     | 2022-07-01      |                                                  | 
-           3 | {301}          | UPDATE         | {"id": 1}  | 2022-01-01     | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"} | finishes
-           4 |                | SKIP_IDENTICAL | {"id": 1}  | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}  | equals
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                       data                       | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------+----------
+           1 | {301}          | UPDATE         | SHRINK                 | {"id": 1}  | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"} | starts
+           2 | {301}          | UPDATE         | SHRINK                 | {"id": 1}  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"} | finishes
+           3 | {301}          | SKIP_IDENTICAL |                        | {"id": 1}  |                |                 | 2021-07-01     | 2022-07-01      |                                                  | 
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"payload": "B-1", "edit_comment": "After Gap"}  | equals
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'
