@@ -165,19 +165,19 @@ TABLE sql_saga.foreign_keys; -- The column name should be updated here
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 419 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_fk_update" on table "rename_test_ref" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 419 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_update" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 419 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
 ERROR:  cannot drop or rename trigger "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" on table "rename_test" because it is used in an era foreign key "rename_test_ref_col2_COLUMN1_col3_q"
-CONTEXT:  PL/pgSQL function rename_following() line 400 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 419 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |         type         | table_schema |   table_name    |    column_names     | fk_era_name |             fk_table_columns_snapshot             |       unique_key_name        | match_type | update_action | delete_action |               fk_insert_trigger               |               fk_update_trigger               | fk_check_constraint | fk_helper_function |               uk_update_trigger               |               uk_delete_trigger               

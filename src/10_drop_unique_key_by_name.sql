@@ -60,12 +60,20 @@ BEGIN
             IF unique_key_row.predicate IS NOT NULL THEN
                 -- This is a unique index, drop it and the exclusion constraint
                 EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
-                    unique_key_row.table_schema, unique_key_row.unique_constraint,
-                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.exclude_constraint);
+                    unique_key_row.table_schema, /* %I */
+                    unique_key_row.unique_constraint, /* %I */
+                    unique_key_row.table_schema, /* %I */
+                    unique_key_row.table_name, /* %I */
+                    unique_key_row.exclude_constraint /* %I */
+                );
             ELSE
                 -- This is a unique constraint, drop both constraints
                 EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I, DROP CONSTRAINT %I',
-                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.unique_constraint, unique_key_row.exclude_constraint);
+                    unique_key_row.table_schema, /* %I */
+                    unique_key_row.table_name, /* %I */
+                    unique_key_row.unique_constraint, /* %I */
+                    unique_key_row.exclude_constraint /* %I */
+                );
             END IF;
         END IF;
     END LOOP;

@@ -72,10 +72,10 @@ BEGIN
         bstartval := jold->info.valid_from_column_name;
         bendval := jold->info.valid_until_column_name;
 
-        EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)', fromval, info.datatype, bendval, info.datatype, bstartval, info.datatype, toval, info.datatype) INTO test;
+        EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)', fromval /* %L */, info.datatype /* %s */, bendval /* %L */, info.datatype /* %s */, bstartval /* %L */, info.datatype /* %s */, toval /* %L */, info.datatype /* %s */) INTO test;
         IF NOT test THEN RETURN NULL; END IF;
 
-        EXECUTE format('SELECT %L::%s < %L::%s AND %L::%s < %L::%s', bstartval, info.datatype, toval, info.datatype, fromval, info.datatype, bendval, info.datatype) INTO test;
+        EXECUTE format('SELECT %L::%s < %L::%s AND %L::%s < %L::%s', bstartval /* %L */, info.datatype /* %s */, toval /* %L */, info.datatype /* %s */, fromval /* %L */, info.datatype /* %s */, bendval /* %L */, info.datatype /* %s */) INTO test;
         IF NOT test THEN RETURN NULL; END IF;
 
         pre_row := jold;
@@ -89,7 +89,7 @@ BEGIN
         IF new_row = jold THEN RETURN NULL; END IF;
 
         pre_assigned := false;
-        EXECUTE format(TEST_SQL, info.datatype, bstartval, fromval, bendval) INTO test;
+        EXECUTE format(TEST_SQL, info.datatype /* %1$s */, bstartval /* %2$L */, fromval /* %3$L */, bendval /* %4$L */) INTO test;
         IF test THEN
             pre_assigned := true;
             pre_row := jsonb_set(pre_row, ARRAY[info.valid_until_column_name], fromval);
@@ -97,7 +97,7 @@ BEGIN
         END IF;
 
         post_assigned := false;
-        EXECUTE format(TEST_SQL, info.datatype, bstartval, toval, bendval) INTO test;
+        EXECUTE format(TEST_SQL, info.datatype /* %1$s */, bstartval /* %2$L */, toval /* %3$L */, bendval /* %4$L */) INTO test;
         IF test THEN
             post_assigned := true;
             new_row := jsonb_set(new_row, ARRAY[info.valid_until_column_name], toval::jsonb);
@@ -141,26 +141,30 @@ BEGIN
 
         IF pre_assigned THEN
             EXECUTE format('INSERT INTO %I.%I (%s) VALUES (%s)',
-                info.table_schema,
-                info.table_name,
-                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)),
-                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row))
+                info.table_schema, /* %I */
+                info.table_name, /* %I */
+                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)), /* %s */
+                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)) /* %s */
             );
         END IF;
 
         EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I = %s AND %I = %s',
-                       info.table_schema, info.table_name,
-                       (SELECT string_agg(format('%I = %L', j.key, j.value), ', ') FROM (SELECT key, value FROM jsonb_each_text(new_row) EXCEPT ALL SELECT key, value FROM jsonb_each_text(jold)) AS j),
-                       (SELECT string_agg(format('%I = %L', j.key, j.value), ' AND ') FROM jsonb_each_text(jold) j WHERE j.key = ANY(identifier_columns)),
-                       info.valid_from_column_name, quote_literal(bstartval::text),
-                       info.valid_until_column_name, quote_literal(bendval::text));
+                       info.table_schema, /* %I */
+                       info.table_name, /* %I */
+                       (SELECT string_agg(format('%I = %L', j.key, j.value), ', ') FROM (SELECT key, value FROM jsonb_each_text(new_row) EXCEPT ALL SELECT key, value FROM jsonb_each_text(jold)) AS j), /* %s */
+                       (SELECT string_agg(format('%I = %L', j.key, j.value), ' AND ') FROM jsonb_each_text(jold) j WHERE j.key = ANY(identifier_columns)), /* %s */
+                       info.valid_from_column_name, /* %I */
+                       quote_literal(bstartval::text), /* %s */
+                       info.valid_until_column_name, /* %I */
+                       quote_literal(bendval::text) /* %s */
+        );
 
         IF post_assigned THEN
             EXECUTE format('INSERT INTO %I.%I (%s) VALUES (%s)',
-                info.table_schema,
-                info.table_name,
-                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)),
-                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row))
+                info.table_schema, /* %I */
+                info.table_name, /* %I */
+                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)), /* %s */
+                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row)) /* %s */
             );
         END IF;
 

@@ -48,12 +48,12 @@ BEGIN
                 DECLARE range_type regtype;
                 BEGIN
                     SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-                    EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type, range_type) INTO derived_from, derived_until USING user_range;
+                    EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type /* %s */, range_type /* %s */) INTO derived_from, derived_until USING user_range;
                 END;
             ELSIF to_changed THEN
                 -- Derivation Source: valid_to has the second highest precedence.
                 derived_from := user_from;
-                EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype) INTO derived_until USING user_to;
+                EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype /* %s */) INTO derived_until USING user_to;
             ELSE -- Derivation Source: bounds are the default.
                 derived_from  := user_from;
                 derived_until := user_until;
@@ -65,12 +65,12 @@ BEGIN
             DECLARE range_type regtype;
             BEGIN
                 SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-                EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type, range_type) INTO derived_from, derived_until USING user_range;
+                EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type /* %s */, range_type /* %s */) INTO derived_from, derived_until USING user_range;
             END;
         ELSIF to_col IS NOT NULL AND user_to IS NOT NULL THEN
             -- Derivation Source: valid_to has the second highest precedence.
             derived_from := user_from;
-            EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype) INTO derived_until USING user_to;
+            EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype /* %s */) INTO derived_until USING user_to;
         ELSE
             -- Derivation Source: bounds are the default.
             derived_from  := user_from;
@@ -88,7 +88,7 @@ BEGIN
 
     -- Step 2: From the derived bounds, derive all other representations.
     IF to_col IS NOT NULL AND derived_until IS NOT NULL THEN
-        EXECUTE format('SELECT CASE WHEN $1 = ''infinity'' THEN ''infinity'' ELSE ($1::%s - 1)::text END', range_subtype)
+        EXECUTE format('SELECT CASE WHEN $1 = ''infinity'' THEN ''infinity'' ELSE ($1::%s - 1)::text END', range_subtype /* %s */)
             INTO derived_to
             USING derived_until;
     END IF;
@@ -97,7 +97,7 @@ BEGIN
         DECLARE range_type regtype;
         BEGIN
             SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-            EXECUTE format('SELECT %s($1::%s, $2::%s, ''[)'')', range_type, range_subtype, range_subtype) INTO derived_range USING derived_from, derived_until;
+            EXECUTE format('SELECT %s($1::%s, $2::%s, ''[)'')', range_type /* %s */, range_subtype /* %s */, range_subtype /* %s */) INTO derived_range USING derived_from, derived_until;
         EXCEPTION WHEN data_exception THEN -- let CHECK constraint handle invalid bounds
         END;
     END IF;

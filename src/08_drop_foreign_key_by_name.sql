@@ -46,35 +46,35 @@ BEGIN
         CASE foreign_key_row.type
             WHEN 'temporal_to_temporal' THEN
                 IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_insert_trigger) THEN
-                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger, fk_table_oid);
+                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_insert_trigger /* %I */, fk_table_oid /* %s */);
                 END IF;
                 IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = fk_table_oid AND tgname = foreign_key_row.fk_update_trigger) THEN
-                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger, fk_table_oid);
+                    EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.fk_update_trigger /* %I */, fk_table_oid /* %s */);
                 END IF;
             WHEN 'regular_to_temporal' THEN
                 IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
-                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid, foreign_key_row.fk_check_constraint);
+                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */);
                 END IF;
                 -- If no other foreign keys use the helper function, drop it.
                 IF NOT EXISTS (
                     SELECT 1 FROM sql_saga.foreign_keys
                     WHERE fk_helper_function = foreign_key_row.fk_helper_function
                 ) THEN
-                    EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function);
+                    EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function /* %s */);
                 END IF;
         END CASE;
 
-        SELECT to_regclass(format('%I.%I', uk.table_schema, uk.table_name))
+        SELECT to_regclass(format('%I.%I', uk.table_schema /* %I */, uk.table_name /* %I */))
         INTO unique_table_oid
         FROM sql_saga.unique_keys AS uk
         WHERE uk.unique_key_name = foreign_key_row.unique_key_name;
 
         IF FOUND AND pg_catalog.to_regclass(unique_table_oid::text) IS NOT NULL THEN
             IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_update_trigger) THEN
-                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger, unique_table_oid);
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger /* %I */, unique_table_oid /* %s */);
             END IF;
             IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_delete_trigger) THEN
-                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger, unique_table_oid);
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger /* %I */, unique_table_oid /* %s */);
             END IF;
         END IF;
     END LOOP;

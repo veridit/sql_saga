@@ -71,17 +71,21 @@ BEGIN
 
                 IF identifier_columns IS NULL THEN
                     RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key for era "%" to support updatable views',
-                        format('%I.%I', r.schema_name, r.table_name)::regclass, r.era_name;
+                        format('%I.%I', r.schema_name /* %I */, r.table_name /* %I */)::regclass, r.era_name;
                 END IF;
 
                 SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
 
                 view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'for_portion_of');
                 trigger_name := 'for_portion_of_' || r.era_name;
-                EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name, view_name, r.table_name);
-                EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
+                EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */);
+                EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_owner::regrole /* %s */);
                 EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.for_portion_of_trigger(%s)',
-                    trigger_name, r.schema_name, view_name, identifier_columns_quoted);
+                    trigger_name, /* %I */
+                    r.schema_name, /* %I */
+                    view_name, /* %I */
+                    identifier_columns_quoted /* %s */
+                );
                 INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name)
                     VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name);
             END;

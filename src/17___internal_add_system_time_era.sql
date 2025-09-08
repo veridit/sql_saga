@@ -70,12 +70,12 @@ BEGIN
     WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
 
     IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', valid_from_column_name);
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', valid_from_column_name /* %I */);
         valid_from_attnum := 0;
         valid_from_type := 'timestamp with time zone'::regtype;
         valid_from_notnull := true;
     END IF;
-    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', valid_from_column_name);
+    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', valid_from_column_name /* %I */);
 
     IF valid_from_attnum < 0 THEN
         RAISE EXCEPTION 'system columns cannot be used in an era';
@@ -87,12 +87,12 @@ BEGIN
     WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
 
     IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', valid_until_column_name);
+        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', valid_until_column_name /* %I */);
         valid_until_attnum := 0;
         valid_until_type := 'timestamp with time zone'::regtype;
         valid_until_notnull := true;
     ELSE
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name /* %I */);
     END IF;
 
     IF valid_until_attnum < 0 THEN
@@ -115,42 +115,42 @@ BEGIN
     END CASE;
 
     IF NOT valid_from_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name /* %I */);
     END IF;
     IF NOT valid_until_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name /* %I */);
     END IF;
 
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name /* %I */, valid_until_column_name /* %I */);
     BEGIN
         IF bounds_check_constraint IS NULL THEN
             bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
         END IF;
-        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint /* %I */, condef /* %s */);
     END;
 
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
+        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name /* %I */);
     BEGIN
         IF infinity_check_constraint IS NULL THEN
             infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
         END IF;
-        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
+        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint /* %I */, condef /* %s */);
     END;
 
     IF alter_commands <> '{}' THEN
-        EXECUTE format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(alter_commands, ', '));
+        EXECUTE format('ALTER TABLE %I.%I %s', table_schema /* %I */, table_name /* %I */, array_to_string(alter_commands, ', ') /* %s */);
     END IF;
 
     generated_always_trigger := coalesce(generated_always_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_generated_always'));
-    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger, table_oid);
+    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger /* %I */, table_oid /* %s */);
 
     write_history_trigger := coalesce(write_history_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_write_history'));
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger, table_oid);
+    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger /* %I */, table_oid /* %s */);
 
     truncate_trigger := coalesce(truncate_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'truncate'));
-    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger, table_oid);
+    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
 
     DECLARE
         range_subtype_category char(1);

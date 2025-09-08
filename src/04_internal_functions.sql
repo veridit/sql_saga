@@ -66,7 +66,7 @@ BEGIN
     FROM unnest(resizable) AS u (t);
 
     LOOP
-        result := format('%s%s', array_to_string(resizable, separator), separator || fixed);
+        result := format('%s%s', array_to_string(resizable, separator) /* %s */, separator || fixed /* %s */);
         IF octet_length(result) <= NAMEDATALEN-extra-1 THEN
             RETURN result;
         END IF;
@@ -101,7 +101,7 @@ BEGIN
     max_length := greatest(length(table_name), length(era_name));
 
     LOOP
-        result := format('%s__%s_%s', table_name, view_type_suffix, era_name);
+        result := format('%s__%s_%s', table_name /* %s */, view_type_suffix /* %s */, era_name /* %s */);
         IF octet_length(result) <= NAMEDATALEN-1 THEN
             RETURN result;
         END IF;

@@ -42,22 +42,22 @@ BEGIN
                 JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
                 WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name)
             LOOP
-                fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema, fk_row.table_name));
+                fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
                 -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
                 IF fk_table_oid IS NOT NULL THEN
                     IF fk_row.type = 'temporal_to_temporal' THEN
                         IF fk_row.fk_insert_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_insert_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_insert_trigger, fk_table_oid);
+                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_insert_trigger /* %I */, fk_table_oid /* %s */);
                         END IF;
                         IF fk_row.fk_update_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_update_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_update_trigger, fk_table_oid);
+                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_update_trigger /* %I */, fk_table_oid /* %s */);
                         END IF;
                     ELSE -- 'regular_to_temporal'
                         IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
-                            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid, fk_row.fk_check_constraint);
+                            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
                         END IF;
                         IF fk_row.fk_helper_function IS NOT NULL THEN
-                           EXECUTE format('DROP FUNCTION IF EXISTS %s', fk_row.fk_helper_function);
+                           EXECUTE format('DROP FUNCTION IF EXISTS %s', fk_row.fk_helper_function /* %s */);
                         END IF;
                     END IF;
                 END IF;
@@ -74,14 +74,14 @@ BEGIN
                 FROM sql_saga.foreign_keys fk JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
                 WHERE (fk.table_schema, fk.table_name) = (r.schema_name, r.object_name)
             LOOP
-                uk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.uk_schema, fk_row.uk_table));
+                uk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.uk_schema /* %I */, fk_row.uk_table /* %I */));
                 -- Use DROP IF EXISTS because the UK table might have been dropped in the same command.
                 IF uk_table_oid IS NOT NULL THEN
                     IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_update_trigger) THEN
-                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_update_trigger, uk_table_oid);
+                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_update_trigger /* %I */, uk_table_oid /* %s */);
                     END IF;
                     IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_delete_trigger) THEN
-                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_delete_trigger, uk_table_oid);
+                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_delete_trigger /* %I */, uk_table_oid /* %s */);
                     END IF;
                 END IF;
             END LOOP;

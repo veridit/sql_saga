@@ -51,14 +51,19 @@ BEGIN
      */
     FOR sql IN
         SELECT pg_catalog.format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
-            sa.attname, ea.attname, e.table_schema, e.table_name, e.era_name)
+            sa.attname, /* %L */
+            ea.attname, /* %L */
+            e.table_schema, /* %L */
+            e.table_name, /* %L */
+            e.era_name /* %L */
+        )
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.bounds_check_constraint)
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
         WHERE (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname /* %I */, ea.attname /* %I */)
     LOOP
         EXECUTE sql;
     END LOOP;
@@ -69,14 +74,18 @@ BEGIN
      */
     FOR sql IN
         SELECT pg_catalog.format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
-            c.conname, e.table_schema, e.table_name, e.era_name)
+            c.conname, /* %L */
+            e.table_schema, /* %L */
+            e.table_name, /* %L */
+            e.era_name /* %L */
+        )
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
         WHERE e.bounds_check_constraint <> c.conname
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname /* %I */, ea.attname /* %I */)
           AND (e.valid_from_column_name, e.valid_until_column_name) = (sa.attname, ea.attname)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.bounds_check_constraint))
     LOOP
@@ -160,7 +169,7 @@ BEGIN
     BEGIN
         FOR v_view_row IN SELECT * FROM sql_saga.updatable_view
         LOOP
-            v_view_oid := to_regclass(format('%I.%I', v_view_row.view_schema, v_view_row.view_name));
+            v_view_oid := to_regclass(format('%I.%I', v_view_row.view_schema /* %I */, v_view_row.view_name /* %I */));
 
             -- Check if the registered trigger still exists on the view
             IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = v_view_oid AND tgname = v_view_row.trigger_name) THEN
@@ -172,7 +181,10 @@ BEGIN
 
                     IF FOUND THEN
                         sql := format('UPDATE sql_saga.updatable_view SET trigger_name = %L WHERE (view_schema, view_name) = (%L, %L)',
-                            v_new_trigger_name, v_view_row.view_schema, v_view_row.view_name);
+                            v_new_trigger_name, /* %L */
+                            v_view_row.view_schema, /* %L */
+                            v_view_row.view_name /* %L */
+                        );
                         EXECUTE sql;
                     END IF;
                 END IF;
@@ -186,7 +198,9 @@ BEGIN
 
     FOR sql IN
         SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
-            a.column_names, uk.unique_key_name)
+            a.column_names, /* %L */
+            uk.unique_key_name /* %L */
+        )
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
@@ -205,7 +219,9 @@ BEGIN
 
     FOR sql IN
         SELECT format('UPDATE sql_saga.unique_keys SET unique_constraint = %L WHERE unique_key_name = %L',
-            c.conname, uk.unique_key_name)
+            c.conname, /* %L */
+            uk.unique_key_name /* %L */
+        )
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
@@ -213,7 +229,7 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
         GROUP BY uk.unique_key_name, c.oid, c.conname
-        HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)) = pg_catalog.pg_get_constraintdef(c.oid)
+        HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
         --RAISE DEBUG 'unique_constraint sql:%', sql;
         EXECUTE sql;
@@ -221,7 +237,9 @@ BEGIN
 
     FOR sql IN
         SELECT format('UPDATE sql_saga.unique_keys SET exclude_constraint = %L WHERE unique_key_name = %L',
-            c.conname, uk.unique_key_name)
+            c.conname, /* %L */
+            uk.unique_key_name /* %L */
+        )
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
@@ -230,10 +248,11 @@ BEGIN
         WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
         GROUP BY uk.unique_key_name, c.oid, c.conname, e.range_type, e.valid_from_column_name, e.valid_until_column_name
         HAVING format('EXCLUDE USING gist (%s, %I(%I, %I) WITH &&) DEFERRABLE',
-                      string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality),
-                      e.range_type,
-                      e.valid_from_column_name,
-                      e.valid_until_column_name) = pg_catalog.pg_get_constraintdef(c.oid)
+                      string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality), /* %s */
+                      e.range_type, /* %I */
+                      e.valid_from_column_name, /* %I */
+                      e.valid_until_column_name /* %I */
+        ) = pg_catalog.pg_get_constraintdef(c.oid)
     LOOP
         --RAISE DEBUG 'exclude_constraint sql:%', sql;
         EXECUTE sql;
@@ -256,7 +275,7 @@ BEGIN
             SELECT DISTINCT table_schema, table_name
             FROM sql_saga.foreign_keys
         LOOP
-            fk_table_oid := to_regclass(format('%I.%I', fk_table.table_schema, fk_table.table_name));
+            fk_table_oid := to_regclass(format('%I.%I', fk_table.table_schema /* %I */, fk_table.table_name /* %I */));
 
             -- If table was dropped, skip it. drop_protection will handle FK violations.
             IF fk_table_oid IS NULL THEN

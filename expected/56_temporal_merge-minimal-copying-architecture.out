@@ -368,6 +368,8 @@ TABLE etl.data_table ORDER BY identity_correlation, row_id;
 --------------------------------------------------------------------------------
 CREATE PROCEDURE etl.process_legal_units(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_rec RECORD;
 BEGIN
     -- Create a view for the legal unit batch
     EXECUTE format($$
@@ -382,8 +384,8 @@ BEGIN
             merge_errors,
             valid_from,
             valid_until
-        FROM etl.data_table WHERE batch = %L AND lu_name IS NOT NULL;
-    $$, p_batch_id);
+        FROM etl.data_table WHERE batch = %1$L AND lu_name IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
@@ -401,19 +403,51 @@ BEGIN
         p_feedback_error_key => 'legal_unit'
     );
 
-    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_correlation
+    RAISE NOTICE '--- Plan from temporal_merge (legal_unit) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (legal_unit) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation: Fill the generated legal_unit_id into all
+    -- other rows in this batch that belong to the same conceptual entity. This
+    -- is necessary because subsequent ETL steps for dependent entities (like
+    -- locations) need this foreign key to be present.
     UPDATE etl.data_table dt
     SET legal_unit_id = sub.legal_unit_id
     FROM (
-        SELECT DISTINCT identity_correlation, legal_unit_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            legal_unit_id
         FROM etl.data_table
-        WHERE legal_unit_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND legal_unit_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC -- Get latest ID if multiple updates
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.legal_unit_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date legal_unit_id to all future, unprocessed batches for this entity.
+    UPDATE etl.data_table dt_future
+    SET legal_unit_id = dt_latest.legal_unit_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            legal_unit_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND legal_unit_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 END;
 $procedure$;
 CREATE PROCEDURE etl.process_locations(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_rec RECORD;
 BEGIN
     -- Create a view for the physical locations batch.
     EXECUTE format($$
@@ -431,8 +465,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.batch = %L AND dt.physical_address IS NOT NULL;
-    $$, p_batch_id);
+        WHERE dt.batch = %1$L AND dt.physical_address IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Merge physical locations
     CALL sql_saga.temporal_merge(
@@ -450,15 +484,42 @@ BEGIN
         p_feedback_error_key => 'physical_location'
     );
 
-    -- Back-propagate the generated physical_location_id
+    RAISE NOTICE '--- Plan from temporal_merge (physical_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (physical_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation for physical_location_id.
     UPDATE etl.data_table dt
     SET physical_location_id = sub.physical_location_id
     FROM (
-        SELECT DISTINCT identity_correlation, physical_location_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            physical_location_id
         FROM etl.data_table
-        WHERE physical_location_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND physical_location_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.physical_location_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date physical_location_id to future batches.
+    UPDATE etl.data_table dt_future
+    SET physical_location_id = dt_latest.physical_location_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            physical_location_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND physical_location_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 
     -- Create a view for the postal locations batch.
     EXECUTE format($$
@@ -476,8 +537,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.batch = %L AND dt.postal_address IS NOT NULL;
-    $$, p_batch_id);
+        WHERE dt.batch = %1$L AND dt.postal_address IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Merge postal locations
     CALL sql_saga.temporal_merge(
@@ -495,15 +556,42 @@ BEGIN
         p_feedback_error_key => 'postal_location'
     );
 
-    -- Back-propagate the generated postal_location_id
+    RAISE NOTICE '--- Plan from temporal_merge (postal_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (postal_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation for postal_location_id.
     UPDATE etl.data_table dt
     SET postal_location_id = sub.postal_location_id
     FROM (
-        SELECT DISTINCT identity_correlation, postal_location_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            postal_location_id
         FROM etl.data_table
-        WHERE postal_location_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND postal_location_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.postal_location_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date postal_location_id to future batches.
+    UPDATE etl.data_table dt_future
+    SET postal_location_id = dt_latest.postal_location_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            postal_location_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND postal_location_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 END;
 $procedure$;
 CREATE PROCEDURE etl.process_stats(p_batch_id int)
@@ -511,6 +599,7 @@ LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_stat_def RECORD;
     v_view_sql TEXT;
+    v_rec RECORD;
 BEGIN
     FOR v_stat_def IN SELECT * FROM etl.stat_definition LOOP
         RAISE NOTICE 'Processing statistic: % for batch %', v_stat_def.code, p_batch_id;
@@ -518,28 +607,26 @@ BEGIN
         -- Dynamically create a view for the current statistic's batch
         v_view_sql := format(
             $SQL$
-            CREATE OR REPLACE TEMP VIEW source_view_stat_%s AS
+            CREATE OR REPLACE TEMP VIEW source_view_stat_%1$s AS
             SELECT
                 dt.row_id,
                 dt.identity_correlation as founding_id,
-                dt.%I AS id, -- Map the specific writeback ID column
+                dt.%2$I AS id,
                 dt.legal_unit_id,
-                %L as stat_definition_id,
-                dt.%I as value, -- Map the specific source value column
+                %3$L::integer as stat_definition_id,
+                dt.%1$I as value,
                 dt.comment,
                 dt.merge_statuses,
                 dt.merge_errors,
                 dt.valid_from,
                 dt.valid_until
             FROM etl.data_table dt
-            WHERE dt.batch = %L AND dt.%I IS NOT NULL;
+            WHERE dt.batch = %4$L AND dt.%1$I IS NOT NULL;
             $SQL$,
-            v_stat_def.code, -- Suffix for unique view name
-            format('%s_stat_id', v_stat_def.code), -- e.g., employees_stat_id
-            v_stat_def.id,
-            v_stat_def.code, -- e.g., employees
-            p_batch_id,
-            v_stat_def.code
+            v_stat_def.code,                         /* %1$s, %1$I */
+            format('%s_stat_id', v_stat_def.code), /* %2$I */
+            v_stat_def.id,                           /* %3$L */
+            p_batch_id                               /* %4$L */
         );
         EXECUTE v_view_sql;
 
@@ -559,23 +646,53 @@ BEGIN
             p_feedback_error_key => v_stat_def.code
         );
 
-        -- Back-propagate the generated stat ID for the current statistic
+        RAISE NOTICE '--- Plan from temporal_merge (stat: %) ---', v_stat_def.code;
+        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+            RAISE NOTICE '%', to_jsonb(v_rec);
+        END LOOP;
+        RAISE NOTICE '--- Feedback from temporal_merge (stat: %) ---', v_stat_def.code;
+        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+            RAISE NOTICE '%', to_jsonb(v_rec);
+        END LOOP;
+
+        -- Intra-batch back-propagation for the current statistic's ID.
         EXECUTE format(
             $SQL$
             UPDATE etl.data_table dt
-            SET %I = sub.id
+            SET %1$I = sub.%1$I
             FROM (
-                SELECT DISTINCT identity_correlation, %I AS id
+                SELECT DISTINCT ON (identity_correlation)
+                    identity_correlation,
+                    %1$I
                 FROM etl.data_table
-                WHERE %I IS NOT NULL AND batch = %L
+                WHERE batch = %2$L AND %1$I IS NOT NULL
+                ORDER BY identity_correlation, row_id DESC
             ) AS sub
-            WHERE dt.identity_correlation = sub.identity_correlation AND dt.%I IS NULL;
+            WHERE dt.batch = %2$L
+              AND dt.identity_correlation = sub.identity_correlation;
             $SQL$,
-            format('%s_stat_id', v_stat_def.code),
-            format('%s_stat_id', v_stat_def.code),
-            format('%s_stat_id', v_stat_def.code),
-            p_batch_id,
-            format('%s_stat_id', v_stat_def.code)
+            format('%s_stat_id', v_stat_def.code), /* %1$I */
+            p_batch_id                             /* %2$L */
+        );
+
+        -- Propagate the most up-to-date stat ID to future batches.
+        EXECUTE format(
+            $SQL$
+            UPDATE etl.data_table dt_future
+            SET %1$I = dt_latest.%1$I
+            FROM (
+                SELECT DISTINCT ON (identity_correlation)
+                    identity_correlation,
+                    %1$I
+                FROM etl.data_table
+                WHERE batch <= %2$L AND %1$I IS NOT NULL
+                ORDER BY identity_correlation, batch DESC, row_id DESC
+            ) AS dt_latest
+            WHERE dt_future.batch > %2$L
+              AND dt_future.identity_correlation = dt_latest.identity_correlation;
+            $SQL$,
+            format('%s_stat_id', v_stat_def.code), /* %1$I */
+            p_batch_id                             /* %2$L */
         );
     END LOOP;
 END;
@@ -610,12 +727,12 @@ BEGIN
                     -- We must therefore select only the latest value for each conceptual entity.
                     SELECT DISTINCT ON (dt.identity_correlation)
                         dt.legal_unit_id,
-                        %1$L::integer AS ident_type_id, /* %1$L: v_ident_type.id */
-                        dt.%2$I AS ident_value          /* %2$I: v_column_name */
+                        %1$L::integer AS ident_type_id,
+                        dt.%2$I AS ident_value
                     FROM etl.data_table dt
-                    WHERE dt.batch = %3$L::integer      /* %3$L: p_batch_id */
+                    WHERE dt.batch = %3$L::integer
                       AND dt.legal_unit_id IS NOT NULL
-                      AND dt.%2$I IS NOT NULL           /* %2$I: v_column_name */
+                      AND dt.%2$I IS NOT NULL
                     ORDER BY dt.identity_correlation, dt.valid_from DESC
                 ) AS s
                 ON t.legal_unit_id = s.legal_unit_id AND t.ident_type_id = s.ident_type_id
@@ -625,9 +742,9 @@ BEGIN
                     INSERT (legal_unit_id, ident_type_id, ident_value)
                     VALUES (s.legal_unit_id, s.ident_type_id, s.ident_value);
                 $SQL$,
-                v_ident_type.id,
-                v_column_name,
-                p_batch_id
+                v_ident_type.id, /* %1$L */
+                v_column_name,   /* %2$I */
+                p_batch_id       /* %3$L */
             );
             EXECUTE v_sql;
         END IF;
@@ -639,6 +756,7 @@ LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_activity_type RECORD;
     v_view_sql TEXT;
+    v_rec RECORD;
 BEGIN
     FOR v_activity_type IN SELECT * FROM etl.activity_type LOOP
         -- Only process if there's data for this activity type in the current batch
@@ -654,18 +772,18 @@ BEGIN
                 SELECT
                     row_id,
                     legal_unit_id,
-                    %L::integer as activity_type_id,
+                    %1$L::integer as activity_type_id,
                     comment,
                     merge_statuses,
                     merge_errors,
                     valid_from,
                     valid_until
                 FROM etl.data_table
-                WHERE batch = %L AND activity_code = %L;
+                WHERE batch = %2$L AND activity_code = %3$L;
                 $SQL$,
-                v_activity_type.id,
-                p_batch_id,
-                v_activity_type.code
+                v_activity_type.id,   /* %1$L */
+                p_batch_id,           /* %2$L */
+                v_activity_type.code  /* %3$L */
             );
             EXECUTE v_view_sql;
 
@@ -685,6 +803,15 @@ BEGIN
                 p_feedback_error_column => 'merge_errors',
                 p_feedback_error_key => 'activity'
             );
+
+            RAISE NOTICE '--- Plan from temporal_merge (activity: %) ---', v_activity_type.code;
+            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+                RAISE NOTICE '%', to_jsonb(v_rec);
+            END LOOP;
+            RAISE NOTICE '--- Feedback from temporal_merge (activity: %) ---', v_activity_type.code;
+            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+                RAISE NOTICE '%', to_jsonb(v_rec);
+            END LOOP;
         END IF;
     END LOOP;
 END;
@@ -731,45 +858,187 @@ BEGIN
 END;
 $do$;
 NOTICE:  --- Processing Batch 1 ---
+NOTICE:  --- Plan from temporal_merge (legal_unit) ---
+NOTICE:  {"data": {"name": "NewCo AS", "comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "2024-05-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"name": "RenamedCo AS", "comment": "Company rename"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 2, "new_valid_from": "2024-05-01", "old_valid_from": null, "source_row_ids": [3], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 3, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (physical_location) ---
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (physical_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (postal_location) ---
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-03-01", "old_valid_from": null, "source_row_ids": [2], "new_valid_until": "2024-07-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": null, "source_row_ids": [4], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (postal_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 2, "target_entity_ids": [{"id": 2}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 4, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing statistic: employees for batch 1
+NOTICE:  --- Plan from temporal_merge (stat: employees) ---
+NOTICE:  {"data": {"value": 10, "comment": "Postal address added", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-03-01", "old_valid_from": null, "source_row_ids": [2], "new_valid_until": "2024-09-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 2, "new_valid_from": "2024-09-01", "old_valid_from": null, "source_row_ids": [5], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: employees) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 2, "target_entity_ids": [{"id": 1}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 5, "target_entity_ids": [{"id": 1}]}
 NOTICE:  Processing statistic: turnover for batch 1
+NOTICE:  --- Plan from temporal_merge (stat: turnover) ---
+NOTICE:  {"data": {"value": 50000, "comment": "Company rename", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-05-01", "old_valid_from": null, "source_row_ids": [3], "new_valid_until": "2024-07-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 55000, "comment": "Updated postal address", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": null, "source_row_ids": [4], "new_valid_until": "2024-09-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 3, "new_valid_from": "2024-09-01", "old_valid_from": null, "source_row_ids": [5], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: turnover) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 3, "target_entity_ids": [{"id": 2}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 4, "target_entity_ids": [{"id": 2}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 5, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: manufacturing for batch 1
+NOTICE:  --- Plan from temporal_merge (activity: manufacturing) ---
+NOTICE:  {"data": {"comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"legal_unit_id": 1, "activity_type_id": 10}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1, 5], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (activity: manufacturing) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"legal_unit_id": 1, "activity_type_id": 10}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 5, "target_entity_ids": [{"legal_unit_id": 1, "activity_type_id": 10}]}
 NOTICE:  Processing activity type: retail for batch 1
+NOTICE:  --- Plan from temporal_merge (activity: retail) ---
+NOTICE:  {"data": {"comment": "Company rename"}, "relation": null, "operation": "INSERT", "entity_ids": {"legal_unit_id": 1, "activity_type_id": 20}, "plan_op_seq": 1, "new_valid_from": "2024-05-01", "old_valid_from": null, "source_row_ids": [3], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (activity: retail) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 3, "target_entity_ids": [{"legal_unit_id": 1, "activity_type_id": 20}]}
 NOTICE:  --- Processing Batch 2 ---
+NOTICE:  --- Plan from temporal_merge (legal_unit) ---
+NOTICE:  {"data": {"name": "SecondBiz Inc", "comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6, 8], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 2}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 8, "target_entity_ids": [{"id": 2}]}
+NOTICE:  --- Plan from temporal_merge (physical_location) ---
+NOTICE:  {"data": {"type": "physical", "address": "456 Innovation Dr", "comment": "Initial load", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "789 Tech Pkwy", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (physical_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 3}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 3}]}
+NOTICE:  --- Plan from temporal_merge (postal_location) ---
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 999", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 4, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (postal_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 4}]}
 NOTICE:  Processing statistic: employees for batch 2
+NOTICE:  --- Plan from temporal_merge (stat: employees) ---
+NOTICE:  {"data": {"value": 50, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 55, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "2024-11-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 60, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 3, "new_valid_from": "2024-11-01", "old_valid_from": null, "source_row_ids": [8], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: employees) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 3}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 3}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 8, "target_entity_ids": [{"id": 3}]}
 NOTICE:  Processing statistic: turnover for batch 2
+NOTICE:  --- Plan from temporal_merge (stat: turnover) ---
+NOTICE:  {"data": {"value": 250000, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 4, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 300000, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 4, "founding_id": "2"}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "2024-11-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 320000, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 4, "founding_id": "2"}, "plan_op_seq": 3, "new_valid_from": "2024-11-01", "old_valid_from": null, "source_row_ids": [8], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: turnover) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 4}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 4}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 8, "target_entity_ids": [{"id": 4}]}
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: retail for batch 2
+NOTICE:  --- Plan from temporal_merge (activity: retail) ---
+NOTICE:  {"data": {"comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"legal_unit_id": 2, "activity_type_id": 20}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (activity: retail) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"legal_unit_id": 2, "activity_type_id": 20}]}
 NOTICE:  --- Processing Batch 3 ---
+NOTICE:  --- Plan from temporal_merge (legal_unit) ---
+NOTICE:  {"data": {"name": "RenamedCo AS", "comment": "Company rename"}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": [10], "new_valid_until": "2025-03-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"name": "FinalCo AS", "comment": "Final rename"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-03-01", "old_valid_from": null, "source_row_ids": [10], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"name": "NewCo AS", "comment": "Initial load"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 3, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2024-05-01", "old_valid_until": "2024-05-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 10, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (physical_location) ---
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": [11], "new_valid_until": "2025-05-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-05-01", "old_valid_from": null, "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (physical_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 11, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (postal_location) ---
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": [12], "new_valid_until": "2025-07-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 111", "comment": "New postal address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2}, "plan_op_seq": 1, "new_valid_from": "2025-07-01", "old_valid_from": null, "source_row_ids": [12], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 3, "new_valid_from": "2024-03-01", "old_valid_from": "2024-03-01", "source_row_ids": null, "new_valid_until": "2024-07-01", "old_valid_until": "2024-07-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (postal_location) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 12, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing statistic: employees for batch 3
+NOTICE:  --- Plan from temporal_merge (stat: employees) ---
+NOTICE:  {"data": {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-09-01", "old_valid_from": "2024-09-01", "source_row_ids": [9], "new_valid_until": "2025-01-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"value": 15, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-01-01", "old_valid_from": null, "source_row_ids": [9], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 10, "comment": "Postal address added", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 3, "new_valid_from": "2024-03-01", "old_valid_from": "2024-03-01", "source_row_ids": null, "new_valid_until": "2024-09-01", "old_valid_until": "2024-09-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: employees) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 9, "target_entity_ids": [{"id": 1}]}
 NOTICE:  Processing statistic: turnover for batch 3
+NOTICE:  --- Plan from temporal_merge (stat: turnover) ---
+NOTICE:  {"data": {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-09-01", "old_valid_from": "2024-09-01", "source_row_ids": [9], "new_valid_until": "2025-01-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"value": 75000, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2}, "plan_op_seq": 1, "new_valid_from": "2025-01-01", "old_valid_from": null, "source_row_ids": [9], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 50000, "comment": "Company rename", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 3, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": null, "new_valid_until": "2024-07-01", "old_valid_until": "2024-07-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 55000, "comment": "Updated postal address", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 4, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": null, "new_valid_until": "2024-09-01", "old_valid_until": "2024-09-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: turnover) ---
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 9, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: retail for batch 3
+NOTICE:  --- Plan from temporal_merge (activity: retail) ---
+NOTICE:  {"data": {"comment": "Company rename"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"legal_unit_id": 1, "activity_type_id": 20}, "plan_op_seq": 1, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (activity: retail) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 11, "target_entity_ids": [{"legal_unit_id": 1, "activity_type_id": 20}]}
 NOTICE:  --- Processing Batch 4 ---
+NOTICE:  --- Plan from temporal_merge (legal_unit) ---
+NOTICE:  {"data": {"name": "FinalCo AS", "comment": "Final rename"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 3, "new_valid_from": "2025-03-01", "old_valid_from": "2025-03-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"name": "NewCo AS", "comment": "Initial load"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2024-05-01", "old_valid_until": "2024-05-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"name": "RenamedCo AS", "comment": "Company rename"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": null, "new_valid_until": "2025-03-01", "old_valid_until": "2025-03-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (physical_location) ---
+NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2025-05-01", "old_valid_from": "2025-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2025-05-01", "old_valid_until": "2025-05-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (physical_location) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
+NOTICE:  --- Plan from temporal_merge (postal_location) ---
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": [14], "new_valid_until": "2025-07-01", "old_valid_until": "2025-07-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 111", "comment": "No-op, identical", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 3, "new_valid_from": "2025-07-01", "old_valid_from": "2025-07-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 1, "new_valid_from": "2024-03-01", "old_valid_from": "2024-03-01", "source_row_ids": null, "new_valid_until": "2024-07-01", "old_valid_until": "2024-07-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (postal_location) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing statistic: employees for batch 4
+NOTICE:  --- Plan from temporal_merge (stat: employees) ---
+NOTICE:  {"data": {"value": 15, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 3, "new_valid_from": "2025-01-01", "old_valid_from": "2025-01-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 10, "comment": "Postal address added", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-03-01", "old_valid_from": "2024-03-01", "source_row_ids": null, "new_valid_until": "2024-09-01", "old_valid_until": "2024-09-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-09-01", "old_valid_from": "2024-09-01", "source_row_ids": null, "new_valid_until": "2025-01-01", "old_valid_until": "2025-01-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: employees) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
 NOTICE:  Processing statistic: turnover for batch 4
+NOTICE:  --- Plan from temporal_merge (stat: turnover) ---
+NOTICE:  {"data": {"value": 75000, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 4, "new_valid_from": "2025-01-01", "old_valid_from": "2025-01-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 50000, "comment": "Company rename", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 1, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": null, "new_valid_until": "2024-07-01", "old_valid_until": "2024-07-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 55000, "comment": "Updated postal address", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": null, "new_valid_until": "2024-09-01", "old_valid_until": "2024-09-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 3, "new_valid_from": "2024-09-01", "old_valid_from": "2024-09-01", "source_row_ids": null, "new_valid_until": "2025-01-01", "old_valid_until": "2025-01-01", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (stat: turnover) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 2}]}
 NOTICE:  Processing identifier type: tax (column: tax_ident)
 NOTICE:  Processing activity type: retail for batch 4
+NOTICE:  --- Plan from temporal_merge (activity: retail) ---
+NOTICE:  {"data": {"comment": "Company rename"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"legal_unit_id": 1, "activity_type_id": 20}, "plan_op_seq": 1, "new_valid_from": "2024-05-01", "old_valid_from": "2024-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  --- Feedback from temporal_merge (activity: retail) ---
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"legal_unit_id": 1, "activity_type_id": 20}]}
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 --- ETL Data Table: Final State (all generated IDs are populated) ---
 TABLE etl.data_table ORDER BY identity_correlation, row_id;
- row_id | batch | identity_correlation | valid_from | valid_until |          comment          | tax_ident |    lu_name    | physical_address  | postal_address | activity_code | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                                        merge_statuses                                                                         | merge_errors 
---------+-------+----------------------+------------+-------------+---------------------------+-----------+---------------+-------------------+----------------+---------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------
-      1 |     1 |                    1 | 2024-01-01 | infinity    | Initial load              | TAX111    | NewCo AS      | 123 Business Rd   |                | manufacturing |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                              | {}
-      2 |     1 |                    1 | 2024-03-01 | infinity    | Postal address added      |           |               |                   | PO Box 456     |               |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "postal_location": "APPLIED"}                                                                                                        | {}
-      3 |     1 |                    1 | 2024-05-01 | infinity    | Company rename            | TAX222    | RenamedCo AS  |                   |                | retail        |           |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "turnover": "APPLIED", "legal_unit": "APPLIED"}                                                                                       | {}
-      4 |     1 |                    1 | 2024-07-01 | infinity    | Updated postal address    |           |               |                   | PO Box 789     |               |           |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "postal_location": "APPLIED"}                                                                                                         | {}
-      5 |     1 |                    1 | 2024-09-01 | infinity    | Staff and turnover update |           |               |                   |                | manufacturing |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "turnover": "APPLIED", "employees": "APPLIED"}                                                                                        | {}
-      9 |     3 |                    1 | 2025-01-01 | infinity    | Annual staff update       |           |               |                   |                |               |        15 |    75000 |             1 |                    1 |                  2 |                 5 |                6 | {"turnover": "APPLIED", "employees": "APPLIED"}                                                                                                               | {}
-     10 |     3 |                    1 | 2025-03-01 | infinity    | Final rename              | TAX444    | FinalCo AS    |                   |                |               |           |          |             3 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED"}                                                                                                                                     | {}
-     11 |     3 |                    1 | 2025-05-01 | infinity    | New physical address      |           |               | 1 New Street      |                | retail        |           |          |             1 |                    5 |                  2 |                 1 |                2 | {"activity": "APPLIED", "physical_location": "APPLIED"}                                                                                                       | {}
-     12 |     3 |                    1 | 2025-07-01 | infinity    | New postal address        |           |               |                   | PO Box 111     |               |           |          |             1 |                    1 |                  6 |                 1 |                2 | {"postal_location": "APPLIED"}                                                                                                                                | {}
-     13 |     4 |                    1 | 2025-07-01 | infinity    | No-op, filtered           |           |               |                   |                |               |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                                               | 
-     14 |     4 |                    1 | 2025-07-01 | infinity    | No-op, identical          | TAX444    | FinalCo AS    | 1 New Street      | PO Box 111     | retail        |        15 |    75000 |             4 |                    7 |                  8 |                 7 |                8 | {"activity": "APPLIED", "turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"} | {}
-      6 |     2 |                    2 | 2024-02-15 | infinity    | Initial load              | TAX333    | SecondBiz Inc | 456 Innovation Dr |                | retail        |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"activity": "APPLIED", "turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                               | {}
-      7 |     2 |                    2 | 2024-08-01 | infinity    | Address update            |           |               | 789 Tech Pkwy     | PO Box 999     |               |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                                                 | {}
-      8 |     2 |                    2 | 2024-11-01 | infinity    | Staff update              |           | SecondBiz Inc |                   |                |               |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                                                      | {}
+ row_id | batch | identity_correlation | valid_from | valid_until |          comment          | tax_ident |    lu_name    | physical_address  | postal_address | activity_code | employees | turnover | legal_unit_id | physical_location_id | postal_location_id | employees_stat_id | turnover_stat_id |                                                                                                      merge_statuses                                                                                                       | merge_errors 
+--------+-------+----------------------+------------+-------------+---------------------------+-----------+---------------+-------------------+----------------+---------------+-----------+----------+---------------+----------------------+--------------------+-------------------+------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+--------------
+      1 |     1 |                    1 | 2024-01-01 | infinity    | Initial load              | TAX111    | NewCo AS      | 123 Business Rd   |                | manufacturing |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                                                                                          | {}
+      2 |     1 |                    1 | 2024-03-01 | infinity    | Postal address added      |           |               |                   | PO Box 456     |               |        10 |          |             1 |                    1 |                  2 |                 1 |                2 | {"employees": "APPLIED", "postal_location": "APPLIED"}                                                                                                                                                                    | {}
+      3 |     1 |                    1 | 2024-05-01 | infinity    | Company rename            | TAX222    | RenamedCo AS  |                   |                | retail        |           |    50000 |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "turnover": "APPLIED", "legal_unit": "APPLIED"}                                                                                                                                                   | {}
+      4 |     1 |                    1 | 2024-07-01 | infinity    | Updated postal address    |           |               |                   | PO Box 789     |               |           |    55000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "postal_location": "APPLIED"}                                                                                                                                                                     | {}
+      5 |     1 |                    1 | 2024-09-01 | infinity    | Staff and turnover update |           |               |                   |                | manufacturing |        12 |    60000 |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "APPLIED", "turnover": "APPLIED", "employees": "APPLIED"}                                                                                                                                                    | {}
+      9 |     3 |                    1 | 2025-01-01 | infinity    | Annual staff update       |           |               |                   |                |               |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 | {"turnover": "APPLIED", "employees": "APPLIED"}                                                                                                                                                                           | {}
+     10 |     3 |                    1 | 2025-03-01 | infinity    | Final rename              | TAX444    | FinalCo AS    |                   |                |               |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"legal_unit": "APPLIED"}                                                                                                                                                                                                 | {}
+     11 |     3 |                    1 | 2025-05-01 | infinity    | New physical address      |           |               | 1 New Street      |                | retail        |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "SKIPPED_IDENTICAL", "physical_location": "APPLIED"}                                                                                                                                                         | {}
+     12 |     3 |                    1 | 2025-07-01 | infinity    | New postal address        |           |               |                   | PO Box 111     |               |           |          |             1 |                    1 |                  2 |                 1 |                2 | {"postal_location": "APPLIED"}                                                                                                                                                                                            | {}
+     13 |     4 |                    1 | 2025-07-01 | infinity    | No-op, filtered           |           |               |                   |                |               |           |          |             1 |                    1 |                  2 |                 1 |                2 |                                                                                                                                                                                                                           | 
+     14 |     4 |                    1 | 2025-07-01 | infinity    | No-op, identical          | TAX444    | FinalCo AS    | 1 New Street      | PO Box 111     | retail        |        15 |    75000 |             1 |                    1 |                  2 |                 1 |                2 | {"activity": "SKIPPED_IDENTICAL", "turnover": "SKIPPED_IDENTICAL", "employees": "SKIPPED_IDENTICAL", "legal_unit": "SKIPPED_IDENTICAL", "postal_location": "SKIPPED_IDENTICAL", "physical_location": "SKIPPED_IDENTICAL"} | {}
+      6 |     2 |                    2 | 2024-02-15 | infinity    | Initial load              | TAX333    | SecondBiz Inc | 456 Innovation Dr |                | retail        |        50 |   250000 |             2 |                    3 |                  4 |                 3 |                4 | {"activity": "APPLIED", "turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED", "physical_location": "APPLIED"}                                                                                           | {}
+      7 |     2 |                    2 | 2024-08-01 | infinity    | Address update            |           |               | 789 Tech Pkwy     | PO Box 999     |               |        55 |   300000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "postal_location": "APPLIED", "physical_location": "APPLIED"}                                                                                                             | {}
+      8 |     2 |                    2 | 2024-11-01 | infinity    | Staff update              |           | SecondBiz Inc |                   |                |               |        60 |   320000 |             2 |                    3 |                  4 |                 3 |                4 | {"turnover": "APPLIED", "employees": "APPLIED", "legal_unit": "APPLIED"}                                                                                                                                                  | {}
 (14 rows)
 
 \echo '--- Final Target States ---'
@@ -777,15 +1046,13 @@ TABLE etl.data_table ORDER BY identity_correlation, row_id;
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE etl.legal_unit ORDER BY id, valid_from;
- id |     name      |     comment      | valid_from | valid_until 
-----+---------------+------------------+------------+-------------
-  1 | NewCo AS      | Initial load     | 2024-01-01 | 2024-05-01
-  1 | RenamedCo AS  | Company rename   | 2024-05-01 | 2025-03-01
-  2 | SecondBiz Inc | Initial load     | 2024-02-15 | 2024-11-01
-  2 | SecondBiz Inc | Staff update     | 2024-11-01 | infinity
-  3 | FinalCo AS    | Final rename     | 2025-03-01 | infinity
-  4 | FinalCo AS    | No-op, identical | 2025-07-01 | infinity
-(6 rows)
+ id |     name      |    comment     | valid_from | valid_until 
+----+---------------+----------------+------------+-------------
+  1 | NewCo AS      | Initial load   | 2024-01-01 | 2024-05-01
+  1 | RenamedCo AS  | Company rename | 2024-05-01 | 2025-03-01
+  1 | FinalCo AS    | Final rename   | 2025-03-01 | infinity
+  2 | SecondBiz Inc | Initial load   | 2024-02-15 | infinity
+(4 rows)
 
 \echo '--- location ---'
 --- location ---
@@ -793,16 +1060,14 @@ TABLE etl.location ORDER BY id, valid_from;
  id | legal_unit_id |   type   |      address      |        comment         | valid_from | valid_until 
 ----+---------------+----------+-------------------+------------------------+------------+-------------
   1 |             1 | physical | 123 Business Rd   | Initial load           | 2024-01-01 | 2025-05-01
+  1 |             1 | physical | 1 New Street      | New physical address   | 2025-05-01 | infinity
   2 |             1 | postal   | PO Box 456        | Postal address added   | 2024-03-01 | 2024-07-01
   2 |             1 | postal   | PO Box 789        | Updated postal address | 2024-07-01 | 2025-07-01
+  2 |             1 | postal   | PO Box 111        | New postal address     | 2025-07-01 | infinity
   3 |             2 | physical | 456 Innovation Dr | Initial load           | 2024-02-15 | 2024-08-01
   3 |             2 | physical | 789 Tech Pkwy     | Address update         | 2024-08-01 | infinity
   4 |             2 | postal   | PO Box 999        | Address update         | 2024-08-01 | infinity
-  5 |             1 | physical | 1 New Street      | New physical address   | 2025-05-01 | infinity
-  6 |             1 | postal   | PO Box 111        | New postal address     | 2025-07-01 | infinity
-  7 |             4 | physical | 1 New Street      | No-op, identical       | 2025-07-01 | infinity
-  8 |             4 | postal   | PO Box 111        | No-op, identical       | 2025-07-01 | infinity
-(10 rows)
+(8 rows)
 
 \echo '--- stat_for_unit ---'
 --- stat_for_unit ---
@@ -811,44 +1076,37 @@ TABLE etl.stat_for_unit ORDER BY id, valid_from;
 ----+---------------+--------------------+--------+---------------------------+------------+-------------
   1 |             1 |                  1 |     10 | Postal address added      | 2024-03-01 | 2024-09-01
   1 |             1 |                  1 |     12 | Staff and turnover update | 2024-09-01 | 2025-01-01
+  1 |             1 |                  1 |     15 | Annual staff update       | 2025-01-01 | infinity
   2 |             1 |                  2 |  50000 | Company rename            | 2024-05-01 | 2024-07-01
   2 |             1 |                  2 |  55000 | Updated postal address    | 2024-07-01 | 2024-09-01
   2 |             1 |                  2 |  60000 | Staff and turnover update | 2024-09-01 | 2025-01-01
+  2 |             1 |                  2 |  75000 | Annual staff update       | 2025-01-01 | infinity
   3 |             2 |                  1 |     50 | Initial load              | 2024-02-15 | 2024-08-01
   3 |             2 |                  1 |     55 | Address update            | 2024-08-01 | 2024-11-01
   3 |             2 |                  1 |     60 | Staff update              | 2024-11-01 | infinity
   4 |             2 |                  2 | 250000 | Initial load              | 2024-02-15 | 2024-08-01
   4 |             2 |                  2 | 300000 | Address update            | 2024-08-01 | 2024-11-01
   4 |             2 |                  2 | 320000 | Staff update              | 2024-11-01 | infinity
-  5 |             1 |                  1 |     15 | Annual staff update       | 2025-01-01 | infinity
-  6 |             1 |                  2 |  75000 | Annual staff update       | 2025-01-01 | infinity
-  7 |             4 |                  1 |     15 | No-op, identical          | 2025-07-01 | infinity
-  8 |             4 |                  2 |  75000 | No-op, identical          | 2025-07-01 | infinity
-(15 rows)
+(13 rows)
 
 \echo '--- ident (non-temporal) ---'
 --- ident (non-temporal) ---
 TABLE etl.ident ORDER BY id;
  id | legal_unit_id | ident_type_id | ident_value 
 ----+---------------+---------------+-------------
-  1 |             1 |             1 | TAX222
+  1 |             1 |             1 | TAX444
   2 |             2 |             1 | TAX333
-  3 |             3 |             1 | TAX444
-  4 |             4 |             1 | TAX444
-(4 rows)
+(2 rows)
 
 \echo '--- activity (temporal, natural key) ---'
 --- activity (temporal, natural key) ---
 TABLE etl.activity ORDER BY legal_unit_id, activity_type_id, valid_from;
- legal_unit_id | activity_type_id |          comment          | valid_from | valid_until 
----------------+------------------+---------------------------+------------+-------------
-             1 |               10 | Initial load              | 2024-01-01 | 2024-09-01
-             1 |               10 | Staff and turnover update | 2024-09-01 | infinity
-             1 |               20 | Company rename            | 2024-05-01 | 2025-05-01
-             1 |               20 | New physical address      | 2025-05-01 | infinity
-             2 |               20 | Initial load              | 2024-02-15 | infinity
-             4 |               20 | No-op, identical          | 2025-07-01 | infinity
-(6 rows)
+ legal_unit_id | activity_type_id |    comment     | valid_from | valid_until 
+---------------+------------------+----------------+------------+-------------
+             1 |               10 | Initial load   | 2024-01-01 | infinity
+             1 |               20 | Company rename | 2024-05-01 | infinity
+             2 |               20 | Initial load   | 2024-02-15 | infinity
+(3 rows)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

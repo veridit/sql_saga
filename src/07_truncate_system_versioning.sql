@@ -24,7 +24,7 @@ BEGIN
     WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name);
 
     IF FOUND THEN
-        EXECUTE format('TRUNCATE %I.%I', history_schema, history_table);
+        EXECUTE format('TRUNCATE %I.%I', history_schema /* %I */, history_table /* %I */);
     END IF;
 
     RETURN NULL;

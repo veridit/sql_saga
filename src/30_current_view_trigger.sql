@@ -25,7 +25,7 @@ BEGIN
     -- Get metadata about the view's underlying table.
     SELECT
         v.table_schema, v.table_name, v.era_name, e.valid_from_column_name, e.valid_until_column_name,
-        e.range_subtype, to_regclass(format('%I.%I', v.table_schema, v.table_name)) as table_oid,
+        e.range_subtype, to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) as table_oid,
         v.current_func
     INTO info
     FROM sql_saga.updatable_view AS v
@@ -47,22 +47,25 @@ BEGIN
             CREATE TEMP SEQUENCE current_view_trigger_source_seq;
             GRANT USAGE ON SEQUENCE pg_temp.current_view_trigger_source_seq TO PUBLIC;
         END IF;
-        source_table_name := format('current_view_trigger_source_%s', nextval('pg_temp.current_view_trigger_source_seq'));
+        source_table_name := format('current_view_trigger_source_%s', nextval('pg_temp.current_view_trigger_source_seq') /* %s */);
 
         IF to_regclass(source_table_name) IS NOT NULL THEN
-            EXECUTE format('DROP TABLE %I', source_table_name);
+            EXECUTE format('DROP TABLE %I', source_table_name /* %I */);
         END IF;
 
         EXECUTE format(
             'CREATE TEMP TABLE %I ON COMMIT DROP AS SELECT 1 as row_id, ($1).*',
-            source_table_name
+            source_table_name /* %I */
         ) USING NEW;
 
         EXECUTE format(
             'UPDATE %I SET %I = %s::%s, %I = ''infinity''::%s',
-            source_table_name,
-            info.valid_from_column_name, now_function, info.range_subtype,
-            info.valid_until_column_name, info.range_subtype
+            source_table_name, /* %I */
+            info.valid_from_column_name, /* %I */
+            now_function, /* %s */
+            info.range_subtype, /* %s */
+            info.valid_until_column_name, /* %I */
+            info.range_subtype /* %s */
         );
         source_table_oid := to_regclass(pg_my_temp_schema()::regnamespace::text || '.' || quote_ident(source_table_name));
 
@@ -90,7 +93,7 @@ BEGIN
                 now_value text;
             BEGIN
                 -- Get the value of now_function to compare against valid_from
-                EXECUTE format('SELECT (%s)::%s::text', now_function, info.range_subtype) INTO now_value;
+                EXECUTE format('SELECT (%s)::%s::text', now_function /* %s */, info.range_subtype /* %s */) INTO now_value;
 
                 IF (to_jsonb(OLD)->>info.valid_from_column_name) = now_value THEN
                     -- A soft-delete on the same "day" as creation would violate the
@@ -101,8 +104,10 @@ BEGIN
                     FROM unnest(identifier_columns) AS u(c);
 
                     EXECUTE format('DELETE FROM %I.%I WHERE %s AND %I = ''infinity''',
-                        info.table_schema, info.table_name,
-                        where_clause, info.valid_until_column_name
+                        info.table_schema, /* %I */
+                        info.table_name, /* %I */
+                        where_clause, /* %s */
+                        info.valid_until_column_name /* %I */
                     )
                     USING OLD;
                 ELSE
@@ -113,16 +118,19 @@ BEGIN
 
                     jnew_data := to_jsonb(NEW) - identifier_columns - info.valid_from_column_name - info.valid_until_column_name;
 
-                    SELECT string_agg(format('%I = %L', key, value), ', ')
+                    SELECT string_agg(format('%I = %L', key /* %I */, value /* %L */), ', ')
                     INTO set_clause
                     FROM jsonb_each_text(jnew_data);
 
                     -- Add the valid_until clause separately to ensure now_function is executed, not treated as a literal.
-                    set_clause := set_clause || format(', %I = %s', info.valid_until_column_name, now_function);
+                    set_clause := set_clause || format(', %I = %s', info.valid_until_column_name /* %I */, now_function /* %s */);
 
                     EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I = ''infinity''',
-                        info.table_schema, info.table_name,
-                        set_clause, where_clause, info.valid_until_column_name
+                        info.table_schema, /* %I */
+                        info.table_name, /* %I */
+                        set_clause, /* %s */
+                        where_clause, /* %s */
+                        info.valid_until_column_name /* %I */
                     )
                     USING OLD;
                 END IF;
@@ -135,9 +143,12 @@ BEGIN
             FROM unnest(identifier_columns) AS t(col);
 
             EXECUTE format('UPDATE %I.%I SET %I = %s WHERE %s AND %I = ''infinity''',
-                info.table_schema, info.table_name,
-                info.valid_until_column_name, now_function,
-                where_clause, info.valid_until_column_name
+                info.table_schema, /* %I */
+                info.table_name, /* %I */
+                info.valid_until_column_name, /* %I */
+                now_function, /* %s */
+                where_clause, /* %s */
+                info.valid_until_column_name /* %I */
             )
             USING OLD;
 
@@ -147,11 +158,15 @@ BEGIN
             INTO insert_column_list, insert_values_list
             FROM jsonb_each_text(jnew);
 
-            insert_column_list := insert_column_list || format(', %I, %I', info.valid_from_column_name, info.valid_until_column_name);
-            insert_values_list := insert_values_list || format(', %s, ''infinity''', now_function);
+            insert_column_list := insert_column_list || format(', %I, %I', info.valid_from_column_name /* %I */, info.valid_until_column_name /* %I */);
+            insert_values_list := insert_values_list || format(', %s, ''infinity''', now_function /* %s */);
 
             EXECUTE format('INSERT INTO %I.%I (%s) VALUES (%s)',
-                info.table_schema, info.table_name, insert_column_list, insert_values_list);
+                info.table_schema, /* %I */
+                info.table_name, /* %I */
+                insert_column_list, /* %s */
+                insert_values_list /* %s */
+            );
         END IF;
 
         RETURN NEW;
@@ -164,9 +179,12 @@ BEGIN
                 FROM unnest(identifier_columns) AS t(col);
 
                 EXECUTE format('UPDATE %I.%I SET %I = %s WHERE %s AND %I = ''infinity''',
-                    info.table_schema, info.table_name,
-                    info.valid_until_column_name, now_function,
-                    where_clause, info.valid_until_column_name
+                    info.table_schema, /* %I */
+                    info.table_name, /* %I */
+                    info.valid_until_column_name, /* %I */
+                    now_function, /* %s */
+                    where_clause, /* %s */
+                    info.valid_until_column_name /* %I */
                 )
                 USING OLD;
             WHEN 'delete_as_documented_ending' THEN

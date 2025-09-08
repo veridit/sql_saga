@@ -209,6 +209,8 @@ TABLE etl.data_table ORDER BY identity_correlation, row_id;
 
 CREATE PROCEDURE etl.process_legal_units(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_rec RECORD;
 BEGIN
     -- Create a view for the legal unit batch
     EXECUTE format($$
@@ -223,8 +225,8 @@ BEGIN
             merge_errors,
             valid_from,
             valid_until
-        FROM etl.data_table WHERE batch = %L AND lu_name IS NOT NULL;
-    $$, p_batch_id);
+        FROM etl.data_table WHERE batch = %1$L AND lu_name IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
@@ -242,20 +244,52 @@ BEGIN
         p_feedback_error_key => 'legal_unit'
     );
 
-    -- Back-propagate the generated legal_unit_id to all rows sharing the same identity_correlation
+    RAISE NOTICE '--- Plan from temporal_merge (legal_unit) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (legal_unit) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation: Fill the generated legal_unit_id into all
+    -- other rows in this batch that belong to the same conceptual entity. This
+    -- is necessary because subsequent ETL steps for dependent entities (like
+    -- locations) need this foreign key to be present.
     UPDATE etl.data_table dt
     SET legal_unit_id = sub.legal_unit_id
     FROM (
-        SELECT DISTINCT identity_correlation, legal_unit_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            legal_unit_id
         FROM etl.data_table
-        WHERE legal_unit_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND legal_unit_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC -- Get latest ID if multiple updates
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.legal_unit_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date legal_unit_id to all future, unprocessed batches for this entity.
+    UPDATE etl.data_table dt_future
+    SET legal_unit_id = dt_latest.legal_unit_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            legal_unit_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND legal_unit_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 END;
 $procedure$;
 
 CREATE PROCEDURE etl.process_locations(p_batch_id int)
 LANGUAGE plpgsql AS $procedure$
+DECLARE
+    v_rec RECORD;
 BEGIN
     -- Create a view for the physical locations batch.
     EXECUTE format($$
@@ -273,8 +307,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.batch = %L AND dt.physical_address IS NOT NULL;
-    $$, p_batch_id);
+        WHERE dt.batch = %1$L AND dt.physical_address IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Merge physical locations
     CALL sql_saga.temporal_merge(
@@ -292,15 +326,42 @@ BEGIN
         p_feedback_error_key => 'physical_location'
     );
 
-    -- Back-propagate the generated physical_location_id
+    RAISE NOTICE '--- Plan from temporal_merge (physical_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (physical_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation for physical_location_id.
     UPDATE etl.data_table dt
     SET physical_location_id = sub.physical_location_id
     FROM (
-        SELECT DISTINCT identity_correlation, physical_location_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            physical_location_id
         FROM etl.data_table
-        WHERE physical_location_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND physical_location_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.physical_location_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date physical_location_id to future batches.
+    UPDATE etl.data_table dt_future
+    SET physical_location_id = dt_latest.physical_location_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            physical_location_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND physical_location_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 
     -- Create a view for the postal locations batch.
     EXECUTE format($$
@@ -318,8 +379,8 @@ BEGIN
             dt.valid_from,
             dt.valid_until
         FROM etl.data_table dt
-        WHERE dt.batch = %L AND dt.postal_address IS NOT NULL;
-    $$, p_batch_id);
+        WHERE dt.batch = %1$L AND dt.postal_address IS NOT NULL;
+    $$, p_batch_id /* %1$L */);
 
     -- Merge postal locations
     CALL sql_saga.temporal_merge(
@@ -337,15 +398,42 @@ BEGIN
         p_feedback_error_key => 'postal_location'
     );
 
-    -- Back-propagate the generated postal_location_id
+    RAISE NOTICE '--- Plan from temporal_merge (postal_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+    RAISE NOTICE '--- Feedback from temporal_merge (postal_location) ---';
+    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+        RAISE NOTICE '%', to_jsonb(v_rec);
+    END LOOP;
+
+    -- Intra-batch back-propagation for postal_location_id.
     UPDATE etl.data_table dt
     SET postal_location_id = sub.postal_location_id
     FROM (
-        SELECT DISTINCT identity_correlation, postal_location_id
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            postal_location_id
         FROM etl.data_table
-        WHERE postal_location_id IS NOT NULL AND batch = p_batch_id
+        WHERE batch = p_batch_id AND postal_location_id IS NOT NULL
+        ORDER BY identity_correlation, row_id DESC
     ) AS sub
-    WHERE dt.identity_correlation = sub.identity_correlation AND dt.postal_location_id IS NULL;
+    WHERE dt.batch = p_batch_id
+      AND dt.identity_correlation = sub.identity_correlation;
+
+    -- Propagate the most up-to-date postal_location_id to future batches.
+    UPDATE etl.data_table dt_future
+    SET postal_location_id = dt_latest.postal_location_id
+    FROM (
+        SELECT DISTINCT ON (identity_correlation)
+            identity_correlation,
+            postal_location_id
+        FROM etl.data_table
+        WHERE batch <= p_batch_id AND postal_location_id IS NOT NULL
+        ORDER BY identity_correlation, batch DESC, row_id DESC
+    ) AS dt_latest
+    WHERE dt_future.batch > p_batch_id
+      AND dt_future.identity_correlation = dt_latest.identity_correlation;
 END;
 $procedure$;
 
@@ -354,6 +442,7 @@ LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_stat_def RECORD;
     v_view_sql TEXT;
+    v_rec RECORD;
 BEGIN
     FOR v_stat_def IN SELECT * FROM etl.stat_definition LOOP
         RAISE NOTICE 'Processing statistic: % for batch %', v_stat_def.code, p_batch_id;
@@ -361,28 +450,26 @@ BEGIN
         -- Dynamically create a view for the current statistic's batch
         v_view_sql := format(
             $SQL$
-            CREATE OR REPLACE TEMP VIEW source_view_stat_%s AS
+            CREATE OR REPLACE TEMP VIEW source_view_stat_%1$s AS
             SELECT
                 dt.row_id,
                 dt.identity_correlation as founding_id,
-                dt.%I AS id, -- Map the specific writeback ID column
+                dt.%2$I AS id,
                 dt.legal_unit_id,
-                %L as stat_definition_id,
-                dt.%I as value, -- Map the specific source value column
+                %3$L::integer as stat_definition_id,
+                dt.%1$I as value,
                 dt.comment,
                 dt.merge_statuses,
                 dt.merge_errors,
                 dt.valid_from,
                 dt.valid_until
             FROM etl.data_table dt
-            WHERE dt.batch = %L AND dt.%I IS NOT NULL;
+            WHERE dt.batch = %4$L AND dt.%1$I IS NOT NULL;
             $SQL$,
-            v_stat_def.code, -- Suffix for unique view name
-            format('%s_stat_id', v_stat_def.code), -- e.g., employees_stat_id
-            v_stat_def.id,
-            v_stat_def.code, -- e.g., employees
-            p_batch_id,
-            v_stat_def.code
+            v_stat_def.code,                         /* %1$s, %1$I */
+            format('%s_stat_id', v_stat_def.code), /* %2$I */
+            v_stat_def.id,                           /* %3$L */
+            p_batch_id                               /* %4$L */
         );
         EXECUTE v_view_sql;
 
@@ -402,23 +489,53 @@ BEGIN
             p_feedback_error_key => v_stat_def.code
         );
 
-        -- Back-propagate the generated stat ID for the current statistic
+        RAISE NOTICE '--- Plan from temporal_merge (stat: %) ---', v_stat_def.code;
+        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+            RAISE NOTICE '%', to_jsonb(v_rec);
+        END LOOP;
+        RAISE NOTICE '--- Feedback from temporal_merge (stat: %) ---', v_stat_def.code;
+        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+            RAISE NOTICE '%', to_jsonb(v_rec);
+        END LOOP;
+
+        -- Intra-batch back-propagation for the current statistic's ID.
         EXECUTE format(
             $SQL$
             UPDATE etl.data_table dt
-            SET %I = sub.id
+            SET %1$I = sub.%1$I
             FROM (
-                SELECT DISTINCT identity_correlation, %I AS id
+                SELECT DISTINCT ON (identity_correlation)
+                    identity_correlation,
+                    %1$I
                 FROM etl.data_table
-                WHERE %I IS NOT NULL AND batch = %L
+                WHERE batch = %2$L AND %1$I IS NOT NULL
+                ORDER BY identity_correlation, row_id DESC
             ) AS sub
-            WHERE dt.identity_correlation = sub.identity_correlation AND dt.%I IS NULL;
+            WHERE dt.batch = %2$L
+              AND dt.identity_correlation = sub.identity_correlation;
             $SQL$,
-            format('%s_stat_id', v_stat_def.code),
-            format('%s_stat_id', v_stat_def.code),
-            format('%s_stat_id', v_stat_def.code),
-            p_batch_id,
-            format('%s_stat_id', v_stat_def.code)
+            format('%s_stat_id', v_stat_def.code), /* %1$I */
+            p_batch_id                             /* %2$L */
+        );
+
+        -- Propagate the most up-to-date stat ID to future batches.
+        EXECUTE format(
+            $SQL$
+            UPDATE etl.data_table dt_future
+            SET %1$I = dt_latest.%1$I
+            FROM (
+                SELECT DISTINCT ON (identity_correlation)
+                    identity_correlation,
+                    %1$I
+                FROM etl.data_table
+                WHERE batch <= %2$L AND %1$I IS NOT NULL
+                ORDER BY identity_correlation, batch DESC, row_id DESC
+            ) AS dt_latest
+            WHERE dt_future.batch > %2$L
+              AND dt_future.identity_correlation = dt_latest.identity_correlation;
+            $SQL$,
+            format('%s_stat_id', v_stat_def.code), /* %1$I */
+            p_batch_id                             /* %2$L */
         );
     END LOOP;
 END;
@@ -454,12 +571,12 @@ BEGIN
                     -- We must therefore select only the latest value for each conceptual entity.
                     SELECT DISTINCT ON (dt.identity_correlation)
                         dt.legal_unit_id,
-                        %1$L::integer AS ident_type_id, /* %1$L: v_ident_type.id */
-                        dt.%2$I AS ident_value          /* %2$I: v_column_name */
+                        %1$L::integer AS ident_type_id,
+                        dt.%2$I AS ident_value
                     FROM etl.data_table dt
-                    WHERE dt.batch = %3$L::integer      /* %3$L: p_batch_id */
+                    WHERE dt.batch = %3$L::integer
                       AND dt.legal_unit_id IS NOT NULL
-                      AND dt.%2$I IS NOT NULL           /* %2$I: v_column_name */
+                      AND dt.%2$I IS NOT NULL
                     ORDER BY dt.identity_correlation, dt.valid_from DESC
                 ) AS s
                 ON t.legal_unit_id = s.legal_unit_id AND t.ident_type_id = s.ident_type_id
@@ -469,9 +586,9 @@ BEGIN
                     INSERT (legal_unit_id, ident_type_id, ident_value)
                     VALUES (s.legal_unit_id, s.ident_type_id, s.ident_value);
                 $SQL$,
-                v_ident_type.id,
-                v_column_name,
-                p_batch_id
+                v_ident_type.id, /* %1$L */
+                v_column_name,   /* %2$I */
+                p_batch_id       /* %3$L */
             );
             EXECUTE v_sql;
         END IF;
@@ -484,6 +601,7 @@ LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_activity_type RECORD;
     v_view_sql TEXT;
+    v_rec RECORD;
 BEGIN
     FOR v_activity_type IN SELECT * FROM etl.activity_type LOOP
         -- Only process if there's data for this activity type in the current batch
@@ -499,18 +617,18 @@ BEGIN
                 SELECT
                     row_id,
                     legal_unit_id,
-                    %L::integer as activity_type_id,
+                    %1$L::integer as activity_type_id,
                     comment,
                     merge_statuses,
                     merge_errors,
                     valid_from,
                     valid_until
                 FROM etl.data_table
-                WHERE batch = %L AND activity_code = %L;
+                WHERE batch = %2$L AND activity_code = %3$L;
                 $SQL$,
-                v_activity_type.id,
-                p_batch_id,
-                v_activity_type.code
+                v_activity_type.id,   /* %1$L */
+                p_batch_id,           /* %2$L */
+                v_activity_type.code  /* %3$L */
             );
             EXECUTE v_view_sql;
 
@@ -530,6 +648,15 @@ BEGIN
                 p_feedback_error_column => 'merge_errors',
                 p_feedback_error_key => 'activity'
             );
+
+            RAISE NOTICE '--- Plan from temporal_merge (activity: %) ---', v_activity_type.code;
+            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
+                RAISE NOTICE '%', to_jsonb(v_rec);
+            END LOOP;
+            RAISE NOTICE '--- Feedback from temporal_merge (activity: %) ---', v_activity_type.code;
+            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
+                RAISE NOTICE '%', to_jsonb(v_rec);
+            END LOOP;
         END IF;
     END LOOP;
 END;

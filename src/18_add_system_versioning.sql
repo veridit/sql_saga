@@ -82,27 +82,31 @@ BEGIN
         THEN
             RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', table_oid, history_table_id::regclass;
         END IF;
-        EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass, table_owner);
+        EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
     ELSE
-        EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema, history_table_name, table_name);
-        history_table_id := format('%I.%I', table_schema, history_table_name)::regclass;
-        EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema, history_table_name, table_owner);
+        EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
+        history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
+        EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */);
         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
     END IF;
 
     EXECUTE format('CREATE VIEW %1$I.%2$I AS SELECT %5$s FROM %1$I.%3$I UNION ALL SELECT %5$s FROM %1$I.%4$I',
-        table_schema, view_name, table_name, history_table_name,
-        (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped));
-    EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', table_schema, view_name, table_owner);
+        table_schema, /* %1$I */
+        view_name, /* %2$I */
+        table_name, /* %3$I */
+        history_table_name, /* %4$I */
+        (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped) /* %5$s */
+    );
+    EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, view_name /* %2$I */, table_owner /* %3$I */);
 
-    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1' $$, table_schema, function_as_of_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
-    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I', table_schema, function_as_of_name, table_owner);
-    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2' $$, table_schema, function_between_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
-    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_between_name, table_owner);
-    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)' $$, table_schema, function_between_symmetric_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
-    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_between_symmetric_name, table_owner);
-    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2' $$, table_schema, function_from_to_name, view_name, era_row.valid_from_column_name, era_row.valid_until_column_name);
-    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema, function_from_to_name, table_owner);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I <= $1 AND %5$I > $1' $$, table_schema /* %1$I */, function_as_of_name /* %2$I */, view_name /* %3$I */, era_row.valid_from_column_name /* %4$I */, era_row.valid_until_column_name /* %5$I */);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_as_of_name /* %2$I */, table_owner /* %3$I */);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 <= $2 AND %5$I > $1 AND %4$I <= $2' $$, table_schema /* %1$I */, function_between_name /* %2$I */, view_name /* %3$I */, era_row.valid_from_column_name /* %4$I */, era_row.valid_until_column_name /* %5$I */);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_between_name /* %2$I */, table_owner /* %3$I */);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %5$I > least($1, $2) AND %4$I <= greatest($1, $2)' $$, table_schema /* %1$I */, function_between_symmetric_name /* %2$I */, view_name /* %3$I */, era_row.valid_from_column_name /* %4$I */, era_row.valid_until_column_name /* %5$I */);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_between_symmetric_name /* %2$I */, table_owner /* %3$I */);
+    EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE $1 < $2 AND %5$I > $1 AND %4$I < $2' $$, table_schema /* %1$I */, function_from_to_name /* %2$I */, view_name /* %3$I */, era_row.valid_from_column_name /* %4$I */, era_row.valid_until_column_name /* %5$I */);
+    EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_from_to_name /* %2$I */, table_owner /* %3$I */);
 
     -- TODO: Set privileges on history objects
 
@@ -111,10 +115,10 @@ BEGIN
         table_schema, table_name, 'system_time',
         table_schema, history_table_name,
         table_schema, view_name,
-        format('%I.%I(timestamp with time zone)', table_schema, function_as_of_name),
-        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_between_name),
-        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_between_symmetric_name),
-        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema, function_from_to_name)
+        format('%I.%I(timestamp with time zone)', table_schema /* %I */, function_as_of_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_between_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_between_symmetric_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_from_to_name /* %I */)
     );
 END;
 $function$;

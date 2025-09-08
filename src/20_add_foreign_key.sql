@@ -71,7 +71,7 @@ BEGIN
 
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
-    uk_table_oid := format('%I.%I', uk_schema_name, uk_table_name)::regclass;
+    uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
 
     /* Check that all the columns match */
     IF EXISTS (
@@ -116,14 +116,14 @@ BEGIN
         -- The helper function is owned by the schema of the referenced (UK) table.
         -- Its name is derived from the UK table, so it can be shared by multiple FKs.
         fk_helper_function := coalesce(fk_helper_function,
-            format('%I.%I', uk_schema_name, sql_saga.__internal_make_name(
-                ARRAY[uk_table_name] || uk_row.column_names || ARRAY['exists'])
+            format('%I.%I', uk_schema_name /* %I */, sql_saga.__internal_make_name(
+                ARRAY[uk_table_name] || uk_row.column_names || ARRAY['exists']) /* %I */
             )
         );
 
-        helper_signature := format('%s(%s)', fk_helper_function, fk_column_signatures);
+        helper_signature := format('%s(%s)', fk_helper_function /* %s */, fk_column_signatures /* %s */);
 
-        SELECT string_agg(format('uk.%I = $%s', u.name, u.ordinality), ' AND ')
+        SELECT string_agg(format('uk.%I = $%s', u.name /* %I */, u.ordinality /* %s */), ' AND ')
         INTO uk_where_clause
         FROM unnest(uk_row.column_names) WITH ORDINALITY AS u(name, ordinality);
 
@@ -134,9 +134,10 @@ BEGIN
                 SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);
             $func_body$;
             $$,
-            helper_signature,
-            uk_schema_name, uk_table_name,
-            uk_where_clause
+            helper_signature, /* %s */
+            uk_schema_name, /* %I */
+            uk_table_name, /* %I */
+            uk_where_clause /* %s */
         );
 
         -- Check if a function with this signature already exists.
@@ -158,10 +159,13 @@ BEGIN
         DECLARE
             check_clause text;
         BEGIN
-            check_clause := format('%s(%s)', fk_helper_function, fk_column_list);
+            check_clause := format('%s(%s)', fk_helper_function /* %s */, fk_column_list /* %s */);
 
             EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I CHECK (%s)',
-                fk_schema_name, fk_table_name, fk_check_constraint, check_clause
+                fk_schema_name, /* %I */
+                fk_table_name, /* %I */
+                fk_check_constraint, /* %I */
+                check_clause /* %s */
             );
         END;
     END;
@@ -239,11 +243,11 @@ BEGIN
         violating_row_found boolean;
         fk_not_null_clause text;
     BEGIN
-        SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc), ' AND ')
+        SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc /* %I */), ' AND ')
         INTO fk_not_null_clause
         FROM unnest(fk_column_names) AS u(fkc);
 
-        SELECT string_agg(format('uk.%I = fk.%I', u.ukc, u.fkc), ' AND ')
+        SELECT string_agg(format('uk.%I = fk.%I', u.ukc /* %I */, u.fkc /* %I */), ' AND ')
         INTO uk_where_clause
         FROM unnest(uk_row.column_names, fk_column_names) AS u(ukc, fkc);
 
@@ -385,7 +389,7 @@ BEGIN
 
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
-    uk_table_oid := format('%I.%I', uk_schema_name, uk_table_name)::regclass;
+    uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
 
     /* Check that all the columns match */
     IF EXISTS (

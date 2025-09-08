@@ -110,9 +110,12 @@ BEGIN
                     END IF;
                 END IF;
                 add_sql := format('ALTER TABLE %s ADD COLUMN %I %s, ADD COLUMN %I %s',
-                    table_oid,
-                    valid_from_column_name, column_type_name,
-                    valid_until_column_name, column_type_name);
+                    table_oid, /* %s */
+                    valid_from_column_name, /* %I */
+                    column_type_name, /* %s */
+                    valid_until_column_name, /* %I */
+                    column_type_name /* %s */
+                );
                 EXECUTE add_sql;
             ELSE
                 -- One exists but not the other. This is an error.
@@ -222,10 +225,10 @@ BEGIN
      * SQL:2016 11.27 SR 5.h
      */
     IF NOT valid_from_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name /* %I */);
     END IF;
     IF NOT valid_until_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name);
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name /* %I */);
     END IF;
 
 
@@ -252,16 +255,16 @@ BEGIN
                     v_trigger_applies_defaults := true;
                 ELSE
                     -- For simple eras, set the default directly on the table.
-                    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name);
+                    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name /* %I */);
                 END IF;
             END IF;
         END IF;
 
         IF p_add_bounds_check THEN
             IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
-                condef := format('CHECK ((%I < %I) AND (%I > ''-infinity''))', valid_from_column_name, valid_until_column_name, valid_from_column_name);
+                condef := format('CHECK ((%I < %I) AND (%I > ''-infinity''))', valid_from_column_name /* %I */, valid_until_column_name /* %I */, valid_from_column_name /* %I */);
             ELSE
-                condef := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
+                condef := format('CHECK ((%I < %I))', valid_from_column_name /* %I */, valid_until_column_name /* %I */);
             END IF;
 
             IF bounds_check_constraint IS NOT NULL THEN
@@ -279,7 +282,7 @@ BEGIN
                 END IF;
             ELSE
                 /* If it doesn't exist, we'll use the name for the one we create. */
-                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint /* %I */, condef /* %s */);
             END IF;
         ELSE
             /* No name given, can we appropriate one? */
@@ -293,7 +296,7 @@ BEGIN
             /* Make our own then */
             IF NOT FOUND THEN
                 bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
-                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint, condef);
+                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint /* %I */, condef /* %s */);
             END IF;
         END IF;
         END IF;
@@ -352,7 +355,7 @@ BEGIN
 
     /* If we've created any work for ourselves, do it now */
     IF alter_commands <> '{}' THEN
-        EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(alter_commands, ', '));
+        EXECUTE format('ALTER TABLE %s %s', table_oid /* %s */, array_to_string(alter_commands, ', ') /* %s */);
     END IF;
 
     DECLARE
@@ -415,29 +418,29 @@ BEGIN
             END IF;
 
             IF v_to_col IS NOT NULL THEN
-                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_to_col);
+                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_to_col /* %I */);
             END IF;
             IF v_range_col IS NOT NULL THEN
-                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_range_col);
+                sync_alter_commands := sync_alter_commands || format('ALTER COLUMN %I SET NOT NULL', v_range_col /* %I */);
             END IF;
 
             IF sync_alter_commands <> '{}' THEN
-                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(sync_alter_commands, ', '));
+                 EXECUTE format('ALTER TABLE %s %s', table_oid /* %s */, array_to_string(sync_alter_commands, ', ') /* %s */);
             END IF;
 
             IF v_to_col IS NOT NULL OR v_range_col IS NOT NULL THEN
-                trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
+                trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name /* %s */);
                 EXECUTE format(
                     'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L, %L)',
-                    trigger_name,
-                    array_to_string(ARRAY[valid_from_column_name, valid_until_column_name] || sync_cols, ', '),
-                    table_oid::text,
-                    valid_from_column_name,
-                    valid_until_column_name,
-                    v_to_col,
-                    v_range_col,
-                    v_range_subtype,
-                    v_trigger_applies_defaults
+                    trigger_name, /* %I */
+                    array_to_string(ARRAY[valid_from_column_name, valid_until_column_name] || sync_cols, ', '), /* %s */
+                    table_oid::text, /* %s */
+                    valid_from_column_name, /* %L */
+                    valid_until_column_name, /* %L */
+                    v_to_col, /* %L */
+                    v_range_col, /* %L */
+                    v_range_subtype, /* %L */
+                    v_trigger_applies_defaults /* %L */
                 );
                 RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
 

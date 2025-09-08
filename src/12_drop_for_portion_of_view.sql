@@ -42,8 +42,8 @@ BEGIN
           AND v.view_type = 'for_portion_of'
         RETURNING v.view_schema, v.view_name, v.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name, view_schema, view_name);
-        EXECUTE format('DROP VIEW %I.%I %s', view_schema, view_name, drop_behavior);
+        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name /* %I */, view_schema /* %I */, view_name /* %I */);
+        EXECUTE format('DROP VIEW %I.%I %s', view_schema /* %I */, view_name /* %I */, drop_behavior /* %s */);
     END LOOP;
 
     RETURN true;

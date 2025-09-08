@@ -33,16 +33,16 @@ BEGIN
     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
 
     IF NOT is_dropped THEN
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure, drop_behavior);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure, drop_behavior);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure, drop_behavior);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure, drop_behavior);
-        EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure /* %s */, drop_behavior /* %s */);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure /* %s */, drop_behavior /* %s */);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure /* %s */, drop_behavior /* %s */);
+        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure /* %s */, drop_behavior /* %s */);
+        EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name /* %I */, system_versioning_row.view_table_name /* %I */, drop_behavior /* %s */);
     END IF;
 
     IF NOT is_dropped AND cleanup THEN
         PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
-        EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+        EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name /* %I */, system_versioning_row.history_table_name /* %I */, drop_behavior /* %s */);
     END IF;
 
     RETURN true;

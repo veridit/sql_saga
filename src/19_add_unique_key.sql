@@ -91,11 +91,11 @@ BEGIN
         RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
 
-    where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate) ELSE '' END;
+    where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
 
     IF predicate IS NULL THEN
         /* If we were given a unique constraint to use, look it up and make sure it matches */
-        SELECT format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality))
+        SELECT format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */)
         INTO unique_sql
         FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
 
@@ -153,14 +153,17 @@ BEGIN
     DECLARE
         withs text[];
     BEGIN
-        SELECT array_agg(format('%I WITH =', column_name) ORDER BY n.ordinality)
+        SELECT array_agg(format('%I WITH =', column_name /* %I */) ORDER BY n.ordinality)
         INTO withs
         FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
 
         withs := withs || format('%I(%I, %I) WITH &&',
-            era_row.range_type, era_row.valid_from_column_name, era_row.valid_until_column_name);
+            era_row.range_type, /* %I */
+            era_row.valid_from_column_name, /* %I */
+            era_row.valid_until_column_name /* %I */
+        );
 
-        exclude_sql := format('EXCLUDE USING gist (%s)%s DEFERRABLE', array_to_string(withs, ', '), where_clause);
+        exclude_sql := format('EXCLUDE USING gist (%s)%s DEFERRABLE', array_to_string(withs, ', ') /* %s */, where_clause /* %s */);
     END;
 
     IF exclude_constraint IS NOT NULL THEN
@@ -228,11 +231,11 @@ BEGIN
         -- We generate a name for it and store it in the `unique_constraint` variable for metadata.
         unique_constraint := unique_key_name || '_idx';
         unique_sql := format('CREATE UNIQUE INDEX %I ON %I.%I (%s)%s',
-            unique_constraint,
-            table_schema,
-            table_name,
-            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) AS u(c)),
-            where_clause
+            unique_constraint, /* %I */
+            table_schema, /* %I */
+            table_name, /* %I */
+            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) AS u(c)), /* %s */
+            where_clause /* %s */
         );
         EXECUTE unique_sql;
     END IF;
@@ -243,7 +246,7 @@ BEGIN
     END IF;
 
     IF alter_cmds <> '{}' THEN
-        SELECT format('ALTER TABLE %I.%I %s', n.nspname, c.relname, array_to_string(alter_cmds, ', '))
+        SELECT format('ALTER TABLE %I.%I %s', n.nspname /* %I */, c.relname /* %I */, array_to_string(alter_cmds, ', ') /* %s */)
         INTO sql
         FROM pg_catalog.pg_class AS c
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
@@ -293,10 +296,10 @@ BEGIN
                 ARRAY[table_name] || column_names || ARRAY['idx']
             );
             index_sql := format('CREATE INDEX %I ON %I.%I USING btree (%s)',
-                index_name,
-                table_schema,
-                table_name,
-                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names) AS u(c))
+                index_name, /* %I */
+                table_schema, /* %I */
+                table_name, /* %I */
+                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names) AS u(c)) /* %s */
             );
             EXECUTE index_sql;
         END IF;

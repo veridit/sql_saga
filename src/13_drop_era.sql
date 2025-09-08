@@ -54,10 +54,10 @@ BEGIN
         RETURNING * INTO system_time_era_row;
 
         IF FOUND AND NOT is_dropped THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid);
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, system_time_era_row.infinity_check_constraint /* %I */);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger /* %I */, table_oid /* %s */);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger /* %I */, table_oid /* %s */);
+            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger /* %I */, table_oid /* %s */);
         END IF;
     END;
 
@@ -100,18 +100,21 @@ BEGIN
 
         /* Drop synchronization trigger */
         IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
-             EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name), table_oid);
+             EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
         END IF;
 
         /* Delete bounds check constraint. */
         IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint);
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
         END IF;
 
         /* Delete columns if purging */
         IF NOT is_dropped AND cleanup THEN
             EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
-                table_oid, era_row.valid_from_column_name, era_row.valid_until_column_name);
+                table_oid, /* %s */
+                era_row.valid_from_column_name, /* %I */
+                era_row.valid_until_column_name /* %I */
+            );
         END IF;
 
         RETURN true;
@@ -135,18 +138,21 @@ BEGIN
 
     /* Drop synchronization trigger */
     IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
-         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name), table_oid);
+         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
     END IF;
 
     /* Delete bounds check constraint. */
     IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint);
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
     END IF;
 
     /* Delete columns if purging */
     IF NOT is_dropped AND cleanup THEN
         EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
-            table_oid, era_row.valid_from_column_name, era_row.valid_until_column_name);
+            table_oid, /* %s */
+            era_row.valid_from_column_name, /* %I */
+            era_row.valid_until_column_name /* %I */
+        );
     END IF;
 
     RETURN true;

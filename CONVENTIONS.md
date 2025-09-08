@@ -39,14 +39,77 @@ For file system operations and large-scale edits, prefer suggesting shell comman
     - Use the function/procedure name in the literal string quote for the body (e.g., `AS $my_function_name$`).
     - Specify `LANGUAGE plpgsql` (or other) before the body.
     - Use the long form for parameters for documentation clarity (e.g., `param_name param_type`).
+    - Example:
+      ```sql
+      CREATE FUNCTION public.example(email text) RETURNS void LANGUAGE plpgsql AS $example$
+      BEGIN
+        -- Use function_name.parameter_name for clarity if needed, e.g., example.email
+        SELECT * FROM some_table st WHERE st.email = example.email;
+      END;
+      $$;
+      ```
 - **Function Calls**: For calls with 3+ arguments, use named arguments (e.g., `arg1 => val1`).
 - **String Literals for `format()`**:
     - Always prefer dollar-quoting (e.g., `format($$ ... $$)`) for the main dynamic SQL string. This avoids having to escape single quotes inside the SQL.
-    - **Nesting**: When nesting dollar-quoted strings, use named dollar quotes for the outer string to avoid conflicts (e.g., `$SQL$`).
-    - For `format()` calls with multiple parameters, use numbered placeholders for clarity:
+    - **Nesting**: When nesting dollar-quoted strings (e.g., a dynamic SQL string that itself contains another `format()` call), use named dollar quotes for the outer string to avoid conflicts. The convention is to use a descriptive name like `$SQL$` or `$jsonb_expr$`. This is especially common inside function bodies, which already use a named quote (e.g., `$function_name$`).
+    - For `format()` calls with multiple parameters, especially if parameters repeat, use numbered placeholders for clarity:
       - `%1$I` for the 1st parameter as an identifier, `%2$L` for the 2nd as a literal, `%3$s` for the 3rd as a plain string, etc.
-      - Keep the SQL readable by aligning numbered placeholders with inline comments that show which parameter they refer to (e.g., `... %1$I ... /* %1$I */`).
-- **Table Aliases**: Prefer explicit `AS` for table aliases, e.g., `FROM my_table AS mt`.
+      - Example: `format($$Testing %3$s, %2$s, %1$s$$, 'one' /* %1 */, 'two' /* %2 */, 'three' /* %3 */);`
+    - Prefer parameter binding with `EXECUTE ... USING` for large arrays or values rather than interpolating with `%L` where possible.
+
+    Good
+    ```sql
+    -- Dollar-quoted format() string; identifier and literal are numbered; batch array is passed via USING.
+    EXECUTE format($$
+        UPDATE public.%1$I AS dt SET
+            last_completed_priority = %2$L
+        WHERE dt.row_id = ANY($1) AND dt.action = 'skip'
+    $$, v_data_table_name /* %1$I */, v_step.priority /* %2$L */)
+    USING p_batch_row_ids;
+    ```
+
+    Also good (embedding quotes safely without doubling them)
+    ```sql
+    EXECUTE format($$
+        UPDATE public.%1$I AS dt SET
+            error = COALESCE(dt.error, '{}'::jsonb) ||
+                    jsonb_build_object('status_code', 'Provided status_code not found and no default available'),
+            state = 'error'
+        WHERE dt.row_id = ANY($1) AND dt.status_code IS NOT NULL
+    $$, v_data_table_name)
+    USING p_batch_row_ids;
+    ```
+
+    Also good (nested dollar-quoting)
+    ```sql
+    -- The outer string uses a named quote ($jsonb_expr$) to avoid conflicting with the inner $$
+    v_error_sql := $jsonb_expr$
+        jsonb_build_object('latitude', CASE ... THEN format($$Value %1$s out of range$$, lat_val) ... END)
+    $jsonb_expr$;
+    ```
+
+    Avoid
+    ```sql
+    -- Hard to read and easy to break: manual '' escaping inside single-quoted format string
+    EXECUTE format('UPDATE public.%s SET note = ''it'''''s broken'' WHERE id = %s', tbl, id);
+    ```
+
+    Notes
+    - Use `%I` for identifiers, `%L` for SQL literals, and `%s` for raw string insertion.
+    - Keep the SQL readable by aligning numbered placeholders with inline comments that show which parameter they refer to.
+- **Table Aliases**: Prefer explicit `AS` for table aliases, e.g., `FROM my_table AS mt`. For common data table aliases in import procedures, `AS dt` is preferred.
+- **Temporal Logic**: When writing conditions involving time, always order the components chronologically for readability (e.g., `start <= point AND point < end`). Avoid non-chronological forms like `point >= start`.
+- **Temporary Table Management**:
+    - To ensure procedures are idempotent and to avoid noisy `NOTICE` messages in logs, use the following pattern to clean up temporary tables at the beginning of a procedure:
+      ```sql
+      -- The explicit 'pg_temp.' schema ensures we only check for session-local tables.
+      IF to_regclass('pg_temp.my_temp_table') IS NOT NULL THEN DROP TABLE my_temp_table; END IF;
+      CREATE TEMP TABLE my_temp_table (...) ON COMMIT DROP;
+      ```
+    - This pattern has several advantages:
+        1.  **Silent Operation**: It avoids the `NOTICE: table "..." does not exist, skipping` message that `DROP TABLE IF EXISTS` would generate on the first run.
+        2.  **Co-location**: It keeps the cleanup logic directly beside the creation logic, improving readability.
+        3.  **Debuggability**: If the code does not behave as expected, then a test running in the same transaction can inspect those temporary tables to determine where the faulty logic lies.
 
 ### Build System
 - **`Makefile` and Source Files**: The `Makefile` uses a glob pattern (`src/[0-9][0-9]_*.sql`) to automatically discover and concatenate SQL source files. When adding a new feature, simply create a new numbered `.sql` file in the `src/` directory (e.g., `src/31_new_feature.sql`). It will be included in the build automatically without any need to edit the `Makefile`.

@@ -18,7 +18,7 @@ BEGIN
 
     /* Make sure that all of our tables are still persistent */
     FOR r IN
-        SELECT to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid
+        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
         FROM sql_saga.era AS e
         JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name
         JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
@@ -30,7 +30,7 @@ BEGIN
 
     /* And the history tables, too */
     FOR r IN
-        SELECT to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid
+        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
         FROM sql_saga.era AS e
         JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
@@ -73,7 +73,7 @@ BEGIN
         --
         --        UNION ALL
 
-        SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema, v.view_name, t.relowner::regrole)
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema /* %I */, v.view_name /* %I */, t.relowner::regrole /* %I */)
         FROM sql_saga.updatable_view v
         JOIN pg_class t ON t.relname = v.table_name
         JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
@@ -121,7 +121,7 @@ BEGIN
 --
 --                UNION ALL
 --
-                SELECT to_regclass(format('%I.%I', v.table_schema, v.table_name)) AS table_oid,
+                SELECT to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) AS table_oid,
                        vt.oid::regclass::text AS object_name,
                        vt.relkind AS object_type,
                        acl.privilege_type,
@@ -166,10 +166,11 @@ BEGIN
         /* Propagate GRANTs */
         FOR cmd IN
             SELECT format('GRANT %s ON %s %s TO %s',
-                          string_agg(DISTINCT privilege_type, ', '),
-                          object_type,
-                          string_agg(DISTINCT object_name, ', '),
-                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', '))
+                          string_agg(DISTINCT privilege_type, ', '), /* %s */
+                          object_type, /* %s */
+                          string_agg(DISTINCT object_name, ', '), /* %s */
+                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', ') /* %s */
+            )
             FROM (
 --                SELECT 'TABLE' AS object_type,
 --                       hc.oid::regclass::text AS object_name,
@@ -241,7 +242,7 @@ BEGIN
 --
 --            UNION ALL
 
-            SELECT to_regclass(format('%I.%I', v.table_schema, v.table_name)) AS table_oid,
+            SELECT to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) AS table_oid,
                    vt.oid::regclass::text AS object_name,
                    acl.privilege_type,
                    acl.privilege_type AS base_privilege_type
@@ -283,10 +284,11 @@ BEGIN
         /* Propagate REVOKEs */
         FOR cmd IN
             SELECT format('REVOKE %s ON %s %s FROM %s',
-                          string_agg(DISTINCT privilege_type, ', '),
-                          object_type,
-                          string_agg(DISTINCT object_name, ', '),
-                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', '))
+                          string_agg(DISTINCT privilege_type, ', '), /* %s */
+                          object_type, /* %s */
+                          string_agg(DISTINCT object_name, ', '), /* %s */
+                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', ') /* %s */
+            )
             FROM (
 --                SELECT 'TABLE' AS object_type,
 --                       hc.oid::regclass::text AS object_name,
@@ -308,7 +310,7 @@ BEGIN
                 JOIN pg_class vt ON vt.relname = v.view_name
                 JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
                 CROSS JOIN LATERAL aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS hacl
-                WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', v.table_schema, v.table_name)), hacl.privilege_type)
+                WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)), hacl.privilege_type)
 
 --                UNION ALL
 --
