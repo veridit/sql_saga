@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Fix `add_era` to validate range column type:** The function must verify that the column passed to `p_synchronize_range_column` is a valid range type before creating the synchronization trigger, preventing invalid SQL generation.
 - [x] **Fix `temporal_merge` executor to ignore generated columns:** The executor must not include generated columns (`GENERATED ALWAYS`) in its `UPDATE` statements to prevent "cannot update a generated column" errors.
 - [x] **Fix `temporal_merge` planner bug causing `NOT NULL` violations:** When splitting a time slice, `PATCH` modes failed with a `NOT NULL` violation if the source omitted a `NOT NULL` column. Fixed the planner's introspection to build the target's data payload using all of the target's columns, not just those common to the source, ensuring inherited values are correctly carried forward. Added regression tests for both `PATCH_FOR_PORTION_OF` and `MERGE_ENTITY_PATCH`.
 - [x] **Fix C-level plan cache collision:** Refactored the C-based foreign key triggers to use the trigger's OID as the plan cache key instead of the foreign key's name. This prevents stale cache hits and potential crashes when a foreign key is dropped and a new one with the same name is created in the same session, making the caching mechanism robust.

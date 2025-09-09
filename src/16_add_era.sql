@@ -410,11 +410,30 @@ BEGIN
 
             -- Validate range column
             IF v_range_col IS NOT NULL THEN
-                 IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = table_oid AND attname = v_range_col AND NOT attisdropped) THEN
-                    RAISE EXCEPTION 'Synchronization column "%" not found on table %.', v_range_col, table_oid;
-                 ELSE
+                DECLARE
+                    v_range_col_type oid;
+                    v_range_col_typtype "char";
+                BEGIN
+                    SELECT a.atttypid
+                    INTO v_range_col_type
+                    FROM pg_catalog.pg_attribute AS a
+                    WHERE a.attrelid = table_oid AND a.attname = v_range_col AND NOT a.attisdropped;
+
+                    IF NOT FOUND THEN
+                        RAISE EXCEPTION 'Synchronization column "%" not found on table %.', v_range_col, table_oid;
+                    END IF;
+
+                    SELECT t.typtype
+                    INTO v_range_col_typtype
+                    FROM pg_catalog.pg_type AS t
+                    WHERE t.oid = v_range_col_type;
+
+                    IF v_range_col_typtype <> 'r' THEN
+                        RAISE EXCEPTION 'Column "%" provided for range synchronization is type %, which is not a range type.', v_range_col, v_range_col_type::regtype;
+                    END IF;
+
                     sync_cols := sync_cols || v_range_col;
-                 END IF;
+                END;
             END IF;
 
             IF v_to_col IS NOT NULL THEN
