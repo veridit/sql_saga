@@ -145,33 +145,39 @@ BEGIN
             v_entity_id_as_jsonb
         FROM unnest(p_identity_columns) AS col;
 
-        -- 1. Dynamically get the list of common data columns from SOURCE and TARGET tables.
+        -- 1. Dynamically build jsonb payload expressions for SOURCE and TARGET tables.
+        -- The source payload only includes columns present in the source table.
+        -- The target payload includes ALL data columns from the target table.
         WITH source_cols AS (
             SELECT pa.attname
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_source_table
-              AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         target_cols AS (
-            SELECT pa.attname
+            SELECT pa.attname, pa.attgenerated
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_target_table
-              AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
-        common_data_cols AS (
+        source_data_cols AS (
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(p_identity_columns)
+        ),
+        target_data_cols AS (
+            SELECT t.attname
+            FROM target_cols t
+            WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+              AND t.attname <> ALL(p_identity_columns)
+              AND t.attgenerated = '' -- Exclude generated columns
         )
         SELECT
-            format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), ''))
+            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM source_data_cols),
+            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM target_data_cols)
         INTO
-            v_source_data_cols_jsonb_build -- Re-use this variable for the common expression
-        FROM
-            common_data_cols;
+            v_source_data_cols_jsonb_build,
+            v_target_data_cols_jsonb_build;
 
-        v_target_data_cols_jsonb_build := v_source_data_cols_jsonb_build; -- Both source and target use the same payload structure
         v_source_data_cols_jsonb_build := COALESCE(v_source_data_cols_jsonb_build, '''{}''::jsonb');
         v_target_data_cols_jsonb_build := COALESCE(v_target_data_cols_jsonb_build, '''{}''::jsonb');
 
@@ -744,22 +750,22 @@ BEGIN
             END IF;
         END;
 
-        -- Get dynamic column lists for DML, mimicking the planner's introspection logic for consistency.
-        WITH source_cols AS (
-            SELECT pa.attname
-            FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
-        ),
-        target_cols AS (
-            SELECT pa.attname, pa.atttypid
+        -- Get dynamic column lists for DML. The data columns are defined as all columns
+        -- in the target table, minus the identity and temporal boundary columns.
+        -- This is intentionally different from the planner's introspection, as the executor
+        -- must be able to handle a final payload that contains columns inherited from
+        -- the target's history, which may not be present in the source.
+        WITH target_cols AS (
+            SELECT pa.attname, pa.atttypid, pa.attgenerated
             FROM pg_catalog.pg_attribute pa
             WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         common_data_cols AS (
             SELECT t.attname, t.atttypid
-            FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND s.attname <> ALL(p_identity_columns)
+            FROM target_cols t
+            WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
+              AND t.attname <> ALL(p_identity_columns)
+              AND t.attgenerated = '' -- Exclude generated columns
         ),
         all_available_cols AS (
             SELECT c.attname, c.atttypid FROM common_data_cols c
