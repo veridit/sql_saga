@@ -19,6 +19,7 @@ DECLARE
     v_range_constructor name;
     v_valid_from_col name;
     v_valid_until_col name;
+    v_valid_to_col name;
     v_sql TEXT;
 BEGIN
     -- An entity must be identifiable. Fail fast if no ID columns are provided.
@@ -46,8 +47,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = p_target_table;
 
-    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name
-    INTO v_range_constructor, v_valid_from_col, v_valid_until_col
+    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column
+    INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
@@ -58,7 +59,7 @@ BEGIN
     END IF;
 
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_identity_columns,
@@ -68,7 +69,8 @@ BEGIN
         p_source_row_id_column,
         COALESCE(p_identity_correlation_column, ''),
         v_range_constructor,
-        p_delete_mode
+        p_delete_mode,
+        COALESCE(v_valid_to_col, '')
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
 
@@ -300,6 +302,16 @@ $$, v_resolver_from);
             -- If deleting missing entities, the final payload for those entities must be NULL.
             -- For entities present in the source, the existing v_final_data_payload_expr is correct.
             v_final_data_payload_expr := format($$CASE WHEN entity_is_in_source THEN (%s) ELSE NULL END$$, v_final_data_payload_expr);
+        END IF;
+
+        -- If a `valid_to` column is synchronized, we must override its value in the payload
+        -- to be consistent with the final calculated `valid_until` of the time slice.
+        IF v_valid_to_col IS NOT NULL THEN
+            v_final_data_payload_expr := format(
+                $$(%s) || jsonb_build_object(%L, to_jsonb(valid_until - 1))$$,
+                v_final_data_payload_expr,
+                v_valid_to_col
+            );
         END IF;
 
         -- 4. Construct and execute the main query to generate the execution plan.
