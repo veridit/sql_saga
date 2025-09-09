@@ -140,40 +140,48 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
            ->  CTE Scan on target_rows target_rows_1
    CTE numbered_segments
      ->  WindowAgg
-           ->  Nested Loop Left Join
-                 Filter: ((sr_2.data_payload IS NOT NULL) OR (tr_2.data_payload IS NOT NULL))
-                 ->  Merge Left Join
-                       Merge Cond: (seg.entity_id = tr_2.entity_id)
-                       Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until))
-                       ->  Subquery Scan on seg
-                             Filter: (seg.valid_from < seg.valid_until)
-                             ->  WindowAgg
-                                   ->  Sort
-                                         Sort Key: all_rows.entity_id, all_rows.valid_from
-                                         ->  HashAggregate
-                                               Group Key: all_rows.entity_id, all_rows.valid_from
-                                               ->  Append
-                                                     ->  CTE Scan on all_rows
-                                                           Filter: (valid_from IS NOT NULL)
-                                                     ->  CTE Scan on all_rows all_rows_1
-                                                           Filter: (valid_until IS NOT NULL)
-                       ->  Sort
-                             Sort Key: tr_2.entity_id
-                             ->  CTE Scan on target_rows tr_2
-                 ->  Limit
-                       ->  Sort
-                             Sort Key: sr_2.source_row_id DESC
-                             ->  CTE Scan on active_source_rows sr_2
-                                   Filter: ((entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
-           SubPlan 8
-             ->  Limit
-                   ->  Sort
-                         Sort Key: sr_1.source_row_id DESC
-                         ->  CTE Scan on active_source_rows sr_1
-                               Filter: ((entity_id = seg.entity_id) AND ((daterange(valid_from, valid_until) && daterange(seg.valid_from, seg.valid_until)) OR ((daterange(valid_from, valid_until) -|- daterange(seg.valid_from, seg.valid_until)) AND EXISTS(SubPlan 7))))
-                               SubPlan 7
-                                 ->  CTE Scan on target_rows tr_1
-                                       Filter: ((entity_id = sr_1.entity_id) AND (daterange(sr_1.valid_from, sr_1.valid_until) && daterange(valid_from, valid_until)))
+           ->  Incremental Sort
+                 Sort Key: resolved_atomic_segments_with_payloads.entity_id, resolved_atomic_segments_with_payloads.valid_from
+                 Presorted Key: resolved_atomic_segments_with_payloads.entity_id
+                 ->  Subquery Scan on resolved_atomic_segments_with_payloads
+                       ->  WindowAgg
+                             ->  Incremental Sort
+                                   Sort Key: seg.entity_id, ((tr_2.stable_pk_payload IS NULL)), seg.valid_from
+                                   Presorted Key: seg.entity_id
+                                   ->  Nested Loop Left Join
+                                         Filter: ((sr_2.data_payload IS NOT NULL) OR (tr_2.data_payload IS NOT NULL))
+                                         ->  Merge Left Join
+                                               Merge Cond: (seg.entity_id = tr_2.entity_id)
+                                               Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until))
+                                               ->  Subquery Scan on seg
+                                                     Filter: (seg.valid_from < seg.valid_until)
+                                                     ->  WindowAgg
+                                                           ->  Sort
+                                                                 Sort Key: all_rows.entity_id, all_rows.valid_from
+                                                                 ->  HashAggregate
+                                                                       Group Key: all_rows.entity_id, all_rows.valid_from
+                                                                       ->  Append
+                                                                             ->  CTE Scan on all_rows
+                                                                                   Filter: (valid_from IS NOT NULL)
+                                                                             ->  CTE Scan on all_rows all_rows_1
+                                                                                   Filter: (valid_until IS NOT NULL)
+                                               ->  Sort
+                                                     Sort Key: tr_2.entity_id
+                                                     ->  CTE Scan on target_rows tr_2
+                                         ->  Limit
+                                               ->  Sort
+                                                     Sort Key: sr_2.source_row_id DESC
+                                                     ->  CTE Scan on active_source_rows sr_2
+                                                           Filter: ((entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+                             SubPlan 8
+                               ->  Limit
+                                     ->  Sort
+                                           Sort Key: sr_1.source_row_id DESC
+                                           ->  CTE Scan on active_source_rows sr_1
+                                                 Filter: ((entity_id = seg.entity_id) AND ((daterange(valid_from, valid_until) && daterange(seg.valid_from, seg.valid_until)) OR ((daterange(valid_from, valid_until) -|- daterange(seg.valid_from, seg.valid_until)) AND EXISTS(SubPlan 7))))
+                                                 SubPlan 7
+                                                   ->  CTE Scan on target_rows tr_1
+                                                         Filter: ((entity_id = sr_1.entity_id) AND (daterange(sr_1.valid_from, sr_1.valid_until) && daterange(valid_from, valid_until)))
    CTE running_payload_cte
      ->  Recursive Union
            ->  CTE Scan on numbered_segments s
@@ -199,9 +207,8 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                                Sort Key: running_payload_cte.entity_id, running_payload_cte.valid_from
                                                ->  CTE Scan on running_payload_cte
    ->  WindowAgg
-         ->  Incremental Sort
+         ->  Sort
                Sort Key: "*SELECT* 1".entity_id, "*SELECT* 1".operation, (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".source_row_ids[1])
-               Presorted Key: "*SELECT* 1".entity_id
                ->  Result
                      ->  Subquery Scan on "*SELECT* 1"
                            ->  WindowAgg
@@ -216,7 +223,7 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                                    ->  CTE Scan on coalesced_final_segments
                                              SubPlan 13
                                                ->  CTE Scan on coalesced_final_segments f_inner
-(100 rows)
+(107 rows)
 
 SET client_min_messages TO NOTICE;
 ROLLBACK;

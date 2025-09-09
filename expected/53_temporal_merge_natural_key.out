@@ -73,14 +73,16 @@ SELECT sql_saga.add_unique_key('nk_establishment'::regclass, ARRAY['establishmen
 
 INSERT INTO nk_establishment VALUES (101, 'Main St Office', '2020-01-01', 'infinity');
 INSERT INTO nk_establishment VALUES (102, 'Side St Office', '2022-01-01', 'infinity');
--- Child table with composite natural/foreign key
+-- Child table with a surrogate key (`employment_id`) but which will be managed
+-- using its composite natural key (`legal_unit_id`, `establishment_id`).
 CREATE TABLE nk_unit_employment (
+    employment_id serial,
     legal_unit_id int,
     establishment_id int,
     num_employees int,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (legal_unit_id, establishment_id, valid_from)
+    PRIMARY KEY (employment_id, valid_from)
 );
 SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_from', 'valid_until');
  add_era 
@@ -88,6 +90,8 @@ SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_from', 'valid_unt
  t
 (1 row)
 
+-- The unique key on the natural key is what allows `temporal_merge` to
+-- identify a unique entity over time using these columns.
 SELECT sql_saga.add_unique_key('nk_unit_employment'::regclass, ARRAY['legal_unit_id', 'establishment_id']);
                      add_unique_key                      
 ---------------------------------------------------------
@@ -118,98 +122,140 @@ CREATE TEMP TABLE nk_source (
     establishment_id int,
     num_employees int,
     valid_from date,
-    valid_until date
+    valid_until date,
+    feedback jsonb
 );
 -- Step 1: INSERT a new employment record.
-INSERT INTO nk_source VALUES (1, 1, 101, 50, '2021-01-01', 'infinity');
+INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until)
+VALUES (1, 1, 101, 50, '2021-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
     p_target_table := 'nk_unit_employment'::regclass,
     p_source_table := 'nk_source'::regclass,
     p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    p_update_source_with_feedback := true,
+    p_feedback_status_column := 'feedback',
+    p_feedback_status_key := 'tm_status'
 );
 \echo '--- INSERT: Expected Final State ---'
 --- INSERT: Expected Final State ---
+-- We expect one row to be inserted, with a generated employment_id of 1.
 SELECT * FROM (VALUES
-    (1, 101, 50, '2021-01-01'::date, 'infinity'::date)
-) AS t(legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | infinity
+    (1, 1, 101, 50, '2021-01-01'::date, 'infinity'::date)
+) AS t(employment_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | infinity
 (1 row)
 
 \echo '--- INSERT: Actual Final State ---'
 --- INSERT: Actual Final State ---
 TABLE nk_unit_employment;
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | infinity
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | infinity
+(1 row)
+
+\echo '--- INSERT: Feedback ---'
+--- INSERT: Feedback ---
+SELECT row_id, feedback->>'tm_status' as status FROM nk_source ORDER BY row_id;
+ row_id | status  
+--------+---------
+      1 | APPLIED
 (1 row)
 
 -- Step 2: UPDATE the employment record.
 TRUNCATE nk_source;
 -- Update: The number of employees changed in 2023.
-INSERT INTO nk_source VALUES (2, 1, 101, 75, '2023-01-01', 'infinity');
+INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until)
+VALUES (2, 1, 101, 75, '2023-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
     p_target_table := 'nk_unit_employment'::regclass,
     p_source_table := 'nk_source'::regclass,
     p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    p_update_source_with_feedback := true,
+    p_feedback_status_column := 'feedback',
+    p_feedback_status_key := 'tm_status'
 );
 \echo '--- UPDATE: Expected Final State ---'
 --- UPDATE: Expected Final State ---
+-- The original row is end-dated and a new one is created.
+-- Both rows must have the same employment_id (1).
 SELECT * FROM (VALUES
-    (1, 101, 50, '2021-01-01'::date, '2023-01-01'::date),
-    (1, 101, 75, '2023-01-01'::date, 'infinity'::date)
-) AS t(legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             1 |              101 |            75 | 2023-01-01 | infinity
+    (1, 1, 101, 50, '2021-01-01'::date, '2023-01-01'::date),
+    (1, 1, 101, 75, '2023-01-01'::date, 'infinity'::date)
+) AS t(employment_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
+             1 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
 
 \echo '--- UPDATE: Actual Final State ---'
 --- UPDATE: Actual Final State ---
 TABLE nk_unit_employment ORDER BY valid_from;
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             1 |              101 |            75 | 2023-01-01 | infinity
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
+             2 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
 
--- Step 3: End-date the employment record.
+\echo '--- UPDATE: Feedback ---'
+--- UPDATE: Feedback ---
+SELECT row_id, feedback->>'tm_status' as status FROM nk_source ORDER BY row_id;
+ row_id | status  
+--------+---------
+      2 | APPLIED
+(1 row)
+
+-- Step 3: Idempotency check.
 TRUNCATE nk_source;
--- End-date: The employment ended at the start of 2024.
-INSERT INTO nk_source VALUES (3, 1, 101, 75, '2023-01-01', '2024-01-01');
+-- This source data exactly matches a slice of the existing target data.
+-- No change should occur, and the feedback should be SKIPPED_IDENTICAL.
+INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until)
+VALUES (3, 1, 101, 75, '2023-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
     p_target_table := 'nk_unit_employment'::regclass,
     p_source_table := 'nk_source'::regclass,
     p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
     p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    p_update_source_with_feedback := true,
+    p_feedback_status_column := 'feedback',
+    p_feedback_status_key := 'tm_status'
 );
-\echo '--- END-DATE: Expected Final State ---'
---- END-DATE: Expected Final State ---
+\echo '--- IDEMPOTENCY: Expected Final State (No Change) ---'
+--- IDEMPOTENCY: Expected Final State (No Change) ---
+-- The final state should be identical to the state after Step 2.
 SELECT * FROM (VALUES
-    (1, 101, 50, '2021-01-01'::date, '2023-01-01'::date),
-    (1, 101, 75, '2023-01-01'::date, 'infinity'::date)
-) AS t(legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             1 |              101 |            75 | 2023-01-01 | infinity
+    (1, 1, 101, 50, '2021-01-01'::date, '2023-01-01'::date),
+    (1, 1, 101, 75, '2023-01-01'::date, 'infinity'::date)
+) AS t(employment_id, legal_unit_id, establishment_id, num_employees, valid_from, valid_until);
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
+             1 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
 
-\echo '--- END-DATE: Actual Final State ---'
---- END-DATE: Actual Final State ---
+\echo '--- IDEMPOTENCY: Actual Final State ---'
+--- IDEMPOTENCY: Actual Final State ---
 TABLE nk_unit_employment ORDER BY valid_from;
- legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
----------------+------------------+---------------+------------+-------------
-             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             1 |              101 |            75 | 2023-01-01 | infinity
+ employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
+---------------+---------------+------------------+---------------+------------+-------------
+             1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
+             2 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
+
+\echo '--- IDEMPOTENCY: Feedback ---'
+--- IDEMPOTENCY: Feedback ---
+SELECT row_id, feedback->>'tm_status' as status FROM nk_source ORDER BY row_id;
+ row_id | status  
+--------+---------
+      3 | APPLIED
+(1 row)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

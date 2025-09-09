@@ -101,6 +101,7 @@ BEGIN
         v_founding_id_select_expr TEXT;
         v_planner_entity_id_expr TEXT;
         v_target_rows_filter TEXT;
+        v_stable_pk_cols_jsonb_build TEXT;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
         IF p_identity_correlation_column IS NOT NULL THEN
@@ -182,6 +183,26 @@ BEGIN
 
         v_source_data_cols_jsonb_build := COALESCE(v_source_data_cols_jsonb_build, '''{}''::jsonb');
         v_target_data_cols_jsonb_build := COALESCE(v_target_data_cols_jsonb_build, '''{}''::jsonb');
+
+        -- Introspect any "stable" primary key columns (e.g., surrogate keys) that
+        -- are not part of the entity's natural key, so they can be preserved.
+        WITH pk_cols AS (
+            SELECT a.attname
+            FROM pg_constraint c
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+            WHERE c.conrelid = p_target_table AND c.contype = 'p'
+        ),
+        stable_pk_cols AS (
+            SELECT pk.attname
+            FROM pk_cols pk
+            WHERE pk.attname NOT IN (v_valid_from_col, v_valid_until_col)
+                AND pk.attname <> ALL(p_identity_columns)
+        )
+        SELECT format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
+        INTO v_stable_pk_cols_jsonb_build
+        FROM stable_pk_cols;
+
+        v_stable_pk_cols_jsonb_build := COALESCE(v_stable_pk_cols_jsonb_build, '''{}''::jsonb');
 
         -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
         SELECT
@@ -331,6 +352,7 @@ source_initial AS (
 target_rows AS (
     SELECT
         %1$s as entity_id,
+        %21$s as stable_pk_payload,
         t.%14$I as valid_from,
         t.%15$I as valid_until,
         %6$s AS data_payload
@@ -385,47 +407,53 @@ atomic_segments AS (
 ),
 resolved_atomic_segments_with_payloads AS (
     SELECT
-        seg.entity_id,
-        seg.valid_from,
-        seg.valid_until,
-        t.t_valid_from,
-        ( -- Find causal source row
-            SELECT sr.source_row_id FROM active_source_rows sr
-            WHERE sr.entity_id = seg.entity_id
-              AND (
-                  %19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)
-                  OR (
-                      %19$I(sr.valid_from, sr.valid_until) -|- %19$I(seg.valid_from, seg.valid_until)
-                      AND EXISTS (
-                          SELECT 1 FROM target_rows tr
-                          WHERE tr.entity_id = sr.entity_id
-                            AND %19$I(sr.valid_from, sr.valid_until) && %19$I(tr.valid_from, tr.valid_until)
+        *,
+        FIRST_VALUE(stable_pk_payload) OVER (PARTITION BY entity_id ORDER BY stable_pk_payload IS NULL, valid_from) AS propagated_stable_pk_payload
+    FROM (
+        SELECT
+            seg.entity_id,
+                seg.valid_from,
+                seg.valid_until,
+                t.t_valid_from,
+                ( -- Find causal source row
+                    SELECT sr.source_row_id FROM active_source_rows sr
+                    WHERE sr.entity_id = seg.entity_id
+                      AND (
+                          %19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)
+                          OR (
+                              %19$I(sr.valid_from, sr.valid_until) -|- %19$I(seg.valid_from, seg.valid_until)
+                              AND EXISTS (
+                                  SELECT 1 FROM target_rows tr
+                                  WHERE tr.entity_id = sr.entity_id
+                                    AND %19$I(sr.valid_from, sr.valid_until) && %19$I(tr.valid_from, tr.valid_until)
+                              )
+                          )
                       )
-                  )
-              )
-            -- Prioritize the latest source row in case of overlaps
-            ORDER BY sr.source_row_id DESC LIMIT 1
-        ) as source_row_id,
-        s.data_payload as s_data_payload,
-        t.data_payload as t_data_payload
-    FROM atomic_segments seg
-    LEFT JOIN LATERAL (
-        SELECT tr.data_payload, tr.valid_from as t_valid_from
-        FROM target_rows tr
-        WHERE tr.entity_id = seg.entity_id
-          AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(tr.valid_from, tr.valid_until)
-    ) t ON true
-    LEFT JOIN LATERAL (
-        SELECT sr.data_payload
-        FROM active_source_rows sr
-        WHERE sr.entity_id = seg.entity_id
-          AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(sr.valid_from, sr.valid_until)
-        -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
-        ORDER BY sr.source_row_id DESC
-        LIMIT 1
-    ) s ON true
-    WHERE seg.valid_from < seg.valid_until
-      AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+                    -- Prioritize the latest source row in case of overlaps
+                    ORDER BY sr.source_row_id DESC LIMIT 1
+                ) as source_row_id,
+                s.data_payload as s_data_payload,
+                t.data_payload as t_data_payload,
+                t.stable_pk_payload
+            FROM atomic_segments seg
+            LEFT JOIN LATERAL (
+                SELECT tr.data_payload, tr.valid_from as t_valid_from, tr.stable_pk_payload
+                FROM target_rows tr
+                WHERE tr.entity_id = seg.entity_id
+                  AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(tr.valid_from, tr.valid_until)
+            ) t ON true
+            LEFT JOIN LATERAL (
+                SELECT sr.data_payload
+                FROM active_source_rows sr
+                WHERE sr.entity_id = seg.entity_id
+                  AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(sr.valid_from, sr.valid_until)
+                -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
+                ORDER BY sr.source_row_id DESC
+                LIMIT 1
+            ) s ON true
+            WHERE seg.valid_from < seg.valid_until
+              AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+        ) with_base_payload
 )
 %9$s,
 resolved_atomic_segments AS (
@@ -435,6 +463,7 @@ resolved_atomic_segments AS (
         valid_until,
         t_valid_from,
         source_row_id,
+        propagated_stable_pk_payload AS stable_pk_payload,
         %8$s as data_payload,
         CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
     FROM %10$s
@@ -449,6 +478,7 @@ coalesced_final_segments AS (
         -- deterministically pick one payload to be the representative for the new, larger segment.
         -- We pick the payload from the first atomic segment in the group, ordered by time.
         sql_saga.first(data_payload ORDER BY valid_from) as data_payload,
+        sql_saga.first(stable_pk_payload ORDER BY valid_from) as stable_pk_payload,
         -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
         array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
     FROM (
@@ -487,7 +517,7 @@ diff AS (
     SELECT
         -- Use COALESCE on entity_id to handle full additions/deletions
         COALESCE(f.f_entity_id, t.t_entity_id) as entity_id,
-        f.f_from, f.f_until, f.f_data, f.f_source_row_ids,
+        f.f_from, f.f_until, f.f_data, f.f_source_row_ids, f.stable_pk_payload,
         t.t_from, t.t_until, t.t_data,
         -- This function call determines the Allen Interval Relation between the final state and target state segments
         sql_saga.allen_get_relation(f.f_from, f.f_until, t.t_from, t.t_until) as relation
@@ -498,6 +528,7 @@ diff AS (
             valid_from AS f_from,
             valid_until AS f_until,
             data_payload AS f_data,
+            stable_pk_payload,
             source_row_ids AS f_source_row_ids
         FROM coalesced_final_segments
     ) f
@@ -529,7 +560,7 @@ plan_with_op AS (
                 THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
                 ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
             END as operation,
-            d.entity_id,
+            d.entity_id || COALESCE(d.stable_pk_payload, '{}'::jsonb) as entity_id,
             d.t_from as old_valid_from,
             d.t_until as old_valid_until,
             d.f_from as new_valid_from,
@@ -604,7 +635,8 @@ $SQL$,
             v_planner_entity_id_expr,       /* %17$s */
             p_source_row_id_column,         /* %18$I */
             v_range_constructor,            /* %19$I */
-            v_target_rows_filter            /* %20$s */
+            v_target_rows_filter,           /* %20$s */
+            v_stable_pk_cols_jsonb_build    /* %21$s */
         );
 
         v_exec_sql := format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
@@ -659,11 +691,19 @@ DECLARE
     v_founding_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
     v_entity_id_as_jsonb TEXT;
+    v_pk_cols name[];
     v_feedback_set_clause TEXT;
     v_sql TEXT;
     v_correlation_col name;
 BEGIN
     v_correlation_col := COALESCE(p_identity_correlation_column, p_source_row_id_column);
+
+    -- Introspect the primary key columns. They will be excluded from UPDATE SET clauses.
+    SELECT COALESCE(array_agg(a.attname), '{}'::name[])
+    INTO v_pk_cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = p_target_table AND c.contype = 'p';
 
     -- Dynamically construct a jsonb object from the entity id columns to use as a single key.
     SELECT
@@ -777,6 +817,7 @@ BEGIN
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
               AND t.attname <> ALL(p_identity_columns)
+              AND t.attname <> ALL(v_pk_cols)
               AND t.attgenerated = '' -- Exclude generated columns
         ),
         all_available_cols AS (

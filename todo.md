@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Fix `temporal_merge` to preserve surrogate keys when using a natural key identity:** When `p_identity_columns` is a natural key, the procedure fails to propagate the table's surrogate key (e.g., a `serial` PK) to new historical slices, generating incorrect new keys instead. It also incorrectly attempts to `UPDATE` the surrogate key column, causing `NOT NULL` violations.
 - [x] **Fix `temporal_merge` `valid_to` consistency on slice split:** When splitting a time slice, `temporal_merge` incorrectly inherits `valid_to` from the source instead of recalculating it from the new, shorter `valid_until`. This causes a trigger constraint violation when `valid_to` synchronization is active.
 - [x] **Fix `add_era` to validate range column type:** The function must verify that the column passed to `p_synchronize_range_column` is a valid range type before creating the synchronization trigger, preventing invalid SQL generation.
 - [x] **Fix `temporal_merge` executor to ignore generated columns:** The executor must not include generated columns (`GENERATED ALWAYS`) in its `UPDATE` statements to prevent "cannot update a generated column" errors.
