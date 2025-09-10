@@ -162,6 +162,22 @@ All development work, especially bug fixing, must follow this iterative cycle. D
     - Include `\i sql/include/test_teardown.sql` at the end to clean up.
     - For tests that verify transactional behavior, the `BEGIN`/`ROLLBACK` block should wrap only the test logic, not the setup/teardown of non-transactional objects like roles.
     - When running a specific older test, `01_install` must still be run first.
+    - **Test Isolation Patterns:** To ensure tests are robust and independent, use `SAVEPOINT`s to manage transactional state within a test file.
+        - **For successful test cases:** Wrap each distinct scenario in a `SAVEPOINT <name>` and `RELEASE SAVEPOINT <name>` block. This creates a nested transaction for the scenario. If it succeeds, its changes are committed to the main transaction.
+          ```sql
+          SAVEPOINT scenario_A;
+          -- ... test logic for scenario A ...
+          RELEASE SAVEPOINT scenario_A;
+          ```
+        - **For expected failures:** To test a command that is expected to raise an `ERROR`, wrap it in a `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` block. This allows the test to capture and display the raw error message without aborting the entire test script, enabling subsequent verification steps. This is the preferred pattern for negative testing.
+          ```sql
+          SAVEPOINT expect_error;
+          -- This command is expected to fail
+          SELECT my_buggy_function();
+          ROLLBACK TO SAVEPOINT expect_error;
+          -- This command will now execute successfully
+          SELECT 'The transaction is still active';
+          ```
 
 ### 5. Analyze Results and Verify Hypothesis
 - **Action:** Carefully inspect the output of the tests or commands. Compare the actual results against the expected outcome from Step 3.
