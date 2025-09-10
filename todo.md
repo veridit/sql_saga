@@ -5,8 +5,13 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [ ] **Support mutually exclusive natural keys in `temporal_merge`:** Enhance the planner's lookup logic to use `IS NOT DISTINCT FROM` instead of `=` to correctly identify entities when a composite natural key contains `NULL` values (e.g., `(type, legal_unit_id, establishment_id)`).
 
 ## Medium Priority - Refactoring & API Improvements
+- [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.
+- [ ] **Improve `add_unique_key` to manage primary keys explicitly:** Add a `type` parameter ('primary' or 'natural') to `add_unique_key`. When 'primary' is specified, `sql_saga` will create or adopt the table's actual `PRIMARY KEY` constraint, ensuring it is correctly configured for temporal use (i.e., is a composite key including a temporal column).
+- [ ] **Improve `add_era` validation:** Enhance `add_era` to detect and raise an error if the target table has a simple (non-composite) `PRIMARY KEY` or a `GENERATED ALWAYS` identity column that does not include the temporal columns. This prevents common schema design errors that are incompatible with SCD Type 2 history.
+- [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 
 ## Low Priority - Future Work & New Features
 
