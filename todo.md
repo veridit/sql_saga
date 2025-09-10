@@ -5,7 +5,6 @@ Tasks are checked ✅ when done and made brief.
 Keep a journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [ ] **Support mutually exclusive natural keys in `temporal_merge`:** Enhance the planner's lookup logic to use `IS NOT DISTINCT FROM` instead of `=` to correctly identify entities when a composite natural key contains `NULL` values (e.g., `(type, legal_unit_id, establishment_id)`).
 
 ## Medium Priority - Refactoring & API Improvements
 - [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.
@@ -16,6 +15,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Verify `temporal_merge` correctly handles `NULL`s in composite natural keys:** The `45_...` test (Scenarios 11 and 12) was extended to confirm that the planner's entity lookup logic correctly uses `IS NOT DISTINCT FROM`-style comparisons for composite natural keys containing `NULL` values. The existing implementation passed the test, confirming the feature is already supported. Scenario 12 also serves as a regression test to document the expected failure when using this pattern with an incompatible simple `PRIMARY KEY`.
 - [x] **Simplify `temporal_merge` coalescing logic:** Removed a redundant `CASE` statement. The logic now relies on the fact that the `jsonb - text[]` operator gracefully handles `NULL` payloads, making the code more concise.
 - [x] **Refactor `temporal_merge` coalescing logic for clarity:** The logic for merging adjacent time slices now compares the final, resolved data payload instead of intermediate payloads. This makes the planner more declarative and robust, especially for `DELETE` operations which correctly create non-coalesceable `NULL` data gaps.
 - [x] **Fix `temporal_merge` regressions:** Corrected planner logic to ensure natural key columns are used for change detection but excluded from the final plan's data payload, resolving inconsistencies. Also made data comparison logic robust against non-object JSONB payloads to prevent crashes in delete modes.
