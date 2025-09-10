@@ -794,7 +794,7 @@ BEGIN
 
         -- Conditionally output the plan for debugging, based on a session variable.
         DECLARE
-            v_log_plan BOOLEAN := COALESCE(current_setting('sql_saga.temporal_merge.log_plan', true), 'false')::BOOLEAN;
+            v_log_plan BOOLEAN := CASE WHEN COALESCE(current_setting('sql_saga.temporal_merge.log_plan', true), '') = '' THEN false ELSE current_setting('sql_saga.temporal_merge.log_plan')::BOOLEAN END;
             v_plan_rec RECORD;
         BEGIN
             IF v_log_plan THEN
@@ -820,6 +820,7 @@ BEGIN
             SELECT t.attname, t.atttypid
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
+              AND t.attname <> ALL(COALESCE(p_identity_columns, '{}'))
               AND t.attname <> ALL(v_lookup_columns)
               AND t.attname <> ALL(v_pk_cols)
               AND t.attgenerated = '' -- Exclude generated columns
@@ -1217,7 +1218,7 @@ BEGIN
 
     -- Conditionally output the feedback for debugging, based on a session variable.
     DECLARE
-        v_log_feedback BOOLEAN := COALESCE(current_setting('sql_saga.temporal_merge.log_feedback', true), 'false')::BOOLEAN;
+        v_log_feedback BOOLEAN := CASE WHEN COALESCE(current_setting('sql_saga.temporal_merge.log_feedback', true), '') = '' THEN false ELSE current_setting('sql_saga.temporal_merge.log_feedback')::BOOLEAN END;
         v_feedback_rec RECORD;
     BEGIN
         IF v_log_feedback THEN

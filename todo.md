@@ -7,8 +7,11 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Optimize `temporal_merge` planner:** Refactor the planner query to be SARGable and use indexes on identity columns.
 - [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.
 - [x] **Improve `add_unique_key` to manage primary keys explicitly:** Refactor the `add_unique_key` API to use a single `p_key_type` parameter with three mutually exclusive options: `'primary'`, `'natural'`, and `'predicated'`. This will make the API more declarative and enforce that predicated keys (which cannot be foreign key targets) are distinct from natural keys.
+- [x] **Fix `temporal_merge` executor bug:** The executor must not include stable identity columns (from `p_identity_columns`) in the `SET` clause of generated `UPDATE` statements, as this can cause `NOT NULL` violations.
+- [x] **Fix `temporal_merge` GUC handling:** The procedure's logging logic must gracefully handle `NULL` or empty-string GUC values to prevent invalid cast to `BOOLEAN` errors.
 - [x] **Add validation for temporal primary keys:** Enhanced `add_unique_key` to validate that when `p_key_type` is `'primary'`, the target table does not have incompatible features like a `GENERATED ALWAYS` identity column or a simple (non-temporal) primary key. This moves the strict SCD Type 2 validation to where it belongs, allowing `add_era` to be more flexible.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 

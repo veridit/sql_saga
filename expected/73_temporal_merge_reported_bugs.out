@@ -440,6 +440,108 @@ SELECT * FROM tmrb.my_stat_for_unit_gen_default ORDER BY id, valid_from;
   1 |           100 |         5 | 2023-04-01 | 2023-07-01
 (2 rows)
 
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 4: Reproduce NOT NULL violation on UPDATE (Bug #1)'
+Scenario 4: Reproduce NOT NULL violation on UPDATE (Bug #1)
+\echo 'The executor must not include identity columns in the SET clause of UPDATEs.'
+The executor must not include identity columns in the SET clause of UPDATEs.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+CREATE TABLE tmrb.bug_repro_1 (
+    id SERIAL NOT NULL,
+    legal_unit_id int NOT NULL,
+    value_int int,
+    valid_from date NOT NULL,
+    valid_until date,
+    -- The PK does NOT include the stable identifier `id`, which is what causes the bug.
+    PRIMARY KEY (legal_unit_id, valid_from)
+);
+SELECT sql_saga.add_era('tmrb.bug_repro_1'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
+         add_unique_key          
+---------------------------------
+ bug_repro_1_legal_unit_id_valid
+(1 row)
+
+-- Insert initial record
+TRUNCATE source_data_1;
+INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', 'infinity');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.bug_repro_1',
+    p_source_table => 'source_data_1',
+    p_identity_columns => '{id}',
+    p_natural_identity_columns => '{legal_unit_id}',
+    p_ephemeral_columns => NULL,
+    p_update_source_with_identity => true
+);
+\echo '--- Target after initial import ---'
+--- Target after initial import ---
+TABLE tmrb.bug_repro_1;
+ id | legal_unit_id | value_int | valid_from | valid_until 
+----+---------------+-----------+------------+-------------
+  1 |           100 |         4 | 2023-01-01 | infinity
+(1 row)
+
+-- This source data will cause an UPDATE on the existing id=1
+TRUNCATE source_data_2;
+INSERT INTO source_data_2 VALUES (2, 1, 1, 100, 5, '2023-04-01', 'infinity');
+\echo '--- Source for second import (SCD Type 2 update) ---'
+--- Source for second import (SCD Type 2 update) ---
+TABLE source_data_2;
+ row_id | founding_row_id | id | legal_unit_id | value_int | valid_from | valid_until 
+--------+-----------------+----+---------------+-----------+------------+-------------
+      2 |               1 |  1 |           100 |         5 | 2023-04-01 | infinity
+(1 row)
+
+\echo '--- Calling temporal_merge (should now succeed) ---'
+--- Calling temporal_merge (should now succeed) ---
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.bug_repro_1',
+    p_source_table => 'source_data_2',
+    p_identity_columns => ARRAY['id'],
+    p_natural_identity_columns => ARRAY['legal_unit_id'],
+    p_ephemeral_columns => NULL,
+    p_mode => 'MERGE_ENTITY_REPLACE'
+);
+\echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
+--- Target after second import (CORRECT: 2 historical rows for id=1) ---
+SELECT * FROM tmrb.bug_repro_1 ORDER BY id, valid_from;
+ id | legal_unit_id | value_int | valid_from | valid_until 
+----+---------------+-----------+------------+-------------
+  1 |           100 |         4 | 2023-01-01 | 2023-04-01
+  1 |           100 |         5 | 2023-04-01 | infinity
+(2 rows)
+
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 5: Reproduce invalid boolean cast on GUC (Bug #2)'
+Scenario 5: Reproduce invalid boolean cast on GUC (Bug #2)
+\echo 'The logging logic must handle empty string GUC values gracefully.'
+The logging logic must handle empty string GUC values gracefully.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo '--- Setting log_plan GUC to an empty string ---'
+--- Setting log_plan GUC to an empty string ---
+SET sql_saga.temporal_merge.log_plan = '';
+\echo '--- Calling temporal_merge (should now succeed) ---'
+--- Calling temporal_merge (should now succeed) ---
+-- The content of the call doesn't matter, as the error happens during parameter
+-- processing before the planner runs. The fix ensures this now runs without error.
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.bug_repro_1',
+    p_source_table => 'source_data_2',
+    p_identity_columns => ARRAY['id'],
+    p_natural_identity_columns => NULL,
+    p_ephemeral_columns => NULL
+);
+-- Reset GUC for any subsequent tests
+RESET sql_saga.temporal_merge.log_plan;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --
