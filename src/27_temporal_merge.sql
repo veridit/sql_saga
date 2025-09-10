@@ -100,6 +100,8 @@ BEGIN
         v_source_data_cols_jsonb_build TEXT;
         v_target_data_cols_jsonb_build TEXT;
         v_entity_id_as_jsonb TEXT;
+        v_lookup_cols_select_list TEXT;
+        v_lookup_cols_select_list_no_alias TEXT;
         v_source_schema_name TEXT;
         v_source_table_ident TEXT;
         v_target_table_ident TEXT;
@@ -160,6 +162,14 @@ BEGIN
             v_entity_id_as_jsonb
         FROM unnest(v_lookup_columns) AS col;
 
+        SELECT
+            string_agg(format('t.%I', col), ', '),
+            string_agg(format('%I', col), ', ')
+        INTO
+            v_lookup_cols_select_list,
+            v_lookup_cols_select_list_no_alias
+        FROM unnest(v_lookup_columns) col;
+
         -- 1. Dynamically build jsonb payload expressions for SOURCE and TARGET tables.
         -- The source payload only includes columns present in the source table.
         -- The target payload includes ALL data columns from the target table.
@@ -214,7 +224,7 @@ BEGIN
 
         -- Determine the scope of target entities to process based on the mode.
         -- By default, we optimize by only scanning target entities that are present in the source.
-        v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT entity_id FROM source_initial)', v_entity_id_as_jsonb);
+        v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT %s FROM source_initial)', v_lookup_cols_select_list, v_lookup_cols_select_list_no_alias);
         -- For modes that might delete entities not in the source, we must scan the entire target table.
         IF p_mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND p_delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             v_target_rows_filter := '';
@@ -344,6 +354,7 @@ source_initial AS (
         t.%18$I as source_row_id,
         %16$s
         %1$s as entity_id,
+        %23$s,
         t.%14$I as valid_from,
         t.%15$I as valid_until,
         %2$s AS data_payload,
@@ -645,7 +656,8 @@ $SQL$,
             v_range_constructor,            /* %19$I */
             v_target_rows_filter,           /* %20$s */
             v_stable_pk_cols_jsonb_build,   /* %21$s */
-            v_lookup_columns                /* %22$L */
+            v_lookup_columns,               /* %22$L */
+            v_lookup_cols_select_list       /* %23$s */
         );
 
         v_exec_sql := format('PREPARE %I AS %s', v_plan_ps_name, v_sql);

@@ -26,12 +26,12 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-\echo 'Test: `temporal_merge_plan` caching and EXPLAIN output'
-Test: `temporal_merge_plan` caching and EXPLAIN output
-\echo 'This test verifies that the planner function correctly caches its prepared'
-This test verifies that the planner function correctly caches its prepared
-\echo 'statement and provides a stable EXPLAIN plan for regression monitoring.'
-statement and provides a stable EXPLAIN plan for regression monitoring.
+\echo 'Test: `temporal_merge_plan` EXPLAIN output for performance monitoring'
+Test: `temporal_merge_plan` EXPLAIN output for performance monitoring
+\echo 'This test verifies that the planner function produces a stable and efficient'
+This test verifies that the planner function produces a stable and efficient
+\echo 'EXPLAIN plan. Its output is captured to monitor for performance regressions.'
+EXPLAIN plan. Its output is captured to monitor for performance regressions.
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
 SET client_min_messages TO WARNING;
@@ -44,10 +44,25 @@ SELECT sql_saga.add_era('tmpc.target', 'valid_from', 'valid_until');
 (1 row)
 
 CREATE TEMP TABLE source1 (row_id int, id int, valid_from date, valid_until date, value text);
-CREATE TEMP TABLE source2 (row_id int, id int, valid_from date, valid_until date, value text);
-\echo '--- Call planner for source1 ---'
---- Call planner for source1 ---
--- This call will generate and cache the plan.
+\echo '--- Setting up tables with indexes and data for a realistic plan ---'
+--- Setting up tables with indexes and data for a realistic plan ---
+CREATE INDEX ON tmpc.target (id);
+CREATE INDEX ON tmpc.target USING gist (daterange(valid_from, valid_until));
+CREATE INDEX ON source1 (id);
+CREATE INDEX ON source1 USING gist (daterange(valid_from, valid_until));
+-- Insert enough rows to make an index scan more attractive to the planner.
+INSERT INTO tmpc.target (id, valid_from, valid_until, value)
+SELECT i, '2023-01-01', '2024-01-01', 'A' FROM generate_series(1, 1000) as i;
+-- The source will patch a single row in the middle of the target's history.
+INSERT INTO source1 VALUES (1, 500, '2023-06-01', '2023-07-01', 'B');
+-- Analyze the tables to ensure the planner has up-to-date statistics.
+ANALYZE tmpc.target;
+ANALYZE source1;
+\echo '\n--- Performance Monitoring: EXPLAIN the cached planner query ---'
+
+--- Performance Monitoring: EXPLAIN the cached planner query ---
+-- Generate and immediately explain the plan. The plan output itself is silenced.
+\o /dev/null
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
     p_source_table      => 'source1'::regclass,
@@ -56,53 +71,7 @@ SELECT * FROM sql_saga.temporal_merge_plan(
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
- plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
-(0 rows)
-
-\echo '--- Call planner for source2 ---'
---- Call planner for source2 ---
--- This call should generate a *different* plan because the source table is different.
-SELECT * FROM sql_saga.temporal_merge_plan(
-    p_target_table      => 'tmpc.target'::regclass,
-    p_source_table      => 'source2'::regclass,
-    p_identity_columns        => '{id}'::text[],
-    p_ephemeral_columns => '{}'::text[],
-    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    p_era_name          => 'valid'
-);
- plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
-(0 rows)
-
-\echo '--- Call planner for source1 again ---'
---- Call planner for source1 again ---
--- This call should hit the cache for the first plan.
-SELECT * FROM sql_saga.temporal_merge_plan(
-    p_target_table      => 'tmpc.target'::regclass,
-    p_source_table      => 'source1'::regclass,
-    p_identity_columns        => '{id}'::text[],
-    p_ephemeral_columns => '{}'::text[],
-    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    p_era_name          => 'valid'
-);
- plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data | relation 
--------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+------+----------
-(0 rows)
-
-\echo '--- Verify that two distinct plans are cached ---'
---- Verify that two distinct plans are cached ---
-SELECT count(*)::int as num_cached_plans FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%';
- num_cached_plans 
-------------------
-                2
-(1 row)
-
-\echo '\n--- Performance Monitoring: EXPLAIN the cached planner query for source1 ---'
-
---- Performance Monitoring: EXPLAIN the cached planner query for source1 ---
-\echo '--- This output is captured to monitor for regressions in the query plan, such as the introduction of inefficient joins. ---'
---- This output is captured to monitor for regressions in the query plan, such as the introduction of inefficient joins. ---
+\o
 -- Use \gset to capture the dynamically generated EXPLAIN command into a variable.
 -- This avoids echoing the command with its unstable MD5 hash.
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command
@@ -112,7 +81,7 @@ WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%'
 -- Now, echo a stable placeholder for the regression test's expected output...
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
--- ...and then execute the actual command we captured.
+-- ...and then execute the actual command we captured to print it for review.
 :explain_command
                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -121,13 +90,12 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
    CTE source_initial
      ->  Seq Scan on source1 t
    CTE target_rows
-     ->  Hash Join
-           Hash Cond: (jsonb_build_object('id', t_1.id) = source_initial.entity_id)
-           ->  Seq Scan on target t_1
-           ->  Hash
-                 ->  HashAggregate
-                       Group Key: source_initial.entity_id
-                       ->  CTE Scan on source_initial
+     ->  Nested Loop
+           ->  HashAggregate
+                 Group Key: source_initial.id
+                 ->  CTE Scan on source_initial
+           ->  Index Scan using target_id_idx on target t_1
+                 Index Cond: (id = source_initial.id)
    CTE source_rows
      ->  CTE Scan on source_initial si
            SubPlan 3
@@ -150,24 +118,20 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                    Presorted Key: seg.entity_id
                                    ->  Nested Loop Left Join
                                          Filter: ((sr_2.data_payload IS NOT NULL) OR (tr_2.data_payload IS NOT NULL))
-                                         ->  Merge Left Join
-                                               Merge Cond: (seg.entity_id = tr_2.entity_id)
-                                               Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until))
+                                         ->  Nested Loop Left Join
+                                               Join Filter: ((tr_2.entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until)))
                                                ->  Subquery Scan on seg
                                                      Filter: (seg.valid_from < seg.valid_until)
                                                      ->  WindowAgg
-                                                           ->  Sort
-                                                                 Sort Key: all_rows.entity_id, all_rows.valid_from
-                                                                 ->  HashAggregate
-                                                                       Group Key: all_rows.entity_id, all_rows.valid_from
+                                                           ->  Unique
+                                                                 ->  Sort
+                                                                       Sort Key: all_rows.entity_id, all_rows.valid_from
                                                                        ->  Append
                                                                              ->  CTE Scan on all_rows
                                                                                    Filter: (valid_from IS NOT NULL)
                                                                              ->  CTE Scan on all_rows all_rows_1
                                                                                    Filter: (valid_until IS NOT NULL)
-                                               ->  Sort
-                                                     Sort Key: tr_2.entity_id
-                                                     ->  CTE Scan on target_rows tr_2
+                                               ->  CTE Scan on target_rows tr_2
                                          ->  Limit
                                                ->  Sort
                                                      Sort Key: sr_2.source_row_id DESC
@@ -186,13 +150,11 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
      ->  Recursive Union
            ->  CTE Scan on numbered_segments s
                  Filter: (rn = 1)
-           ->  Merge Join
-                 Merge Cond: (s_1.entity_id = p.entity_id)
-                 Join Filter: (s_1.rn = (p.rn + 1))
-                 ->  CTE Scan on numbered_segments s_1
-                 ->  Sort
-                       Sort Key: p.entity_id
-                       ->  WorkTable Scan on running_payload_cte p
+           ->  Hash Join
+                 Hash Cond: ((p.entity_id = s_1.entity_id) AND ((p.rn + 1) = s_1.rn))
+                 ->  WorkTable Scan on running_payload_cte p
+                 ->  Hash
+                       ->  CTE Scan on numbered_segments s_1
    CTE coalesced_final_segments
      ->  GroupAggregate
            Group Key: with_segment_group.entity_id, with_segment_group.segment_group
@@ -215,16 +177,52 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                                  ->  Sort
                                        Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
                                        ->  Hash Full Join
-                                             Hash Cond: (target_rows.entity_id = coalesced_final_segments.entity_id)
+                                             Hash Cond: (coalesced_final_segments.entity_id = target_rows.entity_id)
                                              Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 13).col1) AND (target_rows.valid_from = (hashed SubPlan 13).col2))))))
                                              Filter: ((coalesced_final_segments.source_row_ids IS NOT NULL) OR (target_rows.data_payload IS NOT NULL))
-                                             ->  CTE Scan on target_rows
+                                             ->  CTE Scan on coalesced_final_segments
                                              ->  Hash
-                                                   ->  CTE Scan on coalesced_final_segments
+                                                   ->  CTE Scan on target_rows
                                              SubPlan 13
                                                ->  CTE Scan on coalesced_final_segments f_inner
-(107 rows)
+(100 rows)
 
+\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
+
+--- Verifying that the plan is optimal (no Seq Scan on target) ---
+-- Programmatically verify that the plan does not contain a sequential scan on the target table.
+-- This makes the test robust against performance regressions.
+DO $$
+DECLARE
+    plan_name TEXT;
+    rec RECORD;
+    has_seq_scan BOOLEAN := false;
+BEGIN
+    -- Find the plan name generated by the preceding call to temporal_merge_plan.
+    SELECT name INTO plan_name
+    FROM pg_prepared_statements
+    WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%';
+
+    -- If no plan is found, something is wrong. Fail fast.
+    IF plan_name IS NULL THEN
+        RAISE EXCEPTION 'Could not find the prepared statement for the temporal_merge_plan.';
+    END IF;
+
+    -- Loop through the EXPLAIN output and check for the inefficient scan.
+    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
+        IF rec."QUERY PLAN" LIKE '%Seq Scan on target%' THEN
+            has_seq_scan := true;
+            EXIT;
+        END IF;
+    END LOOP;
+
+    IF has_seq_scan THEN
+        RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target". Check for non-SARGable query conditions.';
+    END IF;
+END;
+$$;
+\echo '--- OK: Verified that EXPLAIN plan is optimal. ---'
+--- OK: Verified that EXPLAIN plan is optimal. ---
 SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

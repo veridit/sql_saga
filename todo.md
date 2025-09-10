@@ -7,7 +7,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
-- [ ] **Optimize `temporal_merge` planner:** Refactor the planner query to be SARGable and use indexes on identity columns.
+- [x] **Make performance regression test self-verifying:** Enhanced the `temporal_merge` planner test (`48_...`) to programmatically check the `EXPLAIN` output and fail if an inefficient `Seq Scan` is detected on the target table.
+- [x] **Optimize `temporal_merge` planner:** Refactor the planner query to be SARGable and use indexes on identity columns.
 - [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.
 - [x] **Improve `add_unique_key` to manage primary keys explicitly:** Refactor the `add_unique_key` API to use a single `p_key_type` parameter with three mutually exclusive options: `'primary'`, `'natural'`, and `'predicated'`. This will make the API more declarative and enforce that predicated keys (which cannot be foreign key targets) are distinct from natural keys.
 - [x] **Fix `temporal_merge` executor bug:** The executor must not include stable identity columns (from `p_identity_columns`) in the `SET` clause of generated `UPDATE` statements, as this can cause `NOT NULL` violations.
