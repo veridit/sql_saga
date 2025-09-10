@@ -79,6 +79,34 @@ SELECT sql_saga.drop_unique_key('pk_test', '{id}');
 SELECT sql_saga.drop_era('pk_test');
 DROP TABLE pk_test;
 
+
+\echo '--- Test: add_unique_key validation for incompatible simple PRIMARY KEY ---'
+CREATE TABLE public.simple_pk (
+    id int PRIMARY KEY DEFERRABLE,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('public.simple_pk');
+SAVEPOINT expect_error;
+\echo 'Attempting to add a temporal primary key to a table with a simple primary key (should fail)'
+SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', p_key_type => 'primary');
+ROLLBACK TO SAVEPOINT expect_error;
+DROP TABLE public.simple_pk;
+
+
+\echo '--- Test: add_unique_key validation for GENERATED ALWAYS identity column ---'
+CREATE TABLE public.generated_always (
+    id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY DEFERRABLE,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('public.generated_always');
+SAVEPOINT expect_error_2;
+\echo 'Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)'
+SELECT sql_saga.add_unique_key('public.generated_always', '{id}', p_key_type => 'primary');
+ROLLBACK TO SAVEPOINT expect_error_2;
+DROP TABLE public.generated_always;
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql

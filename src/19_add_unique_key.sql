@@ -104,6 +104,43 @@ BEGIN
     where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
 
     IF p_key_type IN ('primary', 'natural') THEN
+        -- When creating a primary key, validate that the table schema is compatible with SCD Type 2 history.
+        IF p_key_type = 'primary' THEN
+            DECLARE
+                identity_column_name name;
+            BEGIN
+                -- Check for a GENERATED ALWAYS identity column first, as it's a more specific error.
+                SELECT a.attname
+                INTO identity_column_name
+                FROM pg_catalog.pg_attribute a
+                WHERE a.attrelid = table_oid
+                AND a.attidentity = 'a'; -- 'a' = always, 'd' = by default
+
+                IF identity_column_name IS NOT NULL THEN
+                    RAISE EXCEPTION 'table "%" has a GENERATED ALWAYS AS IDENTITY column ("%"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity', table_oid, identity_column_name;
+                END IF;
+
+                -- Check for a simple primary key that does not include the temporal columns.
+                DECLARE
+                    pk_columns name[];
+                BEGIN
+                    SELECT
+                        array_agg(a.attname ORDER BY u.ord)
+                    INTO
+                        pk_columns
+                    FROM
+                        pg_catalog.pg_constraint c
+                        JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE
+                        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                    WHERE
+                        c.conrelid = table_oid AND c.contype = 'p';
+
+                    IF pk_columns IS NOT NULL AND NOT (pk_columns @> ARRAY[era_row.valid_from_column_name] OR pk_columns @> ARRAY[era_row.valid_until_column_name]) THEN
+                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal columns; this is incompatible with SCD Type 2 history', table_oid;
+                    END IF;
+                END;
+            END;
+        END IF;
         /* If we were given a unique constraint to use, look it up and make sure it matches */
         SELECT format('%s (%s) DEFERRABLE',
             CASE WHEN p_key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
