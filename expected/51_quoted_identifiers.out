@@ -86,6 +86,7 @@ SELECT sql_saga.add_unique_key(
     table_oid => '"""quoted"" table"',
     column_names => ARRAY['"id"', '"product " code"'],
     era_name => 'valid',
+    p_key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
  add_unique_key 
@@ -94,9 +95,9 @@ SELECT sql_saga.add_unique_key(
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   |           column_names           | era_name |                        unique_constraint                        | exclude_constraint | predicate 
------------------+--------------+----------------+----------------------------------+----------+-----------------------------------------------------------------+--------------------+-----------
- "my " uk"       | public       | "quoted" table | {"\"id\"","\"product \" code\""} | valid    | "quoted" table_"id"_"product " code"_"valid from"_"valid un_key | "my " uk"_excl     | 
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name |                        unique_constraint                        | exclude_constraint | predicate 
+-----------------+--------------+----------------+----------+----------------------------------+----------+-----------------------------------------------------------------+--------------------+-----------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "quoted" table_"id"_"product " code"_"valid from"_"valid un_key | "my " uk"_excl     | 
 (1 row)
 
 -- 4. Create referencing table with quoted names

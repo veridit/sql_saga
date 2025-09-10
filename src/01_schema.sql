@@ -8,6 +8,14 @@ CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
 CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'regular_to_temporal');
 COMMENT ON TYPE sql_saga.fg_type IS 'Distinguishes between foreign keys from a temporal table to another temporal table, and from a regular (non-temporal) table to a temporal table.';
 
+-- A DO block is used to allow this to fail gracefully if the type already exists.
+DO $$ BEGIN
+    CREATE TYPE sql_saga.unique_key_type AS ENUM ('primary', 'natural', 'predicated');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+COMMENT ON TYPE sql_saga.unique_key_type IS 'Distinguishes between a temporal primary key, a natural key (unique, for FKs), and a predicated key (a unique index with a WHERE clause).';
+
 -- This enum represents Allen's Interval Algebra, a set of thirteen mutually
 -- exclusive relations that can hold between two temporal intervals. These
 -- relations are fundamental to the logic of the temporal_merge planner.
@@ -120,6 +128,7 @@ CREATE TABLE sql_saga.unique_keys (
     unique_key_name name NOT NULL,
     table_schema name NOT NULL,
     table_name name NOT NULL,
+    key_type sql_saga.unique_key_type NOT NULL,
     column_names name[] NOT NULL,
     era_name name NOT NULL,
     unique_constraint name NOT NULL,

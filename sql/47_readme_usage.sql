@@ -51,19 +51,20 @@ CREATE TABLE readme.unit_with_range (
 -- Explicitly enable synchronization for the 'valid_to' column.
 SELECT sql_saga.add_era('readme.legal_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], p_key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
 -- Add a predicated unique key (e.g., only active units must have a unique name).
 SELECT sql_saga.add_unique_key(
     table_oid => 'readme.legal_unit'::regclass,
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
 
 SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], p_key_type => 'natural', unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.establishment'::regclass,
@@ -81,7 +82,7 @@ SELECT sql_saga.add_foreign_key(
 );
 
 SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', p_synchronize_range_column := 'num_range');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], unique_key_name => 'unit_with_range_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
 
 \echo '--- Verification: Check metadata tables ---'
 SELECT table_schema, table_name, era_name FROM sql_saga.era WHERE table_schema = 'readme' ORDER BY table_name;

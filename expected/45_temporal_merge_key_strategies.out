@@ -70,7 +70,7 @@ SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', unique_key_name => 'tm_legal_unit_uk');
   add_unique_key  
 ------------------
  tm_legal_unit_uk
@@ -85,7 +85,7 @@ SELECT sql_saga.add_era('tmtc.establishment', 'valid_from', 'valid_until');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', 'tm_establishment_uk');
+SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', unique_key_name => 'tm_establishment_uk');
    add_unique_key    
 ---------------------
  tm_establishment_uk
@@ -106,7 +106,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_from', 'valid_until');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_uk');
  add_unique_key 
 ----------------
  tm_sfu_uk
@@ -128,7 +128,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_from', 'valid_until')
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_id_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_id_uk');
  add_unique_key 
 ----------------
  tm_sfu_id_uk
@@ -150,7 +150,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_from', 'valid_until'
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_identity_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
    add_unique_key   
 --------------------
  tm_sfu_identity_uk
@@ -174,7 +174,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_from', 'valid_until')
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_no_pk_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_no_pk_uk');
  add_unique_key  
 -----------------
  tm_sfu_no_pk_uk
@@ -202,13 +202,13 @@ SELECT sql_saga.add_era('tmtc.location_multi_key');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
  add_unique_key 
 ----------------
  loc_mk_lu_uk
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
  add_unique_key 
 ----------------
  loc_mk_est_uk
@@ -246,13 +246,13 @@ SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
   add_unique_key   
 -------------------
  loc_mk_noid_lu_uk
 (1 row)
 
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
    add_unique_key   
 --------------------
  loc_mk_noid_est_uk

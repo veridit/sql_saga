@@ -36,8 +36,8 @@ SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until', p_sync
 SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
 TABLE sql_saga.era;
 
-SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid');
-SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid');
+SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid', p_key_type => 'natural');
 TABLE sql_saga.unique_keys;
 
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');

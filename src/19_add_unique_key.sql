@@ -2,6 +2,7 @@ CREATE FUNCTION sql_saga.add_unique_key(
         table_oid regclass,
         column_names name[],
         era_name name DEFAULT 'valid',
+        p_key_type sql_saga.unique_key_type DEFAULT 'natural',
         unique_key_name name DEFAULT NULL,
         unique_constraint name DEFAULT NULL,
         exclude_constraint name DEFAULT NULL,
@@ -91,13 +92,32 @@ BEGIN
         RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
     END IF;
 
+    -- Validate parameter combinations
+    IF p_key_type = 'predicated' AND predicate IS NULL THEN
+        RAISE EXCEPTION 'a predicate must be provided when p_key_type is ''predicated''';
+    END IF;
+
+    IF p_key_type IN ('primary', 'natural') AND predicate IS NOT NULL THEN
+        RAISE EXCEPTION 'a predicate can only be provided when p_key_type is ''predicated''';
+    END IF;
+
     where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
 
-    IF predicate IS NULL THEN
+    IF p_key_type IN ('primary', 'natural') THEN
         /* If we were given a unique constraint to use, look it up and make sure it matches */
-        SELECT format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */)
+        SELECT format('%s (%s) DEFERRABLE',
+            CASE WHEN p_key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
+            string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */
+        )
         INTO unique_sql
         FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+
+        IF unique_constraint IS NULL AND p_key_type = 'primary' THEN
+            -- If this is a primary key and no name was given, check if one already exists.
+            SELECT c.conname INTO unique_constraint
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.contype) = (table_oid, 'p');
+        END IF;
 
         IF unique_constraint IS NOT NULL THEN
         SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
@@ -109,7 +129,9 @@ BEGIN
             RAISE EXCEPTION 'constraint "%" does not exist', unique_constraint;
         END IF;
 
-        IF constraint_record.contype NOT IN ('p', 'u') THEN
+        IF p_key_type = 'primary' AND constraint_record.contype <> 'p' THEN
+            RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY', unique_constraint;
+        ELSIF p_key_type = 'natural' AND constraint_record.contype NOT IN ('p', 'u') THEN
             RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
         END IF;
 
@@ -133,7 +155,7 @@ BEGIN
 
         /* Looks good, let's use it. */
         END IF;
-    ELSE
+    ELSIF p_key_type = 'predicated' THEN
         -- When a predicate is provided, we use a unique index, not a unique constraint.
         -- It's not supported to use an existing constraint/index in this case.
         IF unique_constraint IS NOT NULL THEN
@@ -222,11 +244,11 @@ BEGIN
 
     /* Time to make the underlying constraints */
     alter_cmds := '{}';
-    IF predicate IS NULL THEN
+    IF p_key_type IN ('primary', 'natural') THEN
         IF unique_constraint IS NULL THEN
             alter_cmds := alter_cmds || ('ADD ' || unique_sql);
         END IF;
-    ELSE
+    ELSIF p_key_type = 'predicated' THEN
         -- For predicates, we create a unique index instead of a unique constraint.
         -- We generate a name for it and store it in the `unique_constraint` variable for metadata.
         unique_constraint := unique_key_name || '_idx';
@@ -260,7 +282,7 @@ BEGIN
         SELECT c.conname
         INTO unique_constraint
         FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.contype) = (table_oid, 'u')
+        WHERE c.conrelid = table_oid AND c.contype = (CASE WHEN p_key_type = 'primary' THEN 'p' ELSE 'u' END)
         ORDER BY oid DESC
         LIMIT 1;
     END IF;
@@ -268,8 +290,8 @@ BEGIN
     /* If we created an exclude_constraint, we already know its name. */
 
 
-    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, column_names, era_name, unique_constraint, exclude_constraint, predicate)
-    VALUES (unique_key_name, table_schema, table_name, column_names, era_name, unique_constraint, exclude_constraint, predicate);
+    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, predicate)
+    VALUES (unique_key_name, table_schema, table_name, p_key_type, column_names, era_name, unique_constraint, exclude_constraint, predicate);
 
     -- Create a standard B-Tree index on the unique key columns to support
     -- fast lookups for foreign key checks (both temporal and regular).

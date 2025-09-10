@@ -17,6 +17,7 @@ SELECT sql_saga.add_era('employees', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key(
     table_oid => 'employees',
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'department_id IS NOT NULL',
     unique_key_name => 'employees_name_if_department_valid'
 );
@@ -71,6 +72,7 @@ INSERT INTO contractors VALUES (104, 'Eve', NULL, '2021-01-01', 'infinity');
 SELECT sql_saga.add_unique_key(
     table_oid => 'contractors',
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'agency_id IS NOT NULL'
 );
 
@@ -81,6 +83,7 @@ DELETE FROM contractors WHERE id = 102;
 SELECT sql_saga.add_unique_key(
     table_oid => 'contractors',
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'agency_id IS NOT NULL',
     unique_key_name => 'contractors_name_if_agency_valid'
 );

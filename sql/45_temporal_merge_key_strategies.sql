@@ -40,12 +40,12 @@ CREATE TABLE tmtc.legal_unit (
     id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', unique_key_name => 'tm_legal_unit_uk');
 CREATE TABLE tmtc.establishment (
     id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('tmtc.establishment', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', 'tm_establishment_uk');
+SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', unique_key_name => 'tm_establishment_uk');
 
 -- Target table: stat_for_unit (composite key)
 CREATE TABLE tmtc.stat_for_unit (
@@ -57,7 +57,7 @@ CREATE TABLE tmtc.stat_for_unit (
     edit_comment TEXT
 );
 SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_uk');
 
 -- Target table with SERIAL surrogate ID
 CREATE TABLE tmtc.stat_for_unit_id_pk (
@@ -70,7 +70,7 @@ CREATE TABLE tmtc.stat_for_unit_id_pk (
     edit_comment TEXT
 );
 SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_id_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_id_uk');
 
 -- Target table with IDENTITY surrogate ID
 CREATE TABLE tmtc.stat_for_unit_id_gen (
@@ -83,7 +83,7 @@ CREATE TABLE tmtc.stat_for_unit_id_gen (
     edit_comment TEXT
 );
 SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_identity_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
 
 -- Target table with non-PK surrogate key
 CREATE SEQUENCE tmtc.stat_for_unit_no_pk_id_seq;
@@ -98,7 +98,7 @@ CREATE TABLE tmtc.stat_for_unit_no_pk (
     UNIQUE (id, valid_from)
 );
 SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_no_pk_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_no_pk_uk');
 
 -- Target table with multiple, mutually exclusive natural keys (and surrogate ID)
 CREATE TABLE tmtc.location_multi_key (
@@ -117,8 +117,8 @@ CREATE TABLE tmtc.location_multi_key (
     PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('tmtc.location_multi_key');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
@@ -137,8 +137,8 @@ CREATE TABLE tmtc.location_multi_key_no_id (
     )
 );
 SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 

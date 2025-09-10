@@ -22,7 +22,7 @@ CREATE TABLE tmisd.establishment (
 );
 SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
 -- The conceptual key for the entity
-SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', 'tmisd_establishment_uk');
+SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', unique_key_name => 'tmisd_establishment_uk');
 
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE tmisd.reset_target() LANGUAGE plpgsql AS $$

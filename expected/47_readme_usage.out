@@ -82,13 +82,13 @@ SELECT sql_saga.add_era('readme.legal_unit'::regclass, p_synchronize_valid_to_co
 (1 row)
 
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], p_key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
         add_unique_key        
 ------------------------------
  legal_unit_legal_ident_valid
@@ -98,6 +98,7 @@ SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, colum
 SELECT sql_saga.add_unique_key(
     table_oid => 'readme.legal_unit'::regclass,
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
@@ -112,13 +113,13 @@ SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_fro
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'establishment_id_valid');
      add_unique_key     
 ------------------------
  establishment_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], p_key_type => 'natural', unique_key_name => 'establishment_name_valid');
       add_unique_key      
 --------------------------
  establishment_name_valid
@@ -154,7 +155,7 @@ SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_f
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], unique_key_name => 'unit_with_range_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
       add_unique_key      
 --------------------------
  unit_with_range_id_valid
@@ -568,8 +569,8 @@ SELECT * FROM sql_saga.era WHERE table_schema = 'readme';
 (0 rows)
 
 SELECT * FROM sql_saga.unique_keys WHERE table_schema = 'readme';
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
------------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
 (0 rows)
 
 SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';

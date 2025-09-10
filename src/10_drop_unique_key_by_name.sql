@@ -57,7 +57,7 @@ BEGIN
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
         THEN
-            IF unique_key_row.predicate IS NOT NULL THEN
+            IF unique_key_row.key_type = 'predicated' THEN
                 -- This is a unique index, drop it and the exclusion constraint
                 EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
                     unique_key_row.table_schema, /* %I */
@@ -66,8 +66,8 @@ BEGIN
                     unique_key_row.table_name, /* %I */
                     unique_key_row.exclude_constraint /* %I */
                 );
-            ELSE
-                -- This is a unique constraint, drop both constraints
+            ELSE -- 'primary' or 'natural'
+                -- This is a unique/primary key constraint, drop both constraints
                 EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I, DROP CONSTRAINT %I',
                     unique_key_row.table_schema, /* %I */
                     unique_key_row.table_name, /* %I */

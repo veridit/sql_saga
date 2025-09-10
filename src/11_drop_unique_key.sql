@@ -1,7 +1,7 @@
 CREATE FUNCTION sql_saga.drop_unique_key(
         table_oid regclass,
         column_names name[],
-        era_name name,
+        era_name name DEFAULT 'valid',
         drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
         cleanup boolean DEFAULT true
 )

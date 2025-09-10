@@ -307,6 +307,7 @@ SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names
 SELECT sql_saga.add_unique_key(
     table_oid => 'legal_unit'::regclass,
     column_names => ARRAY['name'],
+    p_key_type => 'predicated',
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
@@ -433,8 +434,8 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
 - `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
 
 #### Unique Keys
-- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL, predicate text DEFAULT NULL) RETURNS name`
-- `drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
+- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', p_key_type sql_saga.unique_key_type DEFAULT 'natural', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL, predicate text DEFAULT NULL) RETURNS name`
+- `drop_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 - `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
 
 #### Foreign Keys

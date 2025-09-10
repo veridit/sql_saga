@@ -51,9 +51,9 @@ TABLE sql_saga.era;
 (1 row)
 
 TABLE sql_saga.unique_keys;
-             unique_key_name             | table_schema |    table_name    |    column_names    | era_name |                      unique_constraint                       |              exclude_constraint              | predicate 
------------------------------------------+--------------+------------------+--------------------+----------+--------------------------------------------------------------+----------------------------------------------+-----------
- timestamp_shifts_job_id_worker_id_valid | public       | timestamp_shifts | {job_id,worker_id} | valid    | timestamp_shifts_job_id_worker_id_valid_from_valid_until_key | timestamp_shifts_job_id_worker_id_valid_excl | 
+             unique_key_name             | table_schema |    table_name    | key_type |    column_names    | era_name |                      unique_constraint                       |              exclude_constraint              | predicate 
+-----------------------------------------+--------------+------------------+----------+--------------------+----------+--------------------------------------------------------------+----------------------------------------------+-----------
+ timestamp_shifts_job_id_worker_id_valid | public       | timestamp_shifts | natural  | {job_id,worker_id} | valid    | timestamp_shifts_job_id_worker_id_valid_from_valid_until_key | timestamp_shifts_job_id_worker_id_valid_excl | 
 (1 row)
 
 INSERT INTO timestamp_shifts(job_id, worker_id, valid_from, valid_until) VALUES

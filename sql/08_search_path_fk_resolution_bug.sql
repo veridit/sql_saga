@@ -35,7 +35,7 @@ CREATE TABLE public.legal_unit (
 );
 SELECT sql_saga.add_era('public.legal_unit', 'valid_from', 'valid_until');
 -- On the impostor table, create a unique key with a non-interfering name.
-SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', 'impostor_uk');
+SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', p_key_type => 'natural', unique_key_name => 'impostor_uk');
 
 
 -- Create the real parent table in the `saga_bug_test` schema.
@@ -48,7 +48,7 @@ CREATE TABLE saga_bug_test.legal_unit (
 );
 SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_from', 'valid_until');
 -- Use a different, non-interfering name for the unique key on the correct table.
-SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', 'correct_table_uk');
+SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', p_key_type => 'natural', unique_key_name => 'correct_table_uk');
 
 -- Child table with a temporal FK
 CREATE TABLE saga_bug_test.establishment (
@@ -60,7 +60,7 @@ CREATE TABLE saga_bug_test.establishment (
     PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id']);
+SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], p_key_type => 'natural');
 
 -- Add the temporal FK, correctly pointing to the unique key on the
 -- `saga_bug_test.legal_unit` table.

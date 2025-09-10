@@ -35,16 +35,17 @@ SELECT sql_saga.add_era('uk', 'valid_from', 'valid_until', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
+-- Adopt an existing primary key
+SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', p_key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
  add_unique_key 
 ----------------
  uk_id_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | column_names | era_name | unique_constraint | exclude_constraint | predicate 
------------------+--------------+------------+--------------+----------+-------------------+--------------------+-----------
- uk_id_p         | public       | uk         | {id}         | p        | uk_pkey           | uk_id_p_excl       | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
+ uk_id_p         | public       | uk         | primary  | {id}         | p        | uk_pkey           | uk_id_p_excl       | 
 (1 row)
 
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
@@ -152,6 +153,53 @@ SELECT sql_saga.drop_era('uk', 'p');
 (1 row)
 
 DROP TABLE uk;
+-- Test primary key creation
+CREATE TABLE pk_test (id integer, valid_from integer, valid_until integer);
+SELECT sql_saga.add_era('pk_test', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('pk_test', '{id}', p_key_type => 'primary');
+  add_unique_key  
+------------------
+ pk_test_id_valid
+(1 row)
+
+\d pk_test
+                 Table "public.pk_test"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           | not null | 
+ valid_from  | integer |           | not null | 
+ valid_until | integer |           | not null | 
+Indexes:
+    "pk_test_pkey" PRIMARY KEY, btree (id, valid_from, valid_until) DEFERRABLE
+    "pk_test_id_idx" btree (id)
+    "pk_test_id_valid_excl" EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
+Check constraints:
+    "pk_test_valid_check" CHECK (valid_from < valid_until)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name  | table_schema | table_name | key_type | column_names | era_name | unique_constraint |  exclude_constraint   | predicate 
+------------------+--------------+------------+----------+--------------+----------+-------------------+-----------------------+-----------
+ pk_test_id_valid | public       | pk_test    | primary  | {id}         | valid    | pk_test_pkey      | pk_test_id_valid_excl | 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('pk_test', '{id}');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('pk_test');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE pk_test;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

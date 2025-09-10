@@ -9,7 +9,8 @@ SET ROLE TO sql_saga_unprivileged_user;
 -- PostgreSQL, but test them anyway.
 CREATE TABLE uk (id integer, valid_from integer, valid_until integer, CONSTRAINT uk_pkey PRIMARY KEY (id, valid_from, valid_until) DEFERRABLE);
 SELECT sql_saga.add_era('uk', 'valid_from', 'valid_until', 'p');
-SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
+-- Adopt an existing primary key
+SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', p_key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
 TABLE sql_saga.unique_keys;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
 INSERT INTO uk (id, valid_from, valid_until) VALUES (200, 2, 4), (200, 4, 5), (200, 6, 11); -- success
@@ -67,6 +68,16 @@ DROP TABLE fk;
 SELECT sql_saga.drop_unique_key('uk', ARRAY['id'], 'p');
 SELECT sql_saga.drop_era('uk', 'p');
 DROP TABLE uk;
+
+-- Test primary key creation
+CREATE TABLE pk_test (id integer, valid_from integer, valid_until integer);
+SELECT sql_saga.add_era('pk_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_unique_key('pk_test', '{id}', p_key_type => 'primary');
+\d pk_test
+TABLE sql_saga.unique_keys;
+SELECT sql_saga.drop_unique_key('pk_test', '{id}');
+SELECT sql_saga.drop_era('pk_test');
+DROP TABLE pk_test;
 
 ROLLBACK;
 
