@@ -3,13 +3,13 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_target_table regclass,
     p_source_table regclass,
     p_identity_columns TEXT[],
-    p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode,
     p_era_name name,
     p_source_row_id_column name DEFAULT 'row_id',
     p_identity_correlation_column name DEFAULT NULL,
     p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
-    p_natural_identity_columns TEXT[] DEFAULT NULL
+    p_natural_identity_columns TEXT[] DEFAULT NULL,
+    p_ephemeral_columns TEXT[] DEFAULT NULL
 ) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
@@ -657,7 +657,7 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode, text[]) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode, text[], text[]) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
@@ -666,7 +666,6 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_target_table regclass,
     p_source_table regclass,
     p_identity_columns TEXT[],
-    p_ephemeral_columns TEXT[],
     p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
     p_era_name name DEFAULT 'valid',
     p_source_row_id_column name DEFAULT 'row_id',
@@ -678,7 +677,8 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_feedback_status_column name DEFAULT NULL,
     p_feedback_status_key name DEFAULT NULL,
     p_feedback_error_column name DEFAULT NULL,
-    p_feedback_error_key name DEFAULT NULL
+    p_feedback_error_key name DEFAULT NULL,
+    p_ephemeral_columns TEXT[] DEFAULT NULL
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
@@ -822,7 +822,7 @@ BEGIN
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
               AND t.attname <> ALL(COALESCE(p_identity_columns, '{}'))
               AND t.attname <> ALL(v_lookup_columns)
-              AND t.attname <> ALL(v_pk_cols)
+              AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
               AND t.attgenerated = '' -- Exclude generated columns
         ),
         all_available_cols AS (
@@ -1287,6 +1287,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[]) IS
 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

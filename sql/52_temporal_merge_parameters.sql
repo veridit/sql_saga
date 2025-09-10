@@ -45,7 +45,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_gen_col_target'::regclass,
     p_source_table      := 'tm_gen_col_source'::regclass,
     p_identity_columns        := ARRAY['id']::text[],
-    p_ephemeral_columns := '{}'::text[],
     p_mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
 
@@ -72,7 +71,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_mix_bug_target'::regclass,
     p_source_table      := 'tm_mix_bug_source'::regclass,
     p_identity_columns        := ARRAY['id']::text[],
-    p_ephemeral_columns := '{}'::text[],
     p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
@@ -109,7 +107,6 @@ BEGIN
         p_target_table      := 'tm_bad_params_target'::regclass,
         p_source_table      := 'tm_bad_params_source'::regclass,
         p_identity_columns        := NULL,
-        p_ephemeral_columns := '{}'::text[],
         p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for NULL p_identity_columns';
@@ -125,7 +122,6 @@ BEGIN
         p_target_table      := 'tm_bad_params_target'::regclass,
         p_source_table      := 'tm_bad_params_source'::regclass,
         p_identity_columns        := ARRAY[]::TEXT[],
-        p_ephemeral_columns := '{}'::text[],
         p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for empty p_identity_columns';
@@ -192,7 +188,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_custom_rowid_target'::regclass,
     p_source_table      := 'tm_custom_rowid_source'::regclass,
     p_identity_columns        := ARRAY['id'],
-    p_ephemeral_columns := '{}'::text[],
     p_source_row_id_column := 'source_pk'::name
 );
 
@@ -220,8 +215,7 @@ BEGIN
     CALL sql_saga.temporal_merge(
         p_target_table      := 'tm_no_rowid_target'::regclass,
         p_source_table      := 'tm_no_rowid_sources'::regclass,
-        p_identity_columns        := ARRAY['id'],
-        p_ephemeral_columns := '{}'::text[]
+        p_identity_columns        := ARRAY['id']
         -- p_source_row_id_column is deliberately omitted to test the default
     );
     RAISE EXCEPTION 'temporal_merge should have failed for missing default row_id column';
@@ -255,7 +249,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_weird_names'::regclass,
     p_source_table      := 'tm_weird_names_source'::regclass,
     p_identity_columns        := ARRAY['unit_pk'],
-    p_ephemeral_columns := '{}'::text[],
     p_era_name          := 'timeline'::name,
     p_source_row_id_column := 'source_op_id'::name
 );
@@ -295,7 +288,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_no_data_cols_target'::regclass,
     p_source_table      := 'tm_no_data_cols_source'::regclass,
     p_identity_columns        := ARRAY['id'],
-    p_ephemeral_columns := '{}'::text[],
     p_mode              := 'INSERT_NEW_ENTITIES'
 );
 
@@ -334,7 +326,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_extra_cols_target'::regclass,
     p_source_table      := 'tm_extra_cols_source'::regclass,
     p_identity_columns        := ARRAY['id'],
-    p_ephemeral_columns := '{}'::text[],
     p_mode              := 'INSERT_NEW_ENTITIES'
 );
 
@@ -373,7 +364,6 @@ CALL sql_saga.temporal_merge(
     p_target_table      := 'tm_founding_target'::regclass,
     p_source_table      := 'tm_founding_source'::regclass,
     p_identity_columns        := ARRAY['entity_ident'],
-    p_ephemeral_columns := '{}'::text[],
     p_mode              := 'INSERT_NEW_ENTITIES',
     p_identity_correlation_column := 'founding_group_id'::name
 );

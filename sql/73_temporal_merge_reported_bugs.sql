@@ -319,7 +319,6 @@ CALL sql_saga.temporal_merge(
     p_source_table => 'source_data_1',
     p_identity_columns => '{id}',
     p_natural_identity_columns => '{legal_unit_id}',
-    p_ephemeral_columns => NULL,
     p_update_source_with_identity => true
 );
 \echo '--- Target after initial import ---'
@@ -337,7 +336,6 @@ CALL sql_saga.temporal_merge(
     p_source_table => 'source_data_2',
     p_identity_columns => ARRAY['id'],
     p_natural_identity_columns => ARRAY['legal_unit_id'],
-    p_ephemeral_columns => NULL,
     p_mode => 'MERGE_ENTITY_REPLACE'
 );
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
@@ -356,8 +354,7 @@ CALL sql_saga.temporal_merge(
     p_target_table => 'tmrb.bug_repro_1',
     p_source_table => 'source_data_2',
     p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL
+    p_natural_identity_columns => NULL
 );
 -- Reset GUC for any subsequent tests
 RESET sql_saga.temporal_merge.log_plan;

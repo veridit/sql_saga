@@ -18,6 +18,9 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Make `p_ephemeral_columns` optional in `temporal_merge`:** Refactored the procedure to provide a sensible default (`NULL`) for the `p_ephemeral_columns` parameter to improve API ergonomics.
+- [x] **Fix `temporal_merge` executor bug:** The executor must not include stable identity columns (from `p_identity_columns`) in the `SET` clause of generated `UPDATE` statements, as this can cause `NOT NULL` violations.
+- [x] **Fix `temporal_merge` GUC handling:** The procedure's logging logic must gracefully handle `NULL` or empty-string GUC values to prevent invalid cast to `BOOLEAN` errors.
 - [x] **Verify `temporal_merge` correctly handles `NULL`s in composite natural keys:** The `45_...` test (Scenarios 11 and 12) was extended to confirm that the planner's entity lookup logic correctly uses `IS NOT DISTINCT FROM`-style comparisons for composite natural keys containing `NULL` values. The existing implementation passed the test, confirming the feature is already supported. Scenario 12 also serves as a regression test to document the expected failure when using this pattern with an incompatible simple `PRIMARY KEY`.
 - [x] **Simplify `temporal_merge` coalescing logic:** Removed a redundant `CASE` statement. The logic now relies on the fact that the `jsonb - text[]` operator gracefully handles `NULL` payloads, making the code more concise.
 - [x] **Refactor `temporal_merge` coalescing logic for clarity:** The logic for merging adjacent time slices now compares the final, resolved data payload instead of intermediate payloads. This makes the planner more declarative and robust, especially for `DELETE` operations which correctly create non-coalesceable `NULL` data gaps.

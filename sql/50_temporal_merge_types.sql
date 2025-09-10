@@ -23,7 +23,11 @@ INSERT INTO source_int VALUES
     (101, 1, 15, 18, 'Patched'), -- Update
     (102, 2, 10, 20, 'New');     -- Insert
 
-CALL sql_saga.temporal_merge('tmt.target_int'::regclass, 'source_int'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmt.target_int'::regclass,
+    p_source_table => 'source_int'::regclass,
+    p_identity_columns => '{id}'::text[]
+);
 
 \echo '--- Expected Final State ---'
 SELECT * FROM (VALUES
@@ -47,7 +51,11 @@ INSERT INTO source_bigint VALUES
     (101, 1, 15, 18, 'Patched'), -- Update
     (102, 2, 10, 20, 'New');     -- Insert
 
-CALL sql_saga.temporal_merge('tmt.target_bigint'::regclass, 'source_bigint'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmt.target_bigint'::regclass,
+    p_source_table => 'source_bigint'::regclass,
+    p_identity_columns => '{id}'::text[]
+);
 
 \echo '--- Expected Final State ---'
 SELECT * FROM (VALUES
@@ -71,7 +79,11 @@ INSERT INTO source_numeric VALUES
     (101, 1, 15.5, 18.5, 'Patched'), -- Update
     (102, 2, 10.0, 20.0, 'New');     -- Insert
 
-CALL sql_saga.temporal_merge('tmt.target_numeric'::regclass, 'source_numeric'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmt.target_numeric'::regclass,
+    p_source_table => 'source_numeric'::regclass,
+    p_identity_columns => '{id}'::text[]
+);
 
 \echo '--- Expected Final State ---'
 SELECT * FROM (VALUES
@@ -95,7 +107,11 @@ INSERT INTO source_timestamp VALUES
     (101, 1, '2024-01-01 15:00', '2024-01-01 18:00', 'Patched'), -- Update
     (102, 2, '2024-01-01 10:00', '2024-01-01 20:00', 'New');     -- Insert
 
-CALL sql_saga.temporal_merge('tmt.target_timestamp'::regclass, 'source_timestamp'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmt.target_timestamp'::regclass,
+    p_source_table => 'source_timestamp'::regclass,
+    p_identity_columns => '{id}'::text[]
+);
 
 \echo '--- Expected Final State ---'
 SELECT * FROM (VALUES
@@ -119,7 +135,11 @@ INSERT INTO source_timestamptz VALUES
     (101, 1, '2024-01-01 15:00Z', '2024-01-01 18:00Z', 'Patched'), -- Update
     (102, 2, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'New');     -- Insert
 
-CALL sql_saga.temporal_merge('tmt.target_timestamptz'::regclass, 'source_timestamptz'::regclass, '{id}'::text[], '{}'::text[], 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode, 'valid');
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmt.target_timestamptz'::regclass,
+    p_source_table => 'source_timestamptz'::regclass,
+    p_identity_columns => '{id}'::text[]
+);
 
 \echo '--- Expected Final State ---'
 SELECT * FROM (VALUES
