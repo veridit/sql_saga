@@ -49,13 +49,31 @@ a single, unified suite using the new temporal_merge function.
 --   - Scenario 6: `upsert_patch` with SERIAL surrogate key on target
 --   - Scenario 7: `upsert_patch` with IDENTITY surrogate key on target
 --   - Scenario 8: `upsert_replace` with non-PK surrogate key
+--   - Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID
+--   - Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID
 --
 --------------------------------------------------------------------------------
 SET client_min_messages TO WARNING;
 -- Setup: Create necessary schema and tables for this test
 CREATE SCHEMA IF NOT EXISTS tmtc;
+CREATE TYPE tmtc.location_type AS ENUM ('visiting', 'postal', 'physical');
 -- Parent tables
 CREATE TABLE tmtc.stat_definition (id INT PRIMARY KEY, name TEXT);
+CREATE TABLE tmtc.legal_unit (
+    id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', 'tm_legal_unit_uk');
+  add_unique_key  
+------------------
+ tm_legal_unit_uk
+(1 row)
+
 CREATE TABLE tmtc.establishment (
     id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
 );
@@ -160,12 +178,103 @@ SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definitio
  tm_sfu_no_pk_uk
 (1 row)
 
+-- Target table with multiple, mutually exclusive natural keys (and surrogate ID)
+CREATE TABLE tmtc.location_multi_key (
+    id SERIAL NOT NULL,
+    type tmtc.location_type NOT NULL,
+    legal_unit_id INT,
+    establishment_id INT,
+    address TEXT,
+    edit_comment TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    CONSTRAINT location_multi_key_xor CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    ),
+    PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('tmtc.location_multi_key');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+ add_unique_key 
+----------------
+ loc_mk_lu_uk
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
+ add_unique_key 
+----------------
+ loc_mk_est_uk
+(1 row)
+
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+            add_foreign_key             
+----------------------------------------
+ location_multi_key_legal_unit_id_valid
+(1 row)
+
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+              add_foreign_key              
+-------------------------------------------
+ location_multi_key_establishment_id_valid
+(1 row)
+
+-- Target table with multiple, mutually exclusive natural keys (NO surrogate ID)
+CREATE TABLE tmtc.location_multi_key_no_id (
+    type tmtc.location_type NOT NULL,
+    legal_unit_id INT,
+    establishment_id INT,
+    address TEXT,
+    edit_comment TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    CONSTRAINT location_multi_key_no_id_xor CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    )
+);
+SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+  add_unique_key   
+-------------------
+ loc_mk_noid_lu_uk
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+   add_unique_key   
+--------------------
+ loc_mk_noid_est_uk
+(1 row)
+
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+               add_foreign_key                
+----------------------------------------------
+ location_multi_key_no_id_legal_unit_id_valid
+(1 row)
+
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+                 add_foreign_key                 
+-------------------------------------------------
+ location_multi_key_no_id_establishment_id_valid
+(1 row)
+
 -- Helper procedure to reset the target table for a new scenario
 CREATE OR REPLACE PROCEDURE tmtc.reset_target() AS $$
 BEGIN
-    TRUNCATE tmtc.stat_definition, tmtc.establishment, tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk RESTART IDENTITY CASCADE;
+    TRUNCATE tmtc.stat_definition, tmtc.legal_unit, tmtc.establishment, tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id RESTART IDENTITY CASCADE;
     -- Add parent data
     INSERT INTO tmtc.stat_definition (id, name) VALUES (10, 'Total Employees');
+    INSERT INTO tmtc.legal_unit (id, valid_from, valid_until, name) VALUES (200, '1900-01-01', 'infinity', 'LU 200');
     INSERT INTO tmtc.establishment (id, valid_from, valid_until, name) VALUES (100, '1900-01-01', 'infinity', 'EST 100');
 END;
 $$ LANGUAGE plpgsql;
@@ -530,9 +639,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                                                data                                                | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value", "establishment_id": 100, "stat_definition_id": 10} | 
+ plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -634,9 +743,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                                                data                                                | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value", "establishment_id": 100, "stat_definition_id": 10} | 
+ plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -738,9 +847,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                                               data                                                | relation 
--------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------
-           1 | {104}          | INSERT    | {"id": 1, "row_id": "104", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat", "establishment_id": 100, "stat_definition_id": 10} | 
+ plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
+-------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
+           1 | {104}          | INSERT    | {"id": 1, "row_id": "104", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -842,9 +951,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                                               data                                                | relation 
--------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------
-           1 | {105}          | INSERT    | {"id": 1, "row_id": "105", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat", "establishment_id": 100, "stat_definition_id": 10} | 
+ plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
+-------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
+           1 | {105}          | INSERT    | {"id": 1, "row_id": "105", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -946,9 +1055,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                                                data                                                | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value", "establishment_id": 100, "stat_definition_id": 10} | 
+ plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1002,12 +1111,256 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 (1 row)
 
 DROP TABLE temp_source_8;
+SAVEPOINT scenario_9;
+SET client_min_messages TO NOTICE;
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID'
+Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+-- This scenario tests using different p_natural_identity_columns on the same target table.
+CALL tmtc.reset_target();
+CREATE TEMP TABLE temp_source_9 (
+    row_id INT, id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
+) ON COMMIT DROP;
+-- Insert initial data into target
+INSERT INTO tmtc.location_multi_key (type, legal_unit_id, address, valid_from, valid_until) VALUES
+('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+INSERT INTO tmtc.location_multi_key (type, establishment_id, address, valid_from, valid_until) VALUES
+('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+\echo '--- Target: Initial state ---'
+--- Target: Initial state ---
+SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_multi_key ORDER BY id;
+ id |   type   | legal_unit_id | establishment_id |      address      
+----+----------+---------------+------------------+-------------------
+  1 | visiting |           200 |                  | 200 Main St
+  2 | visiting |               |              100 | 100 Business Park
+(2 rows)
+
+\echo '--- Case 9a: Merge using the (type, legal_unit_id) natural key. ---'
+--- Case 9a: Merge using the (type, legal_unit_id) natural key. ---
+INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+\echo '--- Source (Legal Unit location) ---'
+--- Source (Legal Unit location) ---
+TABLE temp_source_9;
+ row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
+--------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
+      1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
+(1 row)
+
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key',
+    p_source_table => 'temp_source_9',
+    p_identity_columns => '{id}',
+    p_natural_identity_columns => '{type, legal_unit_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => true
+);
+NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
+NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
+NOTICE:  (1,{1},INSERT,,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}",,,2024-06-01,infinity,"{""address"": ""201 New Main St"", ""edit_comment"": ""LU address change"", ""establishment_id"": null}",)
+NOTICE:  (2,{1},UPDATE,SHRINK,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}",2024-01-01,infinity,2024-01-01,2024-06-01,"{""address"": ""200 Main St"", ""edit_comment"": null, ""establishment_id"": null}",starts)
+NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
+NOTICE:  (source_row_id,target_entity_ids,status,error_message)
+NOTICE:  (1,"[{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}]",APPLIED,)
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: After merge for Legal Unit location ---'
+--- Target: After merge for Legal Unit location ---
+SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
+ id |   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
+----+----------+---------------+------------------+-------------------+------------+-------------
+  1 | visiting |           200 |                  | 200 Main St       | 2024-01-01 | 2024-06-01
+  1 | visiting |           200 |                  | 201 New Main St   | 2024-06-01 | infinity
+  2 | visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
+(3 rows)
+
+\echo '--- Source: After back-fill ---'
+--- Source: After back-fill ---
+TABLE temp_source_9;
+ row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
+--------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
+      1 |  1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
+(1 row)
+
+\echo '--- Case 9b: Merge using the (type, establishment_id) natural key. ---'
+--- Case 9b: Merge using the (type, establishment_id) natural key. ---
+TRUNCATE temp_source_9;
+INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+\echo '--- Source (Establishment location) ---'
+--- Source (Establishment location) ---
+TABLE temp_source_9;
+ row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
+--------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
+      2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
+(1 row)
+
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key',
+    p_source_table => 'temp_source_9',
+    p_identity_columns => '{id}',
+    p_natural_identity_columns => '{type, establishment_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => true
+);
+NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
+NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
+NOTICE:  (1,{2},INSERT,,"{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}",,,2024-08-01,infinity,"{""address"": ""101 New Business Park"", ""edit_comment"": ""Est address change"", ""legal_unit_id"": null}",)
+NOTICE:  (2,{2},UPDATE,SHRINK,"{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}",2024-01-01,infinity,2024-01-01,2024-08-01,"{""address"": ""100 Business Park"", ""edit_comment"": null, ""legal_unit_id"": null}",starts)
+NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
+NOTICE:  (source_row_id,target_entity_ids,status,error_message)
+NOTICE:  (2,"[{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}]",APPLIED,)
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: Final state ---'
+--- Target: Final state ---
+SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
+ id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until 
+----+----------+---------------+------------------+-----------------------+------------+-------------
+  1 | visiting |           200 |                  | 200 Main St           | 2024-01-01 | 2024-06-01
+  1 | visiting |           200 |                  | 201 New Main St       | 2024-06-01 | infinity
+  2 | visiting |               |              100 | 100 Business Park     | 2024-01-01 | 2024-08-01
+  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity
+(4 rows)
+
+\echo '--- Source: Final after back-fill ---'
+--- Source: Final after back-fill ---
+TABLE temp_source_9;
+ row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
+--------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
+      2 |  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
+(1 row)
+
+DROP TABLE temp_source_9;
+RELEASE SAVEPOINT scenario_9;
+SAVEPOINT scenario_10;
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID'
+Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+CALL tmtc.reset_target();
+CREATE TEMP TABLE temp_source_10 (
+    row_id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
+) ON COMMIT DROP;
+-- Insert initial data into target
+INSERT INTO tmtc.location_multi_key_no_id (type, legal_unit_id, address, valid_from, valid_until) VALUES
+('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+INSERT INTO tmtc.location_multi_key_no_id (type, establishment_id, address, valid_from, valid_until) VALUES
+('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+\echo '--- Target: Initial state ---'
+--- Target: Initial state ---
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id);
+   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
+----------+---------------+------------------+-------------------+------------+-------------
+ visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
+ visiting |           200 |                  | 200 Main St       | 2024-01-01 | infinity
+(2 rows)
+
+\echo '--- Case 10a: Merge using the (type, legal_unit_id) natural key. ---'
+--- Case 10a: Merge using the (type, legal_unit_id) natural key. ---
+INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+\echo '--- Source (Legal Unit location) ---'
+--- Source (Legal Unit location) ---
+TABLE temp_source_10;
+ row_id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
+--------+----------+---------------+------------------+-----------------+------------+-------------+-------------------
+      1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
+(1 row)
+
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key_no_id',
+    p_source_table => 'temp_source_10',
+    p_identity_columns => NULL,
+    p_natural_identity_columns => '{type, legal_unit_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => false
+);
+NOTICE:  --- temporal_merge plan for tmtc.location_multi_key_no_id ---
+NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
+NOTICE:  (1,{1},INSERT,,"{""type"": ""visiting"", ""legal_unit_id"": 200}",,,2024-06-01,infinity,"{""address"": ""201 New Main St"", ""edit_comment"": ""LU address change"", ""establishment_id"": null}",)
+NOTICE:  (2,{1},UPDATE,SHRINK,"{""type"": ""visiting"", ""legal_unit_id"": 200}",2024-01-01,infinity,2024-01-01,2024-06-01,"{""address"": ""200 Main St"", ""edit_comment"": null, ""establishment_id"": null}",starts)
+NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key_no_id ---
+NOTICE:  (source_row_id,target_entity_ids,status,error_message)
+NOTICE:  (1,"[{""type"": ""visiting"", ""legal_unit_id"": 200}]",APPLIED,)
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: After merge for Legal Unit location ---'
+--- Target: After merge for Legal Unit location ---
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
+   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
+----------+---------------+------------------+-------------------+------------+-------------
+ visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
+ visiting |           200 |                  | 200 Main St       | 2024-01-01 | 2024-06-01
+ visiting |           200 |                  | 201 New Main St   | 2024-06-01 | infinity
+(3 rows)
+
+\echo '--- Case 10b: Merge using the (type, establishment_id) natural key. ---'
+--- Case 10b: Merge using the (type, establishment_id) natural key. ---
+TRUNCATE temp_source_10;
+INSERT INTO temp_source_10 VALUES (2, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+\echo '--- Source (Establishment location) ---'
+--- Source (Establishment location) ---
+TABLE temp_source_10;
+ row_id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
+--------+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
+      2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
+(1 row)
+
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key_no_id',
+    p_source_table => 'temp_source_10',
+    p_identity_columns => NULL,
+    p_natural_identity_columns => '{type, establishment_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => false
+);
+NOTICE:  --- temporal_merge plan for tmtc.location_multi_key_no_id ---
+NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
+NOTICE:  (1,{2},INSERT,,"{""type"": ""visiting"", ""establishment_id"": 100}",,,2024-08-01,infinity,"{""address"": ""101 New Business Park"", ""edit_comment"": ""Est address change"", ""legal_unit_id"": null}",)
+NOTICE:  (2,{2},UPDATE,SHRINK,"{""type"": ""visiting"", ""establishment_id"": 100}",2024-01-01,infinity,2024-01-01,2024-08-01,"{""address"": ""100 Business Park"", ""edit_comment"": null, ""legal_unit_id"": null}",starts)
+NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key_no_id ---
+NOTICE:  (source_row_id,target_entity_ids,status,error_message)
+NOTICE:  (2,"[{""type"": ""visiting"", ""establishment_id"": 100}]",APPLIED,)
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: Final state ---'
+--- Target: Final state ---
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
+   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until 
+----------+---------------+------------------+-----------------------+------------+-------------
+ visiting |               |              100 | 100 Business Park     | 2024-01-01 | 2024-08-01
+ visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity
+ visiting |           200 |                  | 200 Main St           | 2024-01-01 | 2024-06-01
+ visiting |           200 |                  | 201 New Main St       | 2024-06-01 | infinity
+(4 rows)
+
+DROP TABLE temp_source_10;
+RELEASE SAVEPOINT scenario_10;
+RESET client_min_messages;
 -- Final Cleanup
 DROP PROCEDURE tmtc.reset_target();
-DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk;
-DROP TABLE tmtc.establishment;
+DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id;
+DROP TABLE tmtc.legal_unit, tmtc.establishment;
 DROP TABLE tmtc.stat_definition;
 DROP SCHEMA tmtc CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to type tmtc.location_type
+drop cascades to sequence tmtc.stat_for_unit_no_pk_id_seq
 SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

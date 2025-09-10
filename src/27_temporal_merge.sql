@@ -123,7 +123,7 @@ BEGIN
             v_founding_id_select_expr := format('t.%I as founding_id,', p_identity_correlation_column);
             v_planner_entity_id_expr := format($$
                 CASE
-                    WHEN sr.is_new_entity
+                    WHEN sr.is_new_entity AND NOT sr.target_entity_exists
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
@@ -132,7 +132,7 @@ BEGIN
             v_founding_id_select_expr := format('t.%I as founding_id,', p_source_row_id_column);
             v_planner_entity_id_expr := format($$
                 CASE
-                    WHEN sr.is_new_entity
+                    WHEN sr.is_new_entity AND NOT sr.target_entity_exists
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
@@ -177,12 +177,14 @@ BEGIN
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(v_stable_identity_columns)
+              AND s.attname <> ALL(v_lookup_columns)
         ),
         target_data_cols AS (
             SELECT t.attname
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND t.attname <> ALL(v_stable_identity_columns)
+              AND t.attname <> ALL(v_lookup_columns)
               AND t.attgenerated = '' -- Exclude generated columns
         )
         SELECT
@@ -758,7 +760,7 @@ BEGIN
 
         -- Dynamically construct join clause for composite entity key.
         SELECT
-            string_agg(format('t.%I = jpr_entity.%I', col, col), ' AND ')
+            string_agg(format('t.%I IS NOT DISTINCT FROM jpr_entity.%I', col, col), ' AND ')
         INTO
             v_entity_key_join_clause
         FROM unnest(v_lookup_columns) AS col;
@@ -785,17 +787,16 @@ BEGIN
             p_natural_identity_columns => p_natural_identity_columns
         ) p;
 
-        -- Conditionally output the plan for debugging, without adding a parameter.
+        -- Conditionally output the plan for debugging, based on a session variable.
         DECLARE
-            v_current_log_level TEXT;
+            v_log_plan BOOLEAN := COALESCE(current_setting('sql_saga.temporal_merge.log_plan', true), 'false')::BOOLEAN;
             v_plan_rec RECORD;
         BEGIN
-            SHOW client_min_messages INTO v_current_log_level;
-            IF v_current_log_level ILIKE 'debug%' THEN
-                RAISE DEBUG '--- temporal_merge plan for % ---', p_target_table;
-                RAISE DEBUG '(plan_op_seq,source_row_ids,operation,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)';
-                FOR v_plan_rec IN SELECT * FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
-                    RAISE DEBUG '%', v_plan_rec;
+            IF v_log_plan THEN
+                RAISE NOTICE '--- temporal_merge plan for % ---', p_target_table;
+                RAISE NOTICE '(plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)';
+                FOR v_plan_rec IN SELECT plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
+                    RAISE NOTICE '%', v_plan_rec;
                 END LOOP;
             END IF;
         END;
@@ -1209,17 +1210,16 @@ BEGIN
         );
         EXECUTE v_sql;
 
-    -- Conditionally output the feedback for debugging.
+    -- Conditionally output the feedback for debugging, based on a session variable.
     DECLARE
-        v_current_log_level TEXT;
+        v_log_feedback BOOLEAN := COALESCE(current_setting('sql_saga.temporal_merge.log_feedback', true), 'false')::BOOLEAN;
         v_feedback_rec RECORD;
     BEGIN
-        SHOW client_min_messages INTO v_current_log_level;
-        IF v_current_log_level ILIKE 'debug%' THEN
-            RAISE DEBUG '--- temporal_merge feedback for % ---', p_target_table;
-            RAISE DEBUG '(source_row_id,target_entity_ids,status,error_message)';
+        IF v_log_feedback THEN
+            RAISE NOTICE '--- temporal_merge feedback for % ---', p_target_table;
+            RAISE NOTICE '(source_row_id,target_entity_ids,status,error_message)';
             FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-                RAISE DEBUG '%', v_feedback_rec;
+                RAISE NOTICE '%', v_feedback_rec;
             END LOOP;
         END IF;
     END;

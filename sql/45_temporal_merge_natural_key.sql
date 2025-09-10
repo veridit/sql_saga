@@ -22,15 +22,23 @@ BEGIN;
 --   - Scenario 6: `upsert_patch` with SERIAL surrogate key on target
 --   - Scenario 7: `upsert_patch` with IDENTITY surrogate key on target
 --   - Scenario 8: `upsert_replace` with non-PK surrogate key
+--   - Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID
+--   - Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID
 --
 --------------------------------------------------------------------------------
 SET client_min_messages TO WARNING;
 
 -- Setup: Create necessary schema and tables for this test
 CREATE SCHEMA IF NOT EXISTS tmtc;
+CREATE TYPE tmtc.location_type AS ENUM ('visiting', 'postal', 'physical');
 
 -- Parent tables
 CREATE TABLE tmtc.stat_definition (id INT PRIMARY KEY, name TEXT);
+CREATE TABLE tmtc.legal_unit (
+    id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', 'tm_legal_unit_uk');
 CREATE TABLE tmtc.establishment (
     id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
 );
@@ -90,12 +98,55 @@ CREATE TABLE tmtc.stat_for_unit_no_pk (
 SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', 'tm_sfu_no_pk_uk');
 
+-- Target table with multiple, mutually exclusive natural keys (and surrogate ID)
+CREATE TABLE tmtc.location_multi_key (
+    id SERIAL NOT NULL,
+    type tmtc.location_type NOT NULL,
+    legal_unit_id INT,
+    establishment_id INT,
+    address TEXT,
+    edit_comment TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    CONSTRAINT location_multi_key_xor CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    ),
+    PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('tmtc.location_multi_key');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+
+-- Target table with multiple, mutually exclusive natural keys (NO surrogate ID)
+CREATE TABLE tmtc.location_multi_key_no_id (
+    type tmtc.location_type NOT NULL,
+    legal_unit_id INT,
+    establishment_id INT,
+    address TEXT,
+    edit_comment TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    CONSTRAINT location_multi_key_no_id_xor CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    )
+);
+SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+
 -- Helper procedure to reset the target table for a new scenario
 CREATE OR REPLACE PROCEDURE tmtc.reset_target() AS $$
 BEGIN
-    TRUNCATE tmtc.stat_definition, tmtc.establishment, tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk RESTART IDENTITY CASCADE;
+    TRUNCATE tmtc.stat_definition, tmtc.legal_unit, tmtc.establishment, tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id RESTART IDENTITY CASCADE;
     -- Add parent data
     INSERT INTO tmtc.stat_definition (id, name) VALUES (10, 'Total Employees');
+    INSERT INTO tmtc.legal_unit (id, valid_from, valid_until, name) VALUES (200, '1900-01-01', 'infinity', 'LU 200');
     INSERT INTO tmtc.establishment (id, valid_from, valid_until, name) VALUES (100, '1900-01-01', 'infinity', 'EST 100');
 END;
 $$ LANGUAGE plpgsql;
@@ -536,10 +587,140 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 DROP TABLE temp_source_8;
 
 
+SAVEPOINT scenario_9;
+SET client_min_messages TO NOTICE;
+\echo '--------------------------------------------------------------------------------'
+\echo 'Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID'
+\echo '--------------------------------------------------------------------------------'
+-- This scenario tests using different p_natural_identity_columns on the same target table.
+CALL tmtc.reset_target();
+CREATE TEMP TABLE temp_source_9 (
+    row_id INT, id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
+) ON COMMIT DROP;
+
+-- Insert initial data into target
+INSERT INTO tmtc.location_multi_key (type, legal_unit_id, address, valid_from, valid_until) VALUES
+('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+INSERT INTO tmtc.location_multi_key (type, establishment_id, address, valid_from, valid_until) VALUES
+('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+
+\echo '--- Target: Initial state ---'
+SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_multi_key ORDER BY id;
+
+\echo '--- Case 9a: Merge using the (type, legal_unit_id) natural key. ---'
+INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+\echo '--- Source (Legal Unit location) ---'
+TABLE temp_source_9;
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key',
+    p_source_table => 'temp_source_9',
+    p_identity_columns => '{id}',
+    p_natural_identity_columns => '{type, legal_unit_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => true
+);
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: After merge for Legal Unit location ---'
+SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
+\echo '--- Source: After back-fill ---'
+TABLE temp_source_9;
+
+\echo '--- Case 9b: Merge using the (type, establishment_id) natural key. ---'
+TRUNCATE temp_source_9;
+INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+\echo '--- Source (Establishment location) ---'
+TABLE temp_source_9;
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key',
+    p_source_table => 'temp_source_9',
+    p_identity_columns => '{id}',
+    p_natural_identity_columns => '{type, establishment_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => true
+);
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: Final state ---'
+SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
+\echo '--- Source: Final after back-fill ---'
+TABLE temp_source_9;
+DROP TABLE temp_source_9;
+RELEASE SAVEPOINT scenario_9;
+
+
+SAVEPOINT scenario_10;
+\echo '--------------------------------------------------------------------------------'
+\echo 'Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID'
+\echo '--------------------------------------------------------------------------------'
+CALL tmtc.reset_target();
+CREATE TEMP TABLE temp_source_10 (
+    row_id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
+) ON COMMIT DROP;
+
+-- Insert initial data into target
+INSERT INTO tmtc.location_multi_key_no_id (type, legal_unit_id, address, valid_from, valid_until) VALUES
+('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+INSERT INTO tmtc.location_multi_key_no_id (type, establishment_id, address, valid_from, valid_until) VALUES
+('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+
+\echo '--- Target: Initial state ---'
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id);
+
+\echo '--- Case 10a: Merge using the (type, legal_unit_id) natural key. ---'
+INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+\echo '--- Source (Legal Unit location) ---'
+TABLE temp_source_10;
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key_no_id',
+    p_source_table => 'temp_source_10',
+    p_identity_columns => NULL,
+    p_natural_identity_columns => '{type, legal_unit_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => false
+);
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: After merge for Legal Unit location ---'
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
+
+\echo '--- Case 10b: Merge using the (type, establishment_id) natural key. ---'
+TRUNCATE temp_source_10;
+INSERT INTO temp_source_10 VALUES (2, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+\echo '--- Source (Establishment location) ---'
+TABLE temp_source_10;
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.log_feedback = true;
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmtc.location_multi_key_no_id',
+    p_source_table => 'temp_source_10',
+    p_identity_columns => NULL,
+    p_natural_identity_columns => '{type, establishment_id}',
+    p_ephemeral_columns => '{edit_comment}',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_update_source_with_identity => false
+);
+SET sql_saga.temporal_merge.log_plan = false;
+SET sql_saga.temporal_merge.log_feedback = false;
+\echo '--- Target: Final state ---'
+SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
+DROP TABLE temp_source_10;
+RELEASE SAVEPOINT scenario_10;
+RESET client_min_messages;
+
 -- Final Cleanup
 DROP PROCEDURE tmtc.reset_target();
-DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk;
-DROP TABLE tmtc.establishment;
+DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id;
+DROP TABLE tmtc.legal_unit, tmtc.establishment;
 DROP TABLE tmtc.stat_definition;
 DROP SCHEMA tmtc CASCADE;
 
