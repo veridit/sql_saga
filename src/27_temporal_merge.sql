@@ -24,6 +24,7 @@ DECLARE
     v_valid_until_col name;
     v_valid_to_col name;
     v_sql TEXT;
+    v_ephemeral_columns TEXT[] := COALESCE(p_ephemeral_columns, '{}'::text[]);
 BEGIN
     -- An entity must be identifiable. At least one set of identity columns must be provided.
     IF (p_identity_columns IS NULL OR cardinality(p_identity_columns) = 0) AND
@@ -73,7 +74,7 @@ BEGIN
         p_target_table::oid,
         p_source_table::oid,
         p_identity_columns,
-        p_ephemeral_columns,
+        v_ephemeral_columns,
         p_mode,
         p_era_name,
         p_source_row_id_column,
@@ -177,14 +178,12 @@ BEGIN
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(v_stable_identity_columns)
-              AND s.attname <> ALL(v_lookup_columns)
         ),
         target_data_cols AS (
             SELECT t.attname
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND t.attname <> ALL(v_stable_identity_columns)
-              AND t.attname <> ALL(v_lookup_columns)
               AND t.attgenerated = '' -- Exclude generated columns
         )
         SELECT
@@ -468,6 +467,8 @@ resolved_atomic_segments AS (
         t_valid_from,
         source_row_id,
         propagated_stable_pk_payload AS stable_pk_payload,
+        s_data_payload,
+        t_data_payload,
         %8$s as data_payload,
         CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
     FROM %10$s
@@ -496,25 +497,25 @@ coalesced_final_segments AS (
                 *,
                 CASE
                     -- A new segment starts if there is a gap between it and the previous one,
-                    -- or if the data payload changes. For [) intervals,
-                    -- contiguity is defined as the previous `valid_until` being equal to the current `valid_from`.
+                    -- or if the data payload changes. For [) intervals, contiguity is defined
+                    -- as the previous `valid_until` being equal to the current `valid_from`.
+                    -- The subtraction of ephemeral columns `(%5$L)` is safe because the `jsonb - text[]` operator
+                    -- gracefully handles `NULL` payloads, which is how gaps are represented.
                     WHEN LAG(valid_until) OVER (PARTITION BY entity_id ORDER BY valid_from) = valid_from
-                     AND LAG(comparable_payload) OVER (PARTITION BY entity_id ORDER BY valid_from) IS NOT DISTINCT FROM comparable_payload
+                     AND (
+                        LAG(data_payload - %5$L::text[]) OVER (PARTITION BY entity_id ORDER BY valid_from)
+                        IS NOT DISTINCT FROM
+                        (data_payload - %5$L::text[])
+                     )
                     THEN 0 -- Not a new group (contiguous and same data)
                     ELSE 1 -- Is a new group (time gap or different data)
                 END as is_new_segment
-            FROM (
-                SELECT
-                    ras.*,
-                    (ras.data_payload - %5$L::text[]) as comparable_payload
-                FROM resolved_atomic_segments ras
-            ) with_comparable_payload
+            FROM resolved_atomic_segments ras
         ) with_new_segment_flag
     ) with_segment_group
     GROUP BY
         entity_id,
-        segment_group,
-        comparable_payload
+        segment_group
 ),
 
 diff AS (
@@ -615,7 +616,10 @@ SELECT
     p.old_valid_until::TEXT,
     p.new_valid_from::TEXT,
     p.new_valid_until::TEXT,
-    p.data,
+    CASE
+        WHEN jsonb_typeof(p.data) = 'object' THEN p.data - %22$L::text[]
+        ELSE p.data
+    END as data,
     p.relation
 FROM plan p
 ORDER BY plan_op_seq;
@@ -624,7 +628,7 @@ $SQL$,
             v_source_data_payload_expr,     /* %2$s */
             v_source_table_ident,           /* %3$s */
             v_target_table_ident,           /* %4$s */
-            p_ephemeral_columns,            /* %5$L */
+            v_ephemeral_columns,            /* %5$L */
             v_target_data_cols_jsonb_build, /* %6$s */
             p_mode,                         /* %7$L */
             v_final_data_payload_expr,      /* %8$s */
@@ -640,7 +644,8 @@ $SQL$,
             p_source_row_id_column,         /* %18$I */
             v_range_constructor,            /* %19$I */
             v_target_rows_filter,           /* %20$s */
-            v_stable_pk_cols_jsonb_build    /* %21$s */
+            v_stable_pk_cols_jsonb_build,   /* %21$s */
+            v_lookup_columns                /* %22$L */
         );
 
         v_exec_sql := format('PREPARE %I AS %s', v_plan_ps_name, v_sql);

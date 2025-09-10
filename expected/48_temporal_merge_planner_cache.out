@@ -195,9 +195,9 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
                        ->  WorkTable Scan on running_payload_cte p
    CTE coalesced_final_segments
      ->  GroupAggregate
-           Group Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.comparable_payload
+           Group Key: with_segment_group.entity_id, with_segment_group.segment_group
            ->  Incremental Sort
-                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.comparable_payload, with_segment_group.valid_from
+                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.valid_from
                  Presorted Key: with_segment_group.entity_id
                  ->  Subquery Scan on with_segment_group
                        ->  WindowAgg

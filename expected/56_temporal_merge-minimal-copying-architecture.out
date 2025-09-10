@@ -891,7 +891,7 @@ NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1}]}
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 3, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "founding_id": "1", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "123 Business Rd", "comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "founding_id": "1", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
@@ -935,8 +935,8 @@ NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 2}]}
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 8, "target_entity_ids": [{"id": 2}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "456 Innovation Dr", "comment": "Initial load", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
-NOTICE:  {"data": {"type": "physical", "address": "789 Tech Pkwy", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "456 Innovation Dr", "comment": "Initial load"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "789 Tech Pkwy", "comment": "Address update"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 3, "type": "physical", "legal_unit_id": 2}]}
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 3, "type": "physical", "legal_unit_id": 2}]}
@@ -976,8 +976,8 @@ NOTICE:  {"data": {"name": "NewCo AS", "comment": "Initial load"}, "relation": "
 NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 10, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": [11], "new_valid_until": "2025-05-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
-NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-05-01", "old_valid_from": null, "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "123 Business Rd", "comment": "Initial load"}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": [11], "new_valid_until": "2025-05-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"address": "1 New Street", "comment": "New physical address"}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-05-01", "old_valid_from": null, "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 11, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
@@ -1015,8 +1015,8 @@ NOTICE:  {"data": {"name": "RenamedCo AS", "comment": "Company rename"}, "relati
 NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2025-05-01", "old_valid_from": "2025-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2025-05-01", "old_valid_until": "2025-05-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "1 New Street", "comment": "New physical address"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2025-05-01", "old_valid_from": "2025-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"address": "123 Business Rd", "comment": "Initial load"}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2025-05-01", "old_valid_until": "2025-05-01", "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
 NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
