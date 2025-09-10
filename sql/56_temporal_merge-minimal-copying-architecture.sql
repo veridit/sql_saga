@@ -42,15 +42,21 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
        required foreign keys are now present in the source data.
   - **Handling Different Data Models:**
     The example is extended to show several other common patterns:
-    1. **Non-Temporal Identifiers:** An `ident` table stores external
+    1. **Hybrid Key Strategy (Natural Key Lookup):** The `location` table
+       demonstrates a powerful hybrid approach. `physical` locations have a
+       stable identity (`p_identity_columns` = `id`), but are looked up using a
+       natural key (`p_natural_identity_columns` = `legal_unit_id`, `type`). This shows
+       how `temporal_merge` can use a business key to find an entity while
+       correctly preserving its separate, stable primary key.
+    2. **Non-Temporal Identifiers:** An `ident` table stores external
        identifiers (e.g., tax numbers) that are considered stable over
-       time and reference a temporal entity. This table is managed with a
-       standard SQL `MERGE` statement.
-    2. **Temporal Data with Natural Keys:** An `activity` table is temporal
-       but uses a composite natural key instead of a surrogate `id`. This
+       time and reference a temporal entity. This is managed with a standard
+       SQL `MERGE` statement.
+    3. **Temporal Data with Natural Keys:** An `activity` table is temporal
+       and uses a composite natural key without a surrogate `id`. This
        is managed with `temporal_merge` configured for natural keys and no
        identity writeback.
-    3. **Ephemeral Metadata Columns:** A `comment` column is added to all
+    4. **Ephemeral Metadata Columns:** A `comment` column is added to all
        temporal tables and populated from the source. It is passed to
        `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures
        that changes to the comment update the existing historical record
@@ -84,7 +90,7 @@ CREATE TABLE etl.activity_type (id int primary key, code text unique);
 INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
 
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.legal_unit');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
 
@@ -103,9 +109,12 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.location');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], unique_key_name => 'location_id_valid');
+-- A legal unit can only have one of each location type (e.g., one 'physical' address) at any given time.
+-- This serves as a natural key for physical locations.
+SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], unique_key_name => 'location_legal_unit_id_type_valid');
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.location'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
@@ -114,7 +123,7 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.stat_for_unit');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'stat_for_unit_id_valid');
 SELECT sql_saga.add_foreign_key(
@@ -130,7 +139,8 @@ CREATE TABLE etl.activity (
     activity_type_id int,
     comment text,
     valid_from date,
-    valid_until date
+    valid_until date,
+    PRIMARY KEY (legal_unit_id, activity_type_id, valid_from)
 );
 SELECT sql_saga.add_era('etl.activity');
 -- The "unique key" for a natural-key table is the set of natural key columns.
@@ -310,11 +320,14 @@ BEGIN
         WHERE dt.batch = %1$L AND dt.physical_address IS NOT NULL;
     $$, p_batch_id /* %1$L */);
 
-    -- Merge physical locations
+    -- Merge physical locations using a NATURAL KEY for lookup, while preserving
+    -- the stable `id`. `p_natural_identity_columns` specifies the natural key for finding
+    -- entities, and `p_identity_columns` specifies the stable key to preserve.
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_phys',
         p_identity_columns => ARRAY['id'],
+        p_natural_identity_columns => ARRAY['legal_unit_id', 'type'],
         p_ephemeral_columns => ARRAY['comment'],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_identity_correlation_column => 'founding_id',
@@ -382,7 +395,9 @@ BEGIN
         WHERE dt.batch = %1$L AND dt.postal_address IS NOT NULL;
     $$, p_batch_id /* %1$L */);
 
-    -- Merge postal locations
+    -- Merge postal locations using a SURROGATE KEY. In this case, each new
+    -- postal address is treated as a new conceptual entity, identified by its
+    -- surrogate `id`. This demonstrates the traditional identity pattern.
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_post',

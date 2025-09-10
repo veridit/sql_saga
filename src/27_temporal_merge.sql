@@ -8,10 +8,13 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     p_era_name name,
     p_source_row_id_column name DEFAULT 'row_id',
     p_identity_correlation_column name DEFAULT NULL,
-    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'
+    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
+    p_natural_identity_columns TEXT[] DEFAULT NULL
 ) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
+    v_stable_identity_columns TEXT[];
+    v_lookup_columns TEXT[];
     v_plan_key_text TEXT;
     v_plan_ps_name TEXT;
     v_target_schema_name name;
@@ -22,10 +25,17 @@ DECLARE
     v_valid_to_col name;
     v_sql TEXT;
 BEGIN
-    -- An entity must be identifiable. Fail fast if no ID columns are provided.
-    IF p_identity_columns IS NULL OR cardinality(p_identity_columns) = 0 THEN
-        RAISE EXCEPTION 'p_identity_columns must be a non-empty array of column names that form the entity identifier.';
+    -- An entity must be identifiable. At least one set of identity columns must be provided.
+    IF (p_identity_columns IS NULL OR cardinality(p_identity_columns) = 0) AND
+       (p_natural_identity_columns IS NULL OR cardinality(p_natural_identity_columns) = 0)
+    THEN
+        RAISE EXCEPTION 'At least one of p_identity_columns or p_natural_identity_columns must be a non-empty array.';
     END IF;
+
+    -- Use natural_identity_columns for lookups if provided, otherwise fall back to the stable p_identity_columns.
+    v_lookup_columns := COALESCE(p_natural_identity_columns, p_identity_columns);
+    -- The stable identity is always p_identity_columns if provided; otherwise, it's the natural key.
+    v_stable_identity_columns := COALESCE(p_identity_columns, p_natural_identity_columns);
 
     -- Validate that provided column names exist.
     PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_source_row_id_column AND NOT attisdropped AND attnum > 0;
@@ -59,7 +69,7 @@ BEGIN
     END IF;
 
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_identity_columns,
@@ -70,7 +80,8 @@ BEGIN
         COALESCE(p_identity_correlation_column, ''),
         v_range_constructor,
         p_delete_mode,
-        COALESCE(v_valid_to_col, '')
+        COALESCE(v_valid_to_col, ''),
+        COALESCE(p_natural_identity_columns, '{}'::text[])
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
 
@@ -105,8 +116,8 @@ BEGIN
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
         IF p_identity_correlation_column IS NOT NULL THEN
-            IF p_identity_correlation_column = ANY(p_identity_columns) THEN
-                RAISE EXCEPTION 'p_identity_correlation_column (%) cannot be one of the p_identity_columns (%)', p_identity_correlation_column, p_identity_columns;
+            IF p_identity_correlation_column = ANY(v_lookup_columns) THEN
+                RAISE EXCEPTION 'p_identity_correlation_column (%) cannot be one of the p_natural_identity_columns (%)', p_identity_correlation_column, v_lookup_columns;
             END IF;
 
             v_founding_id_select_expr := format('t.%I as founding_id,', p_identity_correlation_column);
@@ -146,7 +157,7 @@ BEGIN
             format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
         INTO
             v_entity_id_as_jsonb
-        FROM unnest(p_identity_columns) AS col;
+        FROM unnest(v_lookup_columns) AS col;
 
         -- 1. Dynamically build jsonb payload expressions for SOURCE and TARGET tables.
         -- The source payload only includes columns present in the source table.
@@ -165,13 +176,13 @@ BEGIN
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
             WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND s.attname <> ALL(p_identity_columns)
+              AND s.attname <> ALL(v_stable_identity_columns)
         ),
         target_data_cols AS (
             SELECT t.attname
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND t.attname <> ALL(p_identity_columns)
+              AND t.attname <> ALL(v_stable_identity_columns)
               AND t.attgenerated = '' -- Exclude generated columns
         )
         SELECT
@@ -184,32 +195,21 @@ BEGIN
         v_source_data_cols_jsonb_build := COALESCE(v_source_data_cols_jsonb_build, '''{}''::jsonb');
         v_target_data_cols_jsonb_build := COALESCE(v_target_data_cols_jsonb_build, '''{}''::jsonb');
 
-        -- Introspect any "stable" primary key columns (e.g., surrogate keys) that
-        -- are not part of the entity's natural key, so they can be preserved.
-        WITH pk_cols AS (
-            SELECT a.attname
-            FROM pg_constraint c
-            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-            WHERE c.conrelid = p_target_table AND c.contype = 'p'
-        ),
-        stable_pk_cols AS (
-            SELECT pk.attname
-            FROM pk_cols pk
-            WHERE pk.attname NOT IN (v_valid_from_col, v_valid_until_col)
-                AND pk.attname <> ALL(p_identity_columns)
-        )
-        SELECT format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', attname, attname), ', '))
+        -- Build a jsonb object of the stable identity columns. These are the keys
+        -- that must be preserved across an entity's timeline.
+        SELECT format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', '))
         INTO v_stable_pk_cols_jsonb_build
-        FROM stable_pk_cols;
+        FROM unnest(v_stable_identity_columns) col;
 
         v_stable_pk_cols_jsonb_build := COALESCE(v_stable_pk_cols_jsonb_build, '''{}''::jsonb');
 
-        -- Construct an expression to reliably check if all entity_id columns for a source row are NULL.
+        -- Construct an expression to reliably check if all stable identity columns for a source row are NULL.
+        -- If so, this is a "founding" event for a new entity.
         SELECT
             COALESCE(string_agg(format('t.%I IS NULL', col), ' AND '), 'true')
         INTO
             v_entity_id_check_is_null_expr
-        FROM unnest(p_identity_columns) AS col;
+        FROM unnest(v_stable_identity_columns) AS col;
 
         -- Determine the scope of target entities to process based on the mode.
         -- By default, we optimize by only scanning target entities that are present in the source.
@@ -407,8 +407,10 @@ atomic_segments AS (
 ),
 resolved_atomic_segments_with_payloads AS (
     SELECT
-        *,
-        FIRST_VALUE(stable_pk_payload) OVER (PARTITION BY entity_id ORDER BY stable_pk_payload IS NULL, valid_from) AS propagated_stable_pk_payload
+        with_base_payload.*,
+        -- Propagate the stable identity payload to all segments of an entity.
+        -- This ensures that when we create new history slices, we preserve the original stable ID.
+        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY with_base_payload.entity_id ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
     FROM (
         SELECT
             seg.entity_id,
@@ -648,7 +650,7 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode, text[]) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';
 
 
@@ -663,6 +665,7 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     p_source_row_id_column name DEFAULT 'row_id',
     p_identity_correlation_column name DEFAULT NULL,
     p_update_source_with_identity BOOLEAN DEFAULT false,
+    p_natural_identity_columns TEXT[] DEFAULT NULL,
     p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
     p_update_source_with_feedback BOOLEAN DEFAULT false,
     p_feedback_status_column name DEFAULT NULL,
@@ -672,6 +675,7 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
+    v_lookup_columns TEXT[];
     v_target_table_ident TEXT := p_target_table::TEXT;
     v_data_cols_ident TEXT;
     v_data_cols_select TEXT;
@@ -690,12 +694,12 @@ DECLARE
     v_founding_all_cols_ident TEXT;
     v_founding_all_cols_from_jsonb TEXT;
     v_internal_keys_to_remove TEXT[];
-    v_entity_id_as_jsonb TEXT;
     v_pk_cols name[];
     v_feedback_set_clause TEXT;
     v_sql TEXT;
     v_correlation_col name;
 BEGIN
+    v_lookup_columns := COALESCE(p_natural_identity_columns, p_identity_columns);
     v_correlation_col := COALESCE(p_identity_correlation_column, p_source_row_id_column);
 
     -- Introspect the primary key columns. They will be excluded from UPDATE SET clauses.
@@ -704,13 +708,6 @@ BEGIN
     FROM pg_constraint c
     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
     WHERE c.conrelid = p_target_table AND c.contype = 'p';
-
-    -- Dynamically construct a jsonb object from the entity id columns to use as a single key.
-    SELECT
-        format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
-    INTO
-        v_entity_id_as_jsonb
-    FROM unnest(p_identity_columns) AS col;
 
     v_internal_keys_to_remove := ARRAY[]::name[];
 
@@ -764,7 +761,7 @@ BEGIN
             string_agg(format('t.%I = jpr_entity.%I', col, col), ' AND ')
         INTO
             v_entity_key_join_clause
-        FROM unnest(p_identity_columns) AS col;
+        FROM unnest(v_lookup_columns) AS col;
 
         v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
@@ -784,7 +781,8 @@ BEGIN
             p_era_name                 => p_era_name,
             p_source_row_id_column    => p_source_row_id_column,
             p_identity_correlation_column => p_identity_correlation_column,
-            p_delete_mode              => p_delete_mode
+            p_delete_mode              => p_delete_mode,
+            p_natural_identity_columns => p_natural_identity_columns
         ) p;
 
         -- Conditionally output the plan for debugging, without adding a parameter.
@@ -816,13 +814,17 @@ BEGIN
             SELECT t.attname, t.atttypid
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
-              AND t.attname <> ALL(p_identity_columns)
+              AND t.attname <> ALL(v_lookup_columns)
               AND t.attname <> ALL(v_pk_cols)
               AND t.attgenerated = '' -- Exclude generated columns
         ),
         all_available_cols AS (
             SELECT c.attname, c.atttypid FROM common_data_cols c
-            UNION ALL
+            UNION
+            SELECT u.attname, t.atttypid
+            FROM unnest(v_lookup_columns) u(attname)
+            JOIN target_cols t ON u.attname = t.attname
+            UNION
             SELECT u.attname, t.atttypid
             FROM unnest(p_identity_columns) u(attname)
             JOIN target_cols t ON u.attname = t.attname
@@ -831,8 +833,8 @@ BEGIN
             -- All available columns that DON'T have a default...
             SELECT attname, atttypid FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
             UNION
-            -- ...plus all identity columns (which might have defaults, but we need to specify them for SCD Type 2).
-            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(p_identity_columns)
+            -- ...plus all identity columns (stable and natural), which must be provided for SCD-2 inserts.
+            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(p_identity_columns) OR attname = ANY(v_lookup_columns)
         ),
         cols_for_founding_insert AS (
             -- For "founding" INSERTs of new entities, we only include columns that do NOT have a default.
@@ -842,9 +844,9 @@ BEGIN
             WHERE attname <> ALL(v_insert_defaulted_columns)
         )
         SELECT
-            string_agg(format('%I', aac.attname), ', ') FILTER (WHERE aac.attname <> ALL(p_identity_columns)),
-            string_agg(format('jpr_data.%I', aac.attname), ', ') FILTER (WHERE aac.attname <> ALL(p_identity_columns)),
-            string_agg(format('%I = jpr_data.%I', aac.attname, aac.attname), ', ') FILTER (WHERE aac.attname <> ALL(p_identity_columns)),
+            (SELECT string_agg(format('%I', cdc.attname), ', ') FROM common_data_cols cdc),
+            (SELECT string_agg(format('jpr_data.%I', cdc.attname), ', ') FROM common_data_cols cdc),
+            (SELECT string_agg(format('%I = jpr_data.%I', cdc.attname, cdc.attname), ', ') FROM common_data_cols cdc),
             (SELECT string_agg(format('%I', cfi.attname), ', ') FROM cols_for_insert cfi),
             (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ') FROM cols_for_insert cfi),
             (SELECT string_agg(format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)), ', ')
@@ -862,8 +864,7 @@ BEGIN
             v_all_cols_select,
             v_all_cols_from_jsonb,
             v_founding_all_cols_ident,
-            v_founding_all_cols_from_jsonb
-        FROM all_available_cols aac;
+            v_founding_all_cols_from_jsonb;
 
         SET CONSTRAINTS ALL DEFERRED;
 
@@ -883,10 +884,10 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT col FROM unnest(p_identity_columns) as col
+                    SELECT col FROM unnest(v_lookup_columns) as col
                     UNION
                     SELECT 'id'
-                    WHERE 'id' IN (SELECT attname FROM target_cols) AND 'id' <> ALL(p_identity_columns)
+                    WHERE 'id' IN (SELECT attname FROM target_cols) AND 'id' <> ALL(v_lookup_columns)
                 )
                 SELECT
                     format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
@@ -1079,9 +1080,9 @@ BEGIN
             DECLARE
                 v_source_update_set_clause TEXT;
             BEGIN
-                -- Build a SET clause for all columns that are present in the entity_ids JSONB
-                -- AND exist as columns on the source table. This is robust to surrogate keys
-                -- that are not in p_identity_columns.
+                -- Build a SET clause for the stable identity columns. This writes back
+                -- any generated surrogate keys to the source table, but correctly
+                -- excludes any natural key columns that were used for lookup only.
                 SELECT string_agg(
                     format('%I = (p.entity_ids->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
                     ', '
@@ -1091,6 +1092,7 @@ BEGIN
                     SELECT key FROM jsonb_object_keys(
                         (SELECT entity_ids FROM temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
                     ) as key
+                    WHERE key = ANY(p_identity_columns)
                 ) j
                 JOIN pg_attribute a ON a.attname = j.key
                 WHERE a.attrelid = p_source_table AND NOT a.attisdropped AND a.attnum > 0;
@@ -1279,6 +1281,6 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, TEXT[], TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name) IS
 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

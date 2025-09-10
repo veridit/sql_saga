@@ -26,10 +26,10 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-\echo 'Test: Unified Temporal Merge with Composite & Surrogate Keys'
-Test: Unified Temporal Merge with Composite & Surrogate Keys
-\echo 'This test consolidates the tests for composite and surrogate keys into'
-This test consolidates the tests for composite and surrogate keys into
+\echo 'Test: Unified Temporal Merge with Natural & Surrogate Keys'
+Test: Unified Temporal Merge with Natural & Surrogate Keys
+\echo 'This test consolidates the tests for natural and surrogate keys into'
+This test consolidates the tests for natural and surrogate keys into
 \echo 'a single, unified suite using the new temporal_merge function.'
 a single, unified suite using the new temporal_merge function.
 \echo '----------------------------------------------------------------------------'
@@ -38,9 +38,9 @@ a single, unified suite using the new temporal_merge function.
 -- Test Scenarios Table of Contents
 --------------------------------------------------------------------------------
 --
--- Composite-Key Entity: stat_for_unit
---   - Scenario 1: `upsert_replace` with a composite key (`during` split)
---   - Scenario 2: `upsert_patch` with a composite key (`during` split)
+-- Natural-Key Entity: stat_for_unit
+--   - Scenario 1: `upsert_replace` with a natural key (`during` split)
+--   - Scenario 2: `upsert_patch` with a natural key (`during` split)
 --   - Scenario 3: `upsert_replace` with mismatched source/target columns
 --
 -- Surrogate-Key Entities:
@@ -172,8 +172,8 @@ $$ LANGUAGE plpgsql;
 \set source_schema 'pg_temp'
 \set ephemeral_cols '{edit_comment}'
 --------------------------------------------------------------------------------
-\echo 'Scenario 1: `upsert_replace` with a composite key (`during` split)'
-Scenario 1: `upsert_replace` with a composite key (`during` split)
+\echo 'Scenario 1: `upsert_replace` with a natural key (`during` split)'
+Scenario 1: `upsert_replace` with a natural key (`during` split)
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
@@ -275,8 +275,8 @@ SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edi
 
 DROP TABLE temp_source_1;
 --------------------------------------------------------------------------------
-\echo 'Scenario 2: `upsert_patch` with a composite key (`during` split)'
-Scenario 2: `upsert_patch` with a composite key (`during` split)
+\echo 'Scenario 2: `upsert_patch` with a natural key (`during` split)'
+Scenario 2: `upsert_patch` with a natural key (`during` split)
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES

@@ -2,8 +2,8 @@
 
 BEGIN;
 \echo '----------------------------------------------------------------------------'
-\echo 'Test: Unified Temporal Merge with Composite & Surrogate Keys'
-\echo 'This test consolidates the tests for composite and surrogate keys into'
+\echo 'Test: Unified Temporal Merge with Natural & Surrogate Keys'
+\echo 'This test consolidates the tests for natural and surrogate keys into'
 \echo 'a single, unified suite using the new temporal_merge function.'
 \echo '----------------------------------------------------------------------------'
 
@@ -11,9 +11,9 @@ BEGIN;
 -- Test Scenarios Table of Contents
 --------------------------------------------------------------------------------
 --
--- Composite-Key Entity: stat_for_unit
---   - Scenario 1: `upsert_replace` with a composite key (`during` split)
---   - Scenario 2: `upsert_patch` with a composite key (`during` split)
+-- Natural-Key Entity: stat_for_unit
+--   - Scenario 1: `upsert_replace` with a natural key (`during` split)
+--   - Scenario 2: `upsert_patch` with a natural key (`during` split)
 --   - Scenario 3: `upsert_replace` with mismatched source/target columns
 --
 -- Surrogate-Key Entities:
@@ -104,7 +104,7 @@ $$ LANGUAGE plpgsql;
 \set ephemeral_cols '{edit_comment}'
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 1: `upsert_replace` with a composite key (`during` split)'
+\echo 'Scenario 1: `upsert_replace` with a natural key (`during` split)'
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
@@ -124,7 +124,8 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit',
     p_source_table             => 'temp_source_1',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => NULL,
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
@@ -158,7 +159,7 @@ SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edi
 DROP TABLE temp_source_1;
 
 --------------------------------------------------------------------------------
-\echo 'Scenario 2: `upsert_patch` with a composite key (`during` split)'
+\echo 'Scenario 2: `upsert_patch` with a natural key (`during` split)'
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
@@ -179,7 +180,8 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit',
     p_source_table             => 'temp_source_2',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => NULL,
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
@@ -234,7 +236,8 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit',
     p_source_table             => 'temp_source_3',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => NULL,
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
@@ -285,7 +288,8 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit_id_pk',
     p_source_table             => 'temp_source_4',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => '{id}'::TEXT[],
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
@@ -337,7 +341,8 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit_id_gen',
     p_source_table             => 'temp_source_5',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => '{id}'::TEXT[],
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',
@@ -389,7 +394,8 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit_id_pk',
     p_source_table             => 'temp_source_6',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => '{id}'::TEXT[],
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
@@ -441,7 +447,8 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit_id_gen',
     p_source_table             => 'temp_source_7',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => '{id}'::TEXT[],
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => '{edit_comment}'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_PATCH',
     p_era_name                 => 'valid',
@@ -493,7 +500,8 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     p_target_table             => 'tmtc.stat_for_unit_no_pk',
     p_source_table             => 'temp_source_8',
-    p_identity_columns               => '{stat_definition_id, establishment_id}'::TEXT[],
+    p_identity_columns         => '{id}'::TEXT[],
+    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
     p_mode                     => 'MERGE_ENTITY_REPLACE',
     p_era_name                 => 'valid',

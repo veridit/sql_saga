@@ -191,7 +191,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for NULL p_identity_columns: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for NULL p_identity_columns: p_identity_columns must be a non-empty array of column names that form the entity identifier.
+NOTICE:  Caught expected error for NULL p_identity_columns: At least one of p_identity_columns or p_natural_identity_columns must be a non-empty array.
 -- Test with empty p_identity_columns
 DO $$
 BEGIN
@@ -207,7 +207,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for empty p_identity_columns: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for empty p_identity_columns: p_identity_columns must be a non-empty array of column names that form the entity identifier.
+NOTICE:  Caught expected error for empty p_identity_columns: At least one of p_identity_columns or p_natural_identity_columns must be a non-empty array.
 ROLLBACK TO SAVEPOINT scenario_9;
 SAVEPOINT scenario_10;
 -- Scenario 10: Test that `temporal_merge` fails if non-existent column names are provided.

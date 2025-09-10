@@ -65,15 +65,21 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
        required foreign keys are now present in the source data.
   - **Handling Different Data Models:**
     The example is extended to show several other common patterns:
-    1. **Non-Temporal Identifiers:** An `ident` table stores external
+    1. **Hybrid Key Strategy (Natural Key Lookup):** The `location` table
+       demonstrates a powerful hybrid approach. `physical` locations have a
+       stable identity (`p_identity_columns` = `id`), but are looked up using a
+       natural key (`p_natural_identity_columns` = `legal_unit_id`, `type`). This shows
+       how `temporal_merge` can use a business key to find an entity while
+       correctly preserving its separate, stable primary key.
+    2. **Non-Temporal Identifiers:** An `ident` table stores external
        identifiers (e.g., tax numbers) that are considered stable over
-       time and reference a temporal entity. This table is managed with a
-       standard SQL `MERGE` statement.
-    2. **Temporal Data with Natural Keys:** An `activity` table is temporal
-       but uses a composite natural key instead of a surrogate `id`. This
+       time and reference a temporal entity. This is managed with a standard
+       SQL `MERGE` statement.
+    3. **Temporal Data with Natural Keys:** An `activity` table is temporal
+       and uses a composite natural key without a surrogate `id`. This
        is managed with `temporal_merge` configured for natural keys and no
        identity writeback.
-    3. **Ephemeral Metadata Columns:** A `comment` column is added to all
+    4. **Ephemeral Metadata Columns:** A `comment` column is added to all
        temporal tables and populated from the source. It is passed to
        `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures
        that changes to the comment update the existing historical record
@@ -90,74 +96,80 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
     updates in a clean, stateful, and transactionally-safe way.
 ----------------------------------------------------------------------------
 $$ as doc;
-                                          doc                                          
----------------------------------------------------------------------------------------
-                                                                                      +
- ----------------------------------------------------------------------------         +
- Test: `temporal_merge` with Updatable View for Minimal-Copying ETL                   +
- Concept:                                                                             +
-   This test demonstrates an advanced ETL architecture that minimizes data            +
-   copying and simplifies calling code by leveraging updatable views and a            +
-   procedural, batch-driven approach. The example shows a multi-step process          +
-   where dependent entities (locations, statistics) are created after their           +
-   parent (legal unit), with generated IDs being written back to the master           +
-   data table at each step.                                                           +
- The Problem:                                                                         +
-   ETL procedures often prepare data in a temporary table, call                       +
-   `temporal_merge`, and then have a separate, boilerplate step to join               +
-   the `temporal_merge_feedback` table back to the main ETL data table                +
-   to update it with generated IDs, statuses, and error messages. This becomes        +
-   especially complex when processing dependent entities (e.g. locations that         +
-   require a `legal_unit_id`) within the same batch, and across multiple batches.     +
- The Solution:                                                                        +
-   Instead of a monolithic script, the ETL logic is encapsulated in idempotent        +
-   procedures that operate on a specific batch of source rows, identified by          +
-   their `row_id`s. This test uses updatable TEMP VIEWs over the main data            +
-   table to avoid data copying. When combined with `temporal_merge`'s                 +
-   `p_update_source_with_identity` parameter, this allows for a                       +
-   powerful pattern of "ID back-propagation".                                         +
- The Mechanism: "Intra-Step and Inter-Batch ID Propagation"                           +
-   This test demonstrates a robust "merge -> back-propagate -> merge" pattern         +
-   for handling dependent entities, and shows how this pattern can be applied         +
-   sequentially across multiple batches of data.                                      +
-   - **Intra-Step Propagation (within a batch):**                                     +
-     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).        +
-        The key parameter `p_update_source_with_identity` is set to                   +
-        `true`, which writes the newly generated `legal_unit_id` back into the        +
-        master data table for the processed source rows.                              +
-     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into       +
-        *all* other rows in the master data table that belong to the same             +
-        conceptual entity (identified by `identity_correlation`). This ensures foreign+
-        keys are available for dependent entities in the next step.                   +
-     3. Subsequent procedures call `temporal_merge` for each dependent entity         +
-        (e.g., `location`, `stat_for_unit`). These calls succeed because the          +
-        required foreign keys are now present in the source data.                     +
-   - **Handling Different Data Models:**                                              +
-     The example is extended to show several other common patterns:                   +
-     1. **Non-Temporal Identifiers:** An `ident` table stores external                +
-        identifiers (e.g., tax numbers) that are considered stable over               +
-        time and reference a temporal entity. This table is managed with a            +
-        standard SQL `MERGE` statement.                                               +
-     2. **Temporal Data with Natural Keys:** An `activity` table is temporal          +
-        but uses a composite natural key instead of a surrogate `id`. This            +
-        is managed with `temporal_merge` configured for natural keys and no           +
-        identity writeback.                                                           +
-     3. **Ephemeral Metadata Columns:** A `comment` column is added to all            +
-        temporal tables and populated from the source. It is passed to                +
-        `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures         +
-        that changes to the comment update the existing historical record             +
-        without creating a new one, correctly treating it as non-business metadata.   +
-   - **Inter-Batch Propagation ("Current State" ETL Pattern):**                       +
-     The test simulates a common ETL pattern where incoming data represents           +
-     the "current state" of an entity, valid from a certain point until               +
-     further notice (`infinity`). Each new batch of data for an existing              +
-     entity "cuts off" the previous timeline and establishes a new current            +
-     state.                                                                           +
-     The same set of idempotent procedures are called by a driver for each            +
-     batch of data in sequence. This demonstrates how the same ETL logic can          +
-     process multiple, independent business entities and their subsequent             +
-     updates in a clean, stateful, and transactionally-safe way.                      +
- ----------------------------------------------------------------------------         +
+                                           doc                                           
+-----------------------------------------------------------------------------------------
+                                                                                        +
+ ----------------------------------------------------------------------------           +
+ Test: `temporal_merge` with Updatable View for Minimal-Copying ETL                     +
+ Concept:                                                                               +
+   This test demonstrates an advanced ETL architecture that minimizes data              +
+   copying and simplifies calling code by leveraging updatable views and a              +
+   procedural, batch-driven approach. The example shows a multi-step process            +
+   where dependent entities (locations, statistics) are created after their             +
+   parent (legal unit), with generated IDs being written back to the master             +
+   data table at each step.                                                             +
+ The Problem:                                                                           +
+   ETL procedures often prepare data in a temporary table, call                         +
+   `temporal_merge`, and then have a separate, boilerplate step to join                 +
+   the `temporal_merge_feedback` table back to the main ETL data table                  +
+   to update it with generated IDs, statuses, and error messages. This becomes          +
+   especially complex when processing dependent entities (e.g. locations that           +
+   require a `legal_unit_id`) within the same batch, and across multiple batches.       +
+ The Solution:                                                                          +
+   Instead of a monolithic script, the ETL logic is encapsulated in idempotent          +
+   procedures that operate on a specific batch of source rows, identified by            +
+   their `row_id`s. This test uses updatable TEMP VIEWs over the main data              +
+   table to avoid data copying. When combined with `temporal_merge`'s                   +
+   `p_update_source_with_identity` parameter, this allows for a                         +
+   powerful pattern of "ID back-propagation".                                           +
+ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"                             +
+   This test demonstrates a robust "merge -> back-propagate -> merge" pattern           +
+   for handling dependent entities, and shows how this pattern can be applied           +
+   sequentially across multiple batches of data.                                        +
+   - **Intra-Step Propagation (within a batch):**                                       +
+     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).          +
+        The key parameter `p_update_source_with_identity` is set to                     +
+        `true`, which writes the newly generated `legal_unit_id` back into the          +
+        master data table for the processed source rows.                                +
+     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into         +
+        *all* other rows in the master data table that belong to the same               +
+        conceptual entity (identified by `identity_correlation`). This ensures foreign  +
+        keys are available for dependent entities in the next step.                     +
+     3. Subsequent procedures call `temporal_merge` for each dependent entity           +
+        (e.g., `location`, `stat_for_unit`). These calls succeed because the            +
+        required foreign keys are now present in the source data.                       +
+   - **Handling Different Data Models:**                                                +
+     The example is extended to show several other common patterns:                     +
+     1. **Hybrid Key Strategy (Natural Key Lookup):** The `location` table              +
+        demonstrates a powerful hybrid approach. `physical` locations have a            +
+        stable identity (`p_identity_columns` = `id`), but are looked up using a        +
+        natural key (`p_natural_identity_columns` = `legal_unit_id`, `type`). This shows+
+        how `temporal_merge` can use a business key to find an entity while             +
+        correctly preserving its separate, stable primary key.                          +
+     2. **Non-Temporal Identifiers:** An `ident` table stores external                  +
+        identifiers (e.g., tax numbers) that are considered stable over                 +
+        time and reference a temporal entity. This is managed with a standard           +
+        SQL `MERGE` statement.                                                          +
+     3. **Temporal Data with Natural Keys:** An `activity` table is temporal            +
+        and uses a composite natural key without a surrogate `id`. This                 +
+        is managed with `temporal_merge` configured for natural keys and no             +
+        identity writeback.                                                             +
+     4. **Ephemeral Metadata Columns:** A `comment` column is added to all              +
+        temporal tables and populated from the source. It is passed to                  +
+        `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures           +
+        that changes to the comment update the existing historical record               +
+        without creating a new one, correctly treating it as non-business metadata.     +
+   - **Inter-Batch Propagation ("Current State" ETL Pattern):**                         +
+     The test simulates a common ETL pattern where incoming data represents             +
+     the "current state" of an entity, valid from a certain point until                 +
+     further notice (`infinity`). Each new batch of data for an existing                +
+     entity "cuts off" the previous timeline and establishes a new current              +
+     state.                                                                             +
+     The same set of idempotent procedures are called by a driver for each              +
+     batch of data in sequence. This demonstrates how the same ETL logic can            +
+     process multiple, independent business entities and their subsequent               +
+     updates in a clean, stateful, and transactionally-safe way.                        +
+ ----------------------------------------------------------------------------           +
  
 (1 row)
 
@@ -172,7 +184,7 @@ INSERT INTO etl.ident_type VALUES (1, 'tax'), (2, 'ssn');
 CREATE TABLE etl.activity_type (id int primary key, code text unique);
 INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.legal_unit');
  add_era 
 ---------
@@ -204,7 +216,7 @@ SELECT sql_saga.add_foreign_key(
 (1 row)
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.location');
  add_era 
 ---------
@@ -215,6 +227,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_nam
   add_unique_key   
 -------------------
  location_id_valid
+(1 row)
+
+-- A legal unit can only have one of each location type (e.g., one 'physical' address) at any given time.
+-- This serves as a natural key for physical locations.
+SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], unique_key_name => 'location_legal_unit_id_type_valid');
+          add_unique_key           
+-----------------------------------
+ location_legal_unit_id_type_valid
 (1 row)
 
 SELECT sql_saga.add_foreign_key(
@@ -229,7 +249,7 @@ SELECT sql_saga.add_foreign_key(
 (1 row)
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.stat_for_unit');
  add_era 
 ---------
@@ -259,7 +279,8 @@ CREATE TABLE etl.activity (
     activity_type_id int,
     comment text,
     valid_from date,
-    valid_until date
+    valid_until date,
+    PRIMARY KEY (legal_unit_id, activity_type_id, valid_from)
 );
 SELECT sql_saga.add_era('etl.activity');
  add_era 
@@ -468,11 +489,14 @@ BEGIN
         WHERE dt.batch = %1$L AND dt.physical_address IS NOT NULL;
     $$, p_batch_id /* %1$L */);
 
-    -- Merge physical locations
+    -- Merge physical locations using a NATURAL KEY for lookup, while preserving
+    -- the stable `id`. `p_natural_identity_columns` specifies the natural key for finding
+    -- entities, and `p_identity_columns` specifies the stable key to preserve.
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_phys',
         p_identity_columns => ARRAY['id'],
+        p_natural_identity_columns => ARRAY['legal_unit_id', 'type'],
         p_ephemeral_columns => ARRAY['comment'],
         p_mode => 'MERGE_ENTITY_PATCH',
         p_identity_correlation_column => 'founding_id',
@@ -540,7 +564,9 @@ BEGIN
         WHERE dt.batch = %1$L AND dt.postal_address IS NOT NULL;
     $$, p_batch_id /* %1$L */);
 
-    -- Merge postal locations
+    -- Merge postal locations using a SURROGATE KEY. In this case, each new
+    -- postal address is treated as a new conceptual entity, identified by its
+    -- surrogate `id`. This demonstrates the traditional identity pattern.
     CALL sql_saga.temporal_merge(
         p_target_table => 'etl.location',
         p_source_table => 'source_view_loc_post',
@@ -865,9 +891,9 @@ NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1}]}
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 3, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "founding_id": "1", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": null, "source_row_ids": [1], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
-NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 1, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 1, "new_valid_from": "2024-03-01", "old_valid_from": null, "source_row_ids": [2], "new_valid_until": "2024-07-01", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2, "founding_id": "1"}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": null, "source_row_ids": [4], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
@@ -909,11 +935,11 @@ NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 2}]}
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 8, "target_entity_ids": [{"id": 2}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "456 Innovation Dr", "comment": "Initial load", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
-NOTICE:  {"data": {"type": "physical", "address": "789 Tech Pkwy", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "founding_id": "2"}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "456 Innovation Dr", "comment": "Initial load", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 1, "new_valid_from": "2024-02-15", "old_valid_from": null, "source_row_ids": [6], "new_valid_until": "2024-08-01", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "789 Tech Pkwy", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 3, "type": "physical", "founding_id": "2", "legal_unit_id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
-NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 3}]}
-NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 3}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 6, "target_entity_ids": [{"id": 3, "type": "physical", "legal_unit_id": 2}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 7, "target_entity_ids": [{"id": 3, "type": "physical", "legal_unit_id": 2}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 999", "comment": "Address update", "legal_unit_id": 2}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 4, "founding_id": "2"}, "plan_op_seq": 1, "new_valid_from": "2024-08-01", "old_valid_from": null, "source_row_ids": [7], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (postal_location) ---
@@ -950,10 +976,10 @@ NOTICE:  {"data": {"name": "NewCo AS", "comment": "Initial load"}, "relation": "
 NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 10, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": [11], "new_valid_until": "2025-05-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
-NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-05-01", "old_valid_from": null, "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": [11], "new_valid_until": "2025-05-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
+NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2025-05-01", "old_valid_from": null, "source_row_ids": [11], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
-NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 11, "target_entity_ids": [{"id": 1}]}
+NOTICE:  {"status": "APPLIED", "error_message": null, "source_row_id": 11, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": "starts", "operation": "UPDATE", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": [12], "new_valid_until": "2025-07-01", "old_valid_until": "infinity", "timeline_update_effect": "SHRINK"}
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 111", "comment": "New postal address", "legal_unit_id": 1}, "relation": null, "operation": "INSERT", "entity_ids": {"id": 2}, "plan_op_seq": 1, "new_valid_from": "2025-07-01", "old_valid_from": null, "source_row_ids": [12], "new_valid_until": "infinity", "old_valid_until": null, "timeline_update_effect": null}
@@ -989,10 +1015,10 @@ NOTICE:  {"data": {"name": "RenamedCo AS", "comment": "Company rename"}, "relati
 NOTICE:  --- Feedback from temporal_merge (legal_unit) ---
 NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
 NOTICE:  --- Plan from temporal_merge (physical_location) ---
-NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 2, "new_valid_from": "2025-05-01", "old_valid_from": "2025-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
-NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2025-05-01", "old_valid_until": "2025-05-01", "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "1 New Street", "comment": "New physical address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 2, "new_valid_from": "2025-05-01", "old_valid_from": "2025-05-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
+NOTICE:  {"data": {"type": "physical", "address": "123 Business Rd", "comment": "Initial load", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 1, "type": "physical", "legal_unit_id": 1}, "plan_op_seq": 1, "new_valid_from": "2024-01-01", "old_valid_from": "2024-01-01", "source_row_ids": null, "new_valid_until": "2025-05-01", "old_valid_until": "2025-05-01", "timeline_update_effect": null}
 NOTICE:  --- Feedback from temporal_merge (physical_location) ---
-NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1}]}
+NOTICE:  {"status": "SKIPPED_IDENTICAL", "error_message": null, "source_row_id": 14, "target_entity_ids": [{"id": 1, "type": "physical", "legal_unit_id": 1}]}
 NOTICE:  --- Plan from temporal_merge (postal_location) ---
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 2, "new_valid_from": "2024-07-01", "old_valid_from": "2024-07-01", "source_row_ids": [14], "new_valid_until": "2025-07-01", "old_valid_until": "2025-07-01", "timeline_update_effect": null}
 NOTICE:  {"data": {"type": "postal", "address": "PO Box 111", "comment": "No-op, identical", "legal_unit_id": 1}, "relation": "equals", "operation": "SKIP_IDENTICAL", "entity_ids": {"id": 2}, "plan_op_seq": 3, "new_valid_from": "2025-07-01", "old_valid_from": "2025-07-01", "source_row_ids": [14], "new_valid_until": "infinity", "old_valid_until": "infinity", "timeline_update_effect": null}
