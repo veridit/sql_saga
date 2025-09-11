@@ -25,7 +25,7 @@ ifeq (fast,$(filter fast,$(MAKECMDGOALS)))
 	REGRESS_TO_RUN = $(REGRESS_FAST_LIST)
 endif
 
-REGRESS = $(if $(TESTS),$(TESTS),$(REGRESS_TO_RUN))
+REGRESS = $(if $(TESTS),$(patsubst sql/%,%,$(TESTS)),$(REGRESS_TO_RUN))
 REGRESS_OPTS := --create-role=sql_saga_regress --dbname=sql_saga_regress
 
 OBJS = src/sql_saga.o src/covers_without_gaps.o $(WIN32RES)
@@ -66,7 +66,8 @@ setup_test_files:
 	@mkdir -p expected
 	@for test in $(REGRESS); do \
 		if [ ! -f expected/$$test.out ]; then \
-			touch expected/$$test.out; \
+			mkdir -p `dirname "expected/$$test.out"`; \
+			touch "expected/$$test.out"; \
 		fi; \
 	done
 
