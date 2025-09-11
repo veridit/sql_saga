@@ -327,7 +327,7 @@ add_current_view(
 
 ```sql
 add_for_portion_of_view(
-    table_oid regclass DEFAULT NULL::regclass,
+    table_oid regclass,
     era_name name DEFAULT 'valid'::name
 ) RETURNS boolean
 ```

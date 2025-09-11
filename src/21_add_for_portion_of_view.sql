@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass DEFAULT NULL, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -10,19 +10,9 @@ DECLARE
     view_name name;
     trigger_name name;
 BEGIN
-    /*
-     * If table_oid and era_name are specified, then just add the views for that.
-     *
-     * If no period is specified, add the views for all periods of the table.
-     *
-     * If no table is specified, add the views everywhere.
-     *
-     * If no table is specified but a period is, that doesn't make any sense.
-     */
-    IF table_oid IS NULL AND era_name IS NOT NULL THEN
-        RAISE EXCEPTION 'cannot specify era name without table name';
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'table_oid must not be NULL';
     END IF;
-
     /* Always serialize operations on our catalogs */
     PERFORM sql_saga.__internal_serialize(table_oid);
 
@@ -30,18 +20,16 @@ BEGIN
         target_schema_name name;
         target_table_name name;
     BEGIN
-        IF table_oid IS NOT NULL THEN
-            SELECT n.nspname, c.relname INTO target_schema_name, target_table_name
-            FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-            WHERE c.oid = table_oid;
-        END IF;
+        SELECT n.nspname, c.relname INTO target_schema_name, target_table_name
+        FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = table_oid;
 
         FOR r IN
             SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid
             FROM sql_saga.era AS p
             JOIN pg_catalog.pg_class AS c ON c.relname = p.table_name
             JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = p.table_schema
-            WHERE (table_oid IS NULL OR (p.table_schema, p.table_name) = (target_schema_name, target_table_name))
+            WHERE (p.table_schema, p.table_name) = (target_schema_name, target_table_name)
               AND (era_name IS NULL OR p.era_name = era_name)
               AND p.era_name <> 'system_time'
               AND NOT EXISTS (
