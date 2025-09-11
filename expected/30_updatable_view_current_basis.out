@@ -62,7 +62,7 @@ TABLE employees ORDER BY id, valid_from;
 -- Test API Lifecycle
 -- ==================
 -- Add the current view, overriding the now() function for stable tests
-SELECT sql_saga.add_current_view('employees'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('employees'::regclass, current_func_name := 'test_now()');
  add_current_view 
 ------------------
  t
@@ -97,7 +97,7 @@ SELECT sql_saga.add_era('widgets', 'valid_from', 'valid_until');
 
 SAVEPOINT expect_fail;
 -- This will fail because the era is not time-based, which is the point of the test.
-SELECT sql_saga.add_current_view('widgets'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('widgets'::regclass, current_func_name := 'test_now()');
 ERROR:  Cannot create a "current" view for era "valid" on table "widgets" because it is a range of integer, and only date or timestamp is supported.
 CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,text) line 48 at RAISE
 ROLLBACK TO expect_fail;

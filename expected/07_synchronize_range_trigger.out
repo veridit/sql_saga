@@ -36,7 +36,7 @@ Test: Automatic range column synchronization via add_era
 --- 1. Test default behavior: DATE range ---
 SAVEPOINT test_1;
 CREATE TABLE sync_range_default (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_default', p_synchronize_range_column := 'validity');
+SELECT sql_saga.add_era('sync_range_default', synchronize_range_column := 'validity');
 NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_columns_trigger" on table sync_range_default to synchronize columns: validity
  add_era 
 ---------
@@ -123,7 +123,7 @@ ROLLBACK TO SAVEPOINT test_2;
 --- 3. Test with a custom column name and INT4RANGE (a discrete type) ---
 SAVEPOINT test_3;
 CREATE TABLE sync_range_custom (id int, start_num int, until_num int, num_range int4range, to_num int);
-SELECT sql_saga.add_era('sync_range_custom', 'start_num', 'until_num', p_synchronize_valid_to_column := 'to_num', p_synchronize_range_column := 'num_range');
+SELECT sql_saga.add_era('sync_range_custom', 'start_num', 'until_num', synchronize_valid_to_column := 'to_num', synchronize_range_column := 'num_range');
 NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_columns_trigger" on table sync_range_custom to synchronize columns: to_num, num_range
  add_era 
 ---------
@@ -156,7 +156,7 @@ ROLLBACK TO SAVEPOINT test_3;
 --- 4. Test error case: inconsistent data on INSERT ---
 SAVEPOINT test_4;
 CREATE TABLE sync_range_error (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_error', p_synchronize_range_column := 'validity');
+SELECT sql_saga.add_era('sync_range_error', synchronize_range_column := 'validity');
 NOTICE:  sql_saga: Created trigger "sync_range_error_synchronize_temporal_columns_trigger" on table sync_range_error to synchronize columns: validity
  add_era 
 ---------
@@ -185,7 +185,7 @@ ROLLBACK TO SAVEPOINT test_4;
 --- 5. Test error case: inclusive-upper bound range is rejected ---
 SAVEPOINT test_5;
 CREATE TABLE sync_range_bounds (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_bounds', p_synchronize_range_column := 'validity');
+SELECT sql_saga.add_era('sync_range_bounds', synchronize_range_column := 'validity');
 NOTICE:  sql_saga: Created trigger "sync_range_bounds_synchronize_temporal_columns_trigger" on table sync_range_bounds to synchronize columns: validity
  add_era 
 ---------
@@ -205,7 +205,7 @@ ROLLBACK TO SAVEPOINT test_5;
 --- 6. Test edge case: generated column is skipped ---
 SAVEPOINT test_6;
 CREATE TABLE sync_range_generated (id int, valid_from date, valid_until date, validity daterange GENERATED ALWAYS AS (daterange(valid_from, valid_until, '[)')) STORED);
-SELECT sql_saga.add_era('sync_range_generated', p_synchronize_range_column := 'validity');
+SELECT sql_saga.add_era('sync_range_generated', synchronize_range_column := 'validity');
 NOTICE:  sql_saga: Created trigger "sync_range_generated_synchronize_temporal_columns_trigger" on table sync_range_generated to synchronize columns: validity
  add_era 
 ---------
@@ -239,7 +239,7 @@ ROLLBACK TO SAVEPOINT test_6;
 SAVEPOINT test_7;
 CREATE TABLE sync_both (id int, valid_from date, valid_to date, valid_until date, validity daterange);
 -- Enable both triggers
-SELECT sql_saga.add_era('sync_both', p_synchronize_valid_to_column := 'valid_to', p_synchronize_range_column := 'validity', p_add_defaults := false);
+SELECT sql_saga.add_era('sync_both', synchronize_valid_to_column := 'valid_to', synchronize_range_column := 'validity', add_defaults := false);
 NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, validity
  add_era 
 ---------
@@ -293,7 +293,7 @@ SELECT sql_saga.drop_era('sync_both');
  t
 (1 row)
 
-SELECT sql_saga.add_era('sync_both', p_synchronize_valid_to_column := 'valid_to', p_synchronize_range_column := 'validity', p_add_defaults := true);
+SELECT sql_saga.add_era('sync_both', synchronize_valid_to_column := 'valid_to', synchronize_range_column := 'validity', add_defaults := true);
 NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, validity
  add_era 
 ---------
@@ -376,7 +376,7 @@ SAVEPOINT test_8a;
 \echo '--- 8a. timestamptz ---'
 --- 8a. timestamptz ---
 CREATE TABLE sync_continuous_tstz (id int, valid_from timestamptz, valid_to timestamptz, valid_until timestamptz);
-SELECT sql_saga.add_era('sync_continuous_tstz', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_continuous_tstz', synchronize_valid_to_column := 'valid_to');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_tstz.
  add_era 
 ---------
@@ -406,7 +406,7 @@ SAVEPOINT test_8b;
 \echo '--- 8b. timestamp ---'
 --- 8b. timestamp ---
 CREATE TABLE sync_continuous_ts (id int, valid_from timestamp, valid_to timestamp, valid_until timestamp);
-SELECT sql_saga.add_era('sync_continuous_ts', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_continuous_ts', synchronize_valid_to_column := 'valid_to');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_ts.
  add_era 
 ---------
@@ -436,7 +436,7 @@ SAVEPOINT test_8c;
 \echo '--- 8c. numeric ---'
 --- 8c. numeric ---
 CREATE TABLE sync_continuous_numeric (id int, valid_from numeric, valid_to numeric, valid_until numeric);
-SELECT sql_saga.add_era('sync_continuous_numeric', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_continuous_numeric', synchronize_valid_to_column := 'valid_to');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_numeric.
  add_era 
 ---------

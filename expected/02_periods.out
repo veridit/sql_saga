@@ -33,7 +33,7 @@ TABLE sql_saga.era;
 --------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
 (0 rows)
 
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', p_add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', add_defaults => false);
  add_era 
 ---------
  t
@@ -56,7 +56,7 @@ TABLE sql_saga.era;
 --------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
 (0 rows)
 
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', p_add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', add_defaults => false);
  add_era 
 ---------
  t

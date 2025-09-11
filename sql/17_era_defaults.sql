@@ -8,7 +8,7 @@ SET ROLE TO sql_saga_unprivileged_user;
 /* Test default values for types that support infinity */
 CREATE TABLE defaults_date (val text, valid_from date, valid_until date, valid_to date);
 -- For synchronized tables, the trigger handles defaults, not the table DDL.
-SELECT sql_saga.add_era('defaults_date', p_synchronize_valid_to_column => 'valid_to');
+SELECT sql_saga.add_era('defaults_date', synchronize_valid_to_column => 'valid_to');
 \d defaults_date
 -- Test implicit default (omitting column)
 INSERT INTO defaults_date (val, valid_from) VALUES ('a', '2000-01-01');
@@ -62,7 +62,7 @@ DROP TABLE defaults_int;
 /* Test optional flags */
 CREATE TABLE flags_test (val text, valid_from date, valid_until date);
 -- No defaults
-SELECT sql_saga.add_era('flags_test', p_add_defaults => false);
+SELECT sql_saga.add_era('flags_test', add_defaults => false);
 \d flags_test
 -- This should fail because there is no default
 SAVEPOINT no_default_fail;
@@ -73,7 +73,7 @@ SELECT sql_saga.drop_era('flags_test');
 -- Recreate the table to ensure the old CHECK constraint is gone.
 DROP TABLE flags_test;
 CREATE TABLE flags_test (val text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('flags_test', p_add_bounds_check => false);
+SELECT sql_saga.add_era('flags_test', add_bounds_check => false);
 \d flags_test
 INSERT INTO flags_test VALUES ('a', '2020-01-01', '2000-01-01'); -- should succeed
 TABLE flags_test;

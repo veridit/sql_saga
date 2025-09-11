@@ -8,7 +8,7 @@ BEGIN;
 
 CREATE TABLE parent(id int, valid_from int, valid_until int);
 SELECT sql_saga.add_era('parent'::regclass, 'valid_from', 'valid_until', 'p');
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
 
 CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
 SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
@@ -47,14 +47,14 @@ SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
 TABLE sql_saga.unique_keys;
 
 -- Test original drop_unique_key (with positional and named arguments)
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
 TABLE sql_saga.unique_keys;
 -- by name (positional)
 SELECT sql_saga.drop_unique_key_by_name('parent'::regclass, 'parent_id_p');
 TABLE sql_saga.unique_keys;
 
 -- Re-create to test named arguments
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
 TABLE sql_saga.unique_keys;
 -- by name (named)
 SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent'::regclass, key_name => 'parent_id_p');

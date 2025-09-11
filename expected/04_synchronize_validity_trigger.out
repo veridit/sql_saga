@@ -36,7 +36,7 @@ Test: Automatic `valid_to` synchronization via add_era
 --- 1. Test default behavior: trigger is created for `valid_to` ---
 SAVEPOINT test_1;
 CREATE TABLE sync_test_default (id int, valid_from date, valid_to date, valid_until date);
-SELECT sql_saga.add_era('sync_test_default', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_test_default', synchronize_valid_to_column := 'valid_to');
 NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_columns_trigger" on table sync_test_default to synchronize columns: valid_to
  add_era 
 ---------
@@ -104,7 +104,7 @@ ROLLBACK TO SAVEPOINT test_2;
 --- 3. Test with a custom column name ---
 SAVEPOINT test_3;
 CREATE TABLE sync_test_custom_name (id int, start_date date, until_date date, to_date date);
-SELECT sql_saga.add_era('sync_test_custom_name', 'start_date', 'until_date', p_synchronize_valid_to_column := 'to_date');
+SELECT sql_saga.add_era('sync_test_custom_name', 'start_date', 'until_date', synchronize_valid_to_column := 'to_date');
 NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_columns_trigger" on table sync_test_custom_name to synchronize columns: to_date
  add_era 
 ---------
@@ -136,7 +136,7 @@ ROLLBACK TO SAVEPOINT test_3;
 --- 4. Test edge case: generated column is skipped ---
 SAVEPOINT test_4;
 CREATE TABLE sync_test_generated (id int, valid_from date, valid_until date, valid_to date GENERATED ALWAYS AS (valid_until - INTERVAL '1 day') STORED);
-SELECT sql_saga.add_era('sync_test_generated', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_test_generated', synchronize_valid_to_column := 'valid_to');
 NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_columns_trigger" on table sync_test_generated to synchronize columns: valid_to
  add_era 
 ---------
@@ -168,7 +168,7 @@ ROLLBACK TO SAVEPOINT test_4;
 --- 5. Test edge case: wrong data type is skipped ---
 SAVEPOINT test_5;
 CREATE TABLE sync_test_wrong_type (id int, valid_from date, valid_to text, valid_until date);
-SELECT sql_saga.add_era('sync_test_wrong_type', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('sync_test_wrong_type', synchronize_valid_to_column := 'valid_to');
 WARNING:  sql_saga: Synchronization column "valid_to" on table sync_test_wrong_type has an incompatible data type (text). It must match the era subtype (date). Skipping synchronization.
  add_era 
 ---------

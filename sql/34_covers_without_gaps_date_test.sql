@@ -11,7 +11,7 @@ CREATE TABLE date_shifts (
   valid_until DATE
 );
 -- Add era and unique key via sql_saga
-SELECT sql_saga.add_era('date_shifts', 'valid_from', 'valid_until', p_add_bounds_check := false);
+SELECT sql_saga.add_era('date_shifts', 'valid_from', 'valid_until', add_bounds_check := false);
 SELECT sql_saga.add_unique_key('date_shifts', ARRAY['job_id', 'worker_id']);
 
 TABLE sql_saga.era;

@@ -30,8 +30,8 @@ BEGIN;
 Test Suite: `sql_saga.temporal_merge` Deletion Semantics
 \echo 'Description:'
 Description:
-\echo '  This test suite verifies the behavior of the `p_delete_mode` parameter,'
-  This test suite verifies the behavior of the `p_delete_mode` parameter,
+\echo '  This test suite verifies the behavior of the `delete_mode` parameter,'
+  This test suite verifies the behavior of the `delete_mode` parameter,
 \echo '  using a rich target timeline to test interactions with gaps and adjacencies.'
   using a rich target timeline to test interactions with gaps and adjacencies.
 \echo '----------------------------------------------------------------------------'
@@ -91,13 +91,13 @@ TABLE source_1 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tmd.target'::regclass,
-    p_source_table      := 'source_1'::regclass,
-    p_identity_columns        := '{id}'::text[],
-    p_ephemeral_columns := '{edit_comment}'::text[],
-    p_mode              := 'MERGE_ENTITY_REPLACE',
-    p_delete_mode       := 'DELETE_MISSING_TIMELINE',
-    p_era_name          := 'valid'
+    target_table      := 'tmd.target'::regclass,
+    source_table      := 'source_1'::regclass,
+    identity_columns        := '{id}'::text[],
+    ephemeral_columns := '{edit_comment}'::text[],
+    mode              := 'MERGE_ENTITY_REPLACE',
+    delete_mode       := 'DELETE_MISSING_TIMELINE',
+    era_name          := 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
@@ -173,13 +173,13 @@ TABLE source_2 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tmd.target'::regclass,
-    p_source_table      := 'source_2'::regclass,
-    p_identity_columns        := '{id}'::text[],
-    p_ephemeral_columns := '{edit_comment}'::text[],
-    p_mode              := 'MERGE_ENTITY_REPLACE',
-    p_delete_mode       := 'DELETE_MISSING_ENTITIES',
-    p_era_name          := 'valid'
+    target_table      := 'tmd.target'::regclass,
+    source_table      := 'source_2'::regclass,
+    identity_columns        := '{id}'::text[],
+    ephemeral_columns := '{edit_comment}'::text[],
+    mode              := 'MERGE_ENTITY_REPLACE',
+    delete_mode       := 'DELETE_MISSING_ENTITIES',
+    era_name          := 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
@@ -267,13 +267,13 @@ TABLE source_3 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tmd.target'::regclass,
-    p_source_table      := 'source_3'::regclass,
-    p_identity_columns        := '{id}'::text[],
-    p_ephemeral_columns := '{edit_comment}'::text[],
-    p_mode              := 'MERGE_ENTITY_REPLACE',
-    p_delete_mode       := 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
-    p_era_name          := 'valid'
+    target_table      := 'tmd.target'::regclass,
+    source_table      := 'source_3'::regclass,
+    identity_columns        := '{id}'::text[],
+    ephemeral_columns := '{edit_comment}'::text[],
+    mode              := 'MERGE_ENTITY_REPLACE',
+    delete_mode       := 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
+    era_name          := 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---

@@ -2,7 +2,7 @@
 
 BEGIN;
 
-\echo '--- Test: add_era validation for p_synchronize_range_column ---'
+\echo '--- Test: add_era validation for synchronize_range_column ---'
 
 CREATE TABLE public.test_range_validation (
     id int,
@@ -16,7 +16,7 @@ CREATE TABLE public.test_range_validation (
 -- This should fail because 'invalid_range_col' is a DATE, not a range type.
 SELECT sql_saga.add_era(
     'public.test_range_validation'::regclass,
-    p_synchronize_range_column := 'invalid_range_col'
+    synchronize_range_column := 'invalid_range_col'
 );
 
 ROLLBACK;

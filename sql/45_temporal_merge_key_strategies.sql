@@ -117,8 +117,8 @@ CREATE TABLE tmtc.location_multi_key (
     PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('tmtc.location_multi_key');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
@@ -137,8 +137,8 @@ CREATE TABLE tmtc.location_multi_key_no_id (
     )
 );
 SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', p_key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
+SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
 SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
@@ -175,14 +175,14 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_1',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_1',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -231,14 +231,14 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_2',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_2',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -287,14 +287,14 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_3',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_3',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -339,14 +339,14 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_pk',
-    p_source_table             => 'temp_source_4',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_pk',
+    source_table => 'temp_source_4',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -392,14 +392,14 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_gen',
-    p_source_table             => 'temp_source_5',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_gen',
+    source_table => 'temp_source_5',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -445,14 +445,14 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_pk',
-    p_source_table             => 'temp_source_6',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_pk',
+    source_table => 'temp_source_6',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -498,14 +498,14 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_gen',
-    p_source_table             => 'temp_source_7',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_gen',
+    source_table => 'temp_source_7',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -551,14 +551,14 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_no_pk',
-    p_source_table             => 'temp_source_8',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_no_pk',
+    source_table => 'temp_source_8',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -600,7 +600,7 @@ SET client_min_messages TO NOTICE;
 \echo '--------------------------------------------------------------------------------'
 \echo 'Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID'
 \echo '--------------------------------------------------------------------------------'
--- This scenario tests using different p_natural_identity_columns on the same target table.
+-- This scenario tests using different natural_identity_columns on the same target table.
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_9 (
     row_id INT, id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
@@ -622,13 +622,13 @@ TABLE temp_source_9;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key',
-    p_source_table => 'temp_source_9',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{type, legal_unit_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.location_multi_key',
+    source_table => 'temp_source_9',
+    identity_columns => '{id}',
+    natural_identity_columns => '{type, legal_unit_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => true
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -645,13 +645,13 @@ TABLE temp_source_9;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key',
-    p_source_table => 'temp_source_9',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{type, establishment_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.location_multi_key',
+    source_table => 'temp_source_9',
+    identity_columns => '{id}',
+    natural_identity_columns => '{type, establishment_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => true
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -688,13 +688,13 @@ TABLE temp_source_10;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key_no_id',
-    p_source_table => 'temp_source_10',
-    p_identity_columns => NULL,
-    p_natural_identity_columns => '{type, legal_unit_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => false
+    target_table => 'tmtc.location_multi_key_no_id',
+    source_table => 'temp_source_10',
+    identity_columns => NULL,
+    natural_identity_columns => '{type, legal_unit_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => false
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -709,13 +709,13 @@ TABLE temp_source_10;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key_no_id',
-    p_source_table => 'temp_source_10',
-    p_identity_columns => NULL,
-    p_natural_identity_columns => '{type, establishment_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => false
+    target_table => 'tmtc.location_multi_key_no_id',
+    source_table => 'temp_source_10',
+    identity_columns => NULL,
+    natural_identity_columns => '{type, establishment_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => false
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -752,13 +752,13 @@ TABLE temp_source_11;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key',
-    p_source_table => 'temp_source_11',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{type, legal_unit_id, establishment_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.location_multi_key',
+    source_table => 'temp_source_11',
+    identity_columns => '{id}',
+    natural_identity_columns => '{type, legal_unit_id, establishment_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => true
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -775,13 +775,13 @@ TABLE temp_source_11;
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.location_multi_key',
-    p_source_table => 'temp_source_11',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{type, legal_unit_id, establishment_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.location_multi_key',
+    source_table => 'temp_source_11',
+    identity_columns => '{id}',
+    natural_identity_columns => '{type, legal_unit_id, establishment_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => true
 );
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
@@ -828,13 +828,13 @@ SAVEPOINT expect_error;
 \echo '--- Plan and Feedback (from failing call) ---'
 SET sql_saga.temporal_merge.log_plan = true;
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmtc.stat_for_unit_id_pk',
-    p_source_table => 'temp_source_12',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}',
-    p_ephemeral_columns => '{edit_comment}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_pk',
+    source_table => 'temp_source_12',
+    identity_columns => '{id}',
+    natural_identity_columns => '{stat_definition_id, establishment_id}',
+    ephemeral_columns => '{edit_comment}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    update_source_with_identity => true
 );
 ROLLBACK TO SAVEPOINT expect_error;
 SET sql_saga.temporal_merge.log_plan = false;

@@ -8,11 +8,11 @@ SET ROLE TO sql_saga_unprivileged_user;
 /* Basic period definitions with dates */
 CREATE TABLE basic (val text, valid_from date, valid_until date);
 TABLE sql_saga.era;
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', p_add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', add_defaults => false);
 TABLE sql_saga.era;
 SELECT sql_saga.drop_era('basic', 'bp');
 TABLE sql_saga.era;
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', p_add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', add_defaults => false);
 TABLE sql_saga.era;
 /* Test constraints */
 SAVEPOINT pristine;

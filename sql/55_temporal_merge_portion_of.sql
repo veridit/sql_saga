@@ -49,7 +49,7 @@ TABLE tm_portion_of.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_1 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass, p_source_table => 'source_1'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, source_table => 'source_1'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -81,7 +81,7 @@ TABLE tm_portion_of.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_2 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass, p_source_table => 'source_2'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'REPLACE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, source_table => 'source_2'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'REPLACE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -113,7 +113,7 @@ TABLE tm_portion_of.target ORDER BY id, valid_from;
 \echo '--- Source: Data to merge ---'
 TABLE source_3 ORDER BY row_id;
 
-CALL sql_saga.temporal_merge(p_target_table => 'tm_portion_of.target'::regclass, p_source_table => 'source_3'::regclass, p_identity_columns => '{id}'::text[], p_ephemeral_columns => '{edit_comment}'::text[], p_mode => 'DELETE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, p_era_name => 'valid');
+CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, source_table => 'source_3'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'DELETE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, era_name => 'valid');
 
 \echo '--- Planner: Actual Plan ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
@@ -166,12 +166,12 @@ TABLE tm_portion_of.test_unit_not_null;
 TABLE source_4;
 
 CALL sql_saga.temporal_merge(
-  p_target_table => 'tm_portion_of.test_unit_not_null'::regclass,
-  p_source_table => 'source_4'::regclass,
-  p_identity_columns => ARRAY['id'],
-  p_ephemeral_columns => ARRAY[]::TEXT[],
-  p_mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode,
-  p_source_row_id_column => 'row_id'
+  target_table => 'tm_portion_of.test_unit_not_null'::regclass,
+  source_table => 'source_4'::regclass,
+  identity_columns => ARRAY['id'],
+  ephemeral_columns => ARRAY[]::TEXT[],
+  mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode,
+  source_row_id_column => 'row_id'
 );
 
 \echo '--- Planner: Actual Plan ---'

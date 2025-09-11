@@ -86,7 +86,7 @@ SELECT sql_saga.add_unique_key(
     table_oid => '"""quoted"" table"',
     column_names => ARRAY['"id"', '"product " code"'],
     era_name => 'valid',
-    p_key_type => 'natural',
+    key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
  add_unique_key 

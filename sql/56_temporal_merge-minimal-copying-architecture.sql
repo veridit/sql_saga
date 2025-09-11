@@ -22,7 +22,7 @@ The Solution:
   procedures that operate on a specific batch of source rows, identified by
   their `row_id`s. This test uses updatable TEMP VIEWs over the main data
   table to avoid data copying. When combined with `temporal_merge`'s
-  `p_update_source_with_identity` parameter, this allows for a
+  `update_source_with_identity` parameter, this allows for a
   powerful pattern of "ID back-propagation".
 The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   This test demonstrates a robust "merge -> back-propagate -> merge" pattern
@@ -30,7 +30,7 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
   sequentially across multiple batches of data.
   - **Intra-Step Propagation (within a batch):**
     1. A procedure calls `temporal_merge` for a parent entity (`legal_unit`).
-       The key parameter `p_update_source_with_identity` is set to
+       The key parameter `update_source_with_identity` is set to
        `true`, which writes the newly generated `legal_unit_id` back into the
        master data table for the processed source rows.
     2. A "back-propagation" `UPDATE` fills this generated `legal_unit_id` into
@@ -44,8 +44,8 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
     The example is extended to show several other common patterns:
     1. **Hybrid Key Strategy (Natural Key Lookup):** The `location` table
        demonstrates a powerful hybrid approach. `physical` locations have a
-       stable identity (`p_identity_columns` = `id`), but are looked up using a
-       natural key (`p_natural_identity_columns` = `legal_unit_id`, `type`). This shows
+       stable identity (`identity_columns` = `id`), but are looked up using a
+       natural key (`natural_identity_columns` = `legal_unit_id`, `type`). This shows
        how `temporal_merge` can use a business key to find an entity while
        correctly preserving its separate, stable primary key.
     2. **Non-Temporal Identifiers:** An `ident` table stores external
@@ -58,7 +58,7 @@ The Mechanism: "Intra-Step and Inter-Batch ID Propagation"
        identity writeback.
     4. **Ephemeral Metadata Columns:** A `comment` column is added to all
        temporal tables and populated from the source. It is passed to
-       `temporal_merge` in the `p_ephemeral_columns` parameter. This ensures
+       `temporal_merge` in the `ephemeral_columns` parameter. This ensures
        that changes to the comment update the existing historical record
        without creating a new one, correctly treating it as non-business metadata.
   - **Inter-Batch Propagation ("Current State" ETL Pattern):**
@@ -240,18 +240,18 @@ BEGIN
 
     -- Call temporal_merge. It will write the new legal_unit_id back to etl.data_table.
     CALL sql_saga.temporal_merge(
-        p_target_table => 'etl.legal_unit',
-        p_source_table => 'source_view_lu',
-        p_identity_columns => ARRAY['id'],
-        p_ephemeral_columns => ARRAY['comment'],
-        p_mode => 'MERGE_ENTITY_PATCH',
-        p_identity_correlation_column => 'founding_id',
-        p_update_source_with_identity => true,
-        p_update_source_with_feedback => true,
-        p_feedback_status_column => 'merge_statuses',
-        p_feedback_status_key => 'legal_unit',
-        p_feedback_error_column => 'merge_errors',
-        p_feedback_error_key => 'legal_unit'
+        target_table => 'etl.legal_unit',
+        source_table => 'source_view_lu',
+        identity_columns => ARRAY['id'],
+        ephemeral_columns => ARRAY['comment'],
+        mode => 'MERGE_ENTITY_PATCH',
+        identity_correlation_column => 'founding_id',
+        update_source_with_identity => true,
+        update_source_with_feedback => true,
+        feedback_status_column => 'merge_statuses',
+        feedback_status_key => 'legal_unit',
+        feedback_error_column => 'merge_errors',
+        feedback_error_key => 'legal_unit'
     );
 
     RAISE NOTICE '--- Plan from temporal_merge (legal_unit) ---';
@@ -321,22 +321,22 @@ BEGIN
     $$, p_batch_id /* %1$L */);
 
     -- Merge physical locations using a NATURAL KEY for lookup, while preserving
-    -- the stable `id`. `p_natural_identity_columns` specifies the natural key for finding
-    -- entities, and `p_identity_columns` specifies the stable key to preserve.
+    -- the stable `id`. `natural_identity_columns` specifies the natural key for finding
+    -- entities, and `identity_columns` specifies the stable key to preserve.
     CALL sql_saga.temporal_merge(
-        p_target_table => 'etl.location',
-        p_source_table => 'source_view_loc_phys',
-        p_identity_columns => ARRAY['id'],
-        p_natural_identity_columns => ARRAY['legal_unit_id', 'type'],
-        p_ephemeral_columns => ARRAY['comment'],
-        p_mode => 'MERGE_ENTITY_PATCH',
-        p_identity_correlation_column => 'founding_id',
-        p_update_source_with_identity => true,
-        p_update_source_with_feedback => true,
-        p_feedback_status_column => 'merge_statuses',
-        p_feedback_status_key => 'physical_location',
-        p_feedback_error_column => 'merge_errors',
-        p_feedback_error_key => 'physical_location'
+        target_table => 'etl.location',
+        source_table => 'source_view_loc_phys',
+        identity_columns => ARRAY['id'],
+        natural_identity_columns => ARRAY['legal_unit_id', 'type'],
+        ephemeral_columns => ARRAY['comment'],
+        mode => 'MERGE_ENTITY_PATCH',
+        identity_correlation_column => 'founding_id',
+        update_source_with_identity => true,
+        update_source_with_feedback => true,
+        feedback_status_column => 'merge_statuses',
+        feedback_status_key => 'physical_location',
+        feedback_error_column => 'merge_errors',
+        feedback_error_key => 'physical_location'
     );
 
     RAISE NOTICE '--- Plan from temporal_merge (physical_location) ---';
@@ -399,18 +399,18 @@ BEGIN
     -- postal address is treated as a new conceptual entity, identified by its
     -- surrogate `id`. This demonstrates the traditional identity pattern.
     CALL sql_saga.temporal_merge(
-        p_target_table => 'etl.location',
-        p_source_table => 'source_view_loc_post',
-        p_identity_columns => ARRAY['id'],
-        p_ephemeral_columns => ARRAY['comment'],
-        p_mode => 'MERGE_ENTITY_PATCH',
-        p_identity_correlation_column => 'founding_id',
-        p_update_source_with_identity => true,
-        p_update_source_with_feedback => true,
-        p_feedback_status_column => 'merge_statuses',
-        p_feedback_status_key => 'postal_location',
-        p_feedback_error_column => 'merge_errors',
-        p_feedback_error_key => 'postal_location'
+        target_table => 'etl.location',
+        source_table => 'source_view_loc_post',
+        identity_columns => ARRAY['id'],
+        ephemeral_columns => ARRAY['comment'],
+        mode => 'MERGE_ENTITY_PATCH',
+        identity_correlation_column => 'founding_id',
+        update_source_with_identity => true,
+        update_source_with_feedback => true,
+        feedback_status_column => 'merge_statuses',
+        feedback_status_key => 'postal_location',
+        feedback_error_column => 'merge_errors',
+        feedback_error_key => 'postal_location'
     );
 
     RAISE NOTICE '--- Plan from temporal_merge (postal_location) ---';
@@ -490,18 +490,18 @@ BEGIN
 
         -- Call temporal_merge for the current statistic
         CALL sql_saga.temporal_merge(
-            p_target_table => 'etl.stat_for_unit',
-            p_source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
-            p_identity_columns => ARRAY['id'],
-            p_ephemeral_columns => ARRAY['comment'],
-            p_mode => 'MERGE_ENTITY_PATCH',
-            p_identity_correlation_column => 'founding_id',
-            p_update_source_with_identity => true,
-            p_update_source_with_feedback => true,
-            p_feedback_status_column => 'merge_statuses',
-            p_feedback_status_key => v_stat_def.code,
-            p_feedback_error_column => 'merge_errors',
-            p_feedback_error_key => v_stat_def.code
+            target_table => 'etl.stat_for_unit',
+            source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
+            identity_columns => ARRAY['id'],
+            ephemeral_columns => ARRAY['comment'],
+            mode => 'MERGE_ENTITY_PATCH',
+            identity_correlation_column => 'founding_id',
+            update_source_with_identity => true,
+            update_source_with_feedback => true,
+            feedback_status_column => 'merge_statuses',
+            feedback_status_key => v_stat_def.code,
+            feedback_error_column => 'merge_errors',
+            feedback_error_key => v_stat_def.code
         );
 
         RAISE NOTICE '--- Plan from temporal_merge (stat: %) ---', v_stat_def.code;
@@ -648,20 +648,20 @@ BEGIN
             EXECUTE v_view_sql;
 
             -- Call temporal_merge on a table with a natural key.
-            -- Note that `p_update_source_with_identity` is false, as there is no
+            -- Note that `update_source_with_identity` is false, as there is no
             -- surrogate key to write back.
             CALL sql_saga.temporal_merge(
-                p_target_table => 'etl.activity'::regclass,
-                p_source_table => 'source_view_activity'::regclass,
-                p_identity_columns => ARRAY['legal_unit_id', 'activity_type_id'],
-                p_ephemeral_columns => ARRAY['comment'],
-                p_mode => 'MERGE_ENTITY_PATCH',
-                p_update_source_with_identity => false,
-                p_update_source_with_feedback => true,
-                p_feedback_status_column => 'merge_statuses',
-                p_feedback_status_key => 'activity',
-                p_feedback_error_column => 'merge_errors',
-                p_feedback_error_key => 'activity'
+                target_table => 'etl.activity'::regclass,
+                source_table => 'source_view_activity'::regclass,
+                identity_columns => ARRAY['legal_unit_id', 'activity_type_id'],
+                ephemeral_columns => ARRAY['comment'],
+                mode => 'MERGE_ENTITY_PATCH',
+                update_source_with_identity => false,
+                update_source_with_feedback => true,
+                feedback_status_column => 'merge_statuses',
+                feedback_status_key => 'activity',
+                feedback_error_column => 'merge_errors',
+                feedback_error_key => 'activity'
             );
 
             RAISE NOTICE '--- Plan from temporal_merge (activity: %) ---', v_activity_type.code;

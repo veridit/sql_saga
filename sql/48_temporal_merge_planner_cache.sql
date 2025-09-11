@@ -25,7 +25,7 @@ SELECT sql_saga.add_era('tmpc.target', 'valid_from', 'valid_until');
 CREATE TABLE tmpc.source1 (row_id int, id int NOT NULL, valid_from date, valid_until date, value text);
 
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
-SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target'::regclass, column_names => ARRAY['id'], p_key_type => 'primary');
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target'::regclass, column_names => ARRAY['id'], key_type => 'primary');
 CREATE INDEX ON tmpc.source1 (id);
 CREATE INDEX ON tmpc.source1 USING gist (daterange(valid_from, valid_until));
 \echo '\d tmpc.target'
@@ -44,11 +44,11 @@ ANALYZE tmpc.source1;
 
 \o /dev/null
 SELECT * FROM sql_saga.temporal_merge_plan(
-    p_target_table      => 'tmpc.target'::regclass,
-    p_source_table      => 'tmpc.source1'::regclass,
-    p_identity_columns        => '{id}'::text[],
-    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    p_era_name          => 'valid'
+    target_table => 'tmpc.target'::regclass,
+    source_table => 'tmpc.source1'::regclass,
+    identity_columns => '{id}'::text[],
+    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+    era_name => 'valid'
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%' \gset
@@ -81,7 +81,7 @@ SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_from', 'valid_until');
 CREATE TABLE tmpc.source_nk_not_null (row_id int, type text NOT NULL, lu_id int NOT NULL, value text, valid_from date, valid_until date);
 
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
-SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk_not_null'::regclass, column_names => ARRAY['type', 'lu_id'], p_key_type => 'primary');
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk_not_null'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'primary');
 INSERT INTO tmpc.target_nk_not_null (type, lu_id, valid_from, valid_until, value) SELECT 'A', i, '2023-01-01', '2024-01-01', 'LU' FROM generate_series(1, 1000) as i;
 INSERT INTO tmpc.source_nk_not_null VALUES (1, 'A', 500, 'LU-patched', '2023-06-01', '2023-07-01');
 ANALYZE tmpc.target_nk_not_null;
@@ -95,11 +95,11 @@ ANALYZE tmpc.source_nk_not_null;
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NOT NULL) ---'
 \o /dev/null
 SELECT * FROM sql_saga.temporal_merge_plan(
-    p_target_table      => 'tmpc.target_nk_not_null'::regclass,
-    p_source_table      => 'tmpc.source_nk_not_null'::regclass,
-    p_identity_columns        => '{type,lu_id}'::text[],
-    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    p_era_name          => 'valid'
+    target_table => 'tmpc.target_nk_not_null'::regclass,
+    source_table => 'tmpc.source_nk_not_null'::regclass,
+    identity_columns => '{type,lu_id}'::text[],
+    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+    era_name => 'valid'
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk_nn FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%' \gset
@@ -136,8 +136,8 @@ CREATE TABLE tmpc.source_nk (row_id int, type text NOT NULL, lu_id int, es_id in
 );
 
 \echo '--- Setting up natural key tables with partial indexes and data ---'
-SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'lu_id'], p_key_type => 'predicated', predicate => 'es_id IS NULL');
-SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'es_id'], p_key_type => 'predicated', predicate => 'lu_id IS NULL');
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'predicated', predicate => 'es_id IS NULL');
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'es_id'], key_type => 'predicated', predicate => 'lu_id IS NULL');
 INSERT INTO tmpc.target_nk (type, lu_id, es_id, valid_from, valid_until, value) SELECT 'A', i, NULL, '2023-01-01', '2024-01-01', 'LU' FROM generate_series(1, 1000) as i;
 INSERT INTO tmpc.target_nk (type, lu_id, es_id, valid_from, valid_until, value) SELECT 'B', NULL, i, '2023-01-01', '2024-01-01', 'ES' FROM generate_series(1, 1000) as i;
 INSERT INTO tmpc.source_nk VALUES (1, 'A', 500, NULL, 'LU-patched', '2023-06-01', '2023-07-01');
@@ -153,11 +153,11 @@ ANALYZE tmpc.source_nk;
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NULLable) ---'
 \o /dev/null
 SELECT * FROM sql_saga.temporal_merge_plan(
-    p_target_table      => 'tmpc.target_nk'::regclass,
-    p_source_table      => 'tmpc.source_nk'::regclass,
-    p_identity_columns        => '{type,lu_id,es_id}'::text[],
-    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    p_era_name          => 'valid'
+    target_table => 'tmpc.target_nk'::regclass,
+    source_table => 'tmpc.source_nk'::regclass,
+    identity_columns => '{type,lu_id,es_id}'::text[],
+    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+    era_name => 'valid'
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%' \gset

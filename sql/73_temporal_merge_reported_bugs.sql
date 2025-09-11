@@ -41,12 +41,12 @@ INSERT INTO source_data_1 VALUES
 TABLE source_data_1;
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit',
-    p_source_table => 'source_data_1',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_identity_correlation_column => 'founding_row_id'
+    target_table => 'tmrb.my_stat_for_unit',
+    source_table => 'source_data_1',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    identity_correlation_column => 'founding_row_id'
 );
 
 \echo '--- Target Table after First Import (Expect 1 row) ---'
@@ -66,12 +66,12 @@ TABLE source_data_2;
 -- This call incorrectly creates a new entity because the source `id` is NULL
 -- and no natural key is provided to find the existing entity.
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_identity_correlation_column => 'founding_row_id'
+    target_table => 'tmrb.my_stat_for_unit',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    identity_correlation_column => 'founding_row_id'
 );
 
 \echo '--- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---'
@@ -82,24 +82,24 @@ TRUNCATE tmrb.my_stat_for_unit;
 TRUNCATE source_data_1;
 INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01');
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit',
-    p_source_table => 'source_data_1',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_identity_correlation_column => 'founding_row_id'
+    target_table => 'tmrb.my_stat_for_unit',
+    source_table => 'source_data_1',
+    identity_columns => '{id}',
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    identity_correlation_column => 'founding_row_id'
 );
 
 \echo '--- Case 1b: Correct Usage (with natural key) ---'
 -- This call correctly finds the existing entity via the natural key `legal_unit_id`
 -- and extends its timeline because the data has not changed.
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => ARRAY['legal_unit_id'],
-    p_ephemeral_columns => NULL,
-    p_identity_correlation_column => 'founding_row_id'
+    target_table => 'tmrb.my_stat_for_unit',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => ARRAY['legal_unit_id'],
+    ephemeral_columns => NULL,
+    identity_correlation_column => 'founding_row_id'
 );
 
 \echo '--- Target Table after Second Import (CORRECT: 1 extended row) ---'
@@ -128,12 +128,12 @@ SELECT sql_saga.add_era('tmrb.my_stat_for_unit_bad_pk'::regclass);
 TRUNCATE source_data_1;
 INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01');
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_bad_pk',
-    p_source_table => 'source_data_1',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_update_source_with_identity => true
+    target_table => 'tmrb.my_stat_for_unit_bad_pk',
+    source_table => 'source_data_1',
+    identity_columns => '{id}',
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    update_source_with_identity => true
 );
 
 \echo '--- Target after first import ---'
@@ -155,11 +155,11 @@ SET client_min_messages TO NOTICE;
 DO $$
 BEGIN
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_bad_pk',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL
+    target_table => 'tmrb.my_stat_for_unit_bad_pk',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL
 );
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
@@ -181,12 +181,12 @@ SELECT sql_saga.add_era('tmrb.my_stat_for_unit_good_pk'::regclass);
 TRUNCATE source_data_1;
 INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01');
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_good_pk',
-    p_source_table => 'source_data_1',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_update_source_with_identity => true
+    target_table => 'tmrb.my_stat_for_unit_good_pk',
+    source_table => 'source_data_1',
+    identity_columns => '{id}',
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    update_source_with_identity => true
 );
 
 \echo '--- Case 2b: Correct Schema (Composite PK) ---'
@@ -196,11 +196,11 @@ INSERT INTO source_data_2 VALUES (2, 1, 1, 100, 5, '2023-04-01', '2023-07-01');
 TABLE source_data_2;
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_good_pk',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL
+    target_table => 'tmrb.my_stat_for_unit_good_pk',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL
 );
 
 \echo '--- Planner output for Case 2b ---'
@@ -239,12 +239,12 @@ TABLE source_data_1;
 DO $$
 BEGIN
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_gen_always',
-    p_source_table => 'source_data_1',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_identity_correlation_column => 'founding_row_id'
+    target_table => 'tmrb.my_stat_for_unit_gen_always',
+    source_table => 'source_data_1',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    identity_correlation_column => 'founding_row_id'
 );
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
@@ -267,12 +267,12 @@ SELECT sql_saga.add_era('tmrb.my_stat_for_unit_gen_default'::regclass);
 TRUNCATE source_data_1;
 INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01');
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_gen_default',
-    p_source_table => 'source_data_1',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL,
-    p_update_source_with_identity => true
+    target_table => 'tmrb.my_stat_for_unit_gen_default',
+    source_table => 'source_data_1',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL,
+    update_source_with_identity => true
 );
 \echo '--- Target after first import ---'
 TABLE tmrb.my_stat_for_unit_gen_default;
@@ -284,11 +284,11 @@ INSERT INTO source_data_2 VALUES (2, 1, 1, 100, 5, '2023-04-01', '2023-07-01');
 TABLE source_data_2;
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.my_stat_for_unit_gen_default',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL,
-    p_ephemeral_columns => NULL
+    target_table => 'tmrb.my_stat_for_unit_gen_default',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL,
+    ephemeral_columns => NULL
 );
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
@@ -315,11 +315,11 @@ SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
 TRUNCATE source_data_1;
 INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.bug_repro_1',
-    p_source_table => 'source_data_1',
-    p_identity_columns => '{id}',
-    p_natural_identity_columns => '{legal_unit_id}',
-    p_update_source_with_identity => true
+    target_table => 'tmrb.bug_repro_1',
+    source_table => 'source_data_1',
+    identity_columns => '{id}',
+    natural_identity_columns => '{legal_unit_id}',
+    update_source_with_identity => true
 );
 \echo '--- Target after initial import ---'
 TABLE tmrb.bug_repro_1;
@@ -332,11 +332,11 @@ TABLE source_data_2;
 
 \echo '--- Calling temporal_merge (should now succeed) ---'
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.bug_repro_1',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => ARRAY['legal_unit_id'],
-    p_mode => 'MERGE_ENTITY_REPLACE'
+    target_table => 'tmrb.bug_repro_1',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => ARRAY['legal_unit_id'],
+    mode => 'MERGE_ENTITY_REPLACE'
 );
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 SELECT * FROM tmrb.bug_repro_1 ORDER BY id, valid_from;
@@ -351,10 +351,10 @@ SET sql_saga.temporal_merge.log_plan = '';
 -- The content of the call doesn't matter, as the error happens during parameter
 -- processing before the planner runs. The fix ensures this now runs without error.
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.bug_repro_1',
-    p_source_table => 'source_data_2',
-    p_identity_columns => ARRAY['id'],
-    p_natural_identity_columns => NULL
+    target_table => 'tmrb.bug_repro_1',
+    source_table => 'source_data_2',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => NULL
 );
 -- Reset GUC for any subsequent tests
 RESET sql_saga.temporal_merge.log_plan;
@@ -395,7 +395,7 @@ CREATE TABLE tmrb.legal_unit_kranloft (
     valid_until date,
     valid_to date -- Synchronized column
 );
-SELECT sql_saga.add_era('tmrb.legal_unit_kranloft'::regclass, p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('tmrb.legal_unit_kranloft'::regclass, synchronize_valid_to_column := 'valid_to');
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_kranloft'::regclass, '{id}');
 
 \echo '--- Source Data ---'
@@ -403,13 +403,13 @@ TABLE source_data_kranloft;
 
 \echo '--- Calling temporal_merge (which should now automatically treat valid_to as ephemeral)...'
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.legal_unit_kranloft'::regclass,
-    p_source_table => 'source_data_kranloft'::regclass,
-    p_identity_columns => '{id}'::text[],
-    p_identity_correlation_column => 'founding_row_id',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_era_name => 'valid',
-    p_ephemeral_columns => NULL
+    target_table => 'tmrb.legal_unit_kranloft'::regclass,
+    source_table => 'source_data_kranloft'::regclass,
+    identity_columns => '{id}'::text[],
+    identity_correlation_column => 'founding_row_id',
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    ephemeral_columns => NULL
 );
 
 \echo '--- Result: CORRECT - Creates 1 coalesced row ---'
@@ -419,9 +419,9 @@ ROLLBACK TO SAVEPOINT kranloft_bug_coalesce;
 
 
 \echo '--------------------------------------------------------------------------------'
-\echo 'Scenario 8: Validate p_ephemeral_columns parameter'
+\echo 'Scenario 8: Validate ephemeral_columns parameter'
 \echo 'temporal_merge must reject calls where temporal boundary or synchronized columns'
-\echo 'are manually specified in p_ephemeral_columns.'
+\echo 'are manually specified in ephemeral_columns.'
 \echo '--------------------------------------------------------------------------------'
 SAVEPOINT ephemeral_validation;
 
@@ -429,36 +429,36 @@ SAVEPOINT ephemeral_validation;
 CREATE TABLE tmrb.ephemeral_validation (
     id int, name text, valid_from date, valid_until date, valid_to date
 );
-SELECT sql_saga.add_era('tmrb.ephemeral_validation'::regclass, p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('tmrb.ephemeral_validation'::regclass, synchronize_valid_to_column := 'valid_to');
 SELECT sql_saga.add_unique_key('tmrb.ephemeral_validation'::regclass, '{id}');
 
 \echo '-- Attempting to pass valid_from as ephemeral (should fail) --'
 DO $$ BEGIN
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.ephemeral_validation'::regclass,
-    p_source_table => 'source_data_kranloft'::regclass,
-    p_identity_columns => '{id}',
-    p_ephemeral_columns => ARRAY['valid_from']
+    target_table => 'tmrb.ephemeral_validation'::regclass,
+    source_table => 'source_data_kranloft'::regclass,
+    identity_columns => '{id}',
+    ephemeral_columns => ARRAY['valid_from']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
 
 \echo '-- Attempting to pass valid_until as ephemeral (should fail) --'
 DO $$ BEGIN
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.ephemeral_validation'::regclass,
-    p_source_table => 'source_data_kranloft'::regclass,
-    p_identity_columns => '{id}',
-    p_ephemeral_columns => ARRAY['valid_until']
+    target_table => 'tmrb.ephemeral_validation'::regclass,
+    source_table => 'source_data_kranloft'::regclass,
+    identity_columns => '{id}',
+    ephemeral_columns => ARRAY['valid_until']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
 
 \echo '-- Attempting to pass synchronized valid_to as ephemeral (should fail) --'
 DO $$ BEGIN
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmrb.ephemeral_validation'::regclass,
-    p_source_table => 'source_data_kranloft'::regclass,
-    p_identity_columns => '{id}',
-    p_ephemeral_columns => ARRAY['valid_to']
+    target_table => 'tmrb.ephemeral_validation'::regclass,
+    source_table => 'source_data_kranloft'::regclass,
+    identity_columns => '{id}',
+    ephemeral_columns => ARRAY['valid_to']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
 

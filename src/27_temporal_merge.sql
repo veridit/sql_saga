@@ -1,15 +1,15 @@
 -- Unified Planning Function
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
-    p_target_table regclass,
-    p_source_table regclass,
-    p_identity_columns TEXT[],
-    p_mode sql_saga.temporal_merge_mode,
-    p_era_name name,
-    p_source_row_id_column name DEFAULT 'row_id',
-    p_identity_correlation_column name DEFAULT NULL,
-    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
-    p_natural_identity_columns TEXT[] DEFAULT NULL,
-    p_ephemeral_columns TEXT[] DEFAULT NULL
+    target_table regclass,
+    source_table regclass,
+    identity_columns TEXT[],
+    mode sql_saga.temporal_merge_mode,
+    era_name name,
+    source_row_id_column name DEFAULT 'row_id',
+    identity_correlation_column name DEFAULT NULL,
+    delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
+    natural_identity_columns TEXT[] DEFAULT NULL,
+    ephemeral_columns TEXT[] DEFAULT NULL
 ) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
@@ -25,30 +25,30 @@ DECLARE
     v_valid_to_col name;
     v_range_col name;
     v_sql TEXT;
-    v_ephemeral_columns TEXT[] := COALESCE(p_ephemeral_columns, '{}'::text[]);
+    v_ephemeral_columns TEXT[] := COALESCE(temporal_merge_plan.ephemeral_columns, '{}'::text[]);
 BEGIN
     -- An entity must be identifiable. At least one set of identity columns must be provided.
-    IF (p_identity_columns IS NULL OR cardinality(p_identity_columns) = 0) AND
-       (p_natural_identity_columns IS NULL OR cardinality(p_natural_identity_columns) = 0)
+    IF (temporal_merge_plan.identity_columns IS NULL OR cardinality(temporal_merge_plan.identity_columns) = 0) AND
+       (temporal_merge_plan.natural_identity_columns IS NULL OR cardinality(temporal_merge_plan.natural_identity_columns) = 0)
     THEN
-        RAISE EXCEPTION 'At least one of p_identity_columns or p_natural_identity_columns must be a non-empty array.';
+        RAISE EXCEPTION 'At least one of identity_columns or natural_identity_columns must be a non-empty array.';
     END IF;
 
-    -- Use natural_identity_columns for lookups if provided, otherwise fall back to the stable p_identity_columns.
-    v_lookup_columns := COALESCE(p_natural_identity_columns, p_identity_columns);
-    -- The stable identity is always p_identity_columns if provided; otherwise, it's the natural key.
-    v_stable_identity_columns := COALESCE(p_identity_columns, p_natural_identity_columns);
+    -- Use natural_identity_columns for lookups if provided, otherwise fall back to the stable identity_columns.
+    v_lookup_columns := COALESCE(temporal_merge_plan.natural_identity_columns, temporal_merge_plan.identity_columns);
+    -- The stable identity is always identity_columns if provided; otherwise, it's the natural key.
+    v_stable_identity_columns := COALESCE(temporal_merge_plan.identity_columns, temporal_merge_plan.natural_identity_columns);
 
     -- Validate that provided column names exist.
-    PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_source_row_id_column AND NOT attisdropped AND attnum > 0;
+    PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = temporal_merge_plan.source_row_id_column AND NOT attisdropped AND attnum > 0;
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'p_source_row_id_column "%" does not exist in source table %s', p_source_row_id_column, p_source_table::text;
+        RAISE EXCEPTION 'source_row_id_column "%" does not exist in source table %s', temporal_merge_plan.source_row_id_column, temporal_merge_plan.source_table::text;
     END IF;
 
-    IF p_identity_correlation_column IS NOT NULL THEN
-        PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_identity_correlation_column AND NOT attisdropped AND attnum > 0;
+    IF temporal_merge_plan.identity_correlation_column IS NOT NULL THEN
+        PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = temporal_merge_plan.identity_correlation_column AND NOT attisdropped AND attnum > 0;
         IF NOT FOUND THEN
-            RAISE EXCEPTION 'p_identity_correlation_column "%" does not exist in source table %s', p_identity_correlation_column, p_source_table::text;
+            RAISE EXCEPTION 'identity_correlation_column "%" does not exist in source table %s', temporal_merge_plan.identity_correlation_column, temporal_merge_plan.source_table::text;
         END IF;
     END IF;
 
@@ -57,28 +57,28 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = p_target_table;
+    WHERE c.oid = temporal_merge_plan.target_table;
 
     SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
     INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
-      AND e.era_name = p_era_name;
+      AND e.era_name = temporal_merge_plan.era_name;
 
     IF v_valid_from_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_plan.era_name, temporal_merge_plan.target_table;
     END IF;
 
     -- Validate that user has not passed in temporal columns as ephemeral.
     IF v_valid_from_col = ANY(v_ephemeral_columns) OR v_valid_until_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Temporal boundary columns ("%", "%") cannot be specified in p_ephemeral_columns.', v_valid_from_col, v_valid_until_col;
+        RAISE EXCEPTION 'Temporal boundary columns ("%", "%") cannot be specified in ephemeral_columns.', v_valid_from_col, v_valid_until_col;
     END IF;
     IF v_valid_to_col IS NOT NULL AND v_valid_to_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in p_ephemeral_columns.', v_valid_to_col;
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_valid_to_col;
     END IF;
     IF v_range_col IS NOT NULL AND v_range_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in p_ephemeral_columns.', v_range_col;
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_range_col;
     END IF;
 
     -- Automatically treat synchronized columns as ephemeral for change detection.
@@ -91,17 +91,17 @@ BEGIN
 
     -- Generate the cache key first from all relevant arguments. This is fast.
     v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
-        p_target_table::oid,
-        p_source_table::oid,
-        p_identity_columns,
+        temporal_merge_plan.target_table::oid,
+        temporal_merge_plan.source_table::oid,
+        temporal_merge_plan.identity_columns,
         v_ephemeral_columns,
-        p_mode,
-        p_era_name,
-        p_source_row_id_column,
-        COALESCE(p_identity_correlation_column, ''),
+        temporal_merge_plan.mode,
+        temporal_merge_plan.era_name,
+        temporal_merge_plan.source_row_id_column,
+        COALESCE(temporal_merge_plan.identity_correlation_column, ''),
         v_range_constructor,
-        p_delete_mode,
-        COALESCE(p_natural_identity_columns, '{}'::text[])
+        temporal_merge_plan.delete_mode,
+        COALESCE(temporal_merge_plan.natural_identity_columns, '{}'::text[])
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
 
@@ -137,41 +137,41 @@ BEGIN
         v_stable_pk_cols_jsonb_build TEXT;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
-        IF p_identity_correlation_column IS NOT NULL THEN
-            IF p_identity_correlation_column = ANY(v_lookup_columns) THEN
-                RAISE EXCEPTION 'p_identity_correlation_column (%) cannot be one of the p_natural_identity_columns (%)', p_identity_correlation_column, v_lookup_columns;
+        IF temporal_merge_plan.identity_correlation_column IS NOT NULL THEN
+            IF temporal_merge_plan.identity_correlation_column = ANY(v_lookup_columns) THEN
+                RAISE EXCEPTION 'identity_correlation_column (%) cannot be one of the natural_identity_columns (%)', temporal_merge_plan.identity_correlation_column, v_lookup_columns;
             END IF;
 
-            v_founding_id_select_expr := format('t.%I as founding_id,', p_identity_correlation_column);
+            v_founding_id_select_expr := format('t.%I as founding_id,', temporal_merge_plan.identity_correlation_column);
             v_planner_entity_id_expr := format($$
                 CASE
                     WHEN sr.is_new_entity AND NOT sr.target_entity_exists
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
-            $$, p_identity_correlation_column);
+            $$, temporal_merge_plan.identity_correlation_column);
         ELSE
-            v_founding_id_select_expr := format('t.%I as founding_id,', p_source_row_id_column);
+            v_founding_id_select_expr := format('t.%I as founding_id,', temporal_merge_plan.source_row_id_column);
             v_planner_entity_id_expr := format($$
                 CASE
                     WHEN sr.is_new_entity AND NOT sr.target_entity_exists
                     THEN sr.entity_id || jsonb_build_object(%L, sr.founding_id::text)
                     ELSE sr.entity_id
                 END
-            $$, COALESCE(p_identity_correlation_column, p_source_row_id_column));
+            $$, COALESCE(temporal_merge_plan.identity_correlation_column, temporal_merge_plan.source_row_id_column));
         END IF;
 
         -- Resolve table identifiers to be correctly quoted and schema-qualified.
-        v_target_table_ident := p_target_table::TEXT;
+        v_target_table_ident := temporal_merge_plan.target_table::TEXT;
 
         SELECT n.nspname INTO v_source_schema_name
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = p_source_table;
+        WHERE c.oid = temporal_merge_plan.source_table;
 
         IF v_source_schema_name = 'pg_temp' THEN
-            v_source_table_ident := p_source_table::regclass::TEXT;
+            v_source_table_ident := temporal_merge_plan.source_table::regclass::TEXT;
         ELSE
-            v_source_table_ident := p_source_table::regclass::TEXT;
+            v_source_table_ident := temporal_merge_plan.source_table::regclass::TEXT;
         END IF;
 
         -- Dynamically construct a jsonb object from the entity id columns to use as a single key for partitioning and joining.
@@ -195,17 +195,17 @@ BEGIN
         WITH source_cols AS (
             SELECT pa.attname
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_source_table AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = temporal_merge_plan.source_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         target_cols AS (
             SELECT pa.attname, pa.attgenerated
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = temporal_merge_plan.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         source_data_cols AS (
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN (p_source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+            WHERE s.attname NOT IN (temporal_merge_plan.source_row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
               AND s.attname <> ALL(v_stable_identity_columns)
         ),
         target_data_cols AS (
@@ -242,7 +242,7 @@ BEGIN
         FROM unnest(v_stable_identity_columns) AS col;
 
         -- Determine the scope of target entities to process based on the mode.
-        IF p_mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND p_delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND temporal_merge_plan.delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- For modes that might delete entities not in the source, we must scan the entire target table.
             v_target_rows_filter := v_target_table_ident || ' t';
         ELSE
@@ -256,11 +256,11 @@ BEGIN
                 FROM (
                     SELECT NOT a.attnotnull as is_nullable
                     FROM unnest(v_lookup_columns) as c(attname)
-                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_target_table
+                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.target_table
                     UNION ALL
                     SELECT NOT a.attnotnull as is_nullable
                     FROM unnest(v_lookup_columns) as c(attname)
-                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_source_table
+                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.source_table
                 ) c;
 
                 v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
@@ -309,7 +309,7 @@ BEGIN
                         BEGIN
                             v_nullable_cols := ARRAY(
                                 SELECT c.attname FROM unnest(v_lookup_columns) as c(attname)
-                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_target_table
+                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.target_table
                                 WHERE NOT a.attnotnull
                             );
 
@@ -326,7 +326,7 @@ BEGIN
                                     v_not_nullable_cols_join_clause := COALESCE(
                                         (SELECT string_agg(format('si.%1$I = t.%1$I', c.attname), ' AND ')
                                          FROM unnest(v_lookup_columns) c(attname)
-                                         JOIN pg_attribute a ON a.attname = c.attname and a.attrelid = p_target_table
+                                         JOIN pg_attribute a ON a.attname = c.attname and a.attrelid = temporal_merge_plan.target_table
                                          WHERE a.attnotnull),
                                         'true'
                                     );
@@ -390,19 +390,19 @@ BEGIN
         -- 2. Construct expressions and resolver CTEs based on the mode.
         -- This logic is structured to be orthogonal:
         -- 1. Payload Handling (_PATCH vs. _REPLACE) is determined first.
-        -- 2. Timeline Handling (destructive vs. non-destructive) is determined by p_delete_mode.
+        -- 2. Timeline Handling (destructive vs. non-destructive) is determined by delete_mode.
 
         -- First, determine payload semantics based on the mode name.
-        IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
+        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
             v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
-        ELSIF p_mode = 'DELETE_FOR_PORTION_OF' THEN
+        ELSIF temporal_merge_plan.mode = 'DELETE_FOR_PORTION_OF' THEN
             v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
         ELSE -- MERGE_ENTITY_REPLACE, REPLACE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
         END IF;
 
-        -- Second, determine timeline semantics based *only* on p_delete_mode.
-        IF p_delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        -- Second, determine timeline semantics based *only* on delete_mode.
+        IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- Destructive mode: Source is truth. Non-overlapping target timeline is discarded.
             -- This uses a simple diff join, resulting in a robust DELETE and INSERT plan for changes.
             v_diff_join_condition := 'f.f_from = t.t_from';
@@ -427,7 +427,7 @@ BEGIN
         END IF;
 
         -- Third, determine payload resolution logic based on the mode and timeline strategy.
-        IF p_mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
+        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
             -- In PATCH modes, we need to compute a running payload that carries forward values
             -- from one atomic segment to the next. A recursive CTE is the most robust way to do this.
             v_resolver_ctes := $$,
@@ -469,14 +469,14 @@ $$;
         END IF;
 
         -- For destructive timeline mode, the final payload is always the source payload. This overrides any complex logic from above.
-        IF p_delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
              v_resolver_ctes := '';
              v_resolver_from := 'resolved_atomic_segments_with_payloads';
              v_final_data_payload_expr := 's_data_payload';
         END IF;
 
         -- Layer on optional destructive delete modes for missing entities.
-        IF p_delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- We need to add a flag to identify entities that are present in the source.
             -- This CTE is chained onto any previous resolver CTEs by using v_resolver_from.
             v_resolver_ctes := v_resolver_ctes || format($$,
@@ -797,7 +797,7 @@ $SQL$,
             v_target_table_ident,           /* %4$s */
             v_ephemeral_columns,            /* %5$L */
             v_target_data_cols_jsonb_build, /* %6$s */
-            p_mode,                         /* %7$L */
+            temporal_merge_plan.mode,                           /* %7$L */
             v_final_data_payload_expr,      /* %8$s */
             v_resolver_ctes,                /* %9$s */
             v_resolver_from,                /* %10$s */
@@ -808,7 +808,7 @@ $SQL$,
             v_valid_until_col,              /* %15$I */
             v_founding_id_select_expr,      /* %16$s */
             v_planner_entity_id_expr,       /* %17$s */
-            p_source_row_id_column,         /* %18$I */
+            temporal_merge_plan.source_row_id_column,           /* %18$I */
             v_range_constructor,            /* %19$I */
             v_target_rows_filter,           /* %20$s */
             v_stable_pk_cols_jsonb_build,   /* %21$s */
@@ -821,7 +821,7 @@ $SQL$,
             v_log_sql BOOLEAN := CASE WHEN COALESCE(current_setting('sql_saga.temporal_merge.log_sql', true), '') = '' THEN false ELSE current_setting('sql_saga.temporal_merge.log_sql')::BOOLEAN END;
         BEGIN
             IF v_log_sql THEN
-                RAISE NOTICE '--- temporal_merge SQL for % ---', p_target_table;
+                RAISE NOTICE '--- temporal_merge SQL for % ---', temporal_merge_plan.target_table;
                 RAISE NOTICE '%', v_sql;
             END IF;
         END;
@@ -841,27 +841,27 @@ COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], sql
 
 -- Unified Executor Procedure
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
-    p_target_table regclass,
-    p_source_table regclass,
-    p_identity_columns TEXT[],
-    p_mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
-    p_era_name name DEFAULT 'valid',
-    p_source_row_id_column name DEFAULT 'row_id',
-    p_identity_correlation_column name DEFAULT NULL,
-    p_update_source_with_identity BOOLEAN DEFAULT false,
-    p_natural_identity_columns TEXT[] DEFAULT NULL,
-    p_delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
-    p_update_source_with_feedback BOOLEAN DEFAULT false,
-    p_feedback_status_column name DEFAULT NULL,
-    p_feedback_status_key name DEFAULT NULL,
-    p_feedback_error_column name DEFAULT NULL,
-    p_feedback_error_key name DEFAULT NULL,
-    p_ephemeral_columns TEXT[] DEFAULT NULL
+    target_table regclass,
+    source_table regclass,
+    identity_columns TEXT[],
+    mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
+    era_name name DEFAULT 'valid',
+    source_row_id_column name DEFAULT 'row_id',
+    identity_correlation_column name DEFAULT NULL,
+    update_source_with_identity BOOLEAN DEFAULT false,
+    natural_identity_columns TEXT[] DEFAULT NULL,
+    delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
+    update_source_with_feedback BOOLEAN DEFAULT false,
+    feedback_status_column name DEFAULT NULL,
+    feedback_status_key name DEFAULT NULL,
+    feedback_error_column name DEFAULT NULL,
+    feedback_error_key name DEFAULT NULL,
+    ephemeral_columns TEXT[] DEFAULT NULL
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
     v_lookup_columns TEXT[];
-    v_target_table_ident TEXT := p_target_table::TEXT;
+    v_target_table_ident TEXT := temporal_merge.target_table::TEXT;
     v_data_cols_ident TEXT;
     v_data_cols_select TEXT;
     v_update_set_clause TEXT;
@@ -886,22 +886,22 @@ DECLARE
     v_sql TEXT;
     v_correlation_col name;
 BEGIN
-    v_lookup_columns := COALESCE(p_natural_identity_columns, p_identity_columns);
-    v_correlation_col := COALESCE(p_identity_correlation_column, p_source_row_id_column);
+    v_lookup_columns := COALESCE(temporal_merge.natural_identity_columns, temporal_merge.identity_columns);
+    v_correlation_col := COALESCE(temporal_merge.identity_correlation_column, temporal_merge.source_row_id_column);
 
     -- Introspect the primary key columns. They will be excluded from UPDATE SET clauses.
     SELECT COALESCE(array_agg(a.attname), '{}'::name[])
     INTO v_pk_cols
     FROM pg_constraint c
     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-    WHERE c.conrelid = p_target_table AND c.contype = 'p';
+    WHERE c.conrelid = temporal_merge.target_table AND c.contype = 'p';
 
     v_internal_keys_to_remove := ARRAY[]::name[];
 
-    IF p_identity_correlation_column IS NOT NULL THEN
-        v_internal_keys_to_remove := v_internal_keys_to_remove || p_identity_correlation_column;
+    IF temporal_merge.identity_correlation_column IS NOT NULL THEN
+        v_internal_keys_to_remove := v_internal_keys_to_remove || temporal_merge.identity_correlation_column;
     ELSE
-        v_internal_keys_to_remove := v_internal_keys_to_remove || p_source_row_id_column;
+        v_internal_keys_to_remove := v_internal_keys_to_remove || temporal_merge.source_row_id_column;
     END IF;
 
     -- If the feedback table exists from a previous call in the same transaction,
@@ -917,17 +917,17 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = p_target_table;
+    WHERE c.oid = temporal_merge.target_table;
 
     SELECT e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
     INTO v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
-      AND e.era_name = p_era_name;
+      AND e.era_name = temporal_merge.era_name;
 
     IF v_valid_from_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge.era_name, temporal_merge.target_table;
     END IF;
 
     -- Auto-detect columns that should be excluded from INSERT statements.
@@ -935,7 +935,7 @@ BEGIN
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_insert_defaulted_columns
     FROM pg_catalog.pg_attribute a
-    WHERE a.attrelid = p_target_table
+    WHERE a.attrelid = temporal_merge.target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
       AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
@@ -948,8 +948,8 @@ BEGIN
         v_insert_defaulted_columns := v_insert_defaulted_columns || v_range_col;
     END IF;
 
-    SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = p_target_table AND attname = v_valid_from_col;
-    SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = p_target_table AND attname = v_valid_until_col;
+    SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = temporal_merge.target_table AND attname = v_valid_from_col;
+    SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = temporal_merge.target_table AND attname = v_valid_until_col;
 
         -- Dynamically construct join clause for composite entity key.
         SELECT
@@ -968,16 +968,16 @@ BEGIN
 
         INSERT INTO temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
-            p_target_table             => p_target_table,
-            p_source_table             => p_source_table,
-            p_identity_columns         => p_identity_columns,
-            p_ephemeral_columns        => p_ephemeral_columns,
-            p_mode                     => p_mode,
-            p_era_name                 => p_era_name,
-            p_source_row_id_column    => p_source_row_id_column,
-            p_identity_correlation_column => p_identity_correlation_column,
-            p_delete_mode              => p_delete_mode,
-            p_natural_identity_columns => p_natural_identity_columns
+            target_table => temporal_merge.target_table,
+            source_table => temporal_merge.source_table,
+            identity_columns => temporal_merge.identity_columns,
+            ephemeral_columns => temporal_merge.ephemeral_columns,
+            mode => temporal_merge.mode,
+            era_name => temporal_merge.era_name,
+            source_row_id_column => temporal_merge.source_row_id_column,
+            identity_correlation_column => temporal_merge.identity_correlation_column,
+            delete_mode => temporal_merge.delete_mode,
+            natural_identity_columns => temporal_merge.natural_identity_columns
         ) p;
 
         -- Conditionally output the plan for debugging, based on a session variable.
@@ -986,7 +986,7 @@ BEGIN
             v_plan_rec RECORD;
         BEGIN
             IF v_log_plan THEN
-                RAISE NOTICE '--- temporal_merge plan for % ---', p_target_table;
+                RAISE NOTICE '--- temporal_merge plan for % ---', temporal_merge.target_table;
                 RAISE NOTICE '(plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)';
                 FOR v_plan_rec IN SELECT plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
                     RAISE NOTICE '%', v_plan_rec;
@@ -1002,13 +1002,13 @@ BEGIN
         WITH target_cols AS (
             SELECT pa.attname, pa.atttypid, pa.attgenerated
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = p_target_table AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = temporal_merge.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         common_data_cols AS (
             SELECT t.attname, t.atttypid
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
-              AND t.attname <> ALL(COALESCE(p_identity_columns, '{}'))
+              AND t.attname <> ALL(COALESCE(temporal_merge.identity_columns, '{}'))
               AND t.attname <> ALL(v_lookup_columns)
               AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
               AND t.attgenerated = '' -- Exclude generated columns
@@ -1021,7 +1021,7 @@ BEGIN
             JOIN target_cols t ON u.attname = t.attname
             UNION
             SELECT u.attname, t.atttypid
-            FROM unnest(p_identity_columns) u(attname)
+            FROM unnest(temporal_merge.identity_columns) u(attname)
             JOIN target_cols t ON u.attname = t.attname
         ),
         cols_for_insert AS (
@@ -1029,7 +1029,7 @@ BEGIN
             SELECT attname, atttypid FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
             UNION
             -- ...plus all identity columns (stable and natural), which must be provided for SCD-2 inserts.
-            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(p_identity_columns) OR attname = ANY(v_lookup_columns)
+            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(temporal_merge.identity_columns) OR attname = ANY(v_lookup_columns)
         ),
         cols_for_founding_insert AS (
             -- For "founding" INSERTs of new entities, we only include columns that do NOT have a default.
@@ -1223,7 +1223,7 @@ BEGIN
                       AND pa.attnum > 0 AND NOT pa.attisdropped
                 ),
                 feedback_id_cols AS (
-                    SELECT unnest(p_identity_columns) as col
+                    SELECT unnest(temporal_merge.identity_columns) as col
                     UNION
                     SELECT 'id'
                     WHERE 'id' IN (SELECT attname FROM target_cols)
@@ -1271,7 +1271,7 @@ BEGIN
         END IF;
 
         -- Back-fill source table with generated IDs if requested.
-        IF p_update_source_with_identity THEN
+        IF temporal_merge.update_source_with_identity THEN
             DECLARE
                 v_source_update_set_clause TEXT;
             BEGIN
@@ -1287,10 +1287,10 @@ BEGIN
                     SELECT key FROM jsonb_object_keys(
                         (SELECT entity_ids FROM temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
                     ) as key
-                    WHERE key = ANY(p_identity_columns)
+                    WHERE key = ANY(temporal_merge.identity_columns)
                 ) j
                 JOIN pg_attribute a ON a.attname = j.key
-                WHERE a.attrelid = p_source_table AND NOT a.attisdropped AND a.attnum > 0;
+                WHERE a.attrelid = temporal_merge.source_table AND NOT a.attisdropped AND a.attnum > 0;
 
                 IF v_source_update_set_clause IS NOT NULL THEN
                     v_sql := format($$
@@ -1307,7 +1307,7 @@ BEGIN
                         SET %2$s
                         FROM map_row_to_entity p
                         WHERE s.%3$I = p.source_row_id;
-                    $$, p_source_table::text, v_source_update_set_clause, p_source_row_id_column);
+                    $$, temporal_merge.source_table::text, v_source_update_set_clause, temporal_merge.source_row_id_column);
                     EXECUTE v_sql;
                 END IF;
             END;
@@ -1398,8 +1398,8 @@ BEGIN
                 FROM feedback_groups fg
                 ORDER BY fg.source_row_id;
         $$,
-            p_source_table::text,       -- 1
-            p_source_row_id_column,     -- 2
+            temporal_merge.source_table::text,       -- 1
+            temporal_merge.source_row_id_column,     -- 2
             v_internal_keys_to_remove   -- 3
         );
         EXECUTE v_sql;
@@ -1410,7 +1410,7 @@ BEGIN
         v_feedback_rec RECORD;
     BEGIN
         IF v_log_feedback THEN
-            RAISE NOTICE '--- temporal_merge feedback for % ---', p_target_table;
+            RAISE NOTICE '--- temporal_merge feedback for % ---', temporal_merge.target_table;
             RAISE NOTICE '(source_row_id,target_entity_ids,status,error_message)';
             FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
                 RAISE NOTICE '%', v_feedback_rec;
@@ -1418,39 +1418,39 @@ BEGIN
         END IF;
     END;
 
-    IF p_update_source_with_feedback THEN
-        IF p_feedback_status_column IS NULL AND p_feedback_error_column IS NULL THEN
-            RAISE EXCEPTION 'When p_update_source_with_feedback is true, at least one feedback column (p_feedback_status_column or p_feedback_error_column) must be provided.';
+    IF temporal_merge.update_source_with_feedback THEN
+        IF temporal_merge.feedback_status_column IS NULL AND temporal_merge.feedback_error_column IS NULL THEN
+            RAISE EXCEPTION 'When update_source_with_feedback is true, at least one feedback column (feedback_status_column or feedback_error_column) must be provided.';
         END IF;
 
         v_feedback_set_clause := '';
 
         -- If a status column is provided, build its part of the SET clause
-        IF p_feedback_status_column IS NOT NULL THEN
-            IF p_feedback_status_key IS NULL THEN
-                RAISE EXCEPTION 'When p_feedback_status_column is provided, p_feedback_status_key must also be provided.';
+        IF temporal_merge.feedback_status_column IS NOT NULL THEN
+            IF temporal_merge.feedback_status_key IS NULL THEN
+                RAISE EXCEPTION 'When feedback_status_column is provided, feedback_status_key must also be provided.';
             END IF;
 
-            PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_feedback_status_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge.source_table AND attname = temporal_merge.feedback_status_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
             IF NOT FOUND THEN
-                RAISE EXCEPTION 'p_feedback_status_column "%" does not exist in source table %s or is not of type jsonb', p_feedback_status_column, p_source_table::text;
+                RAISE EXCEPTION 'feedback_status_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge.feedback_status_column, temporal_merge.source_table::text;
             END IF;
 
             v_feedback_set_clause := v_feedback_set_clause || format(
                 '%I = COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.status)',
-                p_feedback_status_column, p_feedback_status_column, p_feedback_status_key
+                temporal_merge.feedback_status_column, temporal_merge.feedback_status_column, temporal_merge.feedback_status_key
             );
         END IF;
 
         -- If an error column is provided, build its part of the SET clause
-        IF p_feedback_error_column IS NOT NULL THEN
-            IF p_feedback_error_key IS NULL THEN
-                RAISE EXCEPTION 'When p_feedback_error_column is provided, p_feedback_error_key must also be provided.';
+        IF temporal_merge.feedback_error_column IS NOT NULL THEN
+            IF temporal_merge.feedback_error_key IS NULL THEN
+                RAISE EXCEPTION 'When feedback_error_column is provided, feedback_error_key must also be provided.';
             END IF;
 
-            PERFORM 1 FROM pg_attribute WHERE attrelid = p_source_table AND attname = p_feedback_error_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
+            PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge.source_table AND attname = temporal_merge.feedback_error_column AND atttypid = 'jsonb'::regtype AND NOT attisdropped AND attnum > 0;
             IF NOT FOUND THEN
-                RAISE EXCEPTION 'p_feedback_error_column "%" does not exist in source table %s or is not of type jsonb', p_feedback_error_column, p_source_table::text;
+                RAISE EXCEPTION 'feedback_error_column "%" does not exist in source table %s or is not of type jsonb', temporal_merge.feedback_error_column, temporal_merge.source_table::text;
             END IF;
 
             IF v_feedback_set_clause <> '' THEN
@@ -1459,7 +1459,7 @@ BEGIN
 
             v_feedback_set_clause := v_feedback_set_clause || format(
                 '%I = CASE WHEN f.error_message IS NOT NULL THEN COALESCE(s.%I, ''{}''::jsonb) || jsonb_build_object(%L, f.error_message) ELSE COALESCE(s.%I, ''{}''::jsonb) - %L END',
-                p_feedback_error_column, p_feedback_error_column, p_feedback_error_key, p_feedback_error_column, p_feedback_error_key
+                temporal_merge.feedback_error_column, temporal_merge.feedback_error_column, temporal_merge.feedback_error_key, temporal_merge.feedback_error_column, temporal_merge.feedback_error_key
             );
         END IF;
 
@@ -1468,7 +1468,7 @@ BEGIN
             SET %2$s
             FROM pg_temp.temporal_merge_feedback f
             WHERE s.%3$I = f.source_row_id;
-        $$, p_source_table::text, v_feedback_set_clause, p_source_row_id_column);
+        $$, temporal_merge.source_table::text, v_feedback_set_clause, temporal_merge.source_row_id_column);
         EXECUTE v_sql;
     END IF;
 

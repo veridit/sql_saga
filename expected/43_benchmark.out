@@ -227,8 +227,8 @@ BEGIN;
   CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
   INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
   INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
-  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm'::regclass, p_source_table => 'legal_unit_seed_source'::regclass, p_identity_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm'::regclass, p_source_table => 'establishment_seed_source'::regclass, p_identity_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
 END;
 INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED end', 16000);
 INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH start', 0);
@@ -241,8 +241,8 @@ BEGIN;
   -- Source data for 20% INSERT
   INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
   INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
-  CALL sql_saga.temporal_merge(p_target_table => 'legal_unit_tm'::regclass, p_source_table => 'legal_unit_source'::regclass, p_identity_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.temporal_merge(p_target_table => 'establishment_tm'::regclass, p_source_table => 'establishment_source'::regclass, p_identity_columns => ARRAY['id'], p_ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
 END;
 INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH end', 20000);
 SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm

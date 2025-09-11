@@ -57,7 +57,7 @@ SELECT sql_saga.add_era('public.legal_unit', 'valid_from', 'valid_until');
 (1 row)
 
 -- On the impostor table, create a unique key with a non-interfering name.
-SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', p_key_type => 'natural', unique_key_name => 'impostor_uk');
+SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'impostor_uk');
  add_unique_key 
 ----------------
  impostor_uk
@@ -78,7 +78,7 @@ SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_from', 'valid_until')
 (1 row)
 
 -- Use a different, non-interfering name for the unique key on the correct table.
-SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', p_key_type => 'natural', unique_key_name => 'correct_table_uk');
+SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'correct_table_uk');
   add_unique_key  
 ------------------
  correct_table_uk
@@ -99,7 +99,7 @@ SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_from', 'valid_unti
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], key_type => 'natural');
      add_unique_key     
 ------------------------
  establishment_id_valid

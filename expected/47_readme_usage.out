@@ -75,20 +75,20 @@ CREATE TABLE readme.unit_with_range (
 --- Activating sql_saga ---
 -- Register the table as a temporal table (an "era") using default column names.
 -- Explicitly enable synchronization for the 'valid_to' column.
-SELECT sql_saga.add_era('readme.legal_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('readme.legal_unit'::regclass, synchronize_valid_to_column := 'valid_to');
  add_era 
 ---------
  t
 (1 row)
 
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], p_key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
         add_unique_key        
 ------------------------------
  legal_unit_legal_ident_valid
@@ -98,7 +98,7 @@ SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, colum
 SELECT sql_saga.add_unique_key(
     table_oid => 'readme.legal_unit'::regclass,
     column_names => ARRAY['name'],
-    p_key_type => 'predicated',
+    key_type => 'predicated',
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
@@ -113,13 +113,13 @@ SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_fro
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
      add_unique_key     
 ------------------------
  establishment_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], p_key_type => 'natural', unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], key_type => 'natural', unique_key_name => 'establishment_name_valid');
       add_unique_key      
 --------------------------
  establishment_name_valid
@@ -149,13 +149,13 @@ SELECT sql_saga.add_foreign_key(
  projects_legal_unit_id_fkey
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', p_synchronize_range_column := 'num_range');
+SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', synchronize_range_column := 'num_range');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], p_key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
       add_unique_key      
 --------------------------
  unit_with_range_id_valid
@@ -235,14 +235,14 @@ SELECT * FROM source_data ORDER BY row_id;
 --- Step 2a: Merge legal_unit data ---
 CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, founding_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
 CALL sql_saga.temporal_merge(
-    p_target_table => 'readme.legal_unit'::regclass,
-    p_source_table => 'source_legal_unit'::regclass,
-    p_identity_columns => '{id}'::text[],
-    p_ephemeral_columns => '{}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_era_name => 'valid',
-    p_identity_correlation_column => 'founding_id',
-    p_update_source_with_identity => true
+    target_table => 'readme.legal_unit'::regclass,
+    source_table => 'source_legal_unit'::regclass,
+    identity_columns => '{id}'::text[],
+    ephemeral_columns => '{}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id',
+    update_source_with_identity => true
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
@@ -298,13 +298,13 @@ SELECT row_id, founding_id, entity_type, legal_unit_id, name FROM source_data OR
 --- Step 2c: Merge establishment data ---
 CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, founding_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
 CALL sql_saga.temporal_merge(
-    p_target_table => 'readme.establishment'::regclass,
-    p_source_table => 'source_establishment'::regclass,
-    p_identity_columns => '{id}'::text[],
-    p_ephemeral_columns => '{}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_era_name => 'valid',
-    p_identity_correlation_column => 'founding_id'
+    target_table => 'readme.establishment'::regclass,
+    source_table => 'source_establishment'::regclass,
+    identity_columns => '{id}'::text[],
+    ephemeral_columns => '{}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id'
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
@@ -338,7 +338,7 @@ SELECT sql_saga.add_for_portion_of_view('readme.legal_unit'::regclass);
  t
 (1 row)
 
-SELECT sql_saga.add_current_view('readme.legal_unit'::regclass, p_current_func_name := 'readme.test_now()');
+SELECT sql_saga.add_current_view('readme.legal_unit'::regclass, current_func_name := 'readme.test_now()');
  add_current_view 
 ------------------
  t

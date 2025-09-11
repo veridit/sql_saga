@@ -10,7 +10,7 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE uk (id integer, valid_from integer, valid_until integer, CONSTRAINT uk_pkey PRIMARY KEY (id, valid_from, valid_until) DEFERRABLE);
 SELECT sql_saga.add_era('uk', 'valid_from', 'valid_until', 'p');
 -- Adopt an existing primary key
-SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', p_key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
+SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
 TABLE sql_saga.unique_keys;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
 INSERT INTO uk (id, valid_from, valid_until) VALUES (200, 2, 4), (200, 4, 5), (200, 6, 11); -- success
@@ -72,7 +72,7 @@ DROP TABLE uk;
 -- Test primary key creation
 CREATE TABLE pk_test (id integer, valid_from integer, valid_until integer);
 SELECT sql_saga.add_era('pk_test', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('pk_test', '{id}', p_key_type => 'primary');
+SELECT sql_saga.add_unique_key('pk_test', '{id}', key_type => 'primary');
 \d pk_test
 TABLE sql_saga.unique_keys;
 SELECT sql_saga.drop_unique_key('pk_test', '{id}');
@@ -89,7 +89,7 @@ CREATE TABLE public.simple_pk (
 SELECT sql_saga.add_era('public.simple_pk');
 SAVEPOINT expect_error;
 \echo 'Attempting to add a temporal primary key to a table with a simple primary key (should fail)'
-SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', p_key_type => 'primary');
+SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', key_type => 'primary');
 ROLLBACK TO SAVEPOINT expect_error;
 DROP TABLE public.simple_pk;
 
@@ -103,7 +103,7 @@ CREATE TABLE public.generated_always (
 SELECT sql_saga.add_era('public.generated_always');
 SAVEPOINT expect_error_2;
 \echo 'Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)'
-SELECT sql_saga.add_unique_key('public.generated_always', '{id}', p_key_type => 'primary');
+SELECT sql_saga.add_unique_key('public.generated_always', '{id}', key_type => 'primary');
 ROLLBACK TO SAVEPOINT expect_error_2;
 DROP TABLE public.generated_always;
 

@@ -338,11 +338,11 @@ TABLE stm.source;
 BEGIN;
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'stm.parent',
-    p_source_table => 'stm.source',
-    p_identity_columns => '{id}',
-    p_ephemeral_columns => '{}',
-    p_mode => 'MERGE_ENTITY_PATCH'
+    target_table => 'stm.parent',
+    source_table => 'stm.source',
+    identity_columns => '{id}',
+    ephemeral_columns => '{}',
+    mode => 'MERGE_ENTITY_PATCH'
 );
 
 \echo '--- temporal_merge plan ---'

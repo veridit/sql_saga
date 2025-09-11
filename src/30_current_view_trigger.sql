@@ -70,12 +70,12 @@ BEGIN
         source_table_oid := to_regclass(pg_my_temp_schema()::regnamespace::text || '.' || quote_ident(source_table_name));
 
         CALL sql_saga.temporal_merge(
-            p_target_table      := info.table_oid,
-            p_source_table      := source_table_oid,
-            p_identity_columns        := identifier_columns::text[],
-            p_ephemeral_columns := '{}'::text[],
-            p_era_name          := info.era_name,
-            p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+            target_table      := info.table_oid,
+            source_table      := source_table_oid,
+            identity_columns        := identifier_columns::text[],
+            ephemeral_columns := '{}'::text[],
+            era_name          := info.era_name,
+            mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
         );
         DROP TABLE pg_temp.temporal_merge_feedback;
         DROP TABLE pg_temp.temporal_merge_plan;

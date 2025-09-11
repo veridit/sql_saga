@@ -74,14 +74,14 @@ INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, v
 VALUES (1, 1, 101, 50, '2021-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table := 'nk_unit_employment'::regclass,
-    p_source_table := 'nk_source'::regclass,
-    p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
-    p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
-    p_update_source_with_feedback := true,
-    p_feedback_status_column := 'feedback',
-    p_feedback_status_key := 'tm_status'
+    target_table := 'nk_unit_employment'::regclass,
+    source_table := 'nk_source'::regclass,
+    identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
+    ephemeral_columns := '{}'::text[],
+    mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    update_source_with_feedback := true,
+    feedback_status_column := 'feedback',
+    feedback_status_key := 'tm_status'
 );
 
 \echo '--- INSERT: Expected Final State ---'
@@ -103,14 +103,14 @@ INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, v
 VALUES (2, 1, 101, 75, '2023-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table := 'nk_unit_employment'::regclass,
-    p_source_table := 'nk_source'::regclass,
-    p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
-    p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
-    p_update_source_with_feedback := true,
-    p_feedback_status_column := 'feedback',
-    p_feedback_status_key := 'tm_status'
+    target_table := 'nk_unit_employment'::regclass,
+    source_table := 'nk_source'::regclass,
+    identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
+    ephemeral_columns := '{}'::text[],
+    mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    update_source_with_feedback := true,
+    feedback_status_column := 'feedback',
+    feedback_status_key := 'tm_status'
 );
 
 \echo '--- UPDATE: Expected Final State ---'
@@ -135,14 +135,14 @@ INSERT INTO nk_source (row_id, legal_unit_id, establishment_id, num_employees, v
 VALUES (3, 1, 101, 75, '2023-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table := 'nk_unit_employment'::regclass,
-    p_source_table := 'nk_source'::regclass,
-    p_identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
-    p_ephemeral_columns := '{}'::text[],
-    p_mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
-    p_update_source_with_feedback := true,
-    p_feedback_status_column := 'feedback',
-    p_feedback_status_key := 'tm_status'
+    target_table := 'nk_unit_employment'::regclass,
+    source_table := 'nk_source'::regclass,
+    identity_columns := ARRAY['legal_unit_id', 'establishment_id'],
+    ephemeral_columns := '{}'::text[],
+    mode := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode,
+    update_source_with_feedback := true,
+    feedback_status_column := 'feedback',
+    feedback_status_key := 'tm_status'
 );
 
 \echo '--- IDEMPOTENCY: Expected Final State (No Change) ---'

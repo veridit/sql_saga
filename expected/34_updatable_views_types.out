@@ -97,7 +97,7 @@ BEGIN
             EXECUTE format($SQL$
                 CREATE FUNCTION get_current_time() RETURNS %1$s LANGUAGE sql IMMUTABLE AS $$SELECT %2$s$$;
             $SQL$, p_rec.base_type, p_rec.time1);
-            PERFORM sql_saga.add_current_view(v_table_name::regclass, p_current_func_name => 'get_current_time()');
+            PERFORM sql_saga.add_current_view(v_table_name::regclass, current_func_name => 'get_current_time()');
             RAISE NOTICE '4. current: INSERT at time 1';
             EXECUTE format($SQL$
                 INSERT INTO %1$I (id, value) VALUES (2, 'current initial');
@@ -109,7 +109,7 @@ BEGIN
             EXECUTE format($SQL$
                 CREATE OR REPLACE FUNCTION get_current_time() RETURNS %1$s LANGUAGE sql IMMUTABLE AS $$SELECT %2$s$$;
             $SQL$, p_rec.base_type, p_rec.time2);
-            PERFORM sql_saga.add_current_view(v_table_name::regclass, p_current_func_name => 'get_current_time()');
+            PERFORM sql_saga.add_current_view(v_table_name::regclass, current_func_name => 'get_current_time()');
             RAISE NOTICE '5. current: UPDATE (SCD2) at time 2';
             EXECUTE format($SQL$
                 UPDATE %1$I SET value = 'current updated' WHERE id = 2;
@@ -121,7 +121,7 @@ BEGIN
             EXECUTE format($SQL$
                 CREATE OR REPLACE FUNCTION get_current_time() RETURNS %1$s LANGUAGE sql IMMUTABLE AS $$SELECT %2$s$$;
             $SQL$, p_rec.base_type, p_rec.time3);
-            PERFORM sql_saga.add_current_view(v_table_name::regclass, p_current_func_name => 'get_current_time()');
+            PERFORM sql_saga.add_current_view(v_table_name::regclass, current_func_name => 'get_current_time()');
             RAISE NOTICE '6. current: UPDATE (soft-delete) at time 3';
             EXECUTE format($SQL$
                 UPDATE %1$I SET valid_from = 'infinity' WHERE id = 2;

@@ -6,7 +6,7 @@ BEGIN;
 --
 -- Future Scenarios to Test:
 --
--- 1. `p_identity_correlation_column` behavior:
+-- 1. `identity_correlation_column` behavior:
 --    - Scenario 1b (Existing Entity): Create a target entity. Create a source table
 --      with a `founding_id` and data that updates the existing entity. Verify
 --      that `founding_id` is correctly ignored and the operation proceeds as a
@@ -15,8 +15,8 @@ BEGIN;
 -- 2. Table structure variations:
 --
 -- 3. Parameter combinations:
---    - Scenario 3a: Test `p_update_source_with_identity = true` in
---      conjunction with a multi-row `p_identity_correlation_column` scenario to ensure
+--    - Scenario 3a: Test `update_source_with_identity = true` in
+--      conjunction with a multi-row `identity_correlation_column` scenario to ensure
 --      the generated surrogate key is correctly back-filled to all source rows
 --      sharing the founding_id.
 
@@ -42,10 +42,10 @@ CREATE TEMP TABLE tm_gen_col_source (
 INSERT INTO tm_gen_col_source VALUES (1, 1, 100, '2024-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_gen_col_target'::regclass,
-    p_source_table      := 'tm_gen_col_source'::regclass,
-    p_identity_columns        := ARRAY['id']::text[],
-    p_mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
+    target_table      := 'tm_gen_col_target'::regclass,
+    source_table      := 'tm_gen_col_source'::regclass,
+    identity_columns        := ARRAY['id']::text[],
+    mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
 
 -- Verify that the generated column was computed correctly.
@@ -68,10 +68,10 @@ CREATE TEMP TABLE tm_mix_bug_source (row_id int, id int, value text, valid_from 
 INSERT INTO tm_mix_bug_source VALUES (1, 2, 'new', '2024-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_mix_bug_target'::regclass,
-    p_source_table      := 'tm_mix_bug_source'::regclass,
-    p_identity_columns        := ARRAY['id']::text[],
-    p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+    target_table      := 'tm_mix_bug_target'::regclass,
+    source_table      := 'tm_mix_bug_source'::regclass,
+    identity_columns        := ARRAY['id']::text[],
+    mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 
 -- Verify the plan does not contain chaotic operations.
@@ -95,38 +95,38 @@ TABLE tm_mix_bug_target ORDER BY id;
 ROLLBACK TO SAVEPOINT scenario_8;
 
 SAVEPOINT scenario_9;
--- Scenario 9: Test that `temporal_merge` fails gracefully if p_identity_columns is empty or NULL.
+-- Scenario 9: Test that `temporal_merge` fails gracefully if identity_columns is empty or NULL.
 CREATE TABLE tm_bad_params_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_bad_params_target', 'valid_from', 'valid_until');
 CREATE TEMP TABLE tm_bad_params_source (row_id int, id int, value text, valid_from date, valid_until date);
 
--- Test with NULL p_identity_columns
+-- Test with NULL identity_columns
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        p_target_table      := 'tm_bad_params_target'::regclass,
-        p_source_table      := 'tm_bad_params_source'::regclass,
-        p_identity_columns        := NULL,
-        p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+        target_table      := 'tm_bad_params_target'::regclass,
+        source_table      := 'tm_bad_params_source'::regclass,
+        identity_columns        := NULL,
+        mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for NULL p_identity_columns';
+    RAISE EXCEPTION 'temporal_merge should have failed for NULL identity_columns';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for NULL p_identity_columns: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for NULL identity_columns: %', SQLERRM;
 END;
 $$;
 
--- Test with empty p_identity_columns
+-- Test with empty identity_columns
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        p_target_table      := 'tm_bad_params_target'::regclass,
-        p_source_table      := 'tm_bad_params_source'::regclass,
-        p_identity_columns        := ARRAY[]::TEXT[],
-        p_mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+        target_table      := 'tm_bad_params_target'::regclass,
+        source_table      := 'tm_bad_params_source'::regclass,
+        identity_columns        := ARRAY[]::TEXT[],
+        mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for empty p_identity_columns';
+    RAISE EXCEPTION 'temporal_merge should have failed for empty identity_columns';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for empty p_identity_columns: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for empty identity_columns: %', SQLERRM;
 END;
 $$;
 ROLLBACK TO SAVEPOINT scenario_9;
@@ -137,40 +137,40 @@ CREATE TABLE tm_bad_cols_target (id int, value text, valid_from date, valid_unti
 SELECT sql_saga.add_era('tm_bad_cols_target', 'valid_from', 'valid_until');
 CREATE TEMP TABLE tm_bad_cols_source (real_row_id int, id int, value text, valid_from date, valid_until date, real_founding_id int);
 
--- Test with non-existent p_source_row_id_column
+-- Test with non-existent source_row_id_column
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        p_target_table      := 'tm_bad_cols_target'::regclass,
-        p_source_table      := 'tm_bad_cols_source'::regclass,
-        p_identity_columns        := ARRAY['id'],
-        p_source_row_id_column := 'non_existent_row_id'::name
+        target_table      := 'tm_bad_cols_target'::regclass,
+        source_table      := 'tm_bad_cols_source'::regclass,
+        identity_columns        := ARRAY['id'],
+        source_row_id_column := 'non_existent_row_id'::name
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for non-existent p_source_row_id_column';
+    RAISE EXCEPTION 'temporal_merge should have failed for non-existent source_row_id_column';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for non-existent p_source_row_id_column: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for non-existent source_row_id_column: %', SQLERRM;
 END;
 $$;
 
--- Test with non-existent p_identity_correlation_column
+-- Test with non-existent identity_correlation_column
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        p_target_table      := 'tm_bad_cols_target'::regclass,
-        p_source_table      := 'tm_bad_cols_source'::regclass,
-        p_identity_columns        := ARRAY['id'],
-        p_source_row_id_column := 'real_row_id',
-        p_identity_correlation_column := 'non_existent_founding_id'::name
+        target_table      := 'tm_bad_cols_target'::regclass,
+        source_table      := 'tm_bad_cols_source'::regclass,
+        identity_columns        := ARRAY['id'],
+        source_row_id_column := 'real_row_id',
+        identity_correlation_column := 'non_existent_founding_id'::name
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for non-existent p_identity_correlation_column';
+    RAISE EXCEPTION 'temporal_merge should have failed for non-existent identity_correlation_column';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for non-existent p_identity_correlation_column: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for non-existent identity_correlation_column: %', SQLERRM;
 END;
 $$;
 ROLLBACK TO SAVEPOINT scenario_10;
 
 SAVEPOINT scenario_11;
--- Scenario 11: Test using a non-default p_source_row_id_column name.
+-- Scenario 11: Test using a non-default source_row_id_column name.
 CREATE TABLE tm_custom_rowid_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('tm_custom_rowid_target', ARRAY['id']);
@@ -185,10 +185,10 @@ CREATE TEMP TABLE tm_custom_rowid_source (
 INSERT INTO tm_custom_rowid_source VALUES (101, 1, 'A', '2024-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_custom_rowid_target'::regclass,
-    p_source_table      := 'tm_custom_rowid_source'::regclass,
-    p_identity_columns        := ARRAY['id'],
-    p_source_row_id_column := 'source_pk'::name
+    target_table      := 'tm_custom_rowid_target'::regclass,
+    source_table      := 'tm_custom_rowid_source'::regclass,
+    identity_columns        := ARRAY['id'],
+    source_row_id_column := 'source_pk'::name
 );
 
 -- Verify that the merge was successful and feedback works.
@@ -205,7 +205,7 @@ SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feed
 ROLLBACK TO SAVEPOINT scenario_11;
 
 SAVEPOINT scenario_12;
--- Scenario 12: Test that `temporal_merge` fails if the default p_source_row_id_column ('row_id') does not exist.
+-- Scenario 12: Test that `temporal_merge` fails if the default source_row_id_column ('row_id') does not exist.
 CREATE TABLE tm_no_rowid_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_from', 'valid_until');
 CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, valid_from date, valid_until date);
@@ -213,10 +213,10 @@ CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, va
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        p_target_table      := 'tm_no_rowid_target'::regclass,
-        p_source_table      := 'tm_no_rowid_sources'::regclass,
-        p_identity_columns        := ARRAY['id']
-        -- p_source_row_id_column is deliberately omitted to test the default
+        target_table      := 'tm_no_rowid_target'::regclass,
+        source_table      := 'tm_no_rowid_sources'::regclass,
+        identity_columns        := ARRAY['id']
+        -- source_row_id_column is deliberately omitted to test the default
     );
     RAISE EXCEPTION 'temporal_merge should have failed for missing default row_id column';
 EXCEPTION WHEN others THEN
@@ -246,11 +246,11 @@ CREATE TEMP TABLE tm_weird_names_source (
 INSERT INTO tm_weird_names_source VALUES (1, 1, 'X', '2024-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_weird_names'::regclass,
-    p_source_table      := 'tm_weird_names_source'::regclass,
-    p_identity_columns        := ARRAY['unit_pk'],
-    p_era_name          := 'timeline'::name,
-    p_source_row_id_column := 'source_op_id'::name
+    target_table      := 'tm_weird_names'::regclass,
+    source_table      := 'tm_weird_names_source'::regclass,
+    identity_columns        := ARRAY['unit_pk'],
+    era_name          := 'timeline'::name,
+    source_row_id_column := 'source_op_id'::name
 );
 
 -- Verify merge was successful
@@ -285,10 +285,10 @@ CREATE TEMP TABLE tm_no_data_cols_source (
 INSERT INTO tm_no_data_cols_source VALUES (1, 1, '2024-01-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_no_data_cols_target'::regclass,
-    p_source_table      := 'tm_no_data_cols_source'::regclass,
-    p_identity_columns        := ARRAY['id'],
-    p_mode              := 'INSERT_NEW_ENTITIES'
+    target_table      := 'tm_no_data_cols_target'::regclass,
+    source_table      := 'tm_no_data_cols_source'::regclass,
+    identity_columns        := ARRAY['id'],
+    mode              := 'INSERT_NEW_ENTITIES'
 );
 
 -- Verify merge was successful and feedback is correct
@@ -323,10 +323,10 @@ CREATE TEMP TABLE tm_extra_cols_source (
 INSERT INTO tm_extra_cols_source VALUES (1, 1, 'A', 'ignore me', '2024-01-01', 'infinity', 999);
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_extra_cols_target'::regclass,
-    p_source_table      := 'tm_extra_cols_source'::regclass,
-    p_identity_columns        := ARRAY['id'],
-    p_mode              := 'INSERT_NEW_ENTITIES'
+    target_table      := 'tm_extra_cols_target'::regclass,
+    source_table      := 'tm_extra_cols_source'::regclass,
+    identity_columns        := ARRAY['id'],
+    mode              := 'INSERT_NEW_ENTITIES'
 );
 
 -- Verify merge was successful
@@ -337,7 +337,7 @@ TABLE tm_extra_cols_target;
 ROLLBACK TO SAVEPOINT scenario_15;
 
 SAVEPOINT scenario_16;
--- Scenario 16: Test `p_identity_correlation_column` for creating a new entity from multiple source rows.
+-- Scenario 16: Test `identity_correlation_column` for creating a new entity from multiple source rows.
 CREATE TABLE tm_founding_target (
     id serial primary key,
     entity_ident text,
@@ -361,11 +361,11 @@ INSERT INTO tm_founding_source VALUES
 (2, 101, 'NEW_ENTITY_1', 'B', '2024-06-01', 'infinity');
 
 CALL sql_saga.temporal_merge(
-    p_target_table      := 'tm_founding_target'::regclass,
-    p_source_table      := 'tm_founding_source'::regclass,
-    p_identity_columns        := ARRAY['entity_ident'],
-    p_mode              := 'INSERT_NEW_ENTITIES',
-    p_identity_correlation_column := 'founding_group_id'::name
+    target_table      := 'tm_founding_target'::regclass,
+    source_table      := 'tm_founding_source'::regclass,
+    identity_columns        := ARRAY['entity_ident'],
+    mode              := 'INSERT_NEW_ENTITIES',
+    identity_correlation_column := 'founding_group_id'::name
 );
 
 -- Verify that a single new entity was created with two historical slices.

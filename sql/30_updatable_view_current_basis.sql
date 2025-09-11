@@ -29,7 +29,7 @@ TABLE employees ORDER BY id, valid_from;
 -- ==================
 
 -- Add the current view, overriding the now() function for stable tests
-SELECT sql_saga.add_current_view('employees'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('employees'::regclass, current_func_name := 'test_now()');
 \d employees__current_valid
 TABLE sql_saga.updatable_view;
 
@@ -39,7 +39,7 @@ CREATE TABLE widgets (id int, valid_from int, valid_until int);
 SELECT sql_saga.add_era('widgets', 'valid_from', 'valid_until');
 SAVEPOINT expect_fail;
 -- This will fail because the era is not time-based, which is the point of the test.
-SELECT sql_saga.add_current_view('widgets'::regclass, p_current_func_name := 'test_now()');
+SELECT sql_saga.add_current_view('widgets'::regclass, current_func_name := 'test_now()');
 ROLLBACK TO expect_fail;
 ROLLBACK TO before_failure_setup;
 

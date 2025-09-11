@@ -33,7 +33,7 @@ SELECT sql_saga.add_era('parent'::regclass, 'valid_from', 'valid_until', 'p');
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
  add_unique_key 
 ----------------
  parent_id_p
@@ -165,7 +165,7 @@ TABLE sql_saga.unique_keys;
 (0 rows)
 
 -- Test original drop_unique_key (with positional and named arguments)
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
  add_unique_key 
 ----------------
  parent_id_p
@@ -190,7 +190,7 @@ TABLE sql_saga.unique_keys;
 (0 rows)
 
 -- Re-create to test named arguments
-SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', p_key_type => 'natural');
+SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
  add_unique_key 
 ----------------
  parent_id_p

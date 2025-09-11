@@ -200,14 +200,14 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_1',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_1',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -304,14 +304,14 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_2',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_2',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -408,14 +408,14 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit',
-    p_source_table             => 'temp_source_3',
-    p_identity_columns         => NULL,
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit',
+    source_table => 'temp_source_3',
+    identity_columns => NULL,
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -508,14 +508,14 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_pk',
-    p_source_table             => 'temp_source_4',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_pk',
+    source_table => 'temp_source_4',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -612,14 +612,14 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_gen',
-    p_source_table             => 'temp_source_5',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_gen',
+    source_table => 'temp_source_5',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -716,14 +716,14 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_pk',
-    p_source_table             => 'temp_source_6',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_pk',
+    source_table => 'temp_source_6',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -820,14 +820,14 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_id_gen',
-    p_source_table             => 'temp_source_7',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_id_gen',
+    source_table => 'temp_source_7',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
@@ -924,14 +924,14 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmtc.stat_for_unit_no_pk',
-    p_source_table             => 'temp_source_8',
-    p_identity_columns         => '{id}'::TEXT[],
-    p_natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => 'tmtc.stat_for_unit_no_pk',
+    source_table => 'temp_source_8',
+    identity_columns => '{id}'::TEXT[],
+    natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---

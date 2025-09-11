@@ -136,12 +136,12 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_1',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_1',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
 
@@ -184,12 +184,12 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_2',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_2',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -232,12 +232,12 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_3',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_3',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -280,12 +280,12 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_4',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_4',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -330,12 +330,12 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_5',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_5',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -378,12 +378,12 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_6',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_6',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -426,12 +426,12 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_7',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_7',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -474,12 +474,12 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_8',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_8',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -522,12 +522,12 @@ SELECT * FROM temp_source_9 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_9',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_9',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -570,12 +570,12 @@ SELECT * FROM temp_source_10 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_10',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_10',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -618,12 +618,12 @@ SELECT * FROM temp_source_11 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_11',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_11',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -670,12 +670,12 @@ SELECT * FROM temp_source_12 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_12',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_12',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -717,12 +717,12 @@ SELECT * FROM temp_source_13 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_13',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_13',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -764,12 +764,12 @@ SELECT * FROM temp_source_14 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_14',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_14',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -813,12 +813,12 @@ SELECT * FROM temp_source_15 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_15',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_15',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -860,12 +860,12 @@ SELECT * FROM temp_source_16 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_16',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_16',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -904,12 +904,12 @@ SELECT * FROM temp_source_17 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_17',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_17',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -955,12 +955,12 @@ SELECT * FROM temp_source_18 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_18',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'PATCH_FOR_PORTION_OF',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_18',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'PATCH_FOR_PORTION_OF',
+    era_name => 'valid'
 );
 SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
 SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
@@ -997,12 +997,12 @@ SELECT * FROM temp_source_19 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_19',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'REPLACE_FOR_PORTION_OF',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_19',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'REPLACE_FOR_PORTION_OF',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan (Empty since not found) ---'
@@ -1040,12 +1040,12 @@ SELECT * FROM temp_source_20 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_20',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_20',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -1086,12 +1086,12 @@ SELECT * FROM temp_source_21 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_21',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'PATCH_FOR_PORTION_OF',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_21',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'PATCH_FOR_PORTION_OF',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -1134,12 +1134,12 @@ SELECT * FROM temp_source_22 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_22',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_22',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -1180,12 +1180,12 @@ SELECT * FROM temp_source_23 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_23',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_23',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan (a single IDENTICAL operation) ---'
@@ -1230,12 +1230,12 @@ SELECT * FROM temp_source_24 ORDER BY row_id;
 
 -- Run merge
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_24',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_24',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 -- Verify plan
 \echo '--- Planner: Expected Plan ---'
@@ -1285,12 +1285,12 @@ SELECT * FROM temp_source_35 ORDER BY row_id;
 
 \echo '--- Orchestrator: Calling with `patch_only` on non-existent entity... ---'
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_35',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'PATCH_FOR_PORTION_OF',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_35',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'PATCH_FOR_PORTION_OF',
+    era_name => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
 SELECT * FROM (VALUES (301, '[]'::JSONB, 'SKIPPED_NO_TARGET'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -1313,12 +1313,12 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_35 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_35',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_35',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (301, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -1335,12 +1335,12 @@ SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment
 SELECT * FROM temp_source_35 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_35',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'PATCH_FOR_PORTION_OF',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_35',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'PATCH_FOR_PORTION_OF',
+    era_name => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (302, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -1388,12 +1388,12 @@ SELECT * FROM temp_source_36 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_36',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_36',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (A single INSERT for the full period) ---'
@@ -1442,12 +1442,12 @@ SELECT * FROM temp_source_37 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_37',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_37',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (A single INSERT for the full period) ---'
@@ -1495,12 +1495,12 @@ SELECT * FROM temp_source_38 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_38',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_38',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (Two separate INSERTs) ---'
@@ -1549,12 +1549,12 @@ SELECT * FROM temp_source_39 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_39',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_39',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (A single UPDATE extending the target row) ---'
@@ -1659,12 +1659,12 @@ SELECT * FROM temp_source_40 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_40',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_40',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -1718,7 +1718,7 @@ CREATE TABLE temporal_merge_test_vt.test_target (
     PRIMARY KEY (id, valid_from)
 );
 
-SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until', p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
 
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_vt.reset_target() LANGUAGE plpgsql AS $$
@@ -1754,12 +1754,12 @@ SELECT * FROM temp_source_41 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_41',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_41',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -1848,12 +1848,12 @@ SELECT id, valid_from, valid_until, status FROM temporal_merge_test_me.test_targ
 SELECT * FROM temp_source_42 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_42',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_42',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (Entity 1 should have one INSERT, Entity 2 should have two) ---'
@@ -1960,12 +1960,12 @@ SELECT * FROM temp_source_43 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_43',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_PATCH',
-    p_era_name                 => 'valid'
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_43',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_PATCH',
+    era_name => 'valid'
 );
 
 \echo '--- Planner: Expected Plan (Entity 10 should have one INSERT, Entity 20 should have two) ---'
@@ -2051,13 +2051,13 @@ SELECT * FROM temp_source_44 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_44',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => :'ephemeral_cols'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_44',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => :'ephemeral_cols'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -2132,13 +2132,13 @@ SELECT * FROM temp_source_45 ORDER BY row_id;
 
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
-    p_target_table             => :'target_table'::regclass,
-    p_source_table             => 'temp_source_45',
-    p_identity_columns               => :'entity_id_cols'::TEXT[],
-    p_ephemeral_columns        => '{}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_update_source_with_identity => true
+    target_table => :'target_table'::regclass,
+    source_table => 'temp_source_45',
+    identity_columns => :'entity_id_cols'::TEXT[],
+    ephemeral_columns => '{}'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -2216,12 +2216,12 @@ TABLE tm_44_not_null_test.test_unit;
 TABLE source_46;
 
 CALL sql_saga.temporal_merge(
-  p_target_table => 'tm_44_not_null_test.test_unit'::regclass,
-  p_source_table => 'source_46'::regclass,
-  p_identity_columns => ARRAY['id'],
-  p_ephemeral_columns => ARRAY[]::TEXT[],
-  p_mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-  p_source_row_id_column => 'row_id'
+  target_table => 'tm_44_not_null_test.test_unit'::regclass,
+  source_table => 'source_46'::regclass,
+  identity_columns => ARRAY['id'],
+  ephemeral_columns => ARRAY[]::TEXT[],
+  mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+  source_row_id_column => 'row_id'
 );
 
 \echo '--- Planner: Actual Plan ---'

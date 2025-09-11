@@ -24,9 +24,9 @@ INSERT INTO source_int VALUES
     (102, 2, 10, 20, 'New');     -- Insert
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmt.target_int'::regclass,
-    p_source_table => 'source_int'::regclass,
-    p_identity_columns => '{id}'::text[]
+    target_table => 'tmt.target_int'::regclass,
+    source_table => 'source_int'::regclass,
+    identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -52,9 +52,9 @@ INSERT INTO source_bigint VALUES
     (102, 2, 10, 20, 'New');     -- Insert
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmt.target_bigint'::regclass,
-    p_source_table => 'source_bigint'::regclass,
-    p_identity_columns => '{id}'::text[]
+    target_table => 'tmt.target_bigint'::regclass,
+    source_table => 'source_bigint'::regclass,
+    identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -80,9 +80,9 @@ INSERT INTO source_numeric VALUES
     (102, 2, 10.0, 20.0, 'New');     -- Insert
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmt.target_numeric'::regclass,
-    p_source_table => 'source_numeric'::regclass,
-    p_identity_columns => '{id}'::text[]
+    target_table => 'tmt.target_numeric'::regclass,
+    source_table => 'source_numeric'::regclass,
+    identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -108,9 +108,9 @@ INSERT INTO source_timestamp VALUES
     (102, 2, '2024-01-01 10:00', '2024-01-01 20:00', 'New');     -- Insert
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmt.target_timestamp'::regclass,
-    p_source_table => 'source_timestamp'::regclass,
-    p_identity_columns => '{id}'::text[]
+    target_table => 'tmt.target_timestamp'::regclass,
+    source_table => 'source_timestamp'::regclass,
+    identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -136,9 +136,9 @@ INSERT INTO source_timestamptz VALUES
     (102, 2, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'New');     -- Insert
 
 CALL sql_saga.temporal_merge(
-    p_target_table => 'tmt.target_timestamptz'::regclass,
-    p_source_table => 'source_timestamptz'::regclass,
-    p_identity_columns => '{id}'::text[]
+    target_table => 'tmt.target_timestamptz'::regclass,
+    source_table => 'source_timestamptz'::regclass,
+    identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'

@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', p_current_func_name text DEFAULT NULL)
+CREATE FUNCTION sql_saga.add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', current_func_name text DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -55,7 +55,7 @@ BEGIN
             END IF;
 
             -- Determine now() function based on range subtype, but allow override for testing
-            IF p_current_func_name IS NULL THEN
+            IF current_func_name IS NULL THEN
                 SELECT CASE t.typname
                     WHEN 'date' THEN 'CURRENT_DATE'
                     ELSE 'now()'
@@ -63,7 +63,7 @@ BEGIN
                 FROM pg_type t
                 WHERE t.oid = r.range_subtype;
             ELSE
-                now_function := p_current_func_name;
+                now_function := current_func_name;
             END IF;
 
             -- Validate the function name to prevent SQL injection.
@@ -73,7 +73,7 @@ BEGIN
                     PERFORM now_function::regprocedure;
                 EXCEPTION
                     WHEN OTHERS THEN
-                        RAISE EXCEPTION 'p_current_func_name must be "CURRENT_DATE", "now()", or a valid function signature, but is "%"', now_function;
+                        RAISE EXCEPTION 'current_func_name must be "CURRENT_DATE", "now()", or a valid function signature, but is "%"', now_function;
                 END;
             END IF;
 

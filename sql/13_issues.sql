@@ -121,7 +121,7 @@ CREATE TABLE t_uk_gen (
     valid_until date,
     valid_end_date date -- synchronized column
 );
-SELECT sql_saga.add_era('t_uk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+SELECT sql_saga.add_era('t_uk_gen', synchronize_valid_to_column := 'valid_end_date');
 SELECT sql_saga.add_unique_key('t_uk_gen', ARRAY['id']);
 
 CREATE TABLE t_fk_gen (
@@ -131,7 +131,7 @@ CREATE TABLE t_fk_gen (
     valid_until date,
     valid_end_date date -- synchronized column
 );
-SELECT sql_saga.add_era('t_fk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+SELECT sql_saga.add_era('t_fk_gen', synchronize_valid_to_column := 'valid_end_date');
 
 -- This should succeed and create a trigger that watches valid_end_date
 SELECT sql_saga.add_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');

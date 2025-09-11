@@ -51,7 +51,7 @@ CREATE TABLE repro.stat_for_unit (
 );
 
 -- Enable sql_saga on the target table
-SELECT sql_saga.add_era('repro.stat_for_unit'::regclass, p_synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('repro.stat_for_unit'::regclass, synchronize_valid_to_column := 'valid_to');
 SELECT sql_saga.add_unique_key('repro.stat_for_unit'::regclass, ARRAY['id']);
 
 
@@ -101,15 +101,15 @@ INSERT INTO temp_stat_merge_source (
 -- correctly handles source tables that are missing columns with DEFAULT values.
 \echo '--- Calling temporal_merge (EXPECTED TO SUCCEED) ---'
 CALL sql_saga.temporal_merge(
-    p_target_table => 'repro.stat_for_unit',
-    p_source_table => 'temp_stat_merge_source',
-    p_identity_columns => ARRAY['id'],
-    p_ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_era_name => 'valid',
-    p_source_row_id_column => 'synthetic_row_id',
-    p_identity_correlation_column => 'founding_key',
-    p_update_source_with_identity => true
+    target_table => 'repro.stat_for_unit',
+    source_table => 'temp_stat_merge_source',
+    identity_columns => ARRAY['id'],
+    ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    source_row_id_column => 'synthetic_row_id',
+    identity_correlation_column => 'founding_key',
+    update_source_with_identity => true
 );
 
 \echo '--- Verification: Check if data was inserted and created_at defaulted ---'

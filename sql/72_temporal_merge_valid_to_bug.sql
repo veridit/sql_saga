@@ -13,7 +13,7 @@ CREATE TABLE public.my_temporal_table (
     valid_until DATE,
     valid_to DATE
 );
-SELECT sql_saga.add_era('public.my_temporal_table', p_synchronize_valid_to_column => 'valid_to');
+SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
 SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id'], unique_key_name => 'my_temporal_table_id_valid');
 
 
@@ -48,13 +48,13 @@ TABLE source_data;
 -- This call should now succeed. The planner will correctly calculate the
 -- `valid_to` for the shortened time slice, preventing a constraint violation.
 CALL sql_saga.temporal_merge(
-    p_target_table => 'public.my_temporal_table',
-    p_source_table => 'source_data',
-    p_identity_columns => ARRAY['id'],
-    p_ephemeral_columns => '{}',
-    p_mode => 'MERGE_ENTITY_REPLACE',
-    p_identity_correlation_column => 'founding_row_id',
-    p_source_row_id_column => 'data_row_id'
+    target_table => 'public.my_temporal_table',
+    source_table => 'source_data',
+    identity_columns => ARRAY['id'],
+    ephemeral_columns => '{}',
+    mode => 'MERGE_ENTITY_REPLACE',
+    identity_correlation_column => 'founding_row_id',
+    source_row_id_column => 'data_row_id'
 );
 
 \echo '--- VERIFICATION: Final state of my_temporal_table ---'
@@ -78,7 +78,7 @@ CREATE TABLE public.my_temporal_table (
     valid_until DATE,
     valid_to DATE
 );
-SELECT sql_saga.add_era('public.my_temporal_table', p_synchronize_valid_to_column => 'valid_to');
+SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
 SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id']);
 
 -- Insert one long-lived entity.
@@ -104,12 +104,12 @@ TABLE source_data_delete;
 
 \echo '--- VERIFY FIX (DELETE_FOR_PORTION_OF): Call temporal_merge ---'
 CALL sql_saga.temporal_merge(
-    p_target_table => 'public.my_temporal_table',
-    p_source_table => 'source_data_delete',
-    p_identity_columns => ARRAY['id'],
-    p_ephemeral_columns => '{}',
-    p_mode => 'DELETE_FOR_PORTION_OF',
-    p_source_row_id_column => 'data_row_id'
+    target_table => 'public.my_temporal_table',
+    source_table => 'source_data_delete',
+    identity_columns => ARRAY['id'],
+    ephemeral_columns => '{}',
+    mode => 'DELETE_FOR_PORTION_OF',
+    source_row_id_column => 'data_row_id'
 );
 
 \echo '--- VERIFICATION: Final state of my_temporal_table ---'

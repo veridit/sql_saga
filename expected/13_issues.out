@@ -273,7 +273,7 @@ CREATE TABLE t_uk_gen (
     valid_until date,
     valid_end_date date -- synchronized column
 );
-SELECT sql_saga.add_era('t_uk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+SELECT sql_saga.add_era('t_uk_gen', synchronize_valid_to_column := 'valid_end_date');
 NOTICE:  sql_saga: Created trigger "t_uk_gen_synchronize_temporal_columns_trigger" on table t_uk_gen to synchronize columns: valid_end_date
  add_era 
 ---------
@@ -293,7 +293,7 @@ CREATE TABLE t_fk_gen (
     valid_until date,
     valid_end_date date -- synchronized column
 );
-SELECT sql_saga.add_era('t_fk_gen', p_synchronize_valid_to_column := 'valid_end_date');
+SELECT sql_saga.add_era('t_fk_gen', synchronize_valid_to_column := 'valid_end_date');
 NOTICE:  sql_saga: Created trigger "t_fk_gen_synchronize_temporal_columns_trigger" on table t_fk_gen to synchronize columns: valid_end_date
  add_era 
 ---------

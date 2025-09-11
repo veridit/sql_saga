@@ -5,11 +5,11 @@ CREATE OR REPLACE FUNCTION sql_saga.add_era(
     era_name name DEFAULT 'valid',
     range_type regtype DEFAULT NULL,
     bounds_check_constraint name DEFAULT NULL,
-    p_synchronize_valid_to_column name DEFAULT NULL,
-    p_synchronize_range_column name DEFAULT NULL,
+    synchronize_valid_to_column name DEFAULT NULL,
+    synchronize_range_column name DEFAULT NULL,
     create_columns boolean DEFAULT false,
-    p_add_defaults boolean DEFAULT true,
-    p_add_bounds_check boolean DEFAULT true)
+    add_defaults boolean DEFAULT true,
+    add_bounds_check boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -248,9 +248,9 @@ BEGIN
         FROM pg_catalog.pg_type t
         WHERE t.oid = valid_from_type;
 
-        IF p_add_defaults THEN
+        IF add_defaults THEN
             IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
-                IF p_synchronize_valid_to_column IS NOT NULL OR p_synchronize_range_column IS NOT NULL THEN
+                IF synchronize_valid_to_column IS NOT NULL OR synchronize_range_column IS NOT NULL THEN
                     -- If there are synchronized columns, the trigger will handle defaults.
                     v_trigger_applies_defaults := true;
                 ELSE
@@ -260,7 +260,7 @@ BEGIN
             END IF;
         END IF;
 
-        IF p_add_bounds_check THEN
+        IF add_bounds_check THEN
             IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
                 condef := format('CHECK ((%I < %I) AND (%I > ''-infinity''))', valid_from_column_name /* %I */, valid_until_column_name /* %I */, valid_from_column_name /* %I */);
             ELSE
@@ -372,10 +372,10 @@ BEGIN
     END;
 
     -- Create the unified synchronization trigger if any sync columns are specified.
-    IF p_synchronize_valid_to_column IS NOT NULL OR p_synchronize_range_column IS NOT NULL THEN
+    IF synchronize_valid_to_column IS NOT NULL OR synchronize_range_column IS NOT NULL THEN
         DECLARE
-            v_to_col      name := p_synchronize_valid_to_column;
-            v_range_col   name := p_synchronize_range_column;
+            v_to_col      name := synchronize_valid_to_column;
+            v_range_col   name := synchronize_range_column;
             sync_cols     name[] := ARRAY[]::name[];
             trigger_name  name;
             subtype_is_discrete boolean;

@@ -5,7 +5,7 @@ BEGIN;
 \echo 'Test: Temporal Merge with Dependent Row Support'
 \echo 'This test validates that temporal_merge can resolve dependencies within a'
 \echo 'single batch (e.g., an INSERT and a subsequent REPLACE for the same new'
-\echo 'entity) using the p_identity_correlation_column parameter.'
+\echo 'entity) using the identity_correlation_column parameter.'
 \echo '----------------------------------------------------------------------------'
 
 -- Setup
@@ -69,14 +69,14 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 
 -- Run the orchestrator.
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmisd.establishment',
-    p_source_table             => 'temp_source_1',
-    p_identity_columns               => '{id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_identity_correlation_column       => 'founding_id',
-    p_update_source_with_identity => true
+    target_table => 'tmisd.establishment',
+    source_table => 'temp_source_1',
+    identity_columns => '{id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -144,14 +144,14 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 
 -- Run the orchestrator
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmisd.establishment',
-    p_source_table             => 'temp_source_2',
-    p_identity_columns               => '{id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_identity_correlation_column       => 'founding_id',
-    p_update_source_with_identity => true
+    target_table => 'tmisd.establishment',
+    source_table => 'temp_source_2',
+    identity_columns => '{id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id',
+    update_source_with_identity => true
 );
 
 \echo '--- Planner: Expected Plan ---'
@@ -236,14 +236,14 @@ SELECT * FROM v_source_3b ORDER BY row_id;
 
 \echo '--- First call: processing only the first part of the founding set (row_id=301) via v_source_3a ---'
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmisd.establishment',
-    p_source_table             => 'v_source_3a',
-    p_identity_columns               => '{id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_identity_correlation_column       => 'founding_id',
-    p_update_source_with_identity => true
+    target_table => 'tmisd.establishment',
+    source_table => 'v_source_3a',
+    identity_columns => '{id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id',
+    update_source_with_identity => true
 );
 
 \echo '--- Target: State after first call (one new entity created) ---'
@@ -263,14 +263,14 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 -- source view, temporal_merge treats it as the founding of a new entity. It
 -- does not know that founding_id=30 was used in a previous call.
 CALL sql_saga.temporal_merge(
-    p_target_table             => 'tmisd.establishment',
-    p_source_table             => 'v_source_3b',
-    p_identity_columns               => '{id}'::TEXT[],
-    p_ephemeral_columns        => '{edit_comment}'::TEXT[],
-    p_mode                     => 'MERGE_ENTITY_REPLACE',
-    p_era_name                 => 'valid',
-    p_identity_correlation_column       => 'founding_id',
-    p_update_source_with_identity => true
+    target_table => 'tmisd.establishment',
+    source_table => 'v_source_3b',
+    identity_columns => '{id}'::TEXT[],
+    ephemeral_columns => '{edit_comment}'::TEXT[],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    identity_correlation_column => 'founding_id',
+    update_source_with_identity => true
 );
 
 \echo '--- Orchestrator: Expected Final State (Two separate entities created) ---'
