@@ -862,8 +862,6 @@ LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
     v_lookup_columns TEXT[];
     v_target_table_ident TEXT := temporal_merge.target_table::TEXT;
-    v_data_cols_ident TEXT;
-    v_data_cols_select TEXT;
     v_update_set_clause TEXT;
     v_all_cols_ident TEXT;
     v_all_cols_select TEXT;
@@ -1039,9 +1037,7 @@ BEGIN
             WHERE attname <> ALL(v_insert_defaulted_columns)
         )
         SELECT
-            (SELECT string_agg(format('%I', cdc.attname), ', ') FROM common_data_cols cdc),
-            (SELECT string_agg(format('jpr_data.%I', cdc.attname), ', ') FROM common_data_cols cdc),
-            (SELECT string_agg(format('%I = jpr_data.%I', cdc.attname, cdc.attname), ', ') FROM common_data_cols cdc),
+            (SELECT string_agg(format('%1$I = CASE WHEN p.data ? %2$L THEN (p.data->>%2$L)::%3$s ELSE t.%1$I END', cdc.attname, cdc.attname, format_type(cdc.atttypid, -1)), ', ') FROM common_data_cols cdc),
             (SELECT string_agg(format('%I', cfi.attname), ', ') FROM cols_for_insert cfi),
             (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ') FROM cols_for_insert cfi),
             (SELECT string_agg(format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)), ', ')
@@ -1052,8 +1048,6 @@ BEGIN
              FROM cols_for_founding_insert cffi
              WHERE cffi.attname NOT IN (v_valid_from_col, v_valid_until_col))
         INTO
-            v_data_cols_ident,
-            v_data_cols_select,
             v_update_set_clause,
             v_all_cols_ident,
             v_all_cols_select,
@@ -1321,7 +1315,6 @@ BEGIN
         IF v_update_set_clause IS NOT NULL THEN
             v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
                 FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
-                     LATERAL jsonb_populate_record(null::%1$s, p.data) AS jpr_data,
                      LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
                 WHERE %3$s AND t.%4$I = p.old_valid_from::%6$s;
             $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);

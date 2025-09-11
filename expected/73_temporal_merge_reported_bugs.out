@@ -682,6 +682,144 @@ NOTICE:  Caught expected error: Synchronized column "valid_to" is automatically 
 ROLLBACK TO SAVEPOINT ephemeral_validation;
 -- Clean up the common setup
 ROLLBACK TO SAVEPOINT kranloft_scenarios;
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 9: Reproduce FK violation on MERGE_ENTITY_REPLACE (Bug #3)'
+Scenario 9: Reproduce FK violation on MERGE_ENTITY_REPLACE (Bug #3)
+\echo 'A MERGE_ENTITY_REPLACE on a parent table must not fail with a temporal'
+A MERGE_ENTITY_REPLACE on a parent table must not fail with a temporal
+\echo 'foreign key violation if the parent has existing child records.'
+foreign key violation if the parent has existing child records.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+SAVEPOINT fk_violation_on_replace;
+-- Setup: Parent and child temporal tables with a temporal foreign key.
+CREATE TABLE tmrb.legal_unit_fk_bug (
+    id int, name text, valid_from date, valid_until date
+);
+SELECT sql_saga.add_era('tmrb.legal_unit_fk_bug'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.legal_unit_fk_bug'::regclass, '{id}', unique_key_name => 'legal_unit_fk_bug_id_valid');
+       add_unique_key       
+----------------------------
+ legal_unit_fk_bug_id_valid
+(1 row)
+
+CREATE TABLE tmrb.activity_fk_bug (
+    id int, legal_unit_id int, activity_code text, valid_from date, valid_until date
+);
+SELECT sql_saga.add_era('tmrb.activity_fk_bug'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.activity_fk_bug'::regclass, '{id}', unique_key_name => 'activity_fk_bug_id_valid');
+      add_unique_key      
+--------------------------
+ activity_fk_bug_id_valid
+(1 row)
+
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'tmrb.activity_fk_bug'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_fk_bug_id_valid'
+);
+           add_foreign_key           
+-------------------------------------
+ activity_fk_bug_legal_unit_id_valid
+(1 row)
+
+-- Initial State: Insert a parent LU and a child Activity.
+INSERT INTO tmrb.legal_unit_fk_bug (id, name, valid_from, valid_until) VALUES
+(101, 'Original Company', '2023-01-01', '2024-01-01');
+INSERT INTO tmrb.activity_fk_bug (id, legal_unit_id, activity_code, valid_from, valid_until) VALUES
+(201, 101, 'A101', '2023-01-01', '2024-01-01');
+-- Source Data: A new timeline for the existing parent LU.
+CREATE TEMP TABLE source_data_fk_bug (
+    row_id int, founding_row_id int, id int, name text, valid_from date, valid_until date
+) ON COMMIT DROP;
+INSERT INTO source_data_fk_bug VALUES
+(1, 101, 101, 'Updated Company', '2023-01-01', '2024-01-01');
+-- This call used to fail due to a bug in the FK trigger, but now succeeds.
+-- This test now serves as a regression test to confirm the fix.
+CALL sql_saga.temporal_merge(
+    target_table => 'tmrb.legal_unit_fk_bug'::regclass,
+    source_table => 'source_data_fk_bug'::regclass,
+    identity_columns => '{id}'::text[],
+    identity_correlation_column => 'founding_row_id',
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
+);
+\echo '--- Final state of parent table (CORRECT: timeline replaced) ---'
+--- Final state of parent table (CORRECT: timeline replaced) ---
+TABLE tmrb.legal_unit_fk_bug;
+ id  |      name       | valid_from | valid_until 
+-----+-----------------+------------+-------------
+ 101 | Updated Company | 2023-01-01 | 2024-01-01
+(1 row)
+
+ROLLBACK TO SAVEPOINT fk_violation_on_replace;
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 10: Reproduce NOT NULL violation for defaulted column (Bug #4)'
+Scenario 10: Reproduce NOT NULL violation for defaulted column (Bug #4)
+\echo 'An UPDATE must not fail if the source is missing a column that has a'
+An UPDATE must not fail if the source is missing a column that has a
+\echo 'NOT NULL DEFAULT constraint in the target.'
+NOT NULL DEFAULT constraint in the target.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+SAVEPOINT not_null_default_bug;
+-- Setup
+CREATE TABLE tmrb.unit_default_bug (
+    id int PRIMARY KEY, name text, is_active boolean NOT NULL DEFAULT true, valid_from date, valid_until date
+);
+SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.unit_default_bug'::regclass, '{id}');
+      add_unique_key       
+---------------------------
+ unit_default_bug_id_valid
+(1 row)
+
+-- Initial State
+INSERT INTO tmrb.unit_default_bug (id, name, is_active, valid_from, valid_until) VALUES
+(1, 'Initial Name', true, '2023-01-01', '2024-01-01');
+-- Source Data (missing is_active)
+CREATE TEMP TABLE source_data_default_bug (
+    row_id int, founding_row_id int, id int, name text, valid_from date, valid_until date
+) ON COMMIT DROP;
+INSERT INTO source_data_default_bug VALUES
+(1, 1, 1, 'Updated Name', '2023-01-01', '2024-01-01');
+-- This call used to fail due to the bug, but now succeeds.
+-- This test now serves as a regression test to confirm the fix.
+CALL sql_saga.temporal_merge(
+    target_table => 'tmrb.unit_default_bug'::regclass,
+    source_table => 'source_data_default_bug'::regclass,
+    identity_columns => '{id}'::text[],
+    identity_correlation_column => 'founding_row_id',
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid'
+);
+\echo '--- Final state of target table (CORRECT: is_active preserved its default) ---'
+--- Final state of target table (CORRECT: is_active preserved its default) ---
+TABLE tmrb.unit_default_bug;
+ id |     name     | is_active | valid_from | valid_until 
+----+--------------+-----------+------------+-------------
+  1 | Updated Name | t         | 2023-01-01 | 2024-01-01
+(1 row)
+
+ROLLBACK TO SAVEPOINT not_null_default_bug;
 -- ANCHOR Add SAVEPOINT managed test scenarios above this line
 ROLLBACK;
 \i sql/include/test_teardown.sql

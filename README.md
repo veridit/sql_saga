@@ -245,13 +245,15 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 
   This strategy is critical for handling SCD Type 2 changes on a referenced table. By inserting the new version of a record *before* updating (shortening) the old one, it ensures that there is always at least one covering record for any dependent foreign keys. This prevents `AFTER` triggers from failing due to a transient gap in the timeline. To accommodate the temporary timeline overlap this creates, the procedure internally uses deferred constraints, which are checked only at the end of the operation when the timeline is once again consistent.
 
-  **Known Limitation:** This strategy guarantees consistency for operations *within a single `temporal_merge` call*. However, it does not apply to inconsistencies created *between multiple, separate procedure calls* within the same transaction. This is a crucial consideration for complex ETL processes.
+  **Known Limitation:** While this strategy is robust, it cannot prevent all foreign key violations. An `AFTER` trigger on a parent table fires immediately after a `DELETE` or `UPDATE`, and may fail if it sees child records whose timeline is not yet covered by a new parent record (which is handled in a separate statement). This is most common in modes like `MERGE_ENTITY_REPLACE` or when using a `delete_mode`.
+
+  This limitation applies not only to inconsistencies created *between multiple, separate procedure calls* (a common ETL issue), but can also occur *within a single call* for complex replacement or deletion scenarios.
 
   The core issue is that the correct processing order for parent/child tables depends on the type of operation:
   - **For `INSERT`s:** You must process the parent table first to generate the ID that the child table will reference.
-  - **For timeline-shrinking `UPDATE`s:** You must process the child table first. If you shorten the parent's timeline first, its `AFTER UPDATE` trigger will fire and see that the still-long child timeline is no longer covered, causing a foreign key violation.
+  - **For timeline-shrinking `UPDATE`s or `DELETE`s:** You must process the child table first. If you shorten or delete the parent's timeline first, its `AFTER` trigger will fire and see that the child timeline is no longer covered, causing a foreign key violation.
 
-  Since a single ETL batch can contain both `INSERT`s and `UPDATE`s, there is no single fixed processing order that is always correct. The standard and most robust solution for this pattern is to **temporarily disable all relevant foreign key triggers** for the duration of the batch transaction. This allows the transaction to reach a temporarily inconsistent state, with the guarantee that the database's deferred uniqueness constraints on each table will still ensure the final state of each timeline is internally consistent.
+  Since a single ETL batch can contain both `INSERT`s and `DELETE`s/`UPDATE`s, there is no single fixed processing order that is always correct. The standard and most robust solution for this pattern is to **temporarily disable all relevant foreign key triggers** for the duration of the batch transaction. This allows the transaction to reach a temporarily inconsistent state, with the guarantee that the database's deferred uniqueness constraints on each table will still ensure the final state of each timeline is internally consistent.
 
   **Example: Disabling Triggers for a Batch Operation**
   ```sql

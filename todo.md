@@ -114,6 +114,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
 - [x] **Use `pg_temp` schema for temporary tables**: Refactored `temporal_merge` to create its feedback table in the session-local `pg_temp` schema for improved robustness and concurrency safety.
 - [x] **Enforce `NOT NULL` on synchronized temporal columns**: Modified `add_era` to apply `NOT NULL` constraints on `valid_to` and `valid_range` columns when synchronization is enabled to strengthen data integrity guarantees.
+- [x] **Fix `temporal_merge` to respect `DEFAULT` values on `UPDATE`:** When a source table is missing a column that has a `NOT NULL DEFAULT` constraint in the target, the executor now correctly preserves the existing value instead of setting it to `NULL`, preventing `NOT NULL` violations.
+- [x] **Clarify `temporal_merge` FK limitations in README:** Expanded the "Known Limitation" section to explicitly mention that complex `REPLACE` or `DELETE` operations can still cause FK violations due to immediate trigger firing, and reinforced that disabling triggers is the robust solution for complex ETL.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
