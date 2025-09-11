@@ -1,7 +1,7 @@
 # Allow editing of tmp files that are ignored by git.
 add-gitignore-files: true
 
-read: [README.md,CONVENTIONS.md,src/01_schema.sql]
+read: [README.md,CONVENTIONS.md,src/01_schema.sql,docs/api.md]
 file: [todo.md,tmp/journal.md]
 
 # The code quality for large SQL file edits is not great,

@@ -7,6 +7,8 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
+- [x] **Improve API documentation:** Enhanced the auto-generation script to include `ENUM` types, format function signatures for readability, and add database comments for all public API functions.
+- [x] **Generate API documentation from schema:** Create a new regression test that introspects the `sql_saga` schema and generates a complete, accurate `docs/api.md` file. This ensures documentation is always synchronized with the code.
 - [x] **Make performance regression test self-verifying:** Enhanced the `temporal_merge` planner test (`48_...`) to programmatically check the `EXPLAIN` output and fail if an inefficient `Seq Scan` is detected on the target table. The test now covers simple surrogate keys, composite `NOT NULL` natural keys, and complex, `NULL`able natural keys with partial indexes.
 - [x] **Optimize `temporal_merge` planner:** Refactored the planner query to be dynamically SARGable. It now introspects the nullability of identity columns and generates an optimal query plan: a simple, index-friendly `WHERE IN` clause for `NOT NULL` keys, and a `UNION`-based strategy to correctly and efficiently handle `NULL`able keys.
 - [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.

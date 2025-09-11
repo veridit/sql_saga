@@ -288,6 +288,8 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 
 ### Level 3: The Deep Dive - Complete API Reference
 
+For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./docs/api.md).
+
 ## Usage
 
 This section provides a guide to using `sql_saga`, organized into three levels of complexity.
@@ -437,44 +439,6 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   make diff-fail-all vim
   ```
 
-#### Era Management
-- `add_era(table_oid regclass, valid_from_column_name name DEFAULT 'valid_from', ..., synchronize_valid_to_column name DEFAULT NULL, synchronize_range_column name DEFAULT NULL, add_defaults boolean DEFAULT true, add_bounds_check boolean DEFAULT true) RETURNS boolean`: Registers a table as a temporal table using convention-over-configuration.
-  - The `range_type` is automatically inferred from the column data types.
-  - To enable synchronization with a `valid_to`-style column or a native `range` column, provide the column names via `synchronize_valid_to_column` or `synchronize_range_column`. This also adds a `NOT NULL` constraint to the synchronized columns and creates a unified trigger to keep all temporal representations consistent.
-  - `valid_to` synchronization is only supported for **discrete types** (e.g., `date`, `integer`).
-  - `add_defaults`: If `true` (the default), `sql_saga` will set `DEFAULT 'infinity'` on the `valid_until` column for data types that support it. This simplifies `INSERT` statements for open-ended periods. Set to `false` if you wish to manage default values manually.
-  - `add_bounds_check`: If `true` (the default), `sql_saga` will add a `CHECK` constraint to ensure that `valid_from < valid_until`. For data types that support infinity, it also checks that `valid_from > '-infinity'`. Set to `false` to disable this check for advanced use cases where you need to manage temporal integrity at the application level.
-- `drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false) RETURNS boolean`
-
-#### Unique Keys
-- `add_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', key_type sql_saga.unique_key_type DEFAULT 'natural', unique_key_name name DEFAULT NULL, unique_constraint name DEFAULT NULL, exclude_constraint name DEFAULT NULL, predicate text DEFAULT NULL) RETURNS name`
-- `drop_unique_key(table_oid regclass, column_names name[], era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
-- `drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true) RETURNS void`
-
-#### Foreign Keys
-- **For temporal-to-temporal foreign keys:**
-  - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_insert_trigger name DEFAULT NULL, fk_update_trigger name DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
-- **For regular-to-temporal foreign keys:**
-  - `add_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types DEFAULT 'SIMPLE', update_action sql_saga.fk_actions DEFAULT 'NO ACTION', delete_action sql_saga.fk_actions DEFAULT 'NO ACTION', foreign_key_name name DEFAULT NULL, fk_check_constraint name DEFAULT NULL, fk_helper_function text DEFAULT NULL, uk_update_trigger name DEFAULT NULL, uk_delete_trigger name DEFAULT NULL) RETURNS name`
-- **Dropping foreign keys:**
-  - `drop_foreign_key(table_oid regclass, column_names name[], era_name name DEFAULT NULL, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops a foreign key. For temporal-to-temporal keys, `era_name` must be provided. For regular-to-temporal keys, `era_name` should be omitted.
-  - `drop_foreign_key_by_name(table_oid regclass, key_name name) RETURNS boolean`: Drops any type of foreign key by its unique generated or user-provided name.
-
-#### Updatable Views (for PostgREST and `FOR PORTION OF` emulation)
-- `add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ...)`: Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a change to be applied to a specific time slice of a record's history.
-- `drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `for_portion_of` view associated with the specified table and era.
-- `add_current_view(table_oid regclass, era_name name DEFAULT 'valid', delete_mode name DEFAULT 'delete_as_cutoff', current_func_name text DEFAULT NULL)`: Creates a view that shows only the *current* state of data, making it ideal for ORMs and REST APIs.
-- `drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')`: Drops the `current` view associated with the specified table and era.
-
-#### High-Performance Bulk Data Loading (`temporal_merge`)
-- `temporal_merge(target_table regclass, source_table regclass, identity_columns TEXT[], mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH', era_name name DEFAULT 'valid', source_row_id_column name DEFAULT 'row_id', identity_correlation_column name DEFAULT NULL, update_source_with_identity BOOLEAN DEFAULT false, natural_identity_columns TEXT[] DEFAULT NULL, delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE', update_source_with_feedback BOOLEAN DEFAULT false, feedback_status_column name DEFAULT NULL, feedback_status_key name DEFAULT NULL, feedback_error_column name DEFAULT NULL, feedback_error_key name DEFAULT NULL, ephemeral_columns TEXT[] DEFAULT NULL)`
-
-#### System Versioning (History Tables)
-- `add_system_versioning(table_oid regclass, history_table_name name DEFAULT NULL, view_name name DEFAULT NULL)`
-- `drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)`
-- `set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[]) RETURNS void`
-- `generated_always_as_row_start_end() RETURNS trigger` (C function)
-- `write_history() RETURNS trigger` (C function)
 
 ## Dependencies
 
