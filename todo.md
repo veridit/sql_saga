@@ -16,6 +16,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Add validation for temporal primary keys:** Enhanced `add_unique_key` to validate that when `key_type` is `'primary'`, the target table does not have incompatible features like a `GENERATED ALWAYS` identity column or a simple (non-temporal) primary key. This moves the strict SCD Type 2 validation to where it belongs, allowing `add_era` to be more flexible.
 - [x] **Standardize API parameter naming:** Removed the `p_` prefix from all function parameters to align with PostgreSQL conventions and improve consistency. Updated all call sites and function bodies to use the new names, and standardized on `=>` for named argument syntax.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
+- [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 
 ## Low Priority - Future Work & New Features
 

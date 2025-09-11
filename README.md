@@ -318,8 +318,8 @@ CREATE TABLE legal_unit (
 -- Explicitly enable synchronization for the 'valid_to' column.
 SELECT sql_saga.add_era('legal_unit'::regclass, synchronize_valid_to_column := 'valid_to');
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['legal_ident'], unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit'::regclass, column_names => ARRAY['legal_ident'], key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
 -- Add a predicated unique key (e.g., only active units must have a unique name).
 SELECT sql_saga.add_unique_key(
     table_oid => 'legal_unit'::regclass,
@@ -340,8 +340,8 @@ CREATE TABLE establishment (
 );
 
 SELECT sql_saga.add_era(table_oid => 'establishment'::regclass);
-SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['id'], unique_key_name => 'establishment_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['name'], unique_key_name => 'establishment_name_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['name'], key_type => 'natural', unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'establishment'::regclass,
