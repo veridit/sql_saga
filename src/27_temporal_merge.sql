@@ -23,6 +23,7 @@ DECLARE
     v_valid_from_col name;
     v_valid_until_col name;
     v_valid_to_col name;
+    v_range_col name;
     v_sql TEXT;
     v_ephemeral_columns TEXT[] := COALESCE(p_ephemeral_columns, '{}'::text[]);
 BEGIN
@@ -58,8 +59,8 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = p_target_table;
 
-    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column
-    INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col
+    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
+    INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
@@ -69,8 +70,27 @@ BEGIN
         RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
     END IF;
 
+    -- Validate that user has not passed in temporal columns as ephemeral.
+    IF v_valid_from_col = ANY(v_ephemeral_columns) OR v_valid_until_col = ANY(v_ephemeral_columns) THEN
+        RAISE EXCEPTION 'Temporal boundary columns ("%", "%") cannot be specified in p_ephemeral_columns.', v_valid_from_col, v_valid_until_col;
+    END IF;
+    IF v_valid_to_col IS NOT NULL AND v_valid_to_col = ANY(v_ephemeral_columns) THEN
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in p_ephemeral_columns.', v_valid_to_col;
+    END IF;
+    IF v_range_col IS NOT NULL AND v_range_col = ANY(v_ephemeral_columns) THEN
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in p_ephemeral_columns.', v_range_col;
+    END IF;
+
+    -- Automatically treat synchronized columns as ephemeral for change detection.
+    IF v_valid_to_col IS NOT NULL THEN
+        v_ephemeral_columns := v_ephemeral_columns || v_valid_to_col;
+    END IF;
+    IF v_range_col IS NOT NULL THEN
+        v_ephemeral_columns := v_ephemeral_columns || v_range_col;
+    END IF;
+
     -- Generate the cache key first from all relevant arguments. This is fast.
-    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
+    v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         p_target_table::oid,
         p_source_table::oid,
         p_identity_columns,
@@ -81,7 +101,6 @@ BEGIN
         COALESCE(p_identity_correlation_column, ''),
         v_range_constructor,
         p_delete_mode,
-        COALESCE(v_valid_to_col, ''),
         COALESCE(p_natural_identity_columns, '{}'::text[])
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
@@ -853,6 +872,8 @@ DECLARE
     v_target_table_name_only name;
     v_valid_from_col name;
     v_valid_until_col name;
+    v_valid_to_col name;
+    v_range_col name;
     v_valid_from_col_type regtype;
     v_valid_until_col_type regtype;
     v_insert_defaulted_columns TEXT[];
@@ -891,6 +912,24 @@ BEGIN
         TRUNCATE TABLE pg_temp.temporal_merge_feedback;
     END IF;
 
+    -- Introspect era information to get the correct column names
+    SELECT n.nspname, c.relname
+    INTO v_target_schema_name, v_target_table_name_only
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = p_target_table;
+
+    SELECT e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
+    INTO v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
+    FROM sql_saga.era e
+    WHERE e.table_schema = v_target_schema_name
+      AND e.table_name = v_target_table_name_only
+      AND e.era_name = p_era_name;
+
+    IF v_valid_from_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    END IF;
+
     -- Auto-detect columns that should be excluded from INSERT statements.
     -- This includes columns with defaults, identity columns, and generated columns.
     SELECT COALESCE(array_agg(a.attname), '{}')
@@ -901,22 +940,12 @@ BEGIN
       AND NOT a.attisdropped
       AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
 
-    -- Introspect era information to get the correct column names
-    SELECT n.nspname, c.relname
-    INTO v_target_schema_name, v_target_table_name_only
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = p_target_table;
-
-    SELECT e.valid_from_column_name, e.valid_until_column_name
-    INTO v_valid_from_col, v_valid_until_col
-    FROM sql_saga.era e
-    WHERE e.table_schema = v_target_schema_name
-      AND e.table_name = v_target_table_name_only
-      AND e.era_name = p_era_name;
-
-    IF v_valid_from_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', p_era_name, p_target_table;
+    -- Also exclude synchronized columns, as the trigger will populate them.
+    IF v_valid_to_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_to_col;
+    END IF;
+    IF v_range_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_range_col;
     END IF;
 
     SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = p_target_table AND attname = v_valid_from_col;

@@ -539,6 +539,150 @@ CALL sql_saga.temporal_merge(
 );
 -- Reset GUC for any subsequent tests
 RESET sql_saga.temporal_merge.log_plan;
+-- Common setup for Kranløft bug scenarios
+SAVEPOINT kranloft_scenarios;
+-- Source Data: Three contiguous rows for the same entity. The core data ('name')
+-- is identical. Only the synchronized 'valid_to' column changes.
+CREATE TEMP TABLE source_data_kranloft (
+    row_id int,
+    founding_row_id int,
+    id int,
+    name text,
+    valid_from date,
+    valid_until date,
+    valid_to date
+) ON COMMIT DROP;
+INSERT INTO source_data_kranloft VALUES
+(1, 1, 741, 'Kranløft Vestland', '2010-01-01', '2011-01-01', '2010-12-31'),
+(2, 1, 741, 'Kranløft Vestland', '2011-01-01', '2012-01-15', '2012-01-14'),
+(3, 1, 741, 'Kranløft Vestland', '2012-01-15', 'infinity', 'infinity');
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 6: Reproduce incorrect coalescing with synchronized columns (Kranløft Bug)'
+Scenario 6: Reproduce incorrect coalescing with synchronized columns (Kranløft Bug)
+\echo 'temporal_merge must not treat changes to synchronized columns (e.g., valid_to)'
+temporal_merge must not treat changes to synchronized columns (e.g., valid_to)
+\echo 'as data changes when determining if timeline segments should be coalesced.'
+as data changes when determining if timeline segments should be coalesced.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+SAVEPOINT kranloft_bug_coalesce;
+-- Setup: A simple temporal table with a synchronized 'valid_to' column.
+CREATE TABLE tmrb.legal_unit_kranloft (
+    id int,
+    name text,
+    valid_from date,
+    valid_until date,
+    valid_to date -- Synchronized column
+);
+SELECT sql_saga.add_era('tmrb.legal_unit_kranloft'::regclass, p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "legal_unit_kranloft_synchronize_temporal_columns_trigger" on table tmrb.legal_unit_kranloft to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.legal_unit_kranloft'::regclass, '{id}');
+        add_unique_key        
+------------------------------
+ legal_unit_kranloft_id_valid
+(1 row)
+
+\echo '--- Source Data ---'
+--- Source Data ---
+TABLE source_data_kranloft;
+ row_id | founding_row_id | id  |       name        | valid_from | valid_until |  valid_to  
+--------+-----------------+-----+-------------------+------------+-------------+------------
+      1 |               1 | 741 | Kranløft Vestland | 2010-01-01 | 2011-01-01  | 2010-12-31
+      2 |               1 | 741 | Kranløft Vestland | 2011-01-01 | 2012-01-15  | 2012-01-14
+      3 |               1 | 741 | Kranløft Vestland | 2012-01-15 | infinity    | infinity
+(3 rows)
+
+\echo '--- Calling temporal_merge (which should now automatically treat valid_to as ephemeral)...'
+--- Calling temporal_merge (which should now automatically treat valid_to as ephemeral)...
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.legal_unit_kranloft'::regclass,
+    p_source_table => 'source_data_kranloft'::regclass,
+    p_identity_columns => '{id}'::text[],
+    p_identity_correlation_column => 'founding_row_id',
+    p_mode => 'MERGE_ENTITY_REPLACE',
+    p_era_name => 'valid',
+    p_ephemeral_columns => NULL
+);
+\echo '--- Result: CORRECT - Creates 1 coalesced row ---'
+--- Result: CORRECT - Creates 1 coalesced row ---
+SELECT * FROM tmrb.legal_unit_kranloft ORDER BY valid_from;
+ id  |       name        | valid_from | valid_until | valid_to 
+-----+-------------------+------------+-------------+----------
+ 741 | Kranløft Vestland | 2010-01-01 | infinity    | infinity
+(1 row)
+
+ROLLBACK TO SAVEPOINT kranloft_bug_coalesce;
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+\echo 'Scenario 8: Validate p_ephemeral_columns parameter'
+Scenario 8: Validate p_ephemeral_columns parameter
+\echo 'temporal_merge must reject calls where temporal boundary or synchronized columns'
+temporal_merge must reject calls where temporal boundary or synchronized columns
+\echo 'are manually specified in p_ephemeral_columns.'
+are manually specified in p_ephemeral_columns.
+\echo '--------------------------------------------------------------------------------'
+--------------------------------------------------------------------------------
+SAVEPOINT ephemeral_validation;
+-- Use the same setup as the kranloft bug
+CREATE TABLE tmrb.ephemeral_validation (
+    id int, name text, valid_from date, valid_until date, valid_to date
+);
+SELECT sql_saga.add_era('tmrb.ephemeral_validation'::regclass, p_synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "ephemeral_validation_synchronize_temporal_columns_trigger" on table tmrb.ephemeral_validation to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('tmrb.ephemeral_validation'::regclass, '{id}');
+        add_unique_key         
+-------------------------------
+ ephemeral_validation_id_valid
+(1 row)
+
+\echo '-- Attempting to pass valid_from as ephemeral (should fail) --'
+-- Attempting to pass valid_from as ephemeral (should fail) --
+DO $$ BEGIN
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.ephemeral_validation'::regclass,
+    p_source_table => 'source_data_kranloft'::regclass,
+    p_identity_columns => '{id}',
+    p_ephemeral_columns => ARRAY['valid_from']
+);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: Temporal boundary columns ("valid_from", "valid_until") cannot be specified in p_ephemeral_columns.
+\echo '-- Attempting to pass valid_until as ephemeral (should fail) --'
+-- Attempting to pass valid_until as ephemeral (should fail) --
+DO $$ BEGIN
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.ephemeral_validation'::regclass,
+    p_source_table => 'source_data_kranloft'::regclass,
+    p_identity_columns => '{id}',
+    p_ephemeral_columns => ARRAY['valid_until']
+);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: Temporal boundary columns ("valid_from", "valid_until") cannot be specified in p_ephemeral_columns.
+\echo '-- Attempting to pass synchronized valid_to as ephemeral (should fail) --'
+-- Attempting to pass synchronized valid_to as ephemeral (should fail) --
+DO $$ BEGIN
+CALL sql_saga.temporal_merge(
+    p_target_table => 'tmrb.ephemeral_validation'::regclass,
+    p_source_table => 'source_data_kranloft'::regclass,
+    p_identity_columns => '{id}',
+    p_ephemeral_columns => ARRAY['valid_to']
+);
+EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: Synchronized column "valid_to" is automatically handled and should not be specified in p_ephemeral_columns.
+ROLLBACK TO SAVEPOINT ephemeral_validation;
+-- Clean up the common setup
+ROLLBACK TO SAVEPOINT kranloft_scenarios;
+-- ANCHOR Add SAVEPOINT managed test scenarios above this line
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --
