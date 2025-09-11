@@ -726,7 +726,7 @@ plan_with_op AS (
                 WHEN d.f_data IS NULL AND d.t_data IS NOT NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
                 WHEN d.t_data IS NULL AND d.f_data IS NOT NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
                 WHEN d.relation = 'equals' AND d.f_data IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
-                WHEN (d.f_data - %5$L::text[]) IS DISTINCT FROM (d.t_data - %5$L::text[])
+                WHEN d.f_data IS DISTINCT FROM d.t_data
                   OR d.f_from IS DISTINCT FROM d.t_from
                   OR d.f_until IS DISTINCT FROM d.t_until
                 THEN 'UPDATE'::sql_saga.temporal_merge_plan_action

@@ -2104,8 +2104,8 @@ DROP TABLE temp_source_21;
 \echo 'Begin Scenarios for Ephemeral Columns'
 Begin Scenarios for Ephemeral Columns
 --------------------------------------------------------------------------------
-\echo 'Scenario 22: MERGE_ENTITY_PATCH with different ephemeral data (should be SKIPPED)'
-Scenario 22: MERGE_ENTITY_PATCH with different ephemeral data (should be SKIPPED)
+\echo 'Scenario 22: MERGE_ENTITY_PATCH with different ephemeral data (should be APPLIED)'
+Scenario 22: MERGE_ENTITY_PATCH with different ephemeral data (should be APPLIED)
 \echo 'Mode: MERGE_ENTITY_PATCH'
 Mode: MERGE_ENTITY_PATCH
 --------------------------------------------------------------------------------
@@ -2144,47 +2144,47 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
-    (1, '{122}'::INT[], 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action, '{"id": 22}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Same", "employees": 10, "legal_unit_id": 1, "edit_comment": "New Comment"}'::JSONB, 'equals'::sql_saga.allen_interval_relation)
+    (1, '{122}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"id": 22}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Same", "employees": 10, "legal_unit_id": 1, "edit_comment": "New Comment"}'::JSONB, 'equals'::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                         | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------
-           1 | {122}          | SKIP_IDENTICAL | {"id": 22} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} | equals
+ plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                         | relation 
+-------------+----------------+-----------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------
+           1 | {122}          | UPDATE    | {"id": 22} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} | equals
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                         | relation 
--------------+----------------+----------------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------
-           1 | {122}          | SKIP_IDENTICAL | {"id": 22} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} | equals
+ plan_op_seq | source_row_ids | operation | entity_ids | old_valid_from | new_valid_from | new_valid_until |                                         data                                         | relation 
+-------------+----------------+-----------+------------+----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------
+           1 | {122}          | UPDATE    | {"id": 22} | 2024-01-01     | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} | equals
 (1 row)
 
 -- Verify feedback
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
-SELECT * FROM (VALUES (122, '[{"id": 22}]'::JSONB, 'SKIPPED_IDENTICAL'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id | target_entity_ids |      status       | error_message 
----------------+-------------------+-------------------+---------------
-           122 | [{"id": 22}]      | SKIPPED_IDENTICAL | 
+SELECT * FROM (VALUES (122, '[{"id": 22}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
+ source_row_id | target_entity_ids | status  | error_message 
+---------------+-------------------+---------+---------------
+           122 | [{"id": 22}]      | APPLIED | 
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id | target_entity_ids |      status       | error_message 
----------------+-------------------+-------------------+---------------
-           122 | [{"id": 22}]      | SKIPPED_IDENTICAL | 
+ source_row_id | target_entity_ids | status  | error_message 
+---------------+-------------------+---------+---------------
+           122 | [{"id": 22}]      | APPLIED | 
 (1 row)
 
 -- Verify final state
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
-    (22, 1, '2024-01-01'::DATE, '2025-01-01'::DATE, 'Same', 10, 'Old Comment')
+    (22, 1, '2024-01-01'::DATE, '2025-01-01'::DATE, 'Same', 10, 'New Comment')
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
  id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
 ----+---------------+------------+-------------+------+-----------+--------------
- 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | Old Comment
+ 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | New Comment
 (1 row)
 
 \echo '--- Orchestrator: Actual Final State ---'
@@ -2192,7 +2192,7 @@ SELECT * FROM (VALUES
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 22 ORDER BY valid_from;
  id | legal_unit_id | valid_from | valid_until | name | employees | edit_comment 
 ----+---------------+------------+-------------+------+-----------+--------------
- 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | Old Comment
+ 22 |             1 | 2024-01-01 | 2025-01-01  | Same |        10 | New Comment
 (1 row)
 
 DROP TABLE temp_source_22;
