@@ -34,54 +34,425 @@ This test verifies that the planner function produces a stable and efficient
 EXPLAIN plan. Its output is captured to monitor for performance regressions.
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-SET client_min_messages TO WARNING;
+-- Instruct temporal_merge to RAISE NOTICE the sql used for analysis.
+SET client_min_messages TO NOTICE;
+SET sql_saga.temporal_merge.log_sql = true;
 CREATE SCHEMA tmpc;
-CREATE TABLE tmpc.target (id int, valid_from date, valid_until date, value text);
+--------------------------------------------------------------------------------
+-- SCENARIO 1: Simple Surrogate Primary Key (id int NOT NULL)
+--------------------------------------------------------------------------------
+SAVEPOINT s1;
+\echo '\n--- Scenario 1: Simple Surrogate Primary Key (id int NOT NULL) ---'
+
+--- Scenario 1: Simple Surrogate Primary Key (id int NOT NULL) ---
+CREATE TABLE tmpc.target (id int NOT NULL, valid_from date, valid_until date, value text);
 SELECT sql_saga.add_era('tmpc.target', 'valid_from', 'valid_until');
  add_era 
 ---------
  t
 (1 row)
 
-CREATE TEMP TABLE source1 (row_id int, id int, valid_from date, valid_until date, value text);
+CREATE TABLE tmpc.source1 (row_id int, id int NOT NULL, valid_from date, valid_until date, value text);
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
 --- Setting up tables with indexes and data for a realistic plan ---
-CREATE INDEX ON tmpc.target (id);
-CREATE INDEX ON tmpc.target USING gist (daterange(valid_from, valid_until));
-CREATE INDEX ON source1 (id);
-CREATE INDEX ON source1 USING gist (daterange(valid_from, valid_until));
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target'::regclass, column_names => ARRAY['id'], p_key_type => 'primary');
+ add_unique_key  
+-----------------
+ target_id_valid
+(1 row)
+
+CREATE INDEX ON tmpc.source1 (id);
+CREATE INDEX ON tmpc.source1 USING gist (daterange(valid_from, valid_until));
+\echo '\d tmpc.target'
+d tmpc.target
+\d tmpc.target
+                       Table "tmpc.target"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           | not null | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+ value       | text    |           |          | 
+Indexes:
+    "target_pkey" PRIMARY KEY, btree (id, valid_from, valid_until) DEFERRABLE
+    "target_id_idx" btree (id)
+    "target_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+Check constraints:
+    "target_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+\echo '\d tmpc.source1'
+d tmpc.source1
+\d tmpc.source1
+                  Table "tmpc.source1"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ row_id      | integer |           |          | 
+ id          | integer |           | not null | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+ value       | text    |           |          | 
+Indexes:
+    "source1_daterange_idx" gist (daterange(valid_from, valid_until))
+    "source1_id_idx" btree (id)
+
 -- Insert enough rows to make an index scan more attractive to the planner.
 INSERT INTO tmpc.target (id, valid_from, valid_until, value)
 SELECT i, '2023-01-01', '2024-01-01', 'A' FROM generate_series(1, 1000) as i;
--- The source will patch a single row in the middle of the target's history.
-INSERT INTO source1 VALUES (1, 500, '2023-06-01', '2023-07-01', 'B');
--- Analyze the tables to ensure the planner has up-to-date statistics.
+INSERT INTO tmpc.source1 VALUES (1, 500, '2023-06-01', '2023-07-01', 'B');
 ANALYZE tmpc.target;
-ANALYZE source1;
+ANALYZE tmpc.source1;
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query ---'
 
 --- Performance Monitoring: EXPLAIN the cached planner query ---
--- Generate and immediately explain the plan. The plan output itself is silenced.
 \o /dev/null
 SELECT * FROM sql_saga.temporal_merge_plan(
     p_target_table      => 'tmpc.target'::regclass,
-    p_source_table      => 'source1'::regclass,
+    p_source_table      => 'tmpc.source1'::regclass,
     p_identity_columns        => '{id}'::text[],
-    p_ephemeral_columns => '{}'::text[],
     p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     p_era_name          => 'valid'
 );
+NOTICE:  --- temporal_merge SQL for tmpc.target ---
+NOTICE:  
+WITH RECURSIVE
+source_initial AS (
+    SELECT
+        t.row_id as source_row_id,
+        t.row_id as founding_id,
+        jsonb_build_object('id', t.id) as entity_id,
+        t.id,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_strip_nulls(jsonb_build_object('value', t.value)) AS data_payload,
+        t.id IS NULL as is_new_entity
+    FROM tmpc.source1 t
+),
+target_rows AS (
+    SELECT
+        jsonb_build_object('id', t.id) as entity_id,
+        jsonb_build_object('id', t.id) as stable_pk_payload,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_build_object('value', t.value) AS data_payload
+    FROM (
+                        SELECT * FROM tmpc.target t
+                        WHERE (t.id) IN (SELECT DISTINCT id FROM source_initial)
+                    ) t -- v_target_rows_filter is now a subquery with alias t
+),
+source_rows AS (
+    SELECT
+        si.*,
+        (si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)) as target_entity_exists
+    FROM source_initial si
+),
+active_source_rows AS (
+    -- Filter the initial source rows based on the operation mode.
+    SELECT
+        sr.source_row_id as source_row_id,
+        -- If it's a new entity, synthesize a temporary unique ID by embedding the founding_id,
+        -- so the planner can distinguish and group new entities.
+        
+                CASE
+                    WHEN sr.is_new_entity AND NOT sr.target_entity_exists
+                    THEN sr.entity_id || jsonb_build_object('row_id', sr.founding_id::text)
+                    ELSE sr.entity_id
+                END
+             as entity_id,
+        sr.valid_from,
+        sr.valid_until,
+        sr.data_payload
+    FROM source_rows sr
+    WHERE CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+        -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
+        WHEN 'MERGE_ENTITY_PATCH' THEN true
+        WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
+        WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
+        -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
+        WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        ELSE false
+    END
+),
+all_rows AS (
+    SELECT entity_id, valid_from, valid_until FROM active_source_rows
+    UNION ALL
+    SELECT entity_id, valid_from, valid_until FROM target_rows
+),
+time_points AS (
+    SELECT DISTINCT entity_id, point FROM (
+        SELECT entity_id, valid_from AS point FROM all_rows
+        UNION ALL
+        SELECT entity_id, valid_until AS point FROM all_rows
+    ) AS points
+),
+atomic_segments AS (
+    SELECT entity_id, point as valid_from, LEAD(point) OVER (PARTITION BY entity_id ORDER BY point) as valid_until
+    FROM time_points WHERE point IS NOT NULL
+),
+resolved_atomic_segments_with_payloads AS (
+    SELECT
+        with_base_payload.*,
+        -- Propagate the stable identity payload to all segments of an entity.
+        -- This ensures that when we create new history slices, we preserve the original stable ID.
+        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY with_base_payload.entity_id ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
+    FROM (
+        SELECT
+            seg.entity_id,
+                seg.valid_from,
+                seg.valid_until,
+                t.t_valid_from,
+                ( -- Find causal source row
+                    SELECT sr.source_row_id FROM active_source_rows sr
+                    WHERE sr.entity_id = seg.entity_id
+                      AND (
+                          daterange(sr.valid_from, sr.valid_until) && daterange(seg.valid_from, seg.valid_until)
+                          OR (
+                              daterange(sr.valid_from, sr.valid_until) -|- daterange(seg.valid_from, seg.valid_until)
+                              AND EXISTS (
+                                  SELECT 1 FROM target_rows tr
+                                  WHERE tr.entity_id = sr.entity_id
+                                    AND daterange(sr.valid_from, sr.valid_until) && daterange(tr.valid_from, tr.valid_until)
+                              )
+                          )
+                      )
+                    -- Prioritize the latest source row in case of overlaps
+                    ORDER BY sr.source_row_id DESC LIMIT 1
+                ) as source_row_id,
+                s.data_payload as s_data_payload,
+                t.data_payload as t_data_payload,
+                t.stable_pk_payload
+            FROM atomic_segments seg
+            LEFT JOIN LATERAL (
+                SELECT tr.data_payload, tr.valid_from as t_valid_from, tr.stable_pk_payload
+                FROM target_rows tr
+                WHERE tr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(tr.valid_from, tr.valid_until)
+            ) t ON true
+            LEFT JOIN LATERAL (
+                SELECT sr.data_payload
+                FROM active_source_rows sr
+                WHERE sr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(sr.valid_from, sr.valid_until)
+                -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
+                ORDER BY sr.source_row_id DESC
+                LIMIT 1
+            ) s ON true
+            WHERE seg.valid_from < seg.valid_until
+              AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+        ) with_base_payload
+)
+,
+numbered_segments AS (
+    SELECT
+        *,
+        row_number() OVER (PARTITION BY entity_id ORDER BY valid_from) as rn
+    FROM resolved_atomic_segments_with_payloads
+),
+running_payload_cte AS (
+    -- Anchor: The first segment for each entity. Its base payload is its own target payload, or empty.
+    SELECT
+        s.*,
+        (COALESCE(s.t_data_payload, '{}'::jsonb) || COALESCE(s.s_data_payload, '{}'::jsonb)) AS data_payload
+    FROM numbered_segments s
+    WHERE s.rn = 1
+
+    UNION ALL
+
+    -- Recursive step: The next segment's payload is the previous segment's final payload,
+    -- potentially overridden by the current segment's target payload (if any), and then patched
+    -- with the current segment's source payload.
+    SELECT
+        s.*,
+        (
+            COALESCE(s.t_data_payload, p.data_payload) || COALESCE(s.s_data_payload, '{}'::jsonb)
+        )::jsonb AS data_payload
+    FROM numbered_segments s
+    JOIN running_payload_cte p ON s.entity_id = p.entity_id AND s.rn = p.rn + 1
+)
+,
+resolved_atomic_segments AS (
+    SELECT
+        entity_id,
+        valid_from,
+        valid_until,
+        t_valid_from,
+        source_row_id,
+        propagated_stable_pk_payload AS stable_pk_payload,
+        s_data_payload,
+        t_data_payload,
+        data_payload as data_payload,
+        CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+    FROM running_payload_cte
+),
+coalesced_final_segments AS (
+    SELECT
+        entity_id,
+        MIN(valid_from) as valid_from,
+        MAX(valid_until) as valid_until,
+        -- When coalescing segments, the business data is identical (that's why they are being
+        -- coalesced). However, the ephemeral metadata (like a comment) might differ. We must
+        -- deterministically pick one payload to be the representative for the new, larger segment.
+        -- We pick the payload from the first atomic segment in the group, ordered by time.
+        sql_saga.first(data_payload ORDER BY valid_from) as data_payload,
+        sql_saga.first(stable_pk_payload ORDER BY valid_from) as stable_pk_payload,
+        -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
+        array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
+    FROM (
+        SELECT
+            *,
+            -- This window function creates a grouping key (segment_group). A new group starts
+            -- whenever there is a time gap or a change in the data payload.
+            SUM(is_new_segment) OVER (PARTITION BY entity_id ORDER BY valid_from) as segment_group
+        FROM (
+            SELECT
+                *,
+                CASE
+                    -- A new segment starts if there is a gap between it and the previous one,
+                    -- or if the data payload changes. For [) intervals, contiguity is defined
+                    -- as the previous `valid_until` being equal to the current `valid_from`.
+                    -- The subtraction of ephemeral columns `('{}')` is safe because the `jsonb - text[]` operator
+                    -- gracefully handles `NULL` payloads, which is how gaps are represented.
+                    WHEN LAG(valid_until) OVER (PARTITION BY entity_id ORDER BY valid_from) = valid_from
+                     AND (
+                        LAG(data_payload - '{}'::text[]) OVER (PARTITION BY entity_id ORDER BY valid_from)
+                        IS NOT DISTINCT FROM
+                        (data_payload - '{}'::text[])
+                     )
+                    THEN 0 -- Not a new group (contiguous and same data)
+                    ELSE 1 -- Is a new group (time gap or different data)
+                END as is_new_segment
+            FROM resolved_atomic_segments ras
+        ) with_new_segment_flag
+    ) with_segment_group
+    GROUP BY
+        entity_id,
+        segment_group
+),
+
+diff AS (
+    SELECT
+        -- Use COALESCE on entity_id to handle full additions/deletions
+        COALESCE(f.f_entity_id, t.t_entity_id) as entity_id,
+        f.f_from, f.f_until, f.f_data, f.f_source_row_ids, f.stable_pk_payload,
+        t.t_from, t.t_until, t.t_data,
+        -- This function call determines the Allen Interval Relation between the final state and target state segments
+        sql_saga.allen_get_relation(f.f_from, f.f_until, t.t_from, t.t_until) as relation
+    FROM
+    (
+        SELECT
+            entity_id AS f_entity_id,
+            valid_from AS f_from,
+            valid_until AS f_until,
+            data_payload AS f_data,
+            stable_pk_payload,
+            source_row_ids AS f_source_row_ids
+        FROM coalesced_final_segments
+    ) f
+    FULL OUTER JOIN
+    (
+        SELECT
+            entity_id as t_entity_id,
+            valid_from as t_from,
+            valid_until as t_until,
+            data_payload as t_data
+        FROM target_rows
+    ) t
+    ON f.f_entity_id = t.t_entity_id AND (
+               f.f_from = t.t_from
+               OR (
+                   f.f_until = t.t_until AND f.f_data IS NOT DISTINCT FROM t.t_data
+                   AND NOT EXISTS (
+                       SELECT 1 FROM coalesced_final_segments f_inner
+                       WHERE f_inner.entity_id = t.t_entity_id AND f_inner.valid_from = t.t_from
+                   )
+               )
+            )
+),
+plan_with_op AS (
+    (
+        SELECT
+            COALESCE(
+                d.f_source_row_ids,
+                MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
+            ) as source_row_ids,
+            CASE
+                -- If both final and target data are NULL, it's a gap in both. This is a SKIP_IDENTICAL operation.
+                -- This rule must come first to correctly handle intended gaps from DELETE_FOR_PORTION_OF mode.
+                WHEN d.f_data IS NULL AND d.t_data IS NULL THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+                WHEN d.f_data IS NULL AND d.t_data IS NOT NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN d.t_data IS NULL AND d.f_data IS NOT NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                WHEN d.relation = 'equals' AND d.f_data IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN (d.f_data - '{}'::text[]) IS DISTINCT FROM (d.t_data - '{}'::text[])
+                  OR d.f_from IS DISTINCT FROM d.t_from
+                  OR d.f_until IS DISTINCT FROM d.t_until
+                THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
+                ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+            END as operation,
+            d.entity_id || COALESCE(d.stable_pk_payload, '{}'::jsonb) as entity_id,
+            d.t_from as old_valid_from,
+            d.t_until as old_valid_until,
+            d.f_from as new_valid_from,
+            d.f_until as new_valid_until,
+            d.f_data as data,
+            d.relation
+        FROM diff d
+        WHERE d.f_source_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
+    )
+    UNION ALL
+    (
+        -- This part of the plan handles source rows that were filtered out by the main logic,
+        -- allowing the executor to provide accurate feedback.
+        SELECT
+            ARRAY[sr.source_row_id::BIGINT],
+            'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
+            sr.entity_id,
+            NULL, NULL, NULL, NULL, NULL, NULL
+        FROM source_rows sr
+        WHERE
+            CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                ELSE false
+            END
+    )
+),
+plan AS (
+    SELECT
+        *,
+        CASE
+            WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from <= p.old_valid_from AND p.new_valid_until >= p.old_valid_until THEN 'GROW'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from >= p.old_valid_from AND p.new_valid_until <= p.old_valid_until THEN 'SHRINK'::sql_saga.temporal_merge_update_effect
+            ELSE 'MOVE'::sql_saga.temporal_merge_update_effect
+        END AS timeline_update_effect
+    FROM plan_with_op p
+)
+SELECT
+    row_number() OVER (ORDER BY p.entity_id, p.operation, p.timeline_update_effect, COALESCE(p.new_valid_from, p.old_valid_from), (p.source_row_ids[1]))::BIGINT as plan_op_seq,
+    p.source_row_ids,
+    p.operation,
+    p.timeline_update_effect,
+    p.entity_id AS entity_ids,
+    p.old_valid_from::TEXT,
+    p.old_valid_until::TEXT,
+    p.new_valid_from::TEXT,
+    p.new_valid_until::TEXT,
+    CASE
+        WHEN jsonb_typeof(p.data) = 'object' THEN p.data - '{id}'::text[]
+        ELSE p.data
+    END as data,
+    p.relation
+FROM plan p
+ORDER BY plan_op_seq;
+
 \o
--- Use \gset to capture the dynamically generated EXPLAIN command into a variable.
--- This avoids echoing the command with its unstable MD5 hash.
-SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command
-FROM pg_prepared_statements
-WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%'
-\gset
--- Now, echo a stable placeholder for the regression test's expected output...
+SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%' \gset
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
--- ...and then execute the actual command we captured to print it for review.
 :explain_command
                                                                                                                                                                                                                                                                                                                                                                                                                                                                          QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
 -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -94,7 +465,7 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
            ->  HashAggregate
                  Group Key: source_initial.id
                  ->  CTE Scan on source_initial
-           ->  Index Scan using target_id_idx on target t_1
+           ->  Index Scan using target_id_valid_excl on target t_1
                  Index Cond: (id = source_initial.id)
    CTE source_rows
      ->  CTE Scan on source_initial si
@@ -190,39 +561,1143 @@ EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 \echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 
 --- Verifying that the plan is optimal (no Seq Scan on target) ---
--- Programmatically verify that the plan does not contain a sequential scan on the target table.
--- This makes the test robust against performance regressions.
 DO $$
-DECLARE
-    plan_name TEXT;
-    rec RECORD;
-    has_seq_scan BOOLEAN := false;
+DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
 BEGIN
-    -- Find the plan name generated by the preceding call to temporal_merge_plan.
-    SELECT name INTO plan_name
-    FROM pg_prepared_statements
-    WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM source1 t%';
-
-    -- If no plan is found, something is wrong. Fail fast.
-    IF plan_name IS NULL THEN
-        RAISE EXCEPTION 'Could not find the prepared statement for the temporal_merge_plan.';
-    END IF;
-
-    -- Loop through the EXPLAIN output and check for the inefficient scan.
+    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%';
+    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the temporal_merge_plan.'; END IF;
     FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
-        IF rec."QUERY PLAN" LIKE '%Seq Scan on target%' THEN
-            has_seq_scan := true;
-            EXIT;
-        END IF;
+        IF rec."QUERY PLAN" LIKE '%Seq Scan on target%' THEN has_seq_scan := true; EXIT; END IF;
     END LOOP;
-
-    IF has_seq_scan THEN
-        RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target". Check for non-SARGable query conditions.';
-    END IF;
+    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target". Check for non-SARGable query conditions.'; END IF;
 END;
 $$;
 \echo '--- OK: Verified that EXPLAIN plan is optimal. ---'
 --- OK: Verified that EXPLAIN plan is optimal. ---
+ROLLBACK TO SAVEPOINT s1;
+--------------------------------------------------------------------------------
+-- SCENARIO 2: Composite Natural Key (NOT NULL columns)
+--------------------------------------------------------------------------------
+SAVEPOINT s2;
+\echo '\n--- Scenario 2: Composite Natural Key (NOT NULL columns) ---'
+
+--- Scenario 2: Composite Natural Key (NOT NULL columns) ---
+CREATE TABLE tmpc.target_nk_not_null (type TEXT NOT NULL, lu_id INT NOT NULL, value TEXT, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+CREATE TABLE tmpc.source_nk_not_null (row_id int, type text NOT NULL, lu_id int NOT NULL, value text, valid_from date, valid_until date);
+\echo '--- Setting up tables with indexes and data for a realistic plan ---'
+--- Setting up tables with indexes and data for a realistic plan ---
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk_not_null'::regclass, column_names => ARRAY['type', 'lu_id'], p_key_type => 'primary');
+           add_unique_key            
+-------------------------------------
+ target_nk_not_null_type_lu_id_valid
+(1 row)
+
+INSERT INTO tmpc.target_nk_not_null (type, lu_id, valid_from, valid_until, value) SELECT 'A', i, '2023-01-01', '2024-01-01', 'LU' FROM generate_series(1, 1000) as i;
+INSERT INTO tmpc.source_nk_not_null VALUES (1, 'A', 500, 'LU-patched', '2023-06-01', '2023-07-01');
+ANALYZE tmpc.target_nk_not_null;
+ANALYZE tmpc.source_nk_not_null;
+\echo '\d tmpc.target_nk_not_null'
+d tmpc.target_nk_not_null
+\d tmpc.target_nk_not_null
+                 Table "tmpc.target_nk_not_null"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ type        | text    |           | not null | 
+ lu_id       | integer |           | not null | 
+ value       | text    |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "target_nk_not_null_pkey" PRIMARY KEY, btree (type, lu_id, valid_from, valid_until) DEFERRABLE
+    "target_nk_not_null_type_lu_id_idx" btree (type, lu_id)
+    "target_nk_not_null_type_lu_id_valid_excl" EXCLUDE USING gist (type WITH =, lu_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+Check constraints:
+    "target_nk_not_null_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+\echo '\d tmpc.source_nk_not_null'
+d tmpc.source_nk_not_null
+\d tmpc.source_nk_not_null
+            Table "tmpc.source_nk_not_null"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ row_id      | integer |           |          | 
+ type        | text    |           | not null | 
+ lu_id       | integer |           | not null | 
+ value       | text    |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+
+\echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NOT NULL) ---'
+
+--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NOT NULL) ---
+\o /dev/null
+SELECT * FROM sql_saga.temporal_merge_plan(
+    p_target_table      => 'tmpc.target_nk_not_null'::regclass,
+    p_source_table      => 'tmpc.source_nk_not_null'::regclass,
+    p_identity_columns        => '{type,lu_id}'::text[],
+    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+    p_era_name          => 'valid'
+);
+NOTICE:  --- temporal_merge SQL for tmpc.target_nk_not_null ---
+NOTICE:  
+WITH RECURSIVE
+source_initial AS (
+    SELECT
+        t.row_id as source_row_id,
+        t.row_id as founding_id,
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id) as entity_id,
+        t.type, t.lu_id,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_strip_nulls(jsonb_build_object('value', t.value)) AS data_payload,
+        t.type IS NULL AND t.lu_id IS NULL as is_new_entity
+    FROM tmpc.source_nk_not_null t
+),
+target_rows AS (
+    SELECT
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id) as entity_id,
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id) as stable_pk_payload,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_build_object('value', t.value) AS data_payload
+    FROM (
+                        SELECT * FROM tmpc.target_nk_not_null t
+                        WHERE (t.type, t.lu_id) IN (SELECT DISTINCT type, lu_id FROM source_initial)
+                    ) t -- v_target_rows_filter is now a subquery with alias t
+),
+source_rows AS (
+    SELECT
+        si.*,
+        (si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)) as target_entity_exists
+    FROM source_initial si
+),
+active_source_rows AS (
+    -- Filter the initial source rows based on the operation mode.
+    SELECT
+        sr.source_row_id as source_row_id,
+        -- If it's a new entity, synthesize a temporary unique ID by embedding the founding_id,
+        -- so the planner can distinguish and group new entities.
+        
+                CASE
+                    WHEN sr.is_new_entity AND NOT sr.target_entity_exists
+                    THEN sr.entity_id || jsonb_build_object('row_id', sr.founding_id::text)
+                    ELSE sr.entity_id
+                END
+             as entity_id,
+        sr.valid_from,
+        sr.valid_until,
+        sr.data_payload
+    FROM source_rows sr
+    WHERE CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+        -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
+        WHEN 'MERGE_ENTITY_PATCH' THEN true
+        WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
+        WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
+        -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
+        WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        ELSE false
+    END
+),
+all_rows AS (
+    SELECT entity_id, valid_from, valid_until FROM active_source_rows
+    UNION ALL
+    SELECT entity_id, valid_from, valid_until FROM target_rows
+),
+time_points AS (
+    SELECT DISTINCT entity_id, point FROM (
+        SELECT entity_id, valid_from AS point FROM all_rows
+        UNION ALL
+        SELECT entity_id, valid_until AS point FROM all_rows
+    ) AS points
+),
+atomic_segments AS (
+    SELECT entity_id, point as valid_from, LEAD(point) OVER (PARTITION BY entity_id ORDER BY point) as valid_until
+    FROM time_points WHERE point IS NOT NULL
+),
+resolved_atomic_segments_with_payloads AS (
+    SELECT
+        with_base_payload.*,
+        -- Propagate the stable identity payload to all segments of an entity.
+        -- This ensures that when we create new history slices, we preserve the original stable ID.
+        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY with_base_payload.entity_id ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
+    FROM (
+        SELECT
+            seg.entity_id,
+                seg.valid_from,
+                seg.valid_until,
+                t.t_valid_from,
+                ( -- Find causal source row
+                    SELECT sr.source_row_id FROM active_source_rows sr
+                    WHERE sr.entity_id = seg.entity_id
+                      AND (
+                          daterange(sr.valid_from, sr.valid_until) && daterange(seg.valid_from, seg.valid_until)
+                          OR (
+                              daterange(sr.valid_from, sr.valid_until) -|- daterange(seg.valid_from, seg.valid_until)
+                              AND EXISTS (
+                                  SELECT 1 FROM target_rows tr
+                                  WHERE tr.entity_id = sr.entity_id
+                                    AND daterange(sr.valid_from, sr.valid_until) && daterange(tr.valid_from, tr.valid_until)
+                              )
+                          )
+                      )
+                    -- Prioritize the latest source row in case of overlaps
+                    ORDER BY sr.source_row_id DESC LIMIT 1
+                ) as source_row_id,
+                s.data_payload as s_data_payload,
+                t.data_payload as t_data_payload,
+                t.stable_pk_payload
+            FROM atomic_segments seg
+            LEFT JOIN LATERAL (
+                SELECT tr.data_payload, tr.valid_from as t_valid_from, tr.stable_pk_payload
+                FROM target_rows tr
+                WHERE tr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(tr.valid_from, tr.valid_until)
+            ) t ON true
+            LEFT JOIN LATERAL (
+                SELECT sr.data_payload
+                FROM active_source_rows sr
+                WHERE sr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(sr.valid_from, sr.valid_until)
+                -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
+                ORDER BY sr.source_row_id DESC
+                LIMIT 1
+            ) s ON true
+            WHERE seg.valid_from < seg.valid_until
+              AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+        ) with_base_payload
+)
+,
+numbered_segments AS (
+    SELECT
+        *,
+        row_number() OVER (PARTITION BY entity_id ORDER BY valid_from) as rn
+    FROM resolved_atomic_segments_with_payloads
+),
+running_payload_cte AS (
+    -- Anchor: The first segment for each entity. Its base payload is its own target payload, or empty.
+    SELECT
+        s.*,
+        (COALESCE(s.t_data_payload, '{}'::jsonb) || COALESCE(s.s_data_payload, '{}'::jsonb)) AS data_payload
+    FROM numbered_segments s
+    WHERE s.rn = 1
+
+    UNION ALL
+
+    -- Recursive step: The next segment's payload is the previous segment's final payload,
+    -- potentially overridden by the current segment's target payload (if any), and then patched
+    -- with the current segment's source payload.
+    SELECT
+        s.*,
+        (
+            COALESCE(s.t_data_payload, p.data_payload) || COALESCE(s.s_data_payload, '{}'::jsonb)
+        )::jsonb AS data_payload
+    FROM numbered_segments s
+    JOIN running_payload_cte p ON s.entity_id = p.entity_id AND s.rn = p.rn + 1
+)
+,
+resolved_atomic_segments AS (
+    SELECT
+        entity_id,
+        valid_from,
+        valid_until,
+        t_valid_from,
+        source_row_id,
+        propagated_stable_pk_payload AS stable_pk_payload,
+        s_data_payload,
+        t_data_payload,
+        data_payload as data_payload,
+        CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+    FROM running_payload_cte
+),
+coalesced_final_segments AS (
+    SELECT
+        entity_id,
+        MIN(valid_from) as valid_from,
+        MAX(valid_until) as valid_until,
+        -- When coalescing segments, the business data is identical (that's why they are being
+        -- coalesced). However, the ephemeral metadata (like a comment) might differ. We must
+        -- deterministically pick one payload to be the representative for the new, larger segment.
+        -- We pick the payload from the first atomic segment in the group, ordered by time.
+        sql_saga.first(data_payload ORDER BY valid_from) as data_payload,
+        sql_saga.first(stable_pk_payload ORDER BY valid_from) as stable_pk_payload,
+        -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
+        array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
+    FROM (
+        SELECT
+            *,
+            -- This window function creates a grouping key (segment_group). A new group starts
+            -- whenever there is a time gap or a change in the data payload.
+            SUM(is_new_segment) OVER (PARTITION BY entity_id ORDER BY valid_from) as segment_group
+        FROM (
+            SELECT
+                *,
+                CASE
+                    -- A new segment starts if there is a gap between it and the previous one,
+                    -- or if the data payload changes. For [) intervals, contiguity is defined
+                    -- as the previous `valid_until` being equal to the current `valid_from`.
+                    -- The subtraction of ephemeral columns `('{}')` is safe because the `jsonb - text[]` operator
+                    -- gracefully handles `NULL` payloads, which is how gaps are represented.
+                    WHEN LAG(valid_until) OVER (PARTITION BY entity_id ORDER BY valid_from) = valid_from
+                     AND (
+                        LAG(data_payload - '{}'::text[]) OVER (PARTITION BY entity_id ORDER BY valid_from)
+                        IS NOT DISTINCT FROM
+                        (data_payload - '{}'::text[])
+                     )
+                    THEN 0 -- Not a new group (contiguous and same data)
+                    ELSE 1 -- Is a new group (time gap or different data)
+                END as is_new_segment
+            FROM resolved_atomic_segments ras
+        ) with_new_segment_flag
+    ) with_segment_group
+    GROUP BY
+        entity_id,
+        segment_group
+),
+
+diff AS (
+    SELECT
+        -- Use COALESCE on entity_id to handle full additions/deletions
+        COALESCE(f.f_entity_id, t.t_entity_id) as entity_id,
+        f.f_from, f.f_until, f.f_data, f.f_source_row_ids, f.stable_pk_payload,
+        t.t_from, t.t_until, t.t_data,
+        -- This function call determines the Allen Interval Relation between the final state and target state segments
+        sql_saga.allen_get_relation(f.f_from, f.f_until, t.t_from, t.t_until) as relation
+    FROM
+    (
+        SELECT
+            entity_id AS f_entity_id,
+            valid_from AS f_from,
+            valid_until AS f_until,
+            data_payload AS f_data,
+            stable_pk_payload,
+            source_row_ids AS f_source_row_ids
+        FROM coalesced_final_segments
+    ) f
+    FULL OUTER JOIN
+    (
+        SELECT
+            entity_id as t_entity_id,
+            valid_from as t_from,
+            valid_until as t_until,
+            data_payload as t_data
+        FROM target_rows
+    ) t
+    ON f.f_entity_id = t.t_entity_id AND (
+               f.f_from = t.t_from
+               OR (
+                   f.f_until = t.t_until AND f.f_data IS NOT DISTINCT FROM t.t_data
+                   AND NOT EXISTS (
+                       SELECT 1 FROM coalesced_final_segments f_inner
+                       WHERE f_inner.entity_id = t.t_entity_id AND f_inner.valid_from = t.t_from
+                   )
+               )
+            )
+),
+plan_with_op AS (
+    (
+        SELECT
+            COALESCE(
+                d.f_source_row_ids,
+                MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
+            ) as source_row_ids,
+            CASE
+                -- If both final and target data are NULL, it's a gap in both. This is a SKIP_IDENTICAL operation.
+                -- This rule must come first to correctly handle intended gaps from DELETE_FOR_PORTION_OF mode.
+                WHEN d.f_data IS NULL AND d.t_data IS NULL THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+                WHEN d.f_data IS NULL AND d.t_data IS NOT NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN d.t_data IS NULL AND d.f_data IS NOT NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                WHEN d.relation = 'equals' AND d.f_data IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN (d.f_data - '{}'::text[]) IS DISTINCT FROM (d.t_data - '{}'::text[])
+                  OR d.f_from IS DISTINCT FROM d.t_from
+                  OR d.f_until IS DISTINCT FROM d.t_until
+                THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
+                ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+            END as operation,
+            d.entity_id || COALESCE(d.stable_pk_payload, '{}'::jsonb) as entity_id,
+            d.t_from as old_valid_from,
+            d.t_until as old_valid_until,
+            d.f_from as new_valid_from,
+            d.f_until as new_valid_until,
+            d.f_data as data,
+            d.relation
+        FROM diff d
+        WHERE d.f_source_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
+    )
+    UNION ALL
+    (
+        -- This part of the plan handles source rows that were filtered out by the main logic,
+        -- allowing the executor to provide accurate feedback.
+        SELECT
+            ARRAY[sr.source_row_id::BIGINT],
+            'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
+            sr.entity_id,
+            NULL, NULL, NULL, NULL, NULL, NULL
+        FROM source_rows sr
+        WHERE
+            CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                ELSE false
+            END
+    )
+),
+plan AS (
+    SELECT
+        *,
+        CASE
+            WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from <= p.old_valid_from AND p.new_valid_until >= p.old_valid_until THEN 'GROW'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from >= p.old_valid_from AND p.new_valid_until <= p.old_valid_until THEN 'SHRINK'::sql_saga.temporal_merge_update_effect
+            ELSE 'MOVE'::sql_saga.temporal_merge_update_effect
+        END AS timeline_update_effect
+    FROM plan_with_op p
+)
+SELECT
+    row_number() OVER (ORDER BY p.entity_id, p.operation, p.timeline_update_effect, COALESCE(p.new_valid_from, p.old_valid_from), (p.source_row_ids[1]))::BIGINT as plan_op_seq,
+    p.source_row_ids,
+    p.operation,
+    p.timeline_update_effect,
+    p.entity_id AS entity_ids,
+    p.old_valid_from::TEXT,
+    p.old_valid_until::TEXT,
+    p.new_valid_from::TEXT,
+    p.new_valid_until::TEXT,
+    CASE
+        WHEN jsonb_typeof(p.data) = 'object' THEN p.data - '{type,lu_id}'::text[]
+        ELSE p.data
+    END as data,
+    p.relation
+FROM plan p
+ORDER BY plan_op_seq;
+
+\o
+SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk_nn FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%' \gset
+\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+:explain_command_nk_nn
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (row_number() OVER (?))
+   CTE source_initial
+     ->  Seq Scan on source_nk_not_null t
+   CTE target_rows
+     ->  Nested Loop
+           ->  HashAggregate
+                 Group Key: source_initial.type, source_initial.lu_id
+                 ->  CTE Scan on source_initial
+           ->  Index Scan using target_nk_not_null_type_lu_id_valid_excl on target_nk_not_null t_1
+                 Index Cond: ((type = source_initial.type) AND (lu_id = source_initial.lu_id))
+   CTE source_rows
+     ->  CTE Scan on source_initial si
+           SubPlan 3
+             ->  CTE Scan on target_rows tr
+   CTE active_source_rows
+     ->  CTE Scan on source_rows sr
+   CTE all_rows
+     ->  Append
+           ->  CTE Scan on active_source_rows
+           ->  CTE Scan on target_rows target_rows_1
+   CTE numbered_segments
+     ->  WindowAgg
+           ->  Incremental Sort
+                 Sort Key: resolved_atomic_segments_with_payloads.entity_id, resolved_atomic_segments_with_payloads.valid_from
+                 Presorted Key: resolved_atomic_segments_with_payloads.entity_id
+                 ->  Subquery Scan on resolved_atomic_segments_with_payloads
+                       ->  WindowAgg
+                             ->  Incremental Sort
+                                   Sort Key: seg.entity_id, ((tr_2.stable_pk_payload IS NULL)), seg.valid_from
+                                   Presorted Key: seg.entity_id
+                                   ->  Nested Loop Left Join
+                                         Filter: ((sr_2.data_payload IS NOT NULL) OR (tr_2.data_payload IS NOT NULL))
+                                         ->  Nested Loop Left Join
+                                               Join Filter: ((tr_2.entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until)))
+                                               ->  Subquery Scan on seg
+                                                     Filter: (seg.valid_from < seg.valid_until)
+                                                     ->  WindowAgg
+                                                           ->  Unique
+                                                                 ->  Sort
+                                                                       Sort Key: all_rows.entity_id, all_rows.valid_from
+                                                                       ->  Append
+                                                                             ->  CTE Scan on all_rows
+                                                                                   Filter: (valid_from IS NOT NULL)
+                                                                             ->  CTE Scan on all_rows all_rows_1
+                                                                                   Filter: (valid_until IS NOT NULL)
+                                               ->  CTE Scan on target_rows tr_2
+                                         ->  Limit
+                                               ->  Sort
+                                                     Sort Key: sr_2.source_row_id DESC
+                                                     ->  CTE Scan on active_source_rows sr_2
+                                                           Filter: ((entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+                             SubPlan 8
+                               ->  Limit
+                                     ->  Sort
+                                           Sort Key: sr_1.source_row_id DESC
+                                           ->  CTE Scan on active_source_rows sr_1
+                                                 Filter: ((entity_id = seg.entity_id) AND ((daterange(valid_from, valid_until) && daterange(seg.valid_from, seg.valid_until)) OR ((daterange(valid_from, valid_until) -|- daterange(seg.valid_from, seg.valid_until)) AND EXISTS(SubPlan 7))))
+                                                 SubPlan 7
+                                                   ->  CTE Scan on target_rows tr_1
+                                                         Filter: ((entity_id = sr_1.entity_id) AND (daterange(sr_1.valid_from, sr_1.valid_until) && daterange(valid_from, valid_until)))
+   CTE running_payload_cte
+     ->  Recursive Union
+           ->  CTE Scan on numbered_segments s
+                 Filter: (rn = 1)
+           ->  Hash Join
+                 Hash Cond: ((p.entity_id = s_1.entity_id) AND ((p.rn + 1) = s_1.rn))
+                 ->  WorkTable Scan on running_payload_cte p
+                 ->  Hash
+                       ->  CTE Scan on numbered_segments s_1
+   CTE coalesced_final_segments
+     ->  GroupAggregate
+           Group Key: with_segment_group.entity_id, with_segment_group.segment_group
+           ->  Incremental Sort
+                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.valid_from
+                 Presorted Key: with_segment_group.entity_id
+                 ->  Subquery Scan on with_segment_group
+                       ->  WindowAgg
+                             ->  Subquery Scan on with_new_segment_flag
+                                   ->  WindowAgg
+                                         ->  Sort
+                                               Sort Key: running_payload_cte.entity_id, running_payload_cte.valid_from
+                                               ->  CTE Scan on running_payload_cte
+   ->  WindowAgg
+         ->  Sort
+               Sort Key: "*SELECT* 1".entity_id, "*SELECT* 1".operation, (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".source_row_ids[1])
+               ->  Result
+                     ->  Subquery Scan on "*SELECT* 1"
+                           ->  WindowAgg
+                                 ->  Sort
+                                       Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
+                                       ->  Hash Full Join
+                                             Hash Cond: (coalesced_final_segments.entity_id = target_rows.entity_id)
+                                             Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 13).col1) AND (target_rows.valid_from = (hashed SubPlan 13).col2))))))
+                                             Filter: ((coalesced_final_segments.source_row_ids IS NOT NULL) OR (target_rows.data_payload IS NOT NULL))
+                                             ->  CTE Scan on coalesced_final_segments
+                                             ->  Hash
+                                                   ->  CTE Scan on target_rows
+                                             SubPlan 13
+                                               ->  CTE Scan on coalesced_final_segments f_inner
+(100 rows)
+
+\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
+
+--- Verifying that the plan is optimal (no Seq Scan on target) ---
+DO $$
+DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
+BEGIN
+    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%';
+    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the non-null natural key temporal_merge_plan.'; END IF;
+    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
+        IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk_not_null%' THEN has_seq_scan := true; EXIT; END IF;
+    END LOOP;
+    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for non-null natural key contains a "Seq Scan on target_nk_not_null".'; END IF;
+END;
+$$;
+\echo '--- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---'
+--- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---
+ROLLBACK TO SAVEPOINT s2;
+--------------------------------------------------------------------------------
+-- SCENARIO 3: Composite Natural Key with NULLable XOR columns
+--------------------------------------------------------------------------------
+SAVEPOINT s3;
+\echo '\n--- Scenario 3: Composite Natural Key with NULLable XOR columns ---'
+
+--- Scenario 3: Composite Natural Key with NULLable XOR columns ---
+CREATE TABLE tmpc.target_nk (type TEXT NOT NULL, lu_id INT, es_id INT, value TEXT, valid_from date, valid_until date,
+    CONSTRAINT lu_or_es_id_check CHECK ((lu_id IS NOT NULL AND es_id IS NULL) OR (lu_id IS NULL AND es_id IS NOT NULL))
+);
+SELECT sql_saga.add_era('tmpc.target_nk', 'valid_from', 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+CREATE TABLE tmpc.source_nk (row_id int, type text NOT NULL, lu_id int, es_id int, value text, valid_from date, valid_until date,
+    CONSTRAINT source_lu_or_es_id_check CHECK ((lu_id IS NOT NULL AND es_id IS NULL) OR (lu_id IS NULL AND es_id IS NOT NULL))
+);
+\echo '--- Setting up natural key tables with partial indexes and data ---'
+--- Setting up natural key tables with partial indexes and data ---
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'lu_id'], p_key_type => 'predicated', predicate => 'es_id IS NULL');
+       add_unique_key       
+----------------------------
+ target_nk_type_lu_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'es_id'], p_key_type => 'predicated', predicate => 'lu_id IS NULL');
+       add_unique_key       
+----------------------------
+ target_nk_type_es_id_valid
+(1 row)
+
+INSERT INTO tmpc.target_nk (type, lu_id, es_id, valid_from, valid_until, value) SELECT 'A', i, NULL, '2023-01-01', '2024-01-01', 'LU' FROM generate_series(1, 1000) as i;
+INSERT INTO tmpc.target_nk (type, lu_id, es_id, valid_from, valid_until, value) SELECT 'B', NULL, i, '2023-01-01', '2024-01-01', 'ES' FROM generate_series(1, 1000) as i;
+INSERT INTO tmpc.source_nk VALUES (1, 'A', 500, NULL, 'LU-patched', '2023-06-01', '2023-07-01');
+INSERT INTO tmpc.source_nk VALUES (2, 'B', NULL, 500, 'ES-patched', '2023-06-01', '2023-07-01');
+ANALYZE tmpc.target_nk;
+ANALYZE tmpc.source_nk;
+\echo '\d tmpc.target_nk'
+d tmpc.target_nk
+\d tmpc.target_nk
+                     Table "tmpc.target_nk"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ type        | text    |           | not null | 
+ lu_id       | integer |           |          | 
+ es_id       | integer |           |          | 
+ value       | text    |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "target_nk_type_es_id_idx" btree (type, es_id)
+    "target_nk_type_es_id_valid_excl" EXCLUDE USING gist (type WITH =, es_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (lu_id IS NULL) DEFERRABLE
+    "target_nk_type_es_id_valid_idx" UNIQUE, btree (type, es_id, valid_from, valid_until) WHERE lu_id IS NULL
+    "target_nk_type_lu_id_idx" btree (type, lu_id)
+    "target_nk_type_lu_id_valid_excl" EXCLUDE USING gist (type WITH =, lu_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (es_id IS NULL) DEFERRABLE
+    "target_nk_type_lu_id_valid_idx" UNIQUE, btree (type, lu_id, valid_from, valid_until) WHERE es_id IS NULL
+Check constraints:
+    "lu_or_es_id_check" CHECK (lu_id IS NOT NULL AND es_id IS NULL OR lu_id IS NULL AND es_id IS NOT NULL)
+    "target_nk_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+\echo '\d tmpc.source_nk'
+d tmpc.source_nk
+\d tmpc.source_nk
+                 Table "tmpc.source_nk"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ row_id      | integer |           |          | 
+ type        | text    |           | not null | 
+ lu_id       | integer |           |          | 
+ es_id       | integer |           |          | 
+ value       | text    |           |          | 
+ valid_from  | date    |           |          | 
+ valid_until | date    |           |          | 
+Check constraints:
+    "source_lu_or_es_id_check" CHECK (lu_id IS NOT NULL AND es_id IS NULL OR lu_id IS NULL AND es_id IS NOT NULL)
+
+\echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NULLable) ---'
+
+--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NULLable) ---
+\o /dev/null
+SELECT * FROM sql_saga.temporal_merge_plan(
+    p_target_table      => 'tmpc.target_nk'::regclass,
+    p_source_table      => 'tmpc.source_nk'::regclass,
+    p_identity_columns        => '{type,lu_id,es_id}'::text[],
+    p_mode              => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+    p_era_name          => 'valid'
+);
+NOTICE:  --- temporal_merge SQL for tmpc.target_nk ---
+NOTICE:  
+WITH RECURSIVE
+source_initial AS (
+    SELECT
+        t.row_id as source_row_id,
+        t.row_id as founding_id,
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id, 'es_id', t.es_id) as entity_id,
+        t.type, t.lu_id, t.es_id,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_strip_nulls(jsonb_build_object('value', t.value)) AS data_payload,
+        t.type IS NULL AND t.lu_id IS NULL AND t.es_id IS NULL as is_new_entity
+    FROM tmpc.source_nk t
+),
+target_rows AS (
+    SELECT
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id, 'es_id', t.es_id) as entity_id,
+        jsonb_build_object('type', t.type, 'lu_id', t.lu_id, 'es_id', t.es_id) as stable_pk_payload,
+        t.valid_from as valid_from,
+        t.valid_until as valid_until,
+        jsonb_build_object('value', t.value) AS data_payload
+    FROM (((
+                            SELECT * FROM tmpc.target_nk t
+                            WHERE (t.type, t.lu_id, t.es_id) IN (SELECT DISTINCT type, lu_id, es_id FROM source_initial si WHERE si.type IS NOT NULL AND si.lu_id IS NOT NULL AND si.es_id IS NOT NULL)
+                        )) UNION ((
+                                                SELECT DISTINCT t.*
+                                                FROM tmpc.target_nk t
+                                                JOIN source_initial si ON (si.type = t.type AND si.lu_id = t.lu_id)
+                                                WHERE t.es_id IS NULL AND si.es_id IS NULL
+                                            ) UNION ALL (
+                                                SELECT DISTINCT t.*
+                                                FROM tmpc.target_nk t
+                                                JOIN source_initial si ON (si.type = t.type AND si.es_id = t.es_id)
+                                                WHERE t.lu_id IS NULL AND si.lu_id IS NULL
+                                            ))) t -- v_target_rows_filter is now a subquery with alias t
+),
+source_rows AS (
+    SELECT
+        si.*,
+        (si.entity_id IN (SELECT tr.entity_id FROM target_rows tr)) as target_entity_exists
+    FROM source_initial si
+),
+active_source_rows AS (
+    -- Filter the initial source rows based on the operation mode.
+    SELECT
+        sr.source_row_id as source_row_id,
+        -- If it's a new entity, synthesize a temporary unique ID by embedding the founding_id,
+        -- so the planner can distinguish and group new entities.
+        
+                CASE
+                    WHEN sr.is_new_entity AND NOT sr.target_entity_exists
+                    THEN sr.entity_id || jsonb_build_object('row_id', sr.founding_id::text)
+                    ELSE sr.entity_id
+                END
+             as entity_id,
+        sr.valid_from,
+        sr.valid_until,
+        sr.data_payload
+    FROM source_rows sr
+    WHERE CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+        -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
+        WHEN 'MERGE_ENTITY_PATCH' THEN true
+        WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
+        WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
+        -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
+        WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        ELSE false
+    END
+),
+all_rows AS (
+    SELECT entity_id, valid_from, valid_until FROM active_source_rows
+    UNION ALL
+    SELECT entity_id, valid_from, valid_until FROM target_rows
+),
+time_points AS (
+    SELECT DISTINCT entity_id, point FROM (
+        SELECT entity_id, valid_from AS point FROM all_rows
+        UNION ALL
+        SELECT entity_id, valid_until AS point FROM all_rows
+    ) AS points
+),
+atomic_segments AS (
+    SELECT entity_id, point as valid_from, LEAD(point) OVER (PARTITION BY entity_id ORDER BY point) as valid_until
+    FROM time_points WHERE point IS NOT NULL
+),
+resolved_atomic_segments_with_payloads AS (
+    SELECT
+        with_base_payload.*,
+        -- Propagate the stable identity payload to all segments of an entity.
+        -- This ensures that when we create new history slices, we preserve the original stable ID.
+        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY with_base_payload.entity_id ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
+    FROM (
+        SELECT
+            seg.entity_id,
+                seg.valid_from,
+                seg.valid_until,
+                t.t_valid_from,
+                ( -- Find causal source row
+                    SELECT sr.source_row_id FROM active_source_rows sr
+                    WHERE sr.entity_id = seg.entity_id
+                      AND (
+                          daterange(sr.valid_from, sr.valid_until) && daterange(seg.valid_from, seg.valid_until)
+                          OR (
+                              daterange(sr.valid_from, sr.valid_until) -|- daterange(seg.valid_from, seg.valid_until)
+                              AND EXISTS (
+                                  SELECT 1 FROM target_rows tr
+                                  WHERE tr.entity_id = sr.entity_id
+                                    AND daterange(sr.valid_from, sr.valid_until) && daterange(tr.valid_from, tr.valid_until)
+                              )
+                          )
+                      )
+                    -- Prioritize the latest source row in case of overlaps
+                    ORDER BY sr.source_row_id DESC LIMIT 1
+                ) as source_row_id,
+                s.data_payload as s_data_payload,
+                t.data_payload as t_data_payload,
+                t.stable_pk_payload
+            FROM atomic_segments seg
+            LEFT JOIN LATERAL (
+                SELECT tr.data_payload, tr.valid_from as t_valid_from, tr.stable_pk_payload
+                FROM target_rows tr
+                WHERE tr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(tr.valid_from, tr.valid_until)
+            ) t ON true
+            LEFT JOIN LATERAL (
+                SELECT sr.data_payload
+                FROM active_source_rows sr
+                WHERE sr.entity_id = seg.entity_id
+                  AND daterange(seg.valid_from, seg.valid_until) <@ daterange(sr.valid_from, sr.valid_until)
+                -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
+                ORDER BY sr.source_row_id DESC
+                LIMIT 1
+            ) s ON true
+            WHERE seg.valid_from < seg.valid_until
+              AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+        ) with_base_payload
+)
+,
+numbered_segments AS (
+    SELECT
+        *,
+        row_number() OVER (PARTITION BY entity_id ORDER BY valid_from) as rn
+    FROM resolved_atomic_segments_with_payloads
+),
+running_payload_cte AS (
+    -- Anchor: The first segment for each entity. Its base payload is its own target payload, or empty.
+    SELECT
+        s.*,
+        (COALESCE(s.t_data_payload, '{}'::jsonb) || COALESCE(s.s_data_payload, '{}'::jsonb)) AS data_payload
+    FROM numbered_segments s
+    WHERE s.rn = 1
+
+    UNION ALL
+
+    -- Recursive step: The next segment's payload is the previous segment's final payload,
+    -- potentially overridden by the current segment's target payload (if any), and then patched
+    -- with the current segment's source payload.
+    SELECT
+        s.*,
+        (
+            COALESCE(s.t_data_payload, p.data_payload) || COALESCE(s.s_data_payload, '{}'::jsonb)
+        )::jsonb AS data_payload
+    FROM numbered_segments s
+    JOIN running_payload_cte p ON s.entity_id = p.entity_id AND s.rn = p.rn + 1
+)
+,
+resolved_atomic_segments AS (
+    SELECT
+        entity_id,
+        valid_from,
+        valid_until,
+        t_valid_from,
+        source_row_id,
+        propagated_stable_pk_payload AS stable_pk_payload,
+        s_data_payload,
+        t_data_payload,
+        data_payload as data_payload,
+        CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+    FROM running_payload_cte
+),
+coalesced_final_segments AS (
+    SELECT
+        entity_id,
+        MIN(valid_from) as valid_from,
+        MAX(valid_until) as valid_until,
+        -- When coalescing segments, the business data is identical (that's why they are being
+        -- coalesced). However, the ephemeral metadata (like a comment) might differ. We must
+        -- deterministically pick one payload to be the representative for the new, larger segment.
+        -- We pick the payload from the first atomic segment in the group, ordered by time.
+        sql_saga.first(data_payload ORDER BY valid_from) as data_payload,
+        sql_saga.first(stable_pk_payload ORDER BY valid_from) as stable_pk_payload,
+        -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
+        array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
+    FROM (
+        SELECT
+            *,
+            -- This window function creates a grouping key (segment_group). A new group starts
+            -- whenever there is a time gap or a change in the data payload.
+            SUM(is_new_segment) OVER (PARTITION BY entity_id ORDER BY valid_from) as segment_group
+        FROM (
+            SELECT
+                *,
+                CASE
+                    -- A new segment starts if there is a gap between it and the previous one,
+                    -- or if the data payload changes. For [) intervals, contiguity is defined
+                    -- as the previous `valid_until` being equal to the current `valid_from`.
+                    -- The subtraction of ephemeral columns `('{}')` is safe because the `jsonb - text[]` operator
+                    -- gracefully handles `NULL` payloads, which is how gaps are represented.
+                    WHEN LAG(valid_until) OVER (PARTITION BY entity_id ORDER BY valid_from) = valid_from
+                     AND (
+                        LAG(data_payload - '{}'::text[]) OVER (PARTITION BY entity_id ORDER BY valid_from)
+                        IS NOT DISTINCT FROM
+                        (data_payload - '{}'::text[])
+                     )
+                    THEN 0 -- Not a new group (contiguous and same data)
+                    ELSE 1 -- Is a new group (time gap or different data)
+                END as is_new_segment
+            FROM resolved_atomic_segments ras
+        ) with_new_segment_flag
+    ) with_segment_group
+    GROUP BY
+        entity_id,
+        segment_group
+),
+
+diff AS (
+    SELECT
+        -- Use COALESCE on entity_id to handle full additions/deletions
+        COALESCE(f.f_entity_id, t.t_entity_id) as entity_id,
+        f.f_from, f.f_until, f.f_data, f.f_source_row_ids, f.stable_pk_payload,
+        t.t_from, t.t_until, t.t_data,
+        -- This function call determines the Allen Interval Relation between the final state and target state segments
+        sql_saga.allen_get_relation(f.f_from, f.f_until, t.t_from, t.t_until) as relation
+    FROM
+    (
+        SELECT
+            entity_id AS f_entity_id,
+            valid_from AS f_from,
+            valid_until AS f_until,
+            data_payload AS f_data,
+            stable_pk_payload,
+            source_row_ids AS f_source_row_ids
+        FROM coalesced_final_segments
+    ) f
+    FULL OUTER JOIN
+    (
+        SELECT
+            entity_id as t_entity_id,
+            valid_from as t_from,
+            valid_until as t_until,
+            data_payload as t_data
+        FROM target_rows
+    ) t
+    ON f.f_entity_id = t.t_entity_id AND (
+               f.f_from = t.t_from
+               OR (
+                   f.f_until = t.t_until AND f.f_data IS NOT DISTINCT FROM t.t_data
+                   AND NOT EXISTS (
+                       SELECT 1 FROM coalesced_final_segments f_inner
+                       WHERE f_inner.entity_id = t.t_entity_id AND f_inner.valid_from = t.t_from
+                   )
+               )
+            )
+),
+plan_with_op AS (
+    (
+        SELECT
+            COALESCE(
+                d.f_source_row_ids,
+                MAX(d.f_source_row_ids) OVER (PARTITION BY d.entity_id, d.t_from)
+            ) as source_row_ids,
+            CASE
+                -- If both final and target data are NULL, it's a gap in both. This is a SKIP_IDENTICAL operation.
+                -- This rule must come first to correctly handle intended gaps from DELETE_FOR_PORTION_OF mode.
+                WHEN d.f_data IS NULL AND d.t_data IS NULL THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+                WHEN d.f_data IS NULL AND d.t_data IS NOT NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN d.t_data IS NULL AND d.f_data IS NOT NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                WHEN d.relation = 'equals' AND d.f_data IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                WHEN (d.f_data - '{}'::text[]) IS DISTINCT FROM (d.t_data - '{}'::text[])
+                  OR d.f_from IS DISTINCT FROM d.t_from
+                  OR d.f_until IS DISTINCT FROM d.t_until
+                THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
+                ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+            END as operation,
+            d.entity_id || COALESCE(d.stable_pk_payload, '{}'::jsonb) as entity_id,
+            d.t_from as old_valid_from,
+            d.t_until as old_valid_until,
+            d.f_from as new_valid_from,
+            d.f_until as new_valid_until,
+            d.f_data as data,
+            d.relation
+        FROM diff d
+        WHERE d.f_source_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
+    )
+    UNION ALL
+    (
+        -- This part of the plan handles source rows that were filtered out by the main logic,
+        -- allowing the executor to provide accurate feedback.
+        SELECT
+            ARRAY[sr.source_row_id::BIGINT],
+            'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action,
+            sr.entity_id,
+            NULL, NULL, NULL, NULL, NULL, NULL
+        FROM source_rows sr
+        WHERE
+            CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                ELSE false
+            END
+    )
+),
+plan AS (
+    SELECT
+        *,
+        CASE
+            WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from <= p.old_valid_from AND p.new_valid_until >= p.old_valid_until THEN 'GROW'::sql_saga.temporal_merge_update_effect
+            WHEN p.new_valid_from >= p.old_valid_from AND p.new_valid_until <= p.old_valid_until THEN 'SHRINK'::sql_saga.temporal_merge_update_effect
+            ELSE 'MOVE'::sql_saga.temporal_merge_update_effect
+        END AS timeline_update_effect
+    FROM plan_with_op p
+)
+SELECT
+    row_number() OVER (ORDER BY p.entity_id, p.operation, p.timeline_update_effect, COALESCE(p.new_valid_from, p.old_valid_from), (p.source_row_ids[1]))::BIGINT as plan_op_seq,
+    p.source_row_ids,
+    p.operation,
+    p.timeline_update_effect,
+    p.entity_id AS entity_ids,
+    p.old_valid_from::TEXT,
+    p.old_valid_until::TEXT,
+    p.new_valid_from::TEXT,
+    p.new_valid_until::TEXT,
+    CASE
+        WHEN jsonb_typeof(p.data) = 'object' THEN p.data - '{type,lu_id,es_id}'::text[]
+        ELSE p.data
+    END as data,
+    p.relation
+FROM plan p
+ORDER BY plan_op_seq;
+
+\o
+SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%' \gset
+\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
+:explain_command_nk
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                         QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Sort
+   Sort Key: (row_number() OVER (?))
+   CTE source_initial
+     ->  Seq Scan on source_nk t
+   CTE target_rows
+     ->  Subquery Scan on t_1
+           ->  Unique
+                 ->  Merge Append
+                       Sort Key: t_2.type, t_2.lu_id, t_2.es_id, t_2.value, t_2.valid_from, t_2.valid_until
+                       ->  Incremental Sort
+                             Sort Key: t_2.type, t_2.lu_id, t_2.es_id, t_2.value, t_2.valid_from, t_2.valid_until
+                             Presorted Key: t_2.type, t_2.lu_id, t_2.es_id
+                             ->  Nested Loop
+                                   ->  Unique
+                                         ->  Sort
+                                               Sort Key: si.type, si.lu_id, si.es_id
+                                               ->  CTE Scan on source_initial si
+                                                     Filter: ((type IS NOT NULL) AND (lu_id IS NOT NULL) AND (es_id IS NOT NULL))
+                                   ->  Index Scan using target_nk_type_es_id_idx on target_nk t_2
+                                         Index Cond: ((type = si.type) AND (es_id = si.es_id))
+                                         Filter: (lu_id = si.lu_id)
+                       ->  Unique
+                             ->  Sort
+                                   Sort Key: t_3.type, t_3.lu_id, t_3.es_id, t_3.value, t_3.valid_from, t_3.valid_until
+                                   ->  Nested Loop
+                                         ->  CTE Scan on source_initial si_1
+                                               Filter: (es_id IS NULL)
+                                         ->  Index Scan using target_nk_type_lu_id_valid_excl on target_nk t_3
+                                               Index Cond: ((type = si_1.type) AND (lu_id = si_1.lu_id))
+                       ->  Unique
+                             ->  Sort
+                                   Sort Key: t_4.type, t_4.lu_id, t_4.es_id, t_4.value, t_4.valid_from, t_4.valid_until
+                                   ->  Nested Loop
+                                         ->  CTE Scan on source_initial si_2
+                                               Filter: (lu_id IS NULL)
+                                         ->  Index Scan using target_nk_type_es_id_valid_excl on target_nk t_4
+                                               Index Cond: ((type = si_2.type) AND (es_id = si_2.es_id))
+   CTE source_rows
+     ->  CTE Scan on source_initial si_3
+           SubPlan 3
+             ->  CTE Scan on target_rows tr
+   CTE active_source_rows
+     ->  CTE Scan on source_rows sr
+   CTE all_rows
+     ->  Append
+           ->  CTE Scan on active_source_rows
+           ->  CTE Scan on target_rows target_rows_1
+   CTE numbered_segments
+     ->  WindowAgg
+           ->  Incremental Sort
+                 Sort Key: resolved_atomic_segments_with_payloads.entity_id, resolved_atomic_segments_with_payloads.valid_from
+                 Presorted Key: resolved_atomic_segments_with_payloads.entity_id
+                 ->  Subquery Scan on resolved_atomic_segments_with_payloads
+                       ->  WindowAgg
+                             ->  Incremental Sort
+                                   Sort Key: seg.entity_id, ((tr_2.stable_pk_payload IS NULL)), seg.valid_from
+                                   Presorted Key: seg.entity_id
+                                   ->  Nested Loop Left Join
+                                         Filter: ((sr_2.data_payload IS NOT NULL) OR (tr_2.data_payload IS NOT NULL))
+                                         ->  Merge Left Join
+                                               Merge Cond: (seg.entity_id = tr_2.entity_id)
+                                               Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(tr_2.valid_from, tr_2.valid_until))
+                                               ->  Subquery Scan on seg
+                                                     Filter: (seg.valid_from < seg.valid_until)
+                                                     ->  WindowAgg
+                                                           ->  Unique
+                                                                 ->  Sort
+                                                                       Sort Key: all_rows.entity_id, all_rows.valid_from
+                                                                       ->  Append
+                                                                             ->  CTE Scan on all_rows
+                                                                                   Filter: (valid_from IS NOT NULL)
+                                                                             ->  CTE Scan on all_rows all_rows_1
+                                                                                   Filter: (valid_until IS NOT NULL)
+                                               ->  Sort
+                                                     Sort Key: tr_2.entity_id
+                                                     ->  CTE Scan on target_rows tr_2
+                                         ->  Limit
+                                               ->  Sort
+                                                     Sort Key: sr_2.source_row_id DESC
+                                                     ->  CTE Scan on active_source_rows sr_2
+                                                           Filter: ((entity_id = seg.entity_id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+                             SubPlan 8
+                               ->  Limit
+                                     ->  Sort
+                                           Sort Key: sr_1.source_row_id DESC
+                                           ->  CTE Scan on active_source_rows sr_1
+                                                 Filter: ((entity_id = seg.entity_id) AND ((daterange(valid_from, valid_until) && daterange(seg.valid_from, seg.valid_until)) OR ((daterange(valid_from, valid_until) -|- daterange(seg.valid_from, seg.valid_until)) AND EXISTS(SubPlan 7))))
+                                                 SubPlan 7
+                                                   ->  CTE Scan on target_rows tr_1
+                                                         Filter: ((entity_id = sr_1.entity_id) AND (daterange(sr_1.valid_from, sr_1.valid_until) && daterange(valid_from, valid_until)))
+   CTE running_payload_cte
+     ->  Recursive Union
+           ->  CTE Scan on numbered_segments s
+                 Filter: (rn = 1)
+           ->  Hash Join
+                 Hash Cond: ((p.entity_id = s_1.entity_id) AND ((p.rn + 1) = s_1.rn))
+                 ->  WorkTable Scan on running_payload_cte p
+                 ->  Hash
+                       ->  CTE Scan on numbered_segments s_1
+   CTE coalesced_final_segments
+     ->  GroupAggregate
+           Group Key: with_segment_group.entity_id, with_segment_group.segment_group
+           ->  Incremental Sort
+                 Sort Key: with_segment_group.entity_id, with_segment_group.segment_group, with_segment_group.valid_from
+                 Presorted Key: with_segment_group.entity_id
+                 ->  Subquery Scan on with_segment_group
+                       ->  WindowAgg
+                             ->  Subquery Scan on with_new_segment_flag
+                                   ->  WindowAgg
+                                         ->  Sort
+                                               Sort Key: running_payload_cte.entity_id, running_payload_cte.valid_from
+                                               ->  CTE Scan on running_payload_cte
+   ->  WindowAgg
+         ->  Sort
+               Sort Key: "*SELECT* 1".entity_id, "*SELECT* 1".operation, (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".source_row_ids[1])
+               ->  Result
+                     ->  Subquery Scan on "*SELECT* 1"
+                           ->  WindowAgg
+                                 ->  Sort
+                                       Sort Key: (COALESCE(coalesced_final_segments.entity_id, target_rows.entity_id)), target_rows.valid_from
+                                       ->  Hash Full Join
+                                             Hash Cond: (coalesced_final_segments.entity_id = target_rows.entity_id)
+                                             Join Filter: ((coalesced_final_segments.valid_from = target_rows.valid_from) OR ((coalesced_final_segments.valid_until = target_rows.valid_until) AND (NOT (coalesced_final_segments.data_payload IS DISTINCT FROM target_rows.data_payload)) AND (NOT (ANY ((target_rows.entity_id = (hashed SubPlan 13).col1) AND (target_rows.valid_from = (hashed SubPlan 13).col2))))))
+                                             Filter: ((coalesced_final_segments.source_row_ids IS NOT NULL) OR (target_rows.data_payload IS NOT NULL))
+                                             ->  CTE Scan on coalesced_final_segments
+                                             ->  Hash
+                                                   ->  CTE Scan on target_rows
+                                             SubPlan 13
+                                               ->  CTE Scan on coalesced_final_segments f_inner
+(129 rows)
+
+\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
+
+--- Verifying that the plan is optimal (no Seq Scan on target) ---
+DO $$
+DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
+BEGIN
+    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%';
+    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the nullable natural key temporal_merge_plan.'; END IF;
+    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
+        IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk%' THEN has_seq_scan := true; EXIT; END IF;
+    END LOOP;
+    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for nullable natural key contains a "Seq Scan on target_nk".'; END IF;
+END;
+$$;
+\echo '--- OK: Verified that EXPLAIN plan for natural key is optimal. ---'
+--- OK: Verified that EXPLAIN plan for natural key is optimal. ---
+ROLLBACK TO SAVEPOINT s3;
 SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

@@ -234,6 +234,12 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - `p_feedback_error_column`: The name of the `jsonb` column in the source table to write error messages to. If provided, `p_feedback_error_key` must also be set.
   - `p_feedback_error_key`: The key within the `jsonb` error column where the error message for this specific merge operation will be written.
 
+  ##### Planner Optimizations for Natural Keys
+  The `temporal_merge` procedure is designed for high performance and automatically optimizes its query plan based on the nullability of your natural key columns (`p_natural_identity_columns`). It dynamically generates one of three strategies to ensure efficient entity lookups:
+  -   **All keys `NOT NULL`:** Uses a simple and fast `WHERE ... IN (...)` clause, which is ideal for indexes on non-nullable columns.
+  -   **Multiple nullable keys:** For complex keys where multiple columns can be `NULL` (e.g., XOR foreign keys), it generates a `UNION ALL` of simple `=` joins. This pattern is highly effective at enabling the PostgreSQL planner to use partial indexes.
+  -   **Single nullable key:** Falls back to a null-safe `IS NOT DISTINCT FROM` join to ensure correctness.
+
   ##### The `INSERT -> UPDATE -> DELETE` Execution Strategy
   To ensure correctness and compatibility with both temporal foreign keys and uniqueness constraints, the `temporal_merge` executor guarantees that all DML operations are performed in a specific order: all `INSERT`s are executed first, followed by all `UPDATE`s, and finally all `DELETE`s.
 
@@ -272,6 +278,10 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 
   - **Caveat for Multi-Role Sessions:** Because temporary tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later by an unprivileged user, the second call may fail as the unprivileged user might not have permission to `TRUNCATE` the tables created by the superuser.
   - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, it is safest to manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS pg_temp.temporal_merge_plan, pg_temp.temporal_merge_feedback;`
+  - **Debugging GUCs:** To aid in debugging, `temporal_merge` respects three session-level configuration variables (GUCs). They are disabled by default.
+    - `SET sql_saga.temporal_merge.log_plan = true;`: Logs the generated execution plan to the server log.
+    - `SET sql_saga.temporal_merge.log_feedback = true;`: Logs the final row-by-row feedback to the server log.
+    - `SET sql_saga.temporal_merge.log_sql = true;`: Logs the full, dynamically generated SQL of the planner query to the server log. This is useful for performance tuning and debugging complex merge scenarios.
 
 #### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.

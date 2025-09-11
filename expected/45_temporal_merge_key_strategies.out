@@ -1496,11 +1496,10 @@ SET client_min_messages TO NOTICE;
 Scenario 12: Natural key with NULLs on a simple surrogate key table (known anti-pattern)
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
--- This scenario tests using a single composite natural key that contains NULLs
 -- on a standard table with a simple SERIAL PRIMARY KEY. This is an anti-pattern for
--- SCD Type 2 history, as the surrogate ID is not stable. The test demonstrates that
--- the lookup works, but the resulting change is a new entity (SCD Type 4-like)
--- rather than a new version of the existing entity.
+-- SCD Type 2 history. The test demonstrates that attempting to update an entity
+-- on a table with an incompatible schema via natural key lookup correctly
+-- results in an error, preventing silent data corruption.
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_12 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, value BIGINT, valid_from DATE, valid_until DATE, edit_comment TEXT

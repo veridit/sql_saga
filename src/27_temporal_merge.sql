@@ -223,11 +223,149 @@ BEGIN
         FROM unnest(v_stable_identity_columns) AS col;
 
         -- Determine the scope of target entities to process based on the mode.
-        -- By default, we optimize by only scanning target entities that are present in the source.
-        v_target_rows_filter := format('WHERE (%s) IN (SELECT DISTINCT %s FROM source_initial)', v_lookup_cols_select_list, v_lookup_cols_select_list_no_alias);
-        -- For modes that might delete entities not in the source, we must scan the entire target table.
         IF p_mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND p_delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
-            v_target_rows_filter := '';
+            -- For modes that might delete entities not in the source, we must scan the entire target table.
+            v_target_rows_filter := v_target_table_ident || ' t';
+        ELSE
+            -- By default, we optimize by only scanning target entities that are present in the source.
+            DECLARE
+                v_any_nullable_lookup_cols BOOLEAN;
+            BEGIN
+                -- Check if any of the lookup columns are nullable in either the source or target table.
+                SELECT bool_or(c.is_nullable)
+                INTO v_any_nullable_lookup_cols
+                FROM (
+                    SELECT NOT a.attnotnull as is_nullable
+                    FROM unnest(v_lookup_columns) as c(attname)
+                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_target_table
+                    UNION ALL
+                    SELECT NOT a.attnotnull as is_nullable
+                    FROM unnest(v_lookup_columns) as c(attname)
+                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_source_table
+                ) c;
+
+                v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
+
+                IF NOT v_any_nullable_lookup_cols THEN
+                    -- OPTIMIZED PATH: If all lookup columns are defined as NOT NULL in both tables,
+                    -- we can use a simple, fast, SARGable query.
+                    v_target_rows_filter := format($$(
+                        SELECT * FROM %1$s t
+                        WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial)
+                    ) t$$, v_target_table_ident, v_lookup_cols_select_list, v_lookup_cols_select_list_no_alias);
+                ELSE
+                    -- NULL-SAFE PATH: If any lookup column is nullable, we separate the logic
+                    -- for non-NULL and NULL keys into two queries combined by a UNION.
+                    DECLARE
+                        v_sargable_part TEXT;
+                        v_null_part TEXT;
+                        v_lookup_cols_not_null_condition TEXT;
+                        v_lookup_cols_is_null_condition TEXT;
+                        v_join_clause TEXT;
+                    BEGIN
+                        -- Condition to identify source rows with NO NULLs in the lookup key.
+                        v_lookup_cols_not_null_condition := COALESCE(
+                            (SELECT string_agg(format('si.%I IS NOT NULL', col), ' AND ') FROM unnest(v_lookup_columns) AS col),
+                            'true'
+                        );
+
+                        -- SARGable part for non-NULL keys using an IN clause.
+                        v_sargable_part := format($$(
+                            SELECT * FROM %1$s t
+                            WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si WHERE %4$s)
+                        )$$, v_target_table_ident, v_lookup_cols_select_list, v_lookup_cols_select_list_no_alias, v_lookup_cols_not_null_condition);
+
+                        -- Condition to identify source rows with AT LEAST ONE NULL in the lookup key.
+                        v_lookup_cols_is_null_condition := COALESCE(
+                            (SELECT string_agg(format('si.%I IS NULL', col), ' OR ') FROM unnest(v_lookup_columns) AS col),
+                            'false'
+                        );
+
+                        -- NULL-aware part for keys with NULLs. This logic distinguishes between
+                        -- the common case of a single nullable key column and the more complex
+                        -- case of multiple nullable key columns (like an XOR key with partial indexes).
+                        DECLARE
+                            v_nullable_cols NAME[];
+                            v_join_clause TEXT;
+                        BEGIN
+                            v_nullable_cols := ARRAY(
+                                SELECT c.attname FROM unnest(v_lookup_columns) as c(attname)
+                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = p_target_table
+                                WHERE NOT a.attnotnull
+                            );
+
+                            -- Heuristic: If there are multiple nullable columns, we assume it's a
+                            -- complex XOR-style key that relies on partial indexes for performance.
+                            -- In this case, we use a UNION ALL of queries with '=' joins, which is
+                            -- known to be planner-friendly for this pattern.
+                            IF array_length(v_nullable_cols, 1) > 1 THEN
+                                DECLARE
+                                    v_union_parts TEXT[];
+                                    v_not_nullable_cols_join_clause TEXT;
+                                    v_nullable_col NAME;
+                                BEGIN
+                                    v_not_nullable_cols_join_clause := COALESCE(
+                                        (SELECT string_agg(format('si.%1$I = t.%1$I', c.attname), ' AND ')
+                                         FROM unnest(v_lookup_columns) c(attname)
+                                         JOIN pg_attribute a ON a.attname = c.attname and a.attrelid = p_target_table
+                                         WHERE a.attnotnull),
+                                        'true'
+                                    );
+
+                                    v_union_parts := ARRAY[]::TEXT[];
+
+                                    -- For each nullable column, create a query part tailored for a partial index.
+                                    FOREACH v_nullable_col IN ARRAY v_nullable_cols
+                                    LOOP
+                                        DECLARE
+                                            v_other_nullable_cols_filter TEXT;
+                                        BEGIN
+                                            -- Build a filter for both `t` and `si` to match the partial index condition,
+                                            -- e.g., "t.es_id IS NULL AND si.es_id IS NULL"
+                                            v_other_nullable_cols_filter := COALESCE(
+                                                (SELECT string_agg(format('t.%1$I IS NULL AND si.%1$I IS NULL', other.c), ' AND ')
+                                                 FROM (SELECT unnest(v_nullable_cols) c) AS other
+                                                 WHERE other.c <> v_nullable_col),
+                                                'true'
+                                            );
+
+                                            v_union_parts := v_union_parts || format($$(
+                                                SELECT DISTINCT t.*
+                                                FROM %1$s t
+                                                JOIN source_initial si ON (%2$s AND si.%4$I = t.%4$I)
+                                                WHERE %3$s
+                                            )$$,
+                                                v_target_table_ident,               /* %1$s */
+                                                v_not_nullable_cols_join_clause,    /* %2$s */
+                                                v_other_nullable_cols_filter,       /* %3$s */
+                                                v_nullable_col                      /* %4$I */
+                                            );
+                                        END;
+                                    END LOOP;
+                                    v_null_part := array_to_string(v_union_parts, ' UNION ALL ');
+                                END;
+                            ELSE
+                                -- For a single nullable key column (or no nullable columns, as a fallback),
+                                -- we use a simple and correct `IS NOT DISTINCT FROM` join.
+                                v_join_clause := COALESCE(
+                                    (SELECT string_agg(format('si.%1$I IS NOT DISTINCT FROM t.%1$I', col), ' AND ') FROM unnest(v_lookup_columns) as col),
+                                    'true'
+                                );
+                                v_null_part := format($$(
+                                    SELECT DISTINCT t.*
+                                    FROM %1$s t
+                                    JOIN source_initial si ON (%2$s)
+                                    WHERE %3$s
+                                )$$, v_target_table_ident, v_join_clause, v_lookup_cols_is_null_condition);
+                            END IF;
+                        END;
+
+                        -- The final "filter" is a full subquery that replaces the original FROM clause for target_rows.
+                        -- UNION is used to remove duplicates in the rare case an entity is matched by both parts.
+                        v_target_rows_filter := format('((%s) UNION (%s)) t', v_sargable_part, v_null_part);
+                    END;
+                END IF;
+            END;
         END IF;
 
         -- 2. Construct expressions and resolver CTEs based on the mode.
@@ -368,8 +506,7 @@ target_rows AS (
         t.%14$I as valid_from,
         t.%15$I as valid_until,
         %6$s AS data_payload
-    FROM %4$s t
-    %20$s -- v_target_rows_filter
+    FROM %20$s -- v_target_rows_filter is now a subquery with alias t
 ),
 source_rows AS (
     SELECT
@@ -659,6 +796,16 @@ $SQL$,
             v_lookup_columns,               /* %22$L */
             v_lookup_cols_select_list       /* %23$s */
         );
+
+        -- Conditionally log the generated SQL for debugging.
+        DECLARE
+            v_log_sql BOOLEAN := CASE WHEN COALESCE(current_setting('sql_saga.temporal_merge.log_sql', true), '') = '' THEN false ELSE current_setting('sql_saga.temporal_merge.log_sql')::BOOLEAN END;
+        BEGIN
+            IF v_log_sql THEN
+                RAISE NOTICE '--- temporal_merge SQL for % ---', p_target_table;
+                RAISE NOTICE '%', v_sql;
+            END IF;
+        END;
 
         v_exec_sql := format('PREPARE %I AS %s', v_plan_ps_name, v_sql);
         EXECUTE v_exec_sql;
