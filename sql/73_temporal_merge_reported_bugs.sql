@@ -572,6 +572,54 @@ TABLE tmrb.unit_default_bug;
 ROLLBACK TO SAVEPOINT not_null_default_bug;
 
 -- ANCHOR Add SAVEPOINT managed test scenarios above this line
+
+\echo '--------------------------------------------------------------------------------'
+\echo 'Scenario 11: Coalescing adjacent segments must use data from the LATEST segment'
+\echo 'When two adjacent timeline segments are coalesced because their core data is'
+\echo 'identical, the resulting merged segment must inherit its data payload (including'
+\echo 'ephemeral columns) from the chronologically later of the two segments.'
+\echo '--------------------------------------------------------------------------------'
+SAVEPOINT coalesce_uses_latest_data;
+
+-- 1. Setup
+CREATE TABLE tmrb.coalesce_bug (
+    id int,
+    value int,
+    edit_comment text,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('tmrb.coalesce_bug'::regclass);
+SELECT sql_saga.add_unique_key('tmrb.coalesce_bug'::regclass, '{id}');
+
+-- 2. Initial State
+INSERT INTO tmrb.coalesce_bug VALUES (1, 100, 'Old Comment', '2023-01-01', '2023-02-01');
+
+-- 3. Source Data
+CREATE TEMP TABLE source_coalesce_bug (
+    row_id int, id int, value int, edit_comment text, valid_from date, valid_until date
+);
+INSERT INTO source_coalesce_bug VALUES
+(1, 1, 100, 'New Comment', '2023-02-01', '2023-03-01');
+
+\echo '--- Target state BEFORE merge ---'
+TABLE tmrb.coalesce_bug;
+\echo '--- Source data FOR merge ---'
+TABLE source_coalesce_bug;
+
+-- 4. Execute Merge
+CALL sql_saga.temporal_merge(
+    target_table => 'tmrb.coalesce_bug'::regclass,
+    source_table => 'source_coalesce_bug'::regclass,
+    identity_columns => '{id}',
+    ephemeral_columns => '{edit_comment}'
+);
+
+-- 5. Verify Result
+\echo '--- Target state AFTER merge (CORRECT: edit_comment is "New Comment") ---'
+SELECT * FROM tmrb.coalesce_bug;
+
+ROLLBACK TO SAVEPOINT coalesce_uses_latest_data;
 ROLLBACK;
 
 \i sql/include/test_teardown.sql

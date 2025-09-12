@@ -648,9 +648,10 @@ coalesced_final_segments AS (
         -- When coalescing segments, the business data is identical (that's why they are being
         -- coalesced). However, the ephemeral metadata (like a comment) might differ. We must
         -- deterministically pick one payload to be the representative for the new, larger segment.
-        -- We pick the payload from the first atomic segment in the group, ordered by time.
-        sql_saga.first(data_payload ORDER BY valid_from) as data_payload,
-        sql_saga.first(stable_pk_payload ORDER BY valid_from) as stable_pk_payload,
+        -- We pick the payload from the LAST atomic segment in the group (ordered by time)
+        -- to ensure the most recent ephemeral data is preserved.
+        sql_saga.first(data_payload ORDER BY valid_from DESC) as data_payload,
+        sql_saga.first(stable_pk_payload ORDER BY valid_from DESC) as stable_pk_payload,
         -- Aggregate the source_row_id from each atomic segment into a single array for the merged block.
         array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as source_row_ids
     FROM (

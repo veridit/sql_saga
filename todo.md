@@ -118,6 +118,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Fix `temporal_merge` to respect `DEFAULT` values on `UPDATE`:** When a source table is missing a column that has a `NOT NULL DEFAULT` constraint in the target, the executor now correctly preserves the existing value instead of setting it to `NULL`, preventing `NOT NULL` violations.
 - [x] **Clarify `temporal_merge` FK limitations in README:** Expanded the "Known Limitation" section to explicitly mention that complex `REPLACE` or `DELETE` operations can still cause FK violations due to immediate trigger firing, and reinforced that disabling triggers is the robust solution for complex ETL.
 - [x] **Improve `temporal_merge` to update ephemeral columns:** The planner now correctly generates an `UPDATE` operation when only ephemeral columns have changed, allowing for in-place updates of metadata without creating new historical records.
+- [x] **Fix regression in ephemeral column coalescing:** The planner's coalescing logic now correctly uses the data payload from the most recent time segment, preserving updates to ephemeral columns.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
