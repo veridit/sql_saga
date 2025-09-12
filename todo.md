@@ -23,6 +23,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Add `FUNCTION`/`PROCEDURE` keywords to API documentation:** The `80_generate_api_docs` test now prefixes each signature with `FUNCTION`, `PROCEDURE`, or `AGGREGATE` to clarify the object type.
 - [x] **Add `SECURITY` property to API documentation:** The `80_generate_api_docs` test now includes the `SECURITY DEFINER` or `SECURITY INVOKER` property in the signature of each function and procedure, making the API's security model explicit.
 - [x] **Fix `80_generate_api_docs` test:** Converted the function-gathering CTE to a temporary view to fix a "relation does not exist" error, making the uncategorized function check robust.
 - [x] **Fix regression in `add_unique_key` and stabilize trigger tests:** Corrected a regression where `add_unique_key` ignored user-provided constraint names. Stabilized tests (`59_...` and `10_...`) by filtering internal triggers and using correct, predictable constraint names.

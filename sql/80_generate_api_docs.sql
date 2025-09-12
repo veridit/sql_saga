@@ -59,17 +59,17 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         CASE
             WHEN p.prokind = 'a' THEN
                 -- Format aggregate signature
-                format('%s(%s)', p.proname, pg_get_function_arguments(p.oid))
+                format('AGGREGATE %s(%s)', p.proname, pg_get_function_arguments(p.oid))
             WHEN p.prokind = 'p' THEN
                 -- Format procedure signature (name and arguments) with multi-line formatting
-                format('%s(%s)%s', p.proname,
+                format('PROCEDURE %s(%s)%s', p.proname,
                     CASE WHEN pg_get_function_arguments(p.oid) = '' THEN ''
                     ELSE E'\n    ' || replace(pg_get_function_arguments(p.oid), ', ', E',\n    ') || E'\n'
                     END,
                     CASE WHEN p.prosecdef THEN E'\nSECURITY DEFINER' ELSE E'\nSECURITY INVOKER' END)
             ELSE -- 'f' for function
                 -- Format function signature (name, arguments, and return type) with multi-line formatting
-                format('%s(%s) RETURNS %s%s', p.proname,
+                format('FUNCTION %s(%s) RETURNS %s%s', p.proname,
                     CASE WHEN pg_get_function_arguments(p.oid) = '' THEN ''
                     ELSE E'\n    ' || replace(pg_get_function_arguments(p.oid), ', ', E',\n    ') || E'\n'
                     END,

@@ -174,7 +174,7 @@ This document is automatically generated from the database schema by the `80_gen
 > Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.
 
 ```sql
-add_era(
+FUNCTION add_era(
     table_oid regclass,
     valid_from_column_name name DEFAULT 'valid_from'::name,
     valid_until_column_name name DEFAULT 'valid_until'::name,
@@ -195,7 +195,7 @@ SECURITY DEFINER
 > Deregisters a temporal table, removing all associated constraints, triggers, and metadata.
 
 ```sql
-drop_era(
+FUNCTION drop_era(
     table_oid regclass,
     era_name name DEFAULT 'valid'::name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
@@ -211,7 +211,7 @@ SECURITY DEFINER
 > Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys.
 
 ```sql
-add_unique_key(
+FUNCTION add_unique_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT 'valid'::name,
@@ -229,7 +229,7 @@ SECURITY DEFINER
 > Drops a temporal unique key identified by its table, columns, and era.
 
 ```sql
-drop_unique_key(
+FUNCTION drop_unique_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT 'valid'::name,
@@ -244,7 +244,7 @@ SECURITY DEFINER
 > Drops a temporal unique key identified by its unique name.
 
 ```sql
-drop_unique_key_by_name(
+FUNCTION drop_unique_key_by_name(
     table_oid regclass,
     key_name name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
@@ -260,7 +260,7 @@ SECURITY DEFINER
 > Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.
 
 ```sql
-add_foreign_key(
+FUNCTION add_foreign_key(
     fk_table_oid regclass,
     fk_column_names name[],
     fk_era_name name,
@@ -282,7 +282,7 @@ SECURITY DEFINER
 > Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history.
 
 ```sql
-add_foreign_key(
+FUNCTION add_foreign_key(
     fk_table_oid regclass,
     fk_column_names name[],
     unique_key_name name,
@@ -303,7 +303,7 @@ SECURITY DEFINER
 > Drops a foreign key. The era name must be provided for temporal-to-temporal keys and omitted for regular-to-temporal keys.
 
 ```sql
-drop_foreign_key(
+FUNCTION drop_foreign_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT NULL::name,
@@ -317,7 +317,7 @@ SECURITY DEFINER
 > Drops any type of foreign key by its unique name.
 
 ```sql
-drop_foreign_key_by_name(
+FUNCTION drop_foreign_key_by_name(
     table_oid regclass,
     key_name name
 ) RETURNS boolean
@@ -331,7 +331,7 @@ SECURITY DEFINER
 > Creates a view that shows only the current state of data, making it ideal for ORMs and REST APIs. It provides a trigger for safe, explicit SCD Type 2 updates and soft-deletes.
 
 ```sql
-add_current_view(
+FUNCTION add_current_view(
     table_oid regclass,
     era_name name DEFAULT 'valid'::name,
     delete_mode name DEFAULT 'delete_as_cutoff'::name,
@@ -345,7 +345,7 @@ SECURITY DEFINER
 > Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record's history.
 
 ```sql
-add_for_portion_of_view(
+FUNCTION add_for_portion_of_view(
     table_oid regclass,
     era_name name DEFAULT 'valid'::name
 ) RETURNS boolean
@@ -357,7 +357,7 @@ SECURITY DEFINER
 > Drops the "current" view associated with a table and era.
 
 ```sql
-drop_current_view(
+FUNCTION drop_current_view(
     table_oid regclass,
     era_name name DEFAULT 'valid'::name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior
@@ -370,7 +370,7 @@ SECURITY DEFINER
 > Drops the "for_portion_of" view associated with a table and era.
 
 ```sql
-drop_for_portion_of_view(
+FUNCTION drop_for_portion_of_view(
     table_oid regclass,
     era_name name DEFAULT 'valid'::name,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
@@ -386,7 +386,7 @@ SECURITY DEFINER
 > Disables all sql_saga-managed temporal foreign key triggers for the specified tables. This is a targeted alternative to `ALTER TABLE ... DISABLE TRIGGER USER`, intended for complex ETL batches where transient, inconsistent states are expected. It does not affect non-FK triggers, such as those for synchronized columns.
 
 ```sql
-disable_temporal_triggers(
+PROCEDURE disable_temporal_triggers(
     VARIADIC p_table_oids regclass[]
 )
 SECURITY INVOKER
@@ -397,7 +397,7 @@ SECURITY INVOKER
 > Re-enables all sql_saga-managed temporal foreign key triggers for the specified tables. This should be called at the end of an ETL batch transaction to restore integrity checks.
 
 ```sql
-enable_temporal_triggers(
+PROCEDURE enable_temporal_triggers(
     VARIADIC p_table_oids regclass[]
 )
 SECURITY INVOKER
@@ -406,7 +406,7 @@ SECURITY INVOKER
 ### manage_temporal_fk_triggers
 
 ```sql
-manage_temporal_fk_triggers(
+PROCEDURE manage_temporal_fk_triggers(
     IN p_action sql_saga.trigger_action,
     VARIADIC p_table_oids regclass[]
 )
@@ -418,7 +418,7 @@ SECURITY INVOKER
 > Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.
 
 ```sql
-temporal_merge(
+PROCEDURE temporal_merge(
     IN target_table regclass,
     IN source_table regclass,
     IN identity_columns text[],
@@ -446,7 +446,7 @@ SECURITY INVOKER
 > Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.
 
 ```sql
-add_system_versioning(
+FUNCTION add_system_versioning(
     table_oid regclass,
     history_table_name name DEFAULT NULL::name,
     view_name name DEFAULT NULL::name,
@@ -463,7 +463,7 @@ SECURITY DEFINER
 > Drops the internal system time era metadata. This is a lower-level function typically called by `drop_system_versioning`.
 
 ```sql
-drop_system_time_era(
+FUNCTION drop_system_time_era(
     table_oid regclass,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
@@ -476,7 +476,7 @@ SECURITY DEFINER
 > Removes system versioning from a table, dropping the history table and all associated objects.
 
 ```sql
-drop_system_versioning(
+FUNCTION drop_system_versioning(
     table_oid regclass,
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT true
@@ -489,7 +489,7 @@ SECURITY DEFINER
 > Sets the list of columns to be excluded from system versioning. Changes to these columns will not create a new history record.
 
 ```sql
-set_system_time_era_excluded_columns(
+FUNCTION set_system_time_era_excluded_columns(
     table_oid regclass,
     excluded_column_names name[]
 ) RETURNS void
@@ -503,7 +503,7 @@ SECURITY DEFINER
 > A temporal aggregate that checks if a set of ranges (`covered`) completely covers a target range (`target`) without any gaps.
 
 ```sql
-covers_without_gaps(anyrange, anyrange)
+AGGREGATE covers_without_gaps(anyrange, anyrange)
 ```
 
 ### first
@@ -511,7 +511,7 @@ covers_without_gaps(anyrange, anyrange)
 > A simple aggregate to get the first element from a group. Useful for cases where order is guaranteed.
 
 ```sql
-first(anyelement)
+AGGREGATE first(anyelement)
 ```
 
 ## Health Checks
@@ -521,7 +521,7 @@ first(anyelement)
 > An event trigger function that runs after DDL commands to check for inconsistencies in sql_saga's metadata catalogs.
 
 ```sql
-health_checks() RETURNS event_trigger
+FUNCTION health_checks() RETURNS event_trigger
 SECURITY DEFINER
 ```
 
@@ -532,7 +532,7 @@ SECURITY DEFINER
 > Calculates the Allen's Interval Algebra relation between two intervals.
 
 ```sql
-allen_get_relation(
+FUNCTION allen_get_relation(
     x_from anycompatible,
     x_until anycompatible,
     y_from anycompatible,
@@ -546,7 +546,7 @@ SECURITY INVOKER
 > An event trigger function that prevents accidental dropping of sql_saga-managed objects.
 
 ```sql
-drop_protection() RETURNS event_trigger
+FUNCTION drop_protection() RETURNS event_trigger
 SECURITY DEFINER
 ```
 
@@ -555,6 +555,6 @@ SECURITY DEFINER
 > An event trigger function that follows object renames and updates sql_saga's metadata accordingly.
 
 ```sql
-rename_following() RETURNS event_trigger
+FUNCTION rename_following() RETURNS event_trigger
 SECURITY DEFINER
 ```
