@@ -619,6 +619,7 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_9;
+SET sql_saga.temporal_merge.log_id_seed = 'scen9a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -642,6 +643,7 @@ TRUNCATE temp_source_9;
 INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_9;
+SET sql_saga.temporal_merge.log_id_seed = 'scen9b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -685,6 +687,7 @@ SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until F
 INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_10;
+SET sql_saga.temporal_merge.log_id_seed = 'scen10a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -706,6 +709,7 @@ TRUNCATE temp_source_10;
 INSERT INTO temp_source_10 VALUES (2, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_10;
+SET sql_saga.temporal_merge.log_id_seed = 'scen10b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -749,6 +753,7 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_11 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_11;
+SET sql_saga.temporal_merge.log_id_seed = 'scen11a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -772,6 +777,7 @@ TRUNCATE temp_source_11;
 INSERT INTO temp_source_11 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_11;
+SET sql_saga.temporal_merge.log_id_seed = 'scen11b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -826,6 +832,7 @@ SAVEPOINT expect_error;
 -- the main transaction. This allows us to see the raw error message and then
 -- continue with subsequent tests.
 \echo '--- Plan and Feedback (from failing call) ---'
+SET sql_saga.temporal_merge.log_id_seed = 'scen12a';
 SET sql_saga.temporal_merge.log_plan = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',

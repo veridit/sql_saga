@@ -1157,6 +1157,7 @@ TABLE temp_source_9;
       1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen9a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1168,13 +1169,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{1},INSERT,,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}",,,2024-06-01,infinity,"{""address"": ""201 New Main St"", ""edit_comment"": ""LU address change"", ""establishment_id"": null}",)
-NOTICE:  (2,{1},UPDATE,SHRINK,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}",2024-01-01,infinity,2024-01-01,2024-06-01,"{""address"": ""200 Main St"", ""edit_comment"": null, ""establishment_id"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (1,"[{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200}]",APPLIED,)
+NOTICE:  temporal_merge plan (b91) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (b91) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change", "establishment_id": null}, "relation" : null}
+NOTICE:  (b91) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null, "establishment_id": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (b91) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (b91) {"source_row_id" : 1, "target_entity_ids" : [{"id": 1, "type": "visiting", "legal_unit_id": 200}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
@@ -1207,6 +1206,7 @@ TABLE temp_source_9;
       2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen9b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1218,13 +1218,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{2},INSERT,,"{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}",,,2024-08-01,infinity,"{""address"": ""101 New Business Park"", ""edit_comment"": ""Est address change"", ""legal_unit_id"": null}",)
-NOTICE:  (2,{2},UPDATE,SHRINK,"{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}",2024-01-01,infinity,2024-01-01,2024-08-01,"{""address"": ""100 Business Park"", ""edit_comment"": null, ""legal_unit_id"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (2,"[{""id"": 2, ""type"": ""visiting"", ""establishment_id"": 100}]",APPLIED,)
+NOTICE:  temporal_merge plan (e83) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (e83) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 2, "type": "visiting", "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change", "legal_unit_id": null}, "relation" : null}
+NOTICE:  (e83) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 2, "type": "visiting", "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null, "legal_unit_id": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (e83) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (e83) {"source_row_id" : 2, "target_entity_ids" : [{"id": 2, "type": "visiting", "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
@@ -1284,6 +1282,7 @@ TABLE temp_source_10;
       1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen10a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1295,13 +1294,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key_no_id ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{1},INSERT,,"{""type"": ""visiting"", ""legal_unit_id"": 200}",,,2024-06-01,infinity,"{""address"": ""201 New Main St"", ""edit_comment"": ""LU address change"", ""establishment_id"": null}",)
-NOTICE:  (2,{1},UPDATE,SHRINK,"{""type"": ""visiting"", ""legal_unit_id"": 200}",2024-01-01,infinity,2024-01-01,2024-06-01,"{""address"": ""200 Main St"", ""edit_comment"": null, ""establishment_id"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key_no_id ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (1,"[{""type"": ""visiting"", ""legal_unit_id"": 200}]",APPLIED,)
+NOTICE:  temporal_merge plan (f96) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (f96) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"type": "visiting", "legal_unit_id": 200}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change", "establishment_id": null}, "relation" : null}
+NOTICE:  (f96) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"type": "visiting", "legal_unit_id": 200}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null, "establishment_id": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (f96) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (f96) {"source_row_id" : 1, "target_entity_ids" : [{"type": "visiting", "legal_unit_id": 200}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
@@ -1326,6 +1323,7 @@ TABLE temp_source_10;
       2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen10b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1337,13 +1335,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key_no_id ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{2},INSERT,,"{""type"": ""visiting"", ""establishment_id"": 100}",,,2024-08-01,infinity,"{""address"": ""101 New Business Park"", ""edit_comment"": ""Est address change"", ""legal_unit_id"": null}",)
-NOTICE:  (2,{2},UPDATE,SHRINK,"{""type"": ""visiting"", ""establishment_id"": 100}",2024-01-01,infinity,2024-01-01,2024-08-01,"{""address"": ""100 Business Park"", ""edit_comment"": null, ""legal_unit_id"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key_no_id ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (2,"[{""type"": ""visiting"", ""establishment_id"": 100}]",APPLIED,)
+NOTICE:  temporal_merge plan (e80) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (e80) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"type": "visiting", "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change", "legal_unit_id": null}, "relation" : null}
+NOTICE:  (e80) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"type": "visiting", "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null, "legal_unit_id": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (e80) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (e80) {"source_row_id" : 2, "target_entity_ids" : [{"type": "visiting", "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
@@ -1397,6 +1393,7 @@ TABLE temp_source_11;
       1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen11a';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1408,13 +1405,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{1},INSERT,,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200, ""establishment_id"": null}",,,2024-06-01,infinity,"{""address"": ""201 New Main St"", ""edit_comment"": ""LU address change""}",)
-NOTICE:  (2,{1},UPDATE,SHRINK,"{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200, ""establishment_id"": null}",2024-01-01,infinity,2024-01-01,2024-06-01,"{""address"": ""200 Main St"", ""edit_comment"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (1,"[{""id"": 1, ""type"": ""visiting"", ""legal_unit_id"": 200, ""establishment_id"": null}]",APPLIED,)
+NOTICE:  temporal_merge plan (328) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (328) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change"}, "relation" : null}
+NOTICE:  (328) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (328) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (328) {"source_row_id" : 1, "target_entity_ids" : [{"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
@@ -1447,6 +1442,7 @@ TABLE temp_source_11;
       2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
+SET sql_saga.temporal_merge.log_id_seed = 'scen11b';
 SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
@@ -1458,13 +1454,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  --- temporal_merge plan for tmtc.location_multi_key ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{2},INSERT,,"{""id"": 2, ""type"": ""visiting"", ""legal_unit_id"": null, ""establishment_id"": 100}",,,2024-08-01,infinity,"{""address"": ""101 New Business Park"", ""edit_comment"": ""Est address change""}",)
-NOTICE:  (2,{2},UPDATE,SHRINK,"{""id"": 2, ""type"": ""visiting"", ""legal_unit_id"": null, ""establishment_id"": 100}",2024-01-01,infinity,2024-01-01,2024-08-01,"{""address"": ""100 Business Park"", ""edit_comment"": null}",starts)
-NOTICE:  --- temporal_merge feedback for tmtc.location_multi_key ---
-NOTICE:  (source_row_id,target_entity_ids,status,error_message)
-NOTICE:  (2,"[{""id"": 2, ""type"": ""visiting"", ""legal_unit_id"": null, ""establishment_id"": 100}]",APPLIED,)
+NOTICE:  temporal_merge plan (db5) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (db5) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change"}, "relation" : null}
+NOTICE:  (db5) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null}, "relation" : "starts"}
+NOTICE:  temporal_merge feedback (db5) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (db5) {"source_row_id" : 2, "target_entity_ids" : [{"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
 SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
@@ -1534,6 +1528,7 @@ SAVEPOINT expect_error;
 -- continue with subsequent tests.
 \echo '--- Plan and Feedback (from failing call) ---'
 --- Plan and Feedback (from failing call) ---
+SET sql_saga.temporal_merge.log_id_seed = 'scen12a';
 SET sql_saga.temporal_merge.log_plan = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
@@ -1544,10 +1539,9 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  --- temporal_merge plan for tmtc.stat_for_unit_id_pk ---
-NOTICE:  (plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)
-NOTICE:  (1,{1},INSERT,,"{""id"": 1, ""establishment_id"": null, ""stat_definition_id"": 10}",,,2024-07-01,infinity,"{""value"": 550, ""edit_comment"": ""Stat value update""}",)
-NOTICE:  (2,{1},UPDATE,SHRINK,"{""id"": 1, ""establishment_id"": null, ""stat_definition_id"": 10}",2024-01-01,infinity,2024-01-01,2024-07-01,"{""value"": 500, ""edit_comment"": null}",starts)
+NOTICE:  temporal_merge plan (35f) on tmtc.stat_for_unit_id_pk: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{stat_definition_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
+NOTICE:  (35f) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "establishment_id": null, "stat_definition_id": 10}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-07-01", "new_valid_until" : "infinity", "data" : {"value": 550, "edit_comment": "Stat value update"}, "relation" : null}
+NOTICE:  (35f) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "establishment_id": null, "stat_definition_id": 10}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-07-01", "data" : {"value": 500, "edit_comment": null}, "relation" : "starts"}
 ERROR:  duplicate key value violates unique constraint "stat_for_unit_id_pk_pkey"
 DETAIL:  Key (id)=(1) already exists.
 CONTEXT:  SQL statement "
@@ -1572,7 +1566,7 @@ CONTEXT:  SQL statement "
                     FROM inserted_rows ir
                     WHERE p.plan_op_seq = ir.plan_op_seq;
                 "
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 312 at EXECUTE
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 339 at EXECUTE
 ROLLBACK TO SAVEPOINT expect_error;
 SET sql_saga.temporal_merge.log_plan = false;
 \echo '--- Target: After merge (should be unchanged) ---'

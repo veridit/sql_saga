@@ -884,9 +884,25 @@ DECLARE
     v_feedback_set_clause TEXT;
     v_sql TEXT;
     v_correlation_col name;
+    v_log_id TEXT;
+    v_summary_line TEXT;
 BEGIN
+    v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
+
     v_lookup_columns := COALESCE(temporal_merge.natural_identity_columns, temporal_merge.identity_columns);
     v_correlation_col := COALESCE(temporal_merge.identity_correlation_column, temporal_merge.source_row_id_column);
+
+    v_summary_line := format(
+        'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, natural_identity_columns=>%L, ephemeral_columns=>%L, identity_correlation_column=>%L, source_row_id_column=>%L',
+        temporal_merge.target_table,
+        temporal_merge.mode,
+        temporal_merge.delete_mode,
+        temporal_merge.identity_columns,
+        temporal_merge.natural_identity_columns,
+        temporal_merge.ephemeral_columns,
+        temporal_merge.identity_correlation_column,
+        temporal_merge.source_row_id_column
+    );
 
     -- Introspect the primary key columns. They will be excluded from UPDATE SET clauses.
     SELECT COALESCE(array_agg(a.attname), '{}'::name[])
@@ -985,10 +1001,21 @@ BEGIN
             v_plan_rec RECORD;
         BEGIN
             IF v_log_plan THEN
-                RAISE NOTICE '--- temporal_merge plan for % ---', temporal_merge.target_table;
-                RAISE NOTICE '(plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation)';
-                FOR v_plan_rec IN SELECT plan_op_seq,source_row_ids,operation,timeline_update_effect,entity_ids,old_valid_from,old_valid_until,new_valid_from,new_valid_until,data,relation FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
-                    RAISE NOTICE '%', v_plan_rec;
+                RAISE NOTICE 'temporal_merge plan (%) %', v_log_id, v_summary_line;
+                FOR v_plan_rec IN SELECT * FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
+                    RAISE NOTICE '(%) %', v_log_id, json_build_object(
+                        'plan_op_seq', v_plan_rec.plan_op_seq,
+                        'source_row_ids', v_plan_rec.source_row_ids,
+                        'operation', v_plan_rec.operation,
+                        'timeline_update_effect', v_plan_rec.timeline_update_effect,
+                        'entity_ids', v_plan_rec.entity_ids,
+                        'old_valid_from', v_plan_rec.old_valid_from,
+                        'old_valid_until', v_plan_rec.old_valid_until,
+                        'new_valid_from', v_plan_rec.new_valid_from,
+                        'new_valid_until', v_plan_rec.new_valid_until,
+                        'data', v_plan_rec.data,
+                        'relation', v_plan_rec.relation
+                    );
                 END LOOP;
             END IF;
         END;
@@ -1404,10 +1431,14 @@ BEGIN
         v_feedback_rec RECORD;
     BEGIN
         IF v_log_feedback THEN
-            RAISE NOTICE '--- temporal_merge feedback for % ---', temporal_merge.target_table;
-            RAISE NOTICE '(source_row_id,target_entity_ids,status,error_message)';
+            RAISE NOTICE 'temporal_merge feedback (%) %', v_log_id, v_summary_line;
             FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-                RAISE NOTICE '%', v_feedback_rec;
+                RAISE NOTICE '(%) %', v_log_id, json_build_object(
+                    'source_row_id', v_feedback_rec.source_row_id,
+                    'target_entity_ids', v_feedback_rec.target_entity_ids,
+                    'status', v_feedback_rec.status,
+                    'error_message', v_feedback_rec.error_message
+                );
             END LOOP;
         END IF;
     END;
