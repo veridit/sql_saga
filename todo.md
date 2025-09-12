@@ -23,6 +23,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Reorganize and renumber regression tests:** Renumbered and grouped all regression tests by feature (`era`, `system_versioning`, `fk`, `views`, `temporal_merge`, etc.) to improve clarity and maintainability. Removed obsolete and misplaced test files.
 - [x] **Improve `temporal_merge` debug logging:** Changed plan and feedback logs to be self-describing JSON objects with a predictable key order and a unique 3-character ID per invocation, improving readability. The ID is deterministic for tests via the `sql_saga.temporal_merge.log_id_seed` GUC. Log headers were also made more concise.
 - [x] **Add `FUNCTION`/`PROCEDURE` keywords to API documentation:** The `80_generate_api_docs` test now prefixes each signature with `FUNCTION`, `PROCEDURE`, or `AGGREGATE` to clarify the object type.
 - [x] **Add `SECURITY` property to API documentation:** The `80_generate_api_docs` test now includes the `SECURITY DEFINER` or `SECURITY INVOKER` property in the signature of each function and procedure, making the API's security model explicit.
