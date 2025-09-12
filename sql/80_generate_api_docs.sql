@@ -62,17 +62,19 @@ CREATE OR REPLACE TEMP VIEW funcs AS
                 format('%s(%s)', p.proname, pg_get_function_arguments(p.oid))
             WHEN p.prokind = 'p' THEN
                 -- Format procedure signature (name and arguments) with multi-line formatting
-                format('%s(%s)', p.proname,
-                    CASE WHEN pg_get_function_arguments(p.oid) = '' THEN ''
-                    ELSE E'\n    ' || replace(pg_get_function_arguments(p.oid), ', ', E',\n    ') || E'\n'
-                    END)
-            ELSE -- 'f' for function
-                -- Format function signature (name, arguments, and return type) with multi-line formatting
-                format('%s(%s) RETURNS %s', p.proname,
+                format('%s(%s)%s', p.proname,
                     CASE WHEN pg_get_function_arguments(p.oid) = '' THEN ''
                     ELSE E'\n    ' || replace(pg_get_function_arguments(p.oid), ', ', E',\n    ') || E'\n'
                     END,
-                    pg_get_function_result(p.oid))
+                    CASE WHEN p.prosecdef THEN E'\nSECURITY DEFINER' ELSE E'\nSECURITY INVOKER' END)
+            ELSE -- 'f' for function
+                -- Format function signature (name, arguments, and return type) with multi-line formatting
+                format('%s(%s) RETURNS %s%s', p.proname,
+                    CASE WHEN pg_get_function_arguments(p.oid) = '' THEN ''
+                    ELSE E'\n    ' || replace(pg_get_function_arguments(p.oid), ', ', E',\n    ') || E'\n'
+                    END,
+                    pg_get_function_result(p.oid),
+                    CASE WHEN p.prosecdef THEN E'\nSECURITY DEFINER' ELSE E'\nSECURITY INVOKER' END)
         END AS func_def,
         d.description,
         CASE
