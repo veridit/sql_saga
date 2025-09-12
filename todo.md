@@ -7,6 +7,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
+- [x] **Improve API documentation grouping:** Grouped trigger management functions (`disable/enable_temporal_triggers`) with `temporal_merge` under "Bulk Data Loading" for better discoverability.
 - [x] **Improve API documentation:** Enhanced the auto-generation script to include `ENUM` types, format function signatures for readability, and add database comments for all public API functions.
 - [x] **Generate API documentation from schema:** Create a new regression test that introspects the `sql_saga` schema and generates a complete, accurate `docs/api.md` file. This ensures documentation is always synchronized with the code.
 - [x] **Make performance regression test self-verifying:** Enhanced the `temporal_merge` planner test (`48_...`) to programmatically check the `EXPLAIN` output and fail if an inefficient `Seq Scan` is detected on the target table. The test now covers simple surrogate keys, composite `NOT NULL` natural keys, and complex, `NULL`able natural keys with partial indexes.
@@ -21,6 +22,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Fix regression in `add_unique_key` and stabilize trigger tests:** Corrected a regression where `add_unique_key` ignored user-provided constraint names. Stabilized tests (`59_...` and `10_...`) by filtering internal triggers and using correct, predictable constraint names.
 - [x] **Make `ephemeral_columns` optional in `temporal_merge`:** Refactored the procedure to provide a sensible default (`NULL`) for the `ephemeral_columns` parameter to improve API ergonomics.
 - [x] **Fix `temporal_merge` coalescing for synchronized columns:** The planner now automatically treats synchronized columns (e.g., `valid_to`) as ephemeral. The executor also excludes them from `INSERT`s, allowing the synchronization trigger to derive their values correctly. This resolves both the coalescing bug and the subsequent trigger inconsistency error.
 - [x] **Fix `temporal_merge` executor bug:** The executor must not include stable identity columns (from `identity_columns`) in the `SET` clause of generated `UPDATE` statements, as this can cause `NOT NULL` violations.
@@ -119,6 +121,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Clarify `temporal_merge` FK limitations in README:** Expanded the "Known Limitation" section to explicitly mention that complex `REPLACE` or `DELETE` operations can still cause FK violations due to immediate trigger firing, and reinforced that disabling triggers is the robust solution for complex ETL.
 - [x] **Improve `temporal_merge` to update ephemeral columns:** The planner now correctly generates an `UPDATE` operation when only ephemeral columns have changed, allowing for in-place updates of metadata without creating new historical records.
 - [x] **Fix regression in ephemeral column coalescing:** The planner's coalescing logic now correctly uses the data payload from the most recent time segment, preserving updates to ephemeral columns.
+- [x] **Add helper procedures to manage temporal triggers:** Created `disable_temporal_triggers` and `enable_temporal_triggers` to allow users to safely manage FK triggers during complex ETL batches without affecting other `sql_saga` triggers (e.g., for column synchronization). Made associated tests robust by using predictable trigger names.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.

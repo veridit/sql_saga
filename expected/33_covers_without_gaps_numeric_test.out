@@ -52,9 +52,9 @@ TABLE sql_saga.era;
 (1 row)
 
 TABLE sql_saga.unique_keys;
-            unique_key_name            | table_schema |   table_name   | key_type |    column_names    | era_name |                     unique_constraint                      |             exclude_constraint             | predicate 
----------------------------------------+--------------+----------------+----------+--------------------+----------+------------------------------------------------------------+--------------------------------------------+-----------
- numeric_shifts_job_id_worker_id_valid | public       | numeric_shifts | natural  | {job_id,worker_id} | valid    | numeric_shifts_job_id_worker_id_valid_from_valid_until_key | numeric_shifts_job_id_worker_id_valid_excl | 
+            unique_key_name            | table_schema |   table_name   | key_type |    column_names    | era_name |             unique_constraint              |             exclude_constraint             | predicate 
+---------------------------------------+--------------+----------------+----------+--------------------+----------+--------------------------------------------+--------------------------------------------+-----------
+ numeric_shifts_job_id_worker_id_valid | public       | numeric_shifts | natural  | {job_id,worker_id} | valid    | numeric_shifts_job_id_worker_id_valid_uniq | numeric_shifts_job_id_worker_id_valid_excl | 
 (1 row)
 
 -- Insert test data into the integer shifts table

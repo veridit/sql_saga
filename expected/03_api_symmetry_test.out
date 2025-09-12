@@ -148,9 +148,9 @@ TABLE sql_saga.foreign_keys;
 DROP TABLE regular_child;
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
------------------+--------------+------------+----------+--------------+----------+--------------------------------------+--------------------+-----------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   | 
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
@@ -172,9 +172,9 @@ SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
------------------+--------------+------------+----------+--------------+----------+--------------------------------------+--------------------+-----------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   | 
 (1 row)
 
 -- by name (positional)
@@ -197,9 +197,9 @@ SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name |          unique_constraint           | exclude_constraint | predicate 
------------------+--------------+------------+----------+--------------+----------+--------------------------------------+--------------------+-----------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_valid_from_valid_until_key | parent_id_p_excl   | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   | 
 (1 row)
 
 -- by name (named)

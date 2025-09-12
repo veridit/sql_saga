@@ -218,7 +218,7 @@ SAVEPOINT expect_error;
 Attempting to add a temporal primary key to a table with a simple primary key (should fail)
 SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', key_type => 'primary');
 ERROR:  table "simple_pk" has a simple PRIMARY KEY that does not include the temporal columns; this is incompatible with SCD Type 2 history
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 126 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 128 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 DROP TABLE public.simple_pk;
 \echo '--- Test: add_unique_key validation for GENERATED ALWAYS identity column ---'
@@ -239,7 +239,7 @@ SAVEPOINT expect_error_2;
 Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)
 SELECT sql_saga.add_unique_key('public.generated_always', '{id}', key_type => 'primary');
 ERROR:  table "generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 107 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 109 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 DROP TABLE public.generated_always;
 ROLLBACK;

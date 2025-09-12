@@ -852,14 +852,15 @@ BEGIN
     RAISE NOTICE '--- Processing Batch % ---', p_batch_id;
 
     -- For complex, multi-step ETL processes, the standard and most robust
-    -- solution is to temporarily disable all relevant foreign key triggers
-    -- for the duration of the batch transaction. This allows the transaction
-    -- to reach a temporarily inconsistent state between procedure calls,
-    -- with the guarantee that the final state will be consistent.
-    ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
-    ALTER TABLE etl.location DISABLE TRIGGER USER;
-    ALTER TABLE etl.stat_for_unit DISABLE TRIGGER USER;
-    ALTER TABLE etl.activity DISABLE TRIGGER USER;
+    -- solution is to temporarily disable all relevant temporal foreign key triggers
+    -- for the duration of the batch transaction. This prevents FK violations
+    -- on transient, inconsistent states between procedure calls.
+    CALL sql_saga.disable_temporal_triggers(
+        'etl.legal_unit',
+        'etl.location',
+        'etl.stat_for_unit',
+        'etl.activity'
+    );
 
     CALL etl.process_legal_units(p_batch_id);
     -- These procedures depend on the legal_unit_id being populated.
@@ -868,10 +869,13 @@ BEGIN
     CALL etl.process_idents(p_batch_id);
     CALL etl.process_activities(p_batch_id);
 
-    ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
-    ALTER TABLE etl.location ENABLE TRIGGER USER;
-    ALTER TABLE etl.stat_for_unit ENABLE TRIGGER USER;
-    ALTER TABLE etl.activity ENABLE TRIGGER USER;
+    -- Re-enable the triggers now that the batch has reached a consistent state.
+    CALL sql_saga.enable_temporal_triggers(
+        'etl.legal_unit',
+        'etl.location',
+        'etl.stat_for_unit',
+        'etl.activity'
+    );
 END;
 $procedure$;
 DO $do$

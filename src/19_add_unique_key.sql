@@ -24,6 +24,8 @@ DECLARE
     pass integer;
     sql text;
     alter_cmds text[];
+    v_unique_constraint_found boolean := false;
+    v_exclude_constraint_found boolean := false;
     unique_sql text;
     exclude_sql text;
     where_clause text;
@@ -157,40 +159,40 @@ BEGIN
         END IF;
 
         IF unique_constraint IS NOT NULL THEN
-        SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
-        INTO constraint_record
-        FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.conname) = (table_oid, unique_constraint);
+            SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
+            INTO constraint_record
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (table_oid, unique_constraint);
 
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'constraint "%" does not exist', unique_constraint;
-        END IF;
+            IF FOUND THEN
+                v_unique_constraint_found := true;
 
-        IF key_type = 'primary' AND constraint_record.contype <> 'p' THEN
-            RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY', unique_constraint;
-        ELSIF key_type = 'natural' AND constraint_record.contype NOT IN ('p', 'u') THEN
-            RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
-        END IF;
+                IF key_type = 'primary' AND constraint_record.contype <> 'p' THEN
+                    RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY', unique_constraint;
+                ELSIF key_type = 'natural' AND constraint_record.contype NOT IN ('p', 'u') THEN
+                    RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
+                END IF;
 
-        IF NOT constraint_record.condeferrable THEN
-            /* For restore purposes, constraints may be deferred,
-             * but everything must be valid at the end fo the transaction
-             */
-            RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', unique_constraint;
-        END IF;
+                IF NOT constraint_record.condeferrable THEN
+                    /* For restore purposes, constraints may be deferred,
+                     * but everything must be valid at the end fo the transaction
+                     */
+                    RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', unique_constraint;
+                END IF;
 
-        IF constraint_record.condeferred THEN
-            /* By default constraints are NOT deferred,
-             * and the user receives a timely validation error.
-             */
-            RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', unique_constraint;
-        END IF;
+                IF constraint_record.condeferred THEN
+                    /* By default constraints are NOT deferred,
+                     * and the user receives a timely validation error.
+                     */
+                    RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', unique_constraint;
+                END IF;
 
-        IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
-            RAISE EXCEPTION 'constraint "%" does not match', unique_constraint;
-        END IF;
+                IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
+                    RAISE EXCEPTION 'constraint "%" does not match', unique_constraint;
+                END IF;
 
-        /* Looks good, let's use it. */
+                /* Looks good, let's use it. */
+            END IF;
         END IF;
     ELSIF key_type = 'predicated' THEN
         -- When a predicate is provided, we use a unique index, not a unique constraint.
@@ -231,33 +233,33 @@ BEGIN
         FROM pg_catalog.pg_constraint AS c
         WHERE (c.conrelid, c.conname) = (table_oid, exclude_constraint);
 
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'constraint "%" does not exist', exclude_constraint;
-        END IF;
+        IF FOUND THEN
+            v_exclude_constraint_found := true;
 
-        IF constraint_record.contype <> 'x' THEN
-            RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
-        END IF;
+            IF constraint_record.contype <> 'x' THEN
+                RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
+            END IF;
 
-        IF NOT constraint_record.condeferrable THEN
-            /* For restore purposes, constraints may be deferred,
-             * but everything must be valid at the end fo the transaction
-             */
-            RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
-        END IF;
+            IF NOT constraint_record.condeferrable THEN
+                /* For restore purposes, constraints may be deferred,
+                 * but everything must be valid at the end fo the transaction
+                 */
+                RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
+            END IF;
 
-        IF constraint_record.condeferred THEN
-            /* By default constraints are NOT deferred,
-             * and the user receives a timely validation error.
-             */
-            RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
-        END IF;
+            IF constraint_record.condeferred THEN
+                /* By default constraints are NOT deferred,
+                 * and the user receives a timely validation error.
+                 */
+                RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
+            END IF;
 
-        IF constraint_record.definition <> exclude_sql THEN
-            RAISE EXCEPTION 'constraint "%" does not match', exclude_constraint;
-        END IF;
+            IF constraint_record.definition <> exclude_sql THEN
+                RAISE EXCEPTION 'constraint "%" does not match', exclude_constraint;
+            END IF;
 
-        /* Looks good, let's use it. */
+            /* Looks good, let's use it. */
+        END IF;
     END IF;
 
     /*
@@ -282,13 +284,26 @@ BEGIN
     /* Time to make the underlying constraints */
     alter_cmds := '{}';
     IF key_type IN ('primary', 'natural') THEN
-        IF unique_constraint IS NULL THEN
-            alter_cmds := alter_cmds || ('ADD ' || unique_sql);
+        IF NOT v_unique_constraint_found THEN
+            IF unique_constraint IS NULL THEN
+                -- If this is a primary key, Postgres will name it automatically.
+                -- For natural keys, we'll generate a name for consistency.
+                IF key_type = 'natural' THEN
+                    unique_constraint := unique_key_name || '_uniq';
+                    alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+                ELSE
+                    alter_cmds := alter_cmds || ('ADD ' || unique_sql);
+                END IF;
+            ELSE
+                 alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+            END IF;
         END IF;
     ELSIF key_type = 'predicated' THEN
         -- For predicates, we create a unique index instead of a unique constraint.
         -- We generate a name for it and store it in the `unique_constraint` variable for metadata.
-        unique_constraint := unique_key_name || '_idx';
+        IF unique_constraint IS NULL THEN
+            unique_constraint := unique_key_name || '_idx';
+        END IF;
         unique_sql := format('CREATE UNIQUE INDEX %I ON %I.%I (%s)%s',
             unique_constraint, /* %I */
             table_schema, /* %I */
@@ -299,8 +314,10 @@ BEGIN
         EXECUTE unique_sql;
     END IF;
 
-    IF exclude_constraint IS NULL THEN
-        exclude_constraint := unique_key_name || '_excl';
+    IF NOT v_exclude_constraint_found THEN
+        IF exclude_constraint IS NULL THEN
+            exclude_constraint := unique_key_name || '_excl';
+        END IF;
         alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(exclude_constraint) || ' ' || exclude_sql);
     END IF;
 

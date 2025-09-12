@@ -357,6 +357,9 @@ END $$;
 CREATE TYPE sql_saga.updatable_view_type AS ENUM ('for_portion_of', 'current');
 COMMENT ON TYPE sql_saga.updatable_view_type IS 'Defines the semantic type of an updatable view. "for_portion_of" provides direct access to historical records, while "current" provides a simplified view of only the currently active data.';
 
+CREATE TYPE sql_saga.trigger_action AS ENUM ('enable', 'disable');
+COMMENT ON TYPE sql_saga.trigger_action IS 'Defines the action for the manage_temporal_fk_triggers procedure.';
+
 CREATE VIEW sql_saga.information_schema__era AS
     SELECT current_catalog AS table_catalog,
            e.table_schema,

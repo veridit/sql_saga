@@ -138,6 +138,15 @@ This document is automatically generated from the database schema by the `80_gen
 - NONE
 ```
 
+### trigger_action
+
+> Defines the action for the manage_temporal_fk_triggers procedure.
+
+```sql
+- enable
+- disable
+```
+
 ### unique_key_type
 
 > Distinguishes between a temporal primary key, a natural key (unique, for FKs), and a predicated key (a unique index with a WHERE clause).
@@ -358,6 +367,35 @@ drop_for_portion_of_view(
 ```
 
 ## Bulk Data Loading
+
+### disable_temporal_triggers
+
+> Disables all sql_saga-managed temporal foreign key triggers for the specified tables. This is a targeted alternative to `ALTER TABLE ... DISABLE TRIGGER USER`, intended for complex ETL batches where transient, inconsistent states are expected. It does not affect non-FK triggers, such as those for synchronized columns.
+
+```sql
+disable_temporal_triggers(
+    VARIADIC p_table_oids regclass[]
+)
+```
+
+### enable_temporal_triggers
+
+> Re-enables all sql_saga-managed temporal foreign key triggers for the specified tables. This should be called at the end of an ETL batch transaction to restore integrity checks.
+
+```sql
+enable_temporal_triggers(
+    VARIADIC p_table_oids regclass[]
+)
+```
+
+### manage_temporal_fk_triggers
+
+```sql
+manage_temporal_fk_triggers(
+    IN p_action sql_saga.trigger_action,
+    VARIADIC p_table_oids regclass[]
+)
+```
 
 ### temporal_merge
 

@@ -108,10 +108,10 @@ SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid', key_type =>
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |            unique_constraint            |   exclude_constraint    | predicate 
---------------------+--------------+------------+----------+--------------+----------+-----------------------------------------+-------------------------+-----------
- employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_from_valid_until_key | employees_id_valid_excl | 
- staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_from_valid_until_key     | staff_id_valid_excl     | 
+  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint    |   exclude_constraint    | predicate 
+--------------------+--------------+------------+----------+--------------+----------+-------------------------+-------------------------+-----------
+ employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_uniq | employees_id_valid_excl | 
+ staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_uniq     | staff_id_valid_excl     | 
 (2 rows)
 
 SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
@@ -140,7 +140,7 @@ TABLE sql_saga.foreign_keys;
 Indexes:
     "employees_id_idx" btree (id)
     "employees_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "employees_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "employees_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -161,7 +161,7 @@ Triggers:
 Indexes:
     "staff_id_idx" btree (id)
     "staff_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "staff_id_valid_from_valid_until_key" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "staff_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
 Check constraints:
     "staff_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:

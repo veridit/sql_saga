@@ -113,13 +113,13 @@ SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p'
 (1 row)
 
 TABLE sql_saga.unique_keys;
-       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |                    unique_constraint                    |        exclude_constraint         | predicate 
-------------------------------+--------------+-------------+----------+------------------+----------+---------------------------------------------------------+-----------------------------------+-----------
- rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_s < e_embedded " symbols_key | rename_test_col2_col1_col3_p_excl | 
+       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |         unique_constraint         |        exclude_constraint         | predicate 
+------------------------------+--------------+-------------+----------+------------------+----------+-----------------------------------+-----------------------------------+-----------
+ rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_p_uniq | rename_test_col2_col1_col3_p_excl | 
 (1 row)
 
 ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
-ALTER TABLE rename_test RENAME CONSTRAINT "rename_test_col2_col1_col3_s < e_embedded "" symbols_key" TO unconst;
+ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_uniq TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_excl TO exconst;
 TABLE sql_saga.unique_keys;
        unique_key_name        | table_schema | table_name  | key_type |    column_names     | era_name | unique_constraint | exclude_constraint | predicate 

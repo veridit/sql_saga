@@ -43,7 +43,7 @@ ALTER TABLE rename_test DROP COLUMN id;
 SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p');
 TABLE sql_saga.unique_keys;
 ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
-ALTER TABLE rename_test RENAME CONSTRAINT "rename_test_col2_col1_col3_s < e_embedded "" symbols_key" TO unconst;
+ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_uniq TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_excl TO exconst;
 TABLE sql_saga.unique_keys;
 
