@@ -7,6 +7,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
+- [x] **Make API documentation test fail-fast:** The test that generates API documentation now fails if any public functions are not explicitly categorized, ensuring new functions are not missed.
 - [x] **Improve API documentation grouping:** Grouped trigger management functions (`disable/enable_temporal_triggers`) with `temporal_merge` under "Bulk Data Loading" for better discoverability.
 - [x] **Improve API documentation:** Enhanced the auto-generation script to include `ENUM` types, format function signatures for readability, and add database comments for all public API functions.
 - [x] **Generate API documentation from schema:** Create a new regression test that introspects the `sql_saga` schema and generates a complete, accurate `docs/api.md` file. This ensures documentation is always synchronized with the code.
@@ -22,6 +23,7 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 ## Low Priority - Future Work & New Features
 
 ## Done
+- [x] **Fix `80_generate_api_docs` test:** Converted the function-gathering CTE to a temporary view to fix a "relation does not exist" error, making the uncategorized function check robust.
 - [x] **Fix regression in `add_unique_key` and stabilize trigger tests:** Corrected a regression where `add_unique_key` ignored user-provided constraint names. Stabilized tests (`59_...` and `10_...`) by filtering internal triggers and using correct, predictable constraint names.
 - [x] **Make `ephemeral_columns` optional in `temporal_merge`:** Refactored the procedure to provide a sensible default (`NULL`) for the `ephemeral_columns` parameter to improve API ergonomics.
 - [x] **Fix `temporal_merge` coalescing for synchronized columns:** The planner now automatically treats synchronized columns (e.g., `valid_to`) as ephemeral. The executor also excludes them from `INSERT`s, allowing the synchronization trigger to derive their values correctly. This resolves both the coalescing bug and the subsequent trigger inconsistency error.

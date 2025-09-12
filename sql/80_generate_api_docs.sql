@@ -53,7 +53,7 @@ FROM enums e JOIN enum_vals ev ON e.oid = ev.enumtypid;
 
 
 -- Query to introspect and format the API documentation
-WITH funcs AS (
+CREATE OR REPLACE TEMP VIEW funcs AS
     SELECT
         p.proname AS func_name,
         CASE
@@ -84,7 +84,7 @@ WITH funcs AS (
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 6
             WHEN p.prokind = 'a' THEN 7
             WHEN p.proname LIKE 'health_check%' THEN 8
-            ELSE 9
+            WHEN p.proname IN ('allen_get_relation', 'drop_protection', 'rename_following') THEN 9
         END AS category_order,
         CASE
             WHEN p.proname IN ('add_era', 'drop_era') THEN 'Era Management'
@@ -95,7 +95,7 @@ WITH funcs AS (
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 'System Versioning'
             WHEN p.prokind = 'a' THEN 'Aggregates'
             WHEN p.proname LIKE 'health_check%' THEN 'Health Checks'
-            ELSE 'Internal and Helper Functions'
+            WHEN p.proname IN ('allen_get_relation', 'drop_protection', 'rename_following') THEN 'Internal and Helper Functions'
         END AS category_name
     FROM
         pg_proc p
@@ -115,8 +115,8 @@ WITH funcs AS (
             'temporal_merge_plan',
             'covers_without_gaps_transfn', 'covers_without_gaps_finalfn',
             'first_sfunc'
-        )
-)
+        );
+
 SELECT
     E'\n\n' || string_agg(
         '## ' || category_name || E'\n\n' || api_docs,
@@ -139,6 +139,7 @@ FROM (
             E'\n\n' ORDER BY func_name, func_def
         ) AS api_docs
     FROM funcs
+    WHERE category_name IS NOT NULL
     GROUP BY category_name, category_order
 ) sub;
 
@@ -154,5 +155,14 @@ FROM (
 
 -- A simple select to confirm the script ran
 SELECT 'API documentation generated in docs/api.md' AS result;
+
+-- Check for any public functions that have not been assigned to a category
+SELECT 'Uncategorized API functions found. Please add them to a category in `sql/80_generate_api_docs.sql`:' AS " ",
+       string_agg(format(E'\n- %s', func_def), '' ORDER BY func_name) AS " "
+FROM funcs
+WHERE category_name IS NULL
+HAVING count(*) > 0;
+
+DROP VIEW funcs;
 
 \i sql/include/test_teardown.sql
