@@ -80,7 +80,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         CASE
             WHEN p.proname IN ('add_era', 'drop_era') THEN 1
             WHEN p.proname IN ('add_unique_key', 'drop_unique_key', 'drop_unique_key_by_name') THEN 2
-            WHEN p.proname IN ('add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 3
+            WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 3
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 4
             WHEN p.proname IN ('temporal_merge', 'disable_temporal_triggers', 'enable_temporal_triggers', 'manage_temporal_fk_triggers') THEN 5
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 6
@@ -91,7 +91,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         CASE
             WHEN p.proname IN ('add_era', 'drop_era') THEN 'Era Management'
             WHEN p.proname IN ('add_unique_key', 'drop_unique_key', 'drop_unique_key_by_name') THEN 'Unique Keys'
-            WHEN p.proname IN ('add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 'Foreign Keys'
+            WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 'Foreign Keys'
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 'Updatable Views'
             WHEN p.proname IN ('temporal_merge', 'disable_temporal_triggers', 'enable_temporal_triggers', 'manage_temporal_fk_triggers') THEN 'Bulk Data Loading'
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 'System Versioning'

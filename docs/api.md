@@ -255,6 +255,25 @@ SECURITY DEFINER
 
 ## Foreign Keys
 
+### add_foreign_key
+
+> Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name.
+
+```sql
+FUNCTION add_foreign_key(
+    fk_table_oid regclass,
+    fk_column_names name[],
+    pk_table_oid regclass,
+    pk_column_names name[],
+    fk_era_name name DEFAULT NULL::name,
+    match_type sql_saga.fk_match_types DEFAULT 'SIMPLE'::sql_saga.fk_match_types,
+    update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
+    delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
+    foreign_key_name name DEFAULT NULL::name
+) RETURNS name
+SECURITY DEFINER
+```
+
 ### add_regular_foreign_key
 
 > Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history.

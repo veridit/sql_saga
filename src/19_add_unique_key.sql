@@ -144,12 +144,20 @@ BEGIN
             END;
         END IF;
         /* If we were given a unique constraint to use, look it up and make sure it matches */
+        -- For a primary key, the constraint must include the user columns and at least one of the era columns.
+        -- For a natural key, it must include both era columns.
         SELECT format('%s (%s) DEFERRABLE',
             CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
             string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */
         )
         INTO unique_sql
-        FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+        FROM unnest(
+            CASE WHEN key_type = 'primary' THEN
+                column_names || era_row.valid_from_column_name
+            ELSE
+                column_names || era_row.valid_from_column_name || era_row.valid_until_column_name
+            END
+        ) WITH ORDINALITY AS u (column_name, ordinality);
 
         IF unique_constraint IS NULL AND key_type = 'primary' THEN
             -- If this is a primary key and no name was given, check if one already exists.
@@ -187,8 +195,42 @@ BEGIN
                     RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', unique_constraint;
                 END IF;
 
-                IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
-                    RAISE EXCEPTION 'constraint "%" does not match', unique_constraint;
+                -- For a primary key, we only require one of the era columns to be present.
+                -- For a natural key, both must be present.
+                IF key_type = 'primary' THEN
+                    -- Check that the constraint includes the user columns and at least one era column.
+                    -- The order does not matter here, just the set of columns.
+                    IF NOT (ARRAY(SELECT unnest(constraint_record.conkey) ORDER BY 1) @> ARRAY(SELECT unnest(column_attnums) ORDER BY 1)
+                        AND (constraint_record.conkey @> ARRAY[era_attnums[1]] OR constraint_record.conkey @> ARRAY[era_attnums[2]]))
+                    THEN
+                        RAISE EXCEPTION 'PRIMARY KEY constraint "%" must include the columns (%) and at least one of the temporal columns ("%" or "%")',
+                            unique_constraint,
+                            array_to_string(column_names, ', '),
+                            era_row.valid_from_column_name,
+                            era_row.valid_until_column_name;
+                    END IF;
+                ELSE -- For natural keys, the column order and set must be exact.
+                    IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
+                        DECLARE
+                            v_expected_columns name[];
+                            v_actual_columns name[];
+                        BEGIN
+                            SELECT array_agg(a.attname ORDER BY u.ord)
+                            INTO v_expected_columns
+                            FROM unnest(column_attnums || era_attnums) WITH ORDINALITY AS u(attnum, ord)
+                            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = table_oid AND a.attnum = u.attnum;
+
+                            SELECT array_agg(a.attname ORDER BY u.ord)
+                            INTO v_actual_columns
+                            FROM unnest(constraint_record.conkey) WITH ORDINALITY AS u(attnum, ord)
+                            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = table_oid AND a.attnum = u.attnum;
+
+                            RAISE EXCEPTION 'constraint "%" does not match. Expected columns (%), but found columns (%).',
+                                unique_constraint,
+                                array_to_string(v_expected_columns, ', '),
+                                array_to_string(v_actual_columns, ', ');
+                        END;
+                    END IF;
                 END IF;
 
                 /* Looks good, let's use it. */
@@ -255,7 +297,10 @@ BEGIN
             END IF;
 
             IF constraint_record.definition <> exclude_sql THEN
-                RAISE EXCEPTION 'constraint "%" does not match', exclude_constraint;
+                RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
+                    exclude_constraint,
+                    exclude_sql,
+                    constraint_record.definition;
             END IF;
 
             /* Looks good, let's use it. */

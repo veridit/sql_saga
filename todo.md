@@ -17,8 +17,12 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Improve `add_unique_key` to manage primary keys explicitly:** Refactor the `add_unique_key` API to use a single `key_type` parameter with three mutually exclusive options: `'primary'`, `'natural'`, and `'predicated'`. This will make the API more declarative and enforce that predicated keys (which cannot be foreign key targets) are distinct from natural keys.
 - [x] **Add validation for temporal primary keys:** Enhanced `add_unique_key` to validate that when `key_type` is `'primary'`, the target table does not have incompatible features like a `GENERATED ALWAYS` identity column or a simple (non-temporal) primary key. This moves the strict SCD Type 2 validation to where it belongs, allowing `add_era` to be more flexible.
 - [x] **Standardize API parameter naming:** Removed the `p_` prefix from all function parameters to align with PostgreSQL conventions and improve consistency. Updated all call sites and function bodies to use the new names, and standardized on `=>` for named argument syntax.
-- [ ] **Refactor `add_foreign_key` to be declarative:**
+- [x] **Refactor `add_foreign_key` to be declarative:**
   - [x] Phase 1: Rename existing `add_foreign_key` functions to `add_temporal_foreign_key` and `add_regular_foreign_key`.
+  - [x] Phase 2: Implement new declarative `add_foreign_key` and `drop_foreign_key` functions.
+    - [x] Implement declarative `add_foreign_key`.
+    - [x] Implement declarative `drop_foreign_key`.
+- [ ] **Refactor API to use `create`/`drop` convention:** Rename all `add_*` functions (e.g., `add_unique_key`) to `create_*` to better align with SQL DDL terminology and improve API clarity.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 

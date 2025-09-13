@@ -175,7 +175,7 @@ SELECT sql_saga.add_unique_key('pk_test', '{id}', key_type => 'primary');
  valid_from  | integer |           | not null | 
  valid_until | integer |           | not null | 
 Indexes:
-    "pk_test_pkey" PRIMARY KEY, btree (id, valid_from, valid_until) DEFERRABLE
+    "pk_test_pkey" PRIMARY KEY, btree (id, valid_from) DEFERRABLE
     "pk_test_id_idx" btree (id)
     "pk_test_id_valid_excl" EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
 Check constraints:

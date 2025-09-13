@@ -1,3 +1,103 @@
+-- Declarative wrapper for creating foreign keys.
+-- This function automatically determines whether to create a temporal or regular FK
+-- and looks up the internal unique key name.
+CREATE FUNCTION sql_saga.add_foreign_key(
+        fk_table_oid regclass,
+        fk_column_names name[],
+        pk_table_oid regclass,
+        pk_column_names name[],
+        fk_era_name name DEFAULT NULL, -- Only needed to disambiguate if FK table has multiple eras
+        match_type sql_saga.fk_match_types DEFAULT 'SIMPLE',
+        update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
+        delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
+        foreign_key_name name DEFAULT NULL
+)
+RETURNS name
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS
+$function_declarative_fk$
+#variable_conflict use_variable
+DECLARE
+    v_fk_schema_name name;
+    v_fk_table_name name;
+    v_pk_schema_name name;
+    v_pk_table_name name;
+    v_is_fk_temporal boolean;
+    v_unique_key_name name;
+    v_fk_era_name name := fk_era_name;
+BEGIN
+    -- Get schema and table names for both tables
+    SELECT n.nspname, c.relname INTO v_fk_schema_name, v_fk_table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = fk_table_oid;
+
+    SELECT n.nspname, c.relname INTO v_pk_schema_name, v_pk_table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = pk_table_oid;
+
+    -- Look up the unique key name based on the PK table and columns.
+    -- We match on primary or natural keys, as they are the intended targets for FKs.
+    -- The ENUM order ('primary', 'natural', ...) ensures we prefer primary keys.
+    SELECT uk.unique_key_name INTO v_unique_key_name
+    FROM sql_saga.unique_keys uk
+    WHERE uk.table_schema = v_pk_schema_name
+      AND uk.table_name = v_pk_table_name
+      AND uk.column_names = pk_column_names
+      AND uk.key_type IN ('primary', 'natural')
+    ORDER BY uk.key_type
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'No primary or natural unique key found on table %.% for columns %',
+            quote_ident(v_pk_schema_name), quote_ident(v_pk_table_name), pk_column_names;
+    END IF;
+
+    -- Determine if the FK table is temporal
+    SELECT EXISTS (
+        SELECT 1 FROM sql_saga.era e
+        WHERE (e.table_schema, e.table_name) = (v_fk_schema_name, v_fk_table_name)
+    ) INTO v_is_fk_temporal;
+
+    IF v_is_fk_temporal THEN
+        -- If fk_era_name is not provided, try to auto-detect it.
+        IF v_fk_era_name IS NULL THEN
+            SELECT e.era_name INTO v_fk_era_name
+            FROM sql_saga.era e
+            WHERE (e.table_schema, e.table_name) = (v_fk_schema_name, v_fk_table_name);
+
+            -- If there's more than one era, the user must specify which one to use.
+            IF (SELECT count(*) FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (v_fk_schema_name, v_fk_table_name)) > 1 THEN
+                RAISE EXCEPTION 'Table %.% has multiple eras. Please specify the fk_era_name parameter.',
+                    quote_ident(v_fk_schema_name), quote_ident(v_fk_table_name);
+            END IF;
+        END IF;
+
+        RETURN sql_saga.add_temporal_foreign_key(
+            fk_table_oid => fk_table_oid,
+            fk_column_names => fk_column_names,
+            fk_era_name => v_fk_era_name,
+            unique_key_name => v_unique_key_name,
+            match_type => match_type,
+            update_action => update_action,
+            delete_action => delete_action,
+            foreign_key_name => foreign_key_name
+        );
+    ELSE
+        RETURN sql_saga.add_regular_foreign_key(
+            fk_table_oid => fk_table_oid,
+            fk_column_names => fk_column_names,
+            unique_key_name => v_unique_key_name,
+            match_type => match_type,
+            update_action => update_action,
+            delete_action => delete_action,
+            foreign_key_name => foreign_key_name
+        );
+    END IF;
+END;
+$function_declarative_fk$;
+
+
 -- Overloaded function for regular (non-temporal) to temporal foreign keys
 CREATE FUNCTION sql_saga.add_regular_foreign_key(
         fk_table_oid regclass,
@@ -673,3 +773,6 @@ COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql
 
 COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
+
+COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name) IS
+'Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name.';
