@@ -14,7 +14,7 @@ SELECT sql_saga.add_unique_key('uk', ARRAY['id'], 'p');
 CREATE TABLE fk(id integer, uk_id integer, f integer, u integer);
 SELECT sql_saga.add_era('fk', 'f', 'u', 'q');
 SELECT sql_saga.add_unique_key('fk', ARRAY['id'], 'q');
-SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
+SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
 --
 TABLE sql_saga.era;
 TABLE sql_saga.foreign_keys;
@@ -101,7 +101,7 @@ SELECT sql_saga.add_era('t_fk', 'valid_after', 'valid_to');
 -- The bug is that 'valid_to' is added to the list twice if it's both the
 -- valid_until_column_name and a column named 'valid_to' exists.
 SAVEPOINT s_fk_error;
-SELECT sql_saga.add_foreign_key('t_fk', ARRAY['uk_id'], 'valid', 't_uk_id_valid');
+SELECT sql_saga.add_temporal_foreign_key('t_fk', ARRAY['uk_id'], 'valid', 't_uk_id_valid');
 ROLLBACK TO SAVEPOINT s_fk_error;
 
 -- cleanup
@@ -134,7 +134,7 @@ CREATE TABLE t_fk_gen (
 SELECT sql_saga.add_era('t_fk_gen', synchronize_valid_to_column := 'valid_end_date');
 
 -- This should succeed and create a trigger that watches valid_end_date
-SELECT sql_saga.add_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');
+SELECT sql_saga.add_temporal_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');
 
 -- cleanup
 SELECT sql_saga.drop_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid');
@@ -169,7 +169,7 @@ SELECT sql_saga.add_era('establishment_bug', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('establishment_bug', ARRAY['id']); 
 
 -- Add the temporal foreign key constraint
-SELECT sql_saga.add_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid', 'legal_unit_bug_id_valid');
+SELECT sql_saga.add_temporal_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid', 'legal_unit_bug_id_valid');
 
 INSERT INTO legal_unit_bug (id, valid_from, valid_until, name) VALUES
 (1, '2023-12-31', 'infinity', 'Parent LU');

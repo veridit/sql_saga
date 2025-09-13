@@ -142,8 +142,8 @@ TABLE sql_saga.era;
  public       | rename_test_ref | q        | s < e                  | embedded " symbols      | int4range  | integer       | N                      | rename_test_ref_q_check |                             |                          | f                        |                   | 
 (2 rows)
 
-SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
-           add_foreign_key           
+SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
+      add_temporal_foreign_key       
 -------------------------------------
  rename_test_ref_col2_COLUMN1_col3_q
 (1 row)

@@ -94,14 +94,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-   add_foreign_key    
-----------------------
+ add_temporal_foreign_key 
+--------------------------
  rooms_house_id_valid
 (1 row)
 
@@ -150,14 +150,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-   add_foreign_key    
-----------------------
+ add_temporal_foreign_key 
+--------------------------
  rooms_house_id_valid
 (1 row)
 
@@ -206,14 +206,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-   add_foreign_key    
-----------------------
+ add_temporal_foreign_key 
+--------------------------
  rooms_house_id_valid
 (1 row)
 
@@ -262,14 +262,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-   add_foreign_key    
-----------------------
+ add_temporal_foreign_key 
+--------------------------
  rooms_house_id_valid
 (1 row)
 
@@ -318,14 +318,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a completely-uncovered foreign key
 SAVEPOINT s;
@@ -371,14 +371,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a partially-covered foreign key
 SAVEPOINT s;
@@ -424,14 +424,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name) line 362 at RAISE
 ROLLBACK TO SAVEPOINT s;
 ROLLBACK;
 \i sql/include/test_teardown.sql

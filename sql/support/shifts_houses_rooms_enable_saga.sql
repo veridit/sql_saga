@@ -10,7 +10,7 @@ SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'
 
 SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',

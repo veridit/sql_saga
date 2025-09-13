@@ -119,8 +119,8 @@ CREATE TABLE tmtc.location_multi_key (
 SELECT sql_saga.add_era('tmtc.location_multi_key');
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
 -- Target table with multiple, mutually exclusive natural keys (NO surrogate ID)
 CREATE TABLE tmtc.location_multi_key_no_id (
@@ -139,8 +139,8 @@ CREATE TABLE tmtc.location_multi_key_no_id (
 SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
 -- Helper procedure to reset the target table for a new scenario
 CREATE OR REPLACE PROCEDURE tmtc.reset_target() AS $$

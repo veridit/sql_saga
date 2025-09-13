@@ -488,7 +488,7 @@ CREATE TABLE tmrb.activity_fk_bug (
 );
 SELECT sql_saga.add_era('tmrb.activity_fk_bug'::regclass);
 SELECT sql_saga.add_unique_key('tmrb.activity_fk_bug'::regclass, '{id}', unique_key_name => 'activity_fk_bug_id_valid');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'tmrb.activity_fk_bug'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',

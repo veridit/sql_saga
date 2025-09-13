@@ -16,12 +16,6 @@ COMMENT ON FUNCTION sql_saga.drop_unique_key_by_name(regclass, name, sql_saga.dr
 'Drops a temporal unique key identified by its unique name.';
 
 -- Foreign Keys
-COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name) IS
-'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
-
-COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name) IS
-'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
-
 COMMENT ON FUNCTION sql_saga.drop_foreign_key(regclass, name[], name, sql_saga.drop_behavior) IS
 'Drops a foreign key. The era name must be provided for temporal-to-temporal keys and omitted for regular-to-temporal keys.';
 

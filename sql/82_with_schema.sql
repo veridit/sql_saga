@@ -40,7 +40,7 @@ SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid', key_ty
 SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid', key_type => 'natural');
 TABLE sql_saga.unique_keys;
 
-SELECT sql_saga.add_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
+SELECT sql_saga.add_temporal_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
 TABLE sql_saga.foreign_keys;
 
 -- While sql_saga is active

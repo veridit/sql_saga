@@ -167,7 +167,7 @@ SELECT $$
 Test: Validate Timely Strategy using sql_saga
 Concept:
   This test repeats the scenario from the previous test, but uses the high-level
-  sql_saga functions (`add_era`, `add_unique_key`, `add_foreign_key`) to set up
+  sql_saga functions (`add_era`, `add_unique_key`, `add_temporal_foreign_key`) to set up
   the constraints. Its purpose is to verify that the extension's own implementation
   of temporal uniqueness and foreign keys correctly adheres to the same architectural
   principles validated by the low-level test.
@@ -201,7 +201,7 @@ CREATE TABLE ss.child (
 SELECT sql_saga.add_era('ss.parent');
 SELECT sql_saga.add_unique_key('ss.parent', '{id}', unique_key_name => 'parent_uk');
 SELECT sql_saga.add_era('ss.child');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'ss.child',
     fk_column_names => '{parent_id}',
     fk_era_name => 'valid',
@@ -297,7 +297,7 @@ CREATE TABLE stm.child (
 SELECT sql_saga.add_era('stm.parent');
 SELECT sql_saga.add_unique_key('stm.parent', '{id}', unique_key_name => 'parent_uk_stm');
 SELECT sql_saga.add_era('stm.child');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'stm.child',
     fk_column_names => '{parent_id}',
     fk_era_name => 'valid',

@@ -214,14 +214,14 @@ SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establi
  loc_mk_est_uk
 (1 row)
 
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-            add_foreign_key             
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+        add_temporal_foreign_key        
 ----------------------------------------
  location_multi_key_legal_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-              add_foreign_key              
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+         add_temporal_foreign_key          
 -------------------------------------------
  location_multi_key_establishment_id_valid
 (1 row)
@@ -258,14 +258,14 @@ SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'e
  loc_mk_noid_est_uk
 (1 row)
 
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-               add_foreign_key                
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+           add_temporal_foreign_key           
 ----------------------------------------------
  location_multi_key_no_id_legal_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-                 add_foreign_key                 
+SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+            add_temporal_foreign_key             
 -------------------------------------------------
  location_multi_key_no_id_establishment_id_valid
 (1 row)

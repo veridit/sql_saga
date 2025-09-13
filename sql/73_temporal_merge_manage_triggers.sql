@@ -27,7 +27,7 @@ SELECT sql_saga.add_unique_key(
     unique_constraint => 'child_id_valid_uniq',
     exclude_constraint => 'child_id_valid_excl'
 );
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'mtt.child'::regclass,
     fk_column_names => ARRAY['parent_id'],
     fk_era_name => 'valid',

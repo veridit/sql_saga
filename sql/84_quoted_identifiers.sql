@@ -73,7 +73,7 @@ CREATE TABLE """fk "" test""" (
 SELECT sql_saga.add_era('"""fk "" test"""', '"from"', '"until"');
 
 -- 5. Add foreign key referencing the complex unique key
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => '"""fk "" test"""',
     fk_column_names => ARRAY['"ref " id"', '"product"'],
     fk_era_name => 'valid',

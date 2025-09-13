@@ -88,14 +88,14 @@ SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id']
  rooms_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'rooms',
     fk_column_names => ARRAY['house_id'],
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-   add_foreign_key    
-----------------------
+ add_temporal_foreign_key 
+--------------------------
  rooms_house_id_valid
 (1 row)
 

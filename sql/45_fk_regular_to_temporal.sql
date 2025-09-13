@@ -41,7 +41,7 @@ SELECT sql_saga.add_unique_key(
 );
 
 -- 3. Add a regular-to-temporal foreign key.
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_regular_foreign_key(
     fk_table_oid => 'regular_fk',
     fk_column_names => ARRAY['pk_id'],
     unique_key_name => 'temporal_pk_id_key'
@@ -49,7 +49,7 @@ SELECT sql_saga.add_foreign_key(
 
 -- Verify helper function and CHECK constraint were created
 \echo
-\echo "--- After add_foreign_key ---"
+\echo "--- After add_regular_foreign_key ---"
 -- The helper function should be in the schema of the referenced table and have a predictable name.
 \df+ public.temporal_pk_id_exists
 -- The CHECK constraint should be on the regular_fk table

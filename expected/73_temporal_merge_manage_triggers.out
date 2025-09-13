@@ -70,14 +70,14 @@ SELECT sql_saga.add_unique_key(
  child_id_valid
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'mtt.child'::regclass,
     fk_column_names => ARRAY['parent_id'],
     fk_era_name => 'valid',
     unique_key_name => 'parent_id_valid'
 );
-    add_foreign_key    
------------------------
+ add_temporal_foreign_key 
+--------------------------
  child_parent_id_valid
 (1 row)
 

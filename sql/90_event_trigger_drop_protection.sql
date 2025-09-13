@@ -70,7 +70,7 @@ ROLLBACK TO SAVEPOINT s9;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
-SELECT sql_saga.add_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
+SELECT sql_saga.add_temporal_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
 SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ROLLBACK TO SAVEPOINT s10;

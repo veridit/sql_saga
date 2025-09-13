@@ -68,7 +68,7 @@ SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], key_t
 -- check `public.legal_unit` anyway, causing a failure.
 -- If the bug is fixed, the trigger will check the correct table, and the
 -- INSERT will succeed.
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     'saga_bug_test.establishment',
     ARRAY['legal_unit_id'],
     'valid',

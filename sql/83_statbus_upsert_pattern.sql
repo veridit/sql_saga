@@ -30,7 +30,7 @@ SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
 SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
 TABLE sql_saga.unique_keys;
 
-SELECT sql_saga.add_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+SELECT sql_saga.add_temporal_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
 TABLE sql_saga.foreign_keys;
 
 -- While sql_saga is active

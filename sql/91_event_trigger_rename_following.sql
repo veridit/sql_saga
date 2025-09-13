@@ -51,7 +51,7 @@ TABLE sql_saga.unique_keys;
 CREATE TABLE rename_test_ref (LIKE rename_test);
 SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
 TABLE sql_saga.era;
-SELECT sql_saga.add_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
+SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
 SAVEPOINT pristine;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1;

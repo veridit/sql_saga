@@ -1,5 +1,5 @@
 -- Overloaded function for regular (non-temporal) to temporal foreign keys
-CREATE FUNCTION sql_saga.add_foreign_key(
+CREATE FUNCTION sql_saga.add_regular_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         unique_key_name name,
@@ -51,7 +51,7 @@ BEGIN
         SELECT 1 FROM sql_saga.era e
         WHERE (e.table_schema, e.table_name) = (fk_schema_name, fk_table_name)
     ) THEN
-        RAISE EXCEPTION 'Table %.% is a temporal table. Use the temporal-to-temporal version of add_foreign_key by providing fk_era_name.',
+        RAISE EXCEPTION 'Table %.% is a temporal table. Use the temporal-to-temporal version of add_temporal_foreign_key by providing fk_era_name.',
             quote_ident(fk_schema_name), quote_ident(fk_table_name);
     END IF;
 
@@ -278,7 +278,7 @@ $function_regular_fk$;
 
 
 -- Original function for temporal-to-temporal FKs
-CREATE FUNCTION sql_saga.add_foreign_key(
+CREATE FUNCTION sql_saga.add_temporal_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         fk_era_name name,
@@ -667,3 +667,9 @@ BEGIN
     RETURN foreign_key_name;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name) IS
+'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
+
+COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name) IS
+'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';

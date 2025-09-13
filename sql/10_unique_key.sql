@@ -21,7 +21,7 @@ ROLLBACK TO SAVEPOINT pristine;
 
 CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id));
 SELECT sql_saga.add_era('fk', 'valid_from', 'valid_until', 'q');
-SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
+SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
     fk_insert_trigger => 'fki',
     fk_update_trigger => 'fku',
@@ -29,7 +29,7 @@ SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     uk_delete_trigger => 'ukd');
 TABLE sql_saga.foreign_keys;
 SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
-SELECT sql_saga.add_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
+SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
 TABLE sql_saga.foreign_keys;
 
 -- INSERT

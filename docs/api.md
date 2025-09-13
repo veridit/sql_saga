@@ -255,12 +255,33 @@ SECURITY DEFINER
 
 ## Foreign Keys
 
-### add_foreign_key
+### add_regular_foreign_key
+
+> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history.
+
+```sql
+FUNCTION add_regular_foreign_key(
+    fk_table_oid regclass,
+    fk_column_names name[],
+    unique_key_name name,
+    match_type sql_saga.fk_match_types DEFAULT 'SIMPLE'::sql_saga.fk_match_types,
+    update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
+    delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
+    foreign_key_name name DEFAULT NULL::name,
+    fk_check_constraint name DEFAULT NULL::name,
+    fk_helper_function text DEFAULT NULL::text,
+    uk_update_trigger name DEFAULT NULL::name,
+    uk_delete_trigger name DEFAULT NULL::name
+) RETURNS name
+SECURITY DEFINER
+```
+
+### add_temporal_foreign_key
 
 > Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.
 
 ```sql
-FUNCTION add_foreign_key(
+FUNCTION add_temporal_foreign_key(
     fk_table_oid regclass,
     fk_column_names name[],
     fk_era_name name,
@@ -271,27 +292,6 @@ FUNCTION add_foreign_key(
     foreign_key_name name DEFAULT NULL::name,
     fk_insert_trigger name DEFAULT NULL::name,
     fk_update_trigger name DEFAULT NULL::name,
-    uk_update_trigger name DEFAULT NULL::name,
-    uk_delete_trigger name DEFAULT NULL::name
-) RETURNS name
-SECURITY DEFINER
-```
-
-### add_foreign_key
-
-> Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target's history.
-
-```sql
-FUNCTION add_foreign_key(
-    fk_table_oid regclass,
-    fk_column_names name[],
-    unique_key_name name,
-    match_type sql_saga.fk_match_types DEFAULT 'SIMPLE'::sql_saga.fk_match_types,
-    update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
-    delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
-    foreign_key_name name DEFAULT NULL::name,
-    fk_check_constraint name DEFAULT NULL::name,
-    fk_helper_function text DEFAULT NULL::text,
     uk_update_trigger name DEFAULT NULL::name,
     uk_delete_trigger name DEFAULT NULL::name
 ) RETURNS name

@@ -31,7 +31,7 @@ SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'va
 SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'establishment',
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
@@ -141,7 +141,7 @@ SELECT sql_saga.add_era(table_oid => 'legal_unit_tm', valid_from_column_name => 
 SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'establishment_tm',
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
@@ -256,7 +256,7 @@ SELECT sql_saga.add_era(table_oid => 'legal_unit_era_history', valid_from_column
 SELECT sql_saga.add_era(table_oid => 'establishment_era_history', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_era_history', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_era_history', column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'establishment_era_history',
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',

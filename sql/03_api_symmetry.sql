@@ -12,7 +12,7 @@ SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key
 
 CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
 SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
-SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
 
 -- Test overloaded drop_foreign_key for temporal-to-temporal
 TABLE sql_saga.foreign_keys;
@@ -20,14 +20,14 @@ SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 
 TABLE sql_saga.foreign_keys;
 
 -- Test original drop_foreign_key (with positional and named arguments)
-SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
 TABLE sql_saga.foreign_keys;
 -- by name (positional)
 SELECT sql_saga.drop_foreign_key_by_name('child'::regclass, 'child_parent_id_q');
 TABLE sql_saga.foreign_keys;
 
 -- Re-create to test named arguments
-SELECT sql_saga.add_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
 TABLE sql_saga.foreign_keys;
 -- by name (named)
 SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child'::regclass, key_name => 'child_parent_id_q');
@@ -35,7 +35,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_foreign_key for regular-to-temporal
 CREATE TABLE regular_child(id int, parent_id int);
-SELECT sql_saga.add_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
+SELECT sql_saga.add_regular_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
 TABLE sql_saga.foreign_keys;
 SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
 TABLE sql_saga.foreign_keys;

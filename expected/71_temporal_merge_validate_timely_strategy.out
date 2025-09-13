@@ -265,7 +265,7 @@ SELECT $$
 Test: Validate Timely Strategy using sql_saga
 Concept:
   This test repeats the scenario from the previous test, but uses the high-level
-  sql_saga functions (`add_era`, `add_unique_key`, `add_foreign_key`) to set up
+  sql_saga functions (`add_era`, `add_unique_key`, `add_temporal_foreign_key`) to set up
   the constraints. Its purpose is to verify that the extension's own implementation
   of temporal uniqueness and foreign keys correctly adheres to the same architectural
   principles validated by the low-level test.
@@ -281,7 +281,7 @@ $$ as doc;
  Test: Validate Timely Strategy using sql_saga                                             +
  Concept:                                                                                  +
    This test repeats the scenario from the previous test, but uses the high-level          +
-   sql_saga functions (`add_era`, `add_unique_key`, `add_foreign_key`) to set up           +
+   sql_saga functions (`add_era`, `add_unique_key`, `add_temporal_foreign_key`) to set up  +
    the constraints. Its purpose is to verify that the extension's own implementation       +
    of temporal uniqueness and foreign keys correctly adheres to the same architectural     +
    principles validated by the low-level test.                                             +
@@ -328,14 +328,14 @@ SELECT sql_saga.add_era('ss.child');
  t
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'ss.child',
     fk_column_names => '{parent_id}',
     fk_era_name => 'valid',
     unique_key_name => 'parent_uk'
 );
-    add_foreign_key    
------------------------
+ add_temporal_foreign_key 
+--------------------------
  child_parent_id_valid
 (1 row)
 
@@ -501,14 +501,14 @@ SELECT sql_saga.add_era('stm.child');
  t
 (1 row)
 
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'stm.child',
     fk_column_names => '{parent_id}',
     fk_era_name => 'valid',
     unique_key_name => 'parent_uk_stm'
 );
-    add_foreign_key    
------------------------
+ add_temporal_foreign_key 
+--------------------------
  child_parent_id_valid
 (1 row)
 

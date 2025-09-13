@@ -343,7 +343,7 @@ SELECT sql_saga.add_era(table_oid => 'establishment'::regclass);
 SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment'::regclass, column_names => ARRAY['name'], key_type => 'natural', unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key. It references a temporal unique key.
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'establishment'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     fk_era_name => 'valid',
@@ -353,7 +353,7 @@ SELECT sql_saga.add_foreign_key(
 -- Add a foreign key from a regular table to a temporal table.
 -- Note that fk_era_name is omitted for the standard table.
 CREATE TABLE projects (id serial primary key, name text, legal_unit_id int);
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_regular_foreign_key(
     fk_table_oid => 'projects'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     unique_key_name => 'legal_unit_id_valid'

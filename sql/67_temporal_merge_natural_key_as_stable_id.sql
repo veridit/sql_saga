@@ -51,10 +51,10 @@ SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_from', 'valid_unt
 SELECT sql_saga.add_unique_key('nk_unit_employment'::regclass, ARRAY['legal_unit_id', 'establishment_id']);
 
 -- Foreign keys from the natural key columns to their respective parent tables.
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     'nk_unit_employment'::regclass, ARRAY['legal_unit_id'], 'valid', 'nk_legal_unit_legal_unit_id_valid'
 );
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     'nk_unit_employment'::regclass, ARRAY['establishment_id'], 'valid', 'nk_establishment_establishment_id_valid'
 );
 
