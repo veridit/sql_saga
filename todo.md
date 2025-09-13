@@ -2,33 +2,26 @@
 
 A living document of upcoming tasks.
 Tasks are checked ✅ when done and made brief.
-Keep a journal.md that tracks the state of the current ongoing task and relevant details.
+Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
 
 ## Medium Priority - Refactoring & API Improvements
-- [x] **Make API documentation test fail-fast:** The test that generates API documentation now fails if any public functions are not explicitly categorized, ensuring new functions are not missed.
-- [x] **Improve API documentation grouping:** Grouped trigger management functions (`disable/enable_temporal_triggers`) with `temporal_merge` under "Bulk Data Loading" for better discoverability.
-- [x] **Improve API documentation:** Enhanced the auto-generation script to include `ENUM` types, format function signatures for readability, and add database comments for all public API functions.
-- [x] **Generate API documentation from schema:** Create a new regression test that introspects the `sql_saga` schema and generates a complete, accurate `docs/api.md` file. This ensures documentation is always synchronized with the code.
-- [x] **Make performance regression test self-verifying:** Enhanced the `temporal_merge` planner test (`48_...`) to programmatically check the `EXPLAIN` output and fail if an inefficient `Seq Scan` is detected on the target table. The test now covers simple surrogate keys, composite `NOT NULL` natural keys, and complex, `NULL`able natural keys with partial indexes.
-- [x] **Optimize `temporal_merge` planner:** Refactored the planner query to be dynamically SARGable. It now introspects the nullability of identity columns and generates an optimal query plan: a simple, index-friendly `WHERE IN` clause for `NOT NULL` keys, and a `UNION`-based strategy to correctly and efficiently handle `NULL`able keys.
-- [x] **Clarify `temporal_merge` test file names:** Renamed `45_temporal_merge_natural_key.sql` to `45_temporal_merge_key_strategies.sql` and `53_temporal_merge_natural_key.sql` to `53_temporal_merge_natural_key_as_stable_id.sql` to better reflect their distinct purposes.
-- [x] **Improve `add_unique_key` to manage primary keys explicitly:** Refactor the `add_unique_key` API to use a single `key_type` parameter with three mutually exclusive options: `'primary'`, `'natural'`, and `'predicated'`. This will make the API more declarative and enforce that predicated keys (which cannot be foreign key targets) are distinct from natural keys.
-- [x] **Add validation for temporal primary keys:** Enhanced `add_unique_key` to validate that when `key_type` is `'primary'`, the target table does not have incompatible features like a `GENERATED ALWAYS` identity column or a simple (non-temporal) primary key. This moves the strict SCD Type 2 validation to where it belongs, allowing `add_era` to be more flexible.
-- [x] **Standardize API parameter naming:** Removed the `p_` prefix from all function parameters to align with PostgreSQL conventions and improve consistency. Updated all call sites and function bodies to use the new names, and standardized on `=>` for named argument syntax.
-- [x] **Refactor `add_foreign_key` to be declarative:**
-  - [x] Phase 1: Rename existing `add_foreign_key` functions to `add_temporal_foreign_key` and `add_regular_foreign_key`.
-  - [x] Phase 2: Implement new declarative `add_foreign_key` and `drop_foreign_key` functions.
-    - [x] Implement declarative `add_foreign_key`.
-    - [x] Implement declarative `drop_foreign_key`.
-- [ ] **Refactor API to use `create`/`drop` convention:** Rename all `add_*` functions (e.g., `add_unique_key`) to `create_*` to better align with SQL DDL terminology and improve API clarity.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
+- [ ] **Refactor API to use `create`/`drop` convention:** Rename all `add_*` functions (e.g., `add_unique_key`) to `create_*` to better align with SQL DDL terminology and improve API clarity.
 
 ## Low Priority - Future Work & New Features
+- [ ] **Package `sql_saga` with pgxman for distribution:**
+  - **Issue:** The extension currently requires manual installation.
+  - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 ## Done
+- [x] **Analyzed `periods` event triggers:** Confirmed `sql_saga`'s implementation is a correct and optimized subset.
+- [x] **Analyzed `time_for_keys` FK implementation:** Confirmed `sql_saga`'s C-based triggers are more performant.
+- [x] **Analyzed `periods` and `time_for_keys` gap coverage:** Confirmed `sql_saga`'s `covers_without_gaps` is more performant, generic, and correct.
+- [x] **Refactor API comments:** Moved all API comments from the centralized `src/98_api_comments.sql` file to their respective source files to improve code locality and maintainability.
+- [x] **Refactor `add_foreign_key` to be declarative:** Created a new, user-friendly `add_foreign_key` function that automatically determines the FK type and looks up internal unique key names. Also enhanced `drop_foreign_key` to be more declarative by auto-detecting the `era_name`.
 - [x] **Reorganize and renumber regression tests:** Renumbered and grouped all regression tests by feature (`era`, `system_versioning`, `fk`, `views`, `temporal_merge`, etc.) to improve clarity and maintainability. Removed obsolete and misplaced test files.
 - [x] **Improve `temporal_merge` debug logging:** Changed plan and feedback logs to be self-describing JSON objects with a predictable key order and a unique 3-character ID per invocation, improving readability. The ID is deterministic for tests via the `sql_saga.temporal_merge.log_id_seed` GUC. Log headers were also made more concise.
 - [x] **Add `FUNCTION`/`PROCEDURE` keywords to API documentation:** The `80_generate_api_docs` test now prefixes each signature with `FUNCTION`, `PROCEDURE`, or `AGGREGATE` to clarify the object type.
@@ -134,23 +127,3 @@ Keep a journal.md that tracks the state of the current ongoing task and relevant
 - [x] **Improve `temporal_merge` to update ephemeral columns:** The planner now correctly generates an `UPDATE` operation when only ephemeral columns have changed, allowing for in-place updates of metadata without creating new historical records.
 - [x] **Fix regression in ephemeral column coalescing:** The planner's coalescing logic now correctly uses the data payload from the most recent time segment, preserving updates to ephemeral columns.
 - [x] **Add helper procedures to manage temporal triggers:** Created `disable_temporal_triggers` and `enable_temporal_triggers` to allow users to safely manage FK triggers during complex ETL batches without affecting other `sql_saga` triggers (e.g., for column synchronization). Made associated tests robust by using predictable trigger names.
-- [ ] **Package `sql_saga` with pgxman for distribution:**
-  - **Issue:** The extension currently requires manual installation.
-  - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
-
-## Learnings from Inspired Projects (`periods` and `time_for_keys`)
-
-This section summarizes potential improvements and features adapted from the `periods` and `time_for_keys` extensions, which served as inspiration for `sql_saga`.
-
-### From `periods` extension:
-
-- [x] **Enhance Event Trigger Logic:** `periods` has robust `drop_protection` and `rename_following` event triggers.
-  - **Action:** Compared logic in `periods` with `sql_saga`'s event triggers. `sql_saga`'s logic is a correct subset of `periods`, and includes a performance optimization for `rename_following` that `periods` lacks. No further changes needed.
-
-### From `time_for_keys` extension:
-
-- [x] **Analyze Alternative Foreign Key Implementation:** The `time_for_keys` project represents a less dynamic, but potentially faster, approach to temporal foreign keys. Instead of a central metadata catalog, it creates specific triggers for each foreign key constraint. The legacy code for this was removed from `sql_saga` to avoid confusion.
-  - **Action:** Analysis complete. The `time_for_keys` approach uses `pl/pgsql` triggers that re-plan validation queries on every row, making it significantly less performant than `sql_saga`'s current C-based triggers with cached query plans. The recent refactoring in `sql_saga` to pass all metadata as arguments has already adopted the best part of this design while implementing it in a much more performant way. No changes are warranted.
-
-- [x] **Evaluate Alternative Gap-Coverage Functions:** `periods` uses a `pl/pgsql` implementation for temporal validation, and `time_for_keys` has a `no_gaps` function specialized for `daterange`. `sql_saga`'s C-based `covers_without_gaps` aggregate for `anyrange` is a deliberate improvement.
-  - **Action:** Analysis complete. The `covers_without_gaps` function in `sql_saga` is more performant than the `periods` implementation and more generic and correct than the `time_for_keys` version. It successfully passes a more comprehensive test suite ported from `time_for_keys`, fixing regressions that were present in the `periods` logic. No changes are needed.
