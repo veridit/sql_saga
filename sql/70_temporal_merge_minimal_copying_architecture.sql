@@ -102,10 +102,11 @@ CREATE TABLE etl.ident (
     ident_value text not null,
     UNIQUE (legal_unit_id, ident_type_id) -- An entity can only have one of each type
 );
-SELECT sql_saga.add_regular_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.ident'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 -- Location table
@@ -115,22 +116,22 @@ SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_nam
 -- A legal unit can only have one of each location type (e.g., one 'physical' address) at any given time.
 -- This serves as a natural key for physical locations.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], unique_key_name => 'location_legal_unit_id_type_valid');
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.location'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 -- Stat For Unit table
 CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('etl.stat_for_unit');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'stat_for_unit_id_valid');
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.stat_for_unit'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 -- Activity table (temporal, with a composite natural key)
@@ -145,11 +146,11 @@ CREATE TABLE etl.activity (
 SELECT sql_saga.add_era('etl.activity');
 -- The "unique key" for a natural-key table is the set of natural key columns.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.activity'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 -- The master ETL data table. In a real system, this would be a partitioned table.

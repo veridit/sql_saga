@@ -65,20 +65,20 @@ SELECT sql_saga.add_unique_key(
 SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
 SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], key_type => 'natural', unique_key_name => 'establishment_name_valid');
--- Add a temporal foreign key. It references a temporal unique key.
-SELECT sql_saga.add_temporal_foreign_key(
+-- Add a temporal foreign key.
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.establishment'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'readme.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 -- Add a foreign key from a regular table to a temporal table.
--- Note that fk_era_name is omitted for the regular table.
-SELECT sql_saga.add_regular_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.projects'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'readme.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
 
 SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', synchronize_range_column := 'num_range');
@@ -230,9 +230,16 @@ SELECT sql_saga.drop_current_view('readme.legal_unit'::regclass);
 SELECT sql_saga.drop_for_portion_of_view('readme.unit_with_range'::regclass);
 
 -- Foreign keys must be dropped before the unique keys they reference.
-SELECT sql_saga.drop_foreign_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['legal_unit_id'], era_name => 'valid');
--- For regular-to-temporal FKs, era_name is omitted.
-SELECT sql_saga.drop_foreign_key(table_oid => 'readme.projects'::regclass, column_names => ARRAY['legal_unit_id']);
+-- For temporal tables, era_name is not needed if the table has only one era.
+SELECT sql_saga.drop_foreign_key(
+    table_oid => 'readme.establishment'::regclass,
+    column_names => ARRAY['legal_unit_id']
+);
+-- For regular tables, era_name is always omitted.
+SELECT sql_saga.drop_foreign_key(
+    table_oid => 'readme.projects'::regclass,
+    column_names => ARRAY['legal_unit_id']
+);
 
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], era_name => 'valid');

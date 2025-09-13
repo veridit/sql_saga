@@ -205,12 +205,13 @@ CREATE TABLE etl.ident (
     ident_value text not null,
     UNIQUE (legal_unit_id, ident_type_id) -- An entity can only have one of each type
 );
-SELECT sql_saga.add_regular_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.ident'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
- add_regular_foreign_key  
+     add_foreign_key      
 --------------------------
  ident_legal_unit_id_fkey
 (1 row)
@@ -237,13 +238,13 @@ SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_nam
  location_legal_unit_id_type_valid
 (1 row)
 
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.location'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
-   add_temporal_foreign_key   
+       add_foreign_key        
 ------------------------------
  location_legal_unit_id_valid
 (1 row)
@@ -262,13 +263,13 @@ SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, colum
  stat_for_unit_id_valid
 (1 row)
 
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.stat_for_unit'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
-     add_temporal_foreign_key      
+          add_foreign_key          
 -----------------------------------
  stat_for_unit_legal_unit_id_valid
 (1 row)
@@ -295,13 +296,13 @@ SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_nam
  activity_legal_unit_id_activity_type_id_valid
 (1 row)
 
-SELECT sql_saga.add_temporal_foreign_key(
+SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.activity'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
+    pk_table_oid => 'etl.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']
 );
-   add_temporal_foreign_key   
+       add_foreign_key        
 ------------------------------
  activity_legal_unit_id_valid
 (1 row)
