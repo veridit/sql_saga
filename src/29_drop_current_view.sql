@@ -38,3 +38,7 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.drop_current_view(regclass, name, sql_saga.drop_behavior) IS
+'Drops the "current" view associated with a table and era.';
+

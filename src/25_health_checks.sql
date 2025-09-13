@@ -335,3 +335,6 @@ BEGIN
 
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.health_checks() IS
+'An event trigger function that runs after DDL commands to check for inconsistencies in sql_saga''s metadata catalogs.';

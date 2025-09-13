@@ -33,3 +33,9 @@ CREATE AGGREGATE sql_saga.first(anyelement) (
     stype = anyelement,
     parallel = safe
 );
+
+COMMENT ON AGGREGATE sql_saga.covers_without_gaps(anyrange, anyrange) IS
+'A temporal aggregate that checks if a set of ranges (`covered`) completely covers a target range (`target`) without any gaps.';
+
+COMMENT ON AGGREGATE sql_saga.first(anyelement) IS
+'A simple aggregate to get the first element from a group. Useful for cases where order is guaranteed.';

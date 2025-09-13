@@ -27,3 +27,6 @@ BEGIN
     RETURN NULL; -- Should be unreachable
 END;
 $$;
+
+COMMENT ON FUNCTION sql_saga.allen_get_relation(anycompatible, anycompatible, anycompatible, anycompatible) IS
+'Calculates the Allen''s Interval Algebra relation between two intervals.';

@@ -512,3 +512,6 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_era(regclass, name, name, name, regtype, name, name, name, boolean, boolean, boolean) IS
+'Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.';

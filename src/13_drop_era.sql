@@ -158,3 +158,6 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.drop_era(regclass, name, sql_saga.drop_behavior, boolean) IS
+'Deregisters a temporal table, removing all associated constraints, triggers, and metadata.';

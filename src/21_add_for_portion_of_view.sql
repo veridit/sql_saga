@@ -83,3 +83,7 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_for_portion_of_view(regclass, name) IS
+'Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record''s history.';
+

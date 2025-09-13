@@ -47,3 +47,6 @@ BEGIN
     WHERE (ste.table_schema, ste.table_name) = (table_schema, table_name);
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.set_system_time_era_excluded_columns(regclass, name[]) IS
+'Sets the list of columns to be excluded from system versioning. Changes to these columns will not create a new history record.';

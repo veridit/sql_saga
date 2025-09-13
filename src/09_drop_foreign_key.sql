@@ -55,3 +55,4 @@ BEGIN
     PERFORM sql_saga.drop_foreign_key_by_name(table_oid, key_name_found);
 END;
 $function$;
+

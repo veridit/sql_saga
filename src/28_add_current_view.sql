@@ -126,3 +126,7 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_current_view(regclass, name, name, text) IS
+'Creates a view that shows only the current state of data, making it ideal for ORMs and REST APIs. It provides a trigger for safe, explicit SCD Type 2 updates and soft-deletes.';
+

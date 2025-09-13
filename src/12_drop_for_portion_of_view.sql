@@ -49,3 +49,7 @@ BEGIN
     RETURN true;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.drop_for_portion_of_view(regclass, name, sql_saga.drop_behavior, boolean) IS
+'Drops the "for_portion_of" view associated with a table and era.';
+

@@ -382,3 +382,6 @@ BEGIN
 --    END LOOP;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.drop_protection() IS
+'An event trigger function that prevents accidental dropping of sql_saga-managed objects.';

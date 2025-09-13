@@ -34,3 +34,6 @@ BEGIN
     PERFORM sql_saga.drop_unique_key_by_name(table_oid, key_name_found, drop_behavior, cleanup);
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.drop_unique_key(regclass, name[], name, sql_saga.drop_behavior, boolean) IS
+'Drops a temporal unique key identified by its table, columns, and era.';

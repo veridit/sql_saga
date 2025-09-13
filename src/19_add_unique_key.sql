@@ -429,3 +429,6 @@ BEGIN
     RETURN unique_key_name;
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text) IS
+'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys.';

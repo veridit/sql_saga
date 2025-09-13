@@ -319,8 +319,6 @@ SECURITY DEFINER
 
 ### drop_foreign_key
 
-> Drops a foreign key. The era name must be provided for temporal-to-temporal keys and omitted for regular-to-temporal keys.
-
 ```sql
 FUNCTION drop_foreign_key(
     table_oid regclass,
@@ -332,8 +330,6 @@ SECURITY DEFINER
 ```
 
 ### drop_foreign_key_by_name
-
-> Drops any type of foreign key by its unique name.
 
 ```sql
 FUNCTION drop_foreign_key_by_name(

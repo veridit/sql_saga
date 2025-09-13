@@ -122,3 +122,6 @@ BEGIN
     );
 END;
 $function$;
+
+COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name) IS
+'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.';
