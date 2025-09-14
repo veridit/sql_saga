@@ -2,13 +2,7 @@
 
 SET ROLE TO sql_saga_unprivileged_user;
 
-CREATE TEMPORARY TABLE benchmark (
-  timestamp TIMESTAMPTZ DEFAULT NOW(),
-  event TEXT,
-  row_count INTEGER
-);
-
-INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
+\i sql/include/benchmark_setup.sql
 
 --
 -- Benchmark with System Versioning ONLY
@@ -152,71 +146,12 @@ INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
-SELECT event, row_count FROM benchmark ORDER BY timestamp;
+SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
 \o expected/103_benchmark_system_versioning_performance.out
 
--- Calculate rows per second
-CREATE OR REPLACE FUNCTION round_to_nearest_100(value FLOAT8) RETURNS FLOAT8 AS $$
-BEGIN
-    RETURN round(value / 100.0) * 100.0;
-END;
-$$ LANGUAGE plpgsql;
-
-WITH benchmark_events AS (
-  SELECT
-    timestamp,
-    event,
-    row_count,
-    regexp_replace(event, ' (start|end)$', '') AS operation,
-    CASE
-      WHEN event LIKE '% start' THEN 'start'
-      WHEN event LIKE '% end' THEN 'end'
-      ELSE 'milestone'
-    END AS phase,
-    FIRST_VALUE(timestamp) OVER (ORDER BY timestamp) as benchmark_start_time,
-    LAG(timestamp) OVER (ORDER BY timestamp) as prev_event_time
-  FROM
-    benchmark
-),
-benchmark_durations AS (
-  SELECT
-    *,
-    LAG(timestamp) OVER (PARTITION BY operation ORDER BY timestamp) AS operation_start_time
-  FROM
-    benchmark_events
-)
-SELECT
-  CASE WHEN phase = 'end' THEN operation ELSE event END AS event,
-  row_count,
-  ROUND(EXTRACT(EPOCH FROM (timestamp - benchmark_start_time)))::numeric || ' secs' AS time_from_start,
-  COALESCE(
-    CASE
-      WHEN phase = 'end' THEN
-        ROUND(EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::numeric || ' secs'
-      WHEN phase = 'milestone' THEN
-        ROUND(EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::numeric || ' secs'
-    END,
-    ''
-  ) AS time_from_prev,
-  row_count || ' rows' AS row_count,
-  '~' || COALESCE(
-    CASE
-      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0 THEN
-        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0 AND row_count > 0 THEN
-        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
-      ELSE
-        '0'
-    END,
-    '0'
-  ) || ' rows/s' AS rows_per_second
-FROM
-  benchmark_durations
-WHERE phase <> 'start'
-ORDER BY
-  timestamp;
+\i sql/include/benchmark_report.sql
 
 -- Stop redirecting output
 \o

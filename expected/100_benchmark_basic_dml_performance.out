@@ -1,12 +1,12 @@
               event              | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 ---------------------------------+-----------+-----------------+----------------+------------+-----------------
- BEGIN                           |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
- Constraints enabled             |         0 | 0 secs          | 0 secs         | 0 rows     | ~0 rows/s
- Era INSERTs delayed constraints |     10000 | 0 secs          | 0 secs         | 10000 rows | ~21100 rows/s
- Era INSERTs                     |     10000 | 1 secs          | 1 secs         | 10000 rows | ~17400 rows/s
- Era Update deferred constraints |     10000 | 10 secs         | 9 secs         | 10000 rows | ~1200 rows/s
- Era Update non-key              |     10000 | 10 secs         | 0 secs         | 10000 rows | ~73800 rows/s
- Constraints disabled            |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
- Tear down complete              |         0 | 10 secs         | 0 secs         | 0 rows     | ~0 rows/s
+ BEGIN                           |         0 | 0 ms            |                | 0 rows     | ~0 rows/s
+ Constraints enabled             |         0 | 22 ms           | 22 ms          | 0 rows     | ~0 rows/s
+ Era INSERTs delayed constraints |     10000 | 461 ms          | 439 ms         | 10000 rows | ~22784 rows/s
+ Era INSERTs                     |     10000 | 1 secs          | 552 ms         | 10000 rows | ~18117 rows/s
+ Era Update deferred constraints |     10000 | 10 secs         | 9 secs         | 10000 rows | ~1151 rows/s
+ Era Update non-key              |     10000 | 10 secs         | 137 ms         | 10000 rows | ~73160 rows/s
+ Constraints disabled            |         0 | 10 secs         | 20 ms          | 0 rows     | ~0 rows/s
+ Tear down complete              |         0 | 10 secs         | 3 ms           | 0 rows     | ~0 rows/s
 (8 rows)
 

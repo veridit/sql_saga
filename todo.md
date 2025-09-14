@@ -5,18 +5,29 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [ ] **Investigate and fix `disable_temporal_triggers`:** The procedure currently has no effect on performance, indicating it is not working as intended. This bug prevents accurate performance measurement and blocks efficient bulk data loading.
 
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Evolve `temporal_merge` API and Performance (Epic):**
+  - **Justification:** Benchmarks reveal the current planner scales poorly even for stateless modes like `REPLACE`, with performance decreasing as batch size increases. A new, high-performance backend with near-linear scaling is required for efficient bulk data loading.
+  - [ ] **Step 1: Implement `MERGE_ENTITY_UPSERT` and `UPDATE_FOR_PORTION_OF` modes.** Add new, intuitive modes that provide stateless partial-update semantics. This will become the recommended default for most use cases.
+  - [ ] **Step 2: Implement GUC-based dispatcher.** Refactor `temporal_merge` into a public dispatcher that calls an internal `_temporal_merge_reference` implementation. This enables performance experimentation without breaking the API.
+  - [ ] **Step 3: Implement high-performance `multirange` backend.** Create a new `_temporal_merge_multirange` implementation for stateless modes (`UPSERT`, `REPLACE`, `DELETE`), offering significantly better performance for common ETL patterns.
+  - [ ] **Step 4: Update documentation and deprecate `PATCH` modes.** Formally deprecate the complex, stateful `PATCH` modes in the documentation, guiding users toward the simpler and more performant `UPSERT`, `REPLACE`, and `INSERT_NEW_ENTITIES` modes.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Refactor API to use `create`/`drop` convention:** Rename all `add_*` functions (e.g., `add_unique_key`) to `create_*` to better align with SQL DDL terminology and improve API clarity.
 
 ## Low Priority - Future Work & New Features
+- [ ] **Investigate constraint performance:** After the `_multirange` backend is implemented, investigate the performance of `sql_saga`'s unique/exclusion constraints. Check for correct index usage and analyze the overhead of re-enabling constraints after large data loads.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 ## Done
+- [x] **Diagnose `temporal_merge` performance bottlenecks:** Confirmed through benchmarking that `MERGE_ENTITY_PATCH` scales poorly due to its stateful algorithm and that `disable_temporal_triggers` is ineffective. This provides clear targets for optimization.
+- [x] **Refactor benchmark tests for clarity and maintainability:** Reinstated the 10,000-record batch size test as a performance goal. Moved all common benchmark setup and reporting logic into two new include files (`benchmark_setup.sql` and `benchmark_report.sql`) to eliminate code duplication.
+- [x] **Fix benchmark timing mechanism:** Replaced `NOW()` with `clock_timestamp()` in all benchmark tests. `NOW()` returns the transaction start time, which caused all events within a single transaction to have the same timestamp, making the performance reports unreliable.
 - [x] **Split benchmark tests and adopt 3-digit numbering:** Split the monolithic `99_benchmark.sql` into four smaller, self-contained tests (`100` through `103`). Renamed all regression tests to use three-digit numbering for consistency.
 - [x] **Analyzed `periods` event triggers:** Confirmed `sql_saga`'s implementation is a correct and optimized subset.
 - [x] **Analyzed `time_for_keys` FK implementation:** Confirmed `sql_saga`'s C-based triggers are more performant.
