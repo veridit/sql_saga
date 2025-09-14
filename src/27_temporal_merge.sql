@@ -397,7 +397,7 @@ BEGIN
             v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
         ELSIF temporal_merge_plan.mode = 'DELETE_FOR_PORTION_OF' THEN
             v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
-        ELSE -- MERGE_ENTITY_REPLACE, REPLACE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
+        ELSE -- MERGE_ENTITY_REPLACE, MERGE_ENTITY_UPSERT, REPLACE_FOR_PORTION_OF, UPDATE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
         END IF;
 
@@ -461,6 +461,11 @@ running_payload_cte AS (
 $$;
             v_resolver_from := 'running_payload_cte';
             v_final_data_payload_expr := 'data_payload';
+        ELSIF temporal_merge_plan.mode IN ('MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF') THEN
+            -- In UPSERT modes, we do a stateless partial update.
+            v_resolver_ctes := '';
+            v_resolver_from := 'resolved_atomic_segments_with_payloads';
+            v_final_data_payload_expr := $$COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)$$;
         ELSE -- REPLACE and DELETE modes
             -- In REPLACE/DELETE modes, we do not inherit. Gaps remain gaps.
             v_resolver_ctes := '';
@@ -548,12 +553,14 @@ active_source_rows AS (
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        WHEN 'MERGE_ENTITY_UPSERT' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
         WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
         WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
         ELSE false
     END
 ),
@@ -758,6 +765,7 @@ plan_with_op AS (
                 WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'UPDATE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 ELSE false
             END
     )

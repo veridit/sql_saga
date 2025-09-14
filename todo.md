@@ -7,7 +7,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 ## High Priority - Bugs & Core Features
 - [ ] **Evolve `temporal_merge` API and Performance (Epic):**
   - **Justification:** Benchmarks reveal the current planner scales poorly even for stateless modes like `REPLACE`, with performance decreasing as batch size increases. A new, high-performance backend with near-linear scaling is required for efficient bulk data loading.
-  - [ ] **Step 1: Implement `MERGE_ENTITY_UPSERT` and `UPDATE_FOR_PORTION_OF` modes.** Add new, intuitive modes that provide stateless partial-update semantics. This will become the recommended default for most use cases.
+  - [x] **Step 1: Implement `MERGE_ENTITY_UPSERT` and `UPDATE_FOR_PORTION_OF` modes.** Add new, intuitive modes that provide stateless partial-update semantics. This will become the recommended default for most use cases.
   - [ ] **Step 2: Implement GUC-based dispatcher.** Refactor `temporal_merge` into a public dispatcher that calls an internal `_temporal_merge_reference` implementation. This enables performance experimentation without breaking the API.
   - [ ] **Step 3: Implement high-performance `multirange` backend.** Create a new `_temporal_merge_multirange` implementation for stateless modes (`UPSERT`, `REPLACE`, `DELETE`), offering significantly better performance for common ETL patterns.
   - [ ] **Step 4: Update documentation and deprecate `PATCH` modes.** Formally deprecate the complex, stateful `PATCH` modes in the documentation, guiding users toward the simpler and more performant `UPSERT`, `REPLACE`, and `INSERT_NEW_ENTITIES` modes.

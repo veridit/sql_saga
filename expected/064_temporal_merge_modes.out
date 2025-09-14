@@ -627,6 +627,191 @@ TABLE tmm.target ORDER BY id, valid_from;
 (5 rows)
 
 ROLLBACK TO SAVEPOINT s6;
+--------------------------------------------------------------------------------
+\echo 'Scenario 7: `MERGE_ENTITY_UPSERT`'
+Scenario 7: `MERGE_ENTITY_UPSERT`
+\echo 'Use Case: The new workhorse. Partial update on existing, insert for new. NULLs are explicit.'
+Use Case: The new workhorse. Partial update on existing, insert for new. NULLs are explicit.
+--------------------------------------------------------------------------------
+SAVEPOINT s7;
+CALL tmm.reset_target();
+CREATE TEMP TABLE source_7 (row_id int, id int, value text, valid_from date, valid_until date) ON COMMIT DROP;
+INSERT INTO source_7 VALUES
+    -- 7.1: Overwrite slice 2 with NULL, but don't provide edit_comment (it should be preserved)
+    (701, 1, NULL, '2024-02-10', '2024-02-20'),
+    -- 7.2: Insert a new entity 3
+    (702, 3, 'C', '2024-01-01', '2025-01-01');
+\echo '--- Target: Initial State ---'
+--- Target: Initial State ---
+TABLE tmm.target ORDER BY id, valid_from;
+ id | value |    edit_comment     | valid_from | valid_until 
+----+-------+---------------------+------------+-------------
+  1 | A1    | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-01 | 2024-03-01
+  1 | A3    | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B     | Long-lived          | 2023-01-01 | 2026-01-01
+(4 rows)
+
+\echo '--- Source: Data to merge ---'
+--- Source: Data to merge ---
+TABLE source_7 ORDER BY row_id;
+ row_id | id | value | valid_from | valid_until 
+--------+----+-------+------------+-------------
+    701 |  1 |       | 2024-02-10 | 2024-02-20
+    702 |  3 | C     | 2024-01-01 | 2025-01-01
+(2 rows)
+
+CALL sql_saga.temporal_merge(target_table => 'tmm.target'::regclass, source_table => 'source_7'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode, era_name => 'valid');
+\echo '--- Planner: Actual Plan ---'
+--- Planner: Actual Plan ---
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                          data                          | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------+----------
+           1 | {701}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-10     | 2024-02-20      | {"value": null, "edit_comment": "Slice 2 (Adjacent)"}  | 
+           2 | {701}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | 
+           3 | {701}          | UPDATE         | SHRINK                 | {"id": 1}  | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}  | starts
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2024-02-01      | 2024-01-01     | 2024-02-01      | {"value": "A1", "edit_comment": "Slice 1"}             | equals
+           5 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-04-01     | 2024-05-01      | 2024-04-01     | 2024-05-01      | {"value": "A3", "edit_comment": "Slice 3 (After Gap)"} | equals
+           6 | {702}          | INSERT         |                        | {"id": 3}  |                |                 | 2024-01-01     | 2025-01-01      | {"value": "C"}                                         | 
+(6 rows)
+
+\echo '--- Executor: Actual Feedback ---'
+--- Executor: Actual Feedback ---
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | target_entity_ids | status  | error_message 
+---------------+-------------------+---------+---------------
+           701 | [{"id": 1}]       | APPLIED | 
+           702 | [{"id": 3}]       | APPLIED | 
+(2 rows)
+
+\echo '--- Target: Expected Final State ---'
+--- Target: Expected Final State ---
+SELECT * FROM (VALUES
+    (1, 'A1', 'Slice 1', '2024-01-01'::date, '2024-02-01'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-01'::date, '2024-02-10'::date),
+    (1, NULL, 'Slice 2 (Adjacent)', '2024-02-10'::date, '2024-02-20'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-20'::date, '2024-03-01'::date),
+    (1, 'A3', 'Slice 3 (After Gap)', '2024-04-01'::date, '2024-05-01'::date),
+    (2, 'B',  'Long-lived',        '2023-01-01'::date, '2026-01-01'::date),
+    (3, 'C', NULL, '2024-01-01'::date, '2025-01-01'::date)
+) t(id, value, edit_comment, valid_from, valid_until) ORDER BY id, valid_from;
+ id | value |    edit_comment     | valid_from | valid_until 
+----+-------+---------------------+------------+-------------
+  1 | A1    | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-01 | 2024-02-10
+  1 |       | Slice 2 (Adjacent)  | 2024-02-10 | 2024-02-20
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-20 | 2024-03-01
+  1 | A3    | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B     | Long-lived          | 2023-01-01 | 2026-01-01
+  3 | C     |                     | 2024-01-01 | 2025-01-01
+(7 rows)
+
+\echo '--- Target: Final State ---'
+--- Target: Final State ---
+TABLE tmm.target ORDER BY id, valid_from;
+ id | value |    edit_comment     | valid_from | valid_until 
+----+-------+---------------------+------------+-------------
+  1 | A1    | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-01 | 2024-02-10
+  1 |       | Slice 2 (Adjacent)  | 2024-02-10 | 2024-02-20
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-20 | 2024-03-01
+  1 | A3    | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B     | Long-lived          | 2023-01-01 | 2026-01-01
+  3 | C     |                     | 2024-01-01 | 2025-01-01
+(7 rows)
+
+ROLLBACK TO SAVEPOINT s7;
+--------------------------------------------------------------------------------
+\echo 'Scenario 8: `UPDATE_FOR_PORTION_OF`'
+Scenario 8: `UPDATE_FOR_PORTION_OF`
+\echo 'Use Case: Surgical partial update on existing entities only; new entities are ignored.'
+Use Case: Surgical partial update on existing entities only; new entities are ignored.
+--------------------------------------------------------------------------------
+SAVEPOINT s8;
+CALL tmm.reset_target();
+CREATE TEMP TABLE source_8 (row_id int, id int, value text, valid_from date, valid_until date) ON COMMIT DROP;
+INSERT INTO source_8 VALUES
+    -- 8.1: Surgical update on slice 2. edit_comment is not provided and should be preserved.
+    (801, 1, 'A2-updated', '2024-02-10', '2024-02-20'),
+    -- 8.2: Attempt to insert a new entity 3 (should be skipped)
+    (802, 3, 'C', '2024-01-01', '2025-01-01');
+\echo '--- Target: Initial State ---'
+--- Target: Initial State ---
+TABLE tmm.target ORDER BY id, valid_from;
+ id | value |    edit_comment     | valid_from | valid_until 
+----+-------+---------------------+------------+-------------
+  1 | A1    | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2    | Slice 2 (Adjacent)  | 2024-02-01 | 2024-03-01
+  1 | A3    | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B     | Long-lived          | 2023-01-01 | 2026-01-01
+(4 rows)
+
+\echo '--- Source: Data to merge ---'
+--- Source: Data to merge ---
+TABLE source_8 ORDER BY row_id;
+ row_id | id |   value    | valid_from | valid_until 
+--------+----+------------+------------+-------------
+    801 |  1 | A2-updated | 2024-02-10 | 2024-02-20
+    802 |  3 | C          | 2024-01-01 | 2025-01-01
+(2 rows)
+
+CALL sql_saga.temporal_merge(target_table => 'tmm.target'::regclass, source_table => 'source_8'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'UPDATE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, era_name => 'valid');
+\echo '--- Planner: Actual Plan ---'
+--- Planner: Actual Plan ---
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | relation 
+-------------+----------------+----------------+------------------------+------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+----------
+           1 | {801}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-10     | 2024-02-20      | {"value": "A2-updated", "edit_comment": "Slice 2 (Adjacent)"} | 
+           2 | {801}          | INSERT         |                        | {"id": 1}  |                |                 | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}         | 
+           3 | {801}          | UPDATE         | SHRINK                 | {"id": 1}  | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"}         | starts
+           4 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-01-01     | 2024-02-01      | 2024-01-01     | 2024-02-01      | {"value": "A1", "edit_comment": "Slice 1"}                    | equals
+           5 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2024-04-01     | 2024-05-01      | 2024-04-01     | 2024-05-01      | {"value": "A3", "edit_comment": "Slice 3 (After Gap)"}        | equals
+           6 | {802}          | SKIP_NO_TARGET |                        | {"id": 3}  |                |                 |                |                 |                                                               | 
+(6 rows)
+
+\echo '--- Executor: Actual Feedback ---'
+--- Executor: Actual Feedback ---
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | target_entity_ids |      status       | error_message 
+---------------+-------------------+-------------------+---------------
+           801 | [{"id": 1}]       | APPLIED           | 
+           802 | [{"id": 3}]       | SKIPPED_NO_TARGET | 
+(2 rows)
+
+\echo '--- Target: Expected Final State ---'
+--- Target: Expected Final State ---
+SELECT * FROM (VALUES
+    (1, 'A1', 'Slice 1', '2024-01-01'::date, '2024-02-01'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-01'::date, '2024-02-10'::date),
+    (1, 'A2-updated', 'Slice 2 (Adjacent)', '2024-02-10'::date, '2024-02-20'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-20'::date, '2024-03-01'::date),
+    (1, 'A3', 'Slice 3 (After Gap)', '2024-04-01'::date, '2024-05-01'::date),
+    (2, 'B',  'Long-lived',        '2023-01-01'::date, '2026-01-01'::date)
+) t(id, value, edit_comment, valid_from, valid_until) ORDER BY id, valid_from;
+ id |   value    |    edit_comment     | valid_from | valid_until 
+----+------------+---------------------+------------+-------------
+  1 | A1         | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2         | Slice 2 (Adjacent)  | 2024-02-01 | 2024-02-10
+  1 | A2-updated | Slice 2 (Adjacent)  | 2024-02-10 | 2024-02-20
+  1 | A2         | Slice 2 (Adjacent)  | 2024-02-20 | 2024-03-01
+  1 | A3         | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B          | Long-lived          | 2023-01-01 | 2026-01-01
+(6 rows)
+
+\echo '--- Target: Final State ---'
+--- Target: Final State ---
+TABLE tmm.target ORDER BY id, valid_from;
+ id |   value    |    edit_comment     | valid_from | valid_until 
+----+------------+---------------------+------------+-------------
+  1 | A1         | Slice 1             | 2024-01-01 | 2024-02-01
+  1 | A2         | Slice 2 (Adjacent)  | 2024-02-01 | 2024-02-10
+  1 | A2-updated | Slice 2 (Adjacent)  | 2024-02-10 | 2024-02-20
+  1 | A2         | Slice 2 (Adjacent)  | 2024-02-20 | 2024-03-01
+  1 | A3         | Slice 3 (After Gap) | 2024-04-01 | 2024-05-01
+  2 | B          | Long-lived          | 2023-01-01 | 2026-01-01
+(6 rows)
+
+ROLLBACK TO SAVEPOINT s8;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

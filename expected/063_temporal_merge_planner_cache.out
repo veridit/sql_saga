@@ -166,12 +166,14 @@ active_source_rows AS (
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        WHEN 'MERGE_ENTITY_UPSERT' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
         WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
         WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
         ELSE false
     END
 ),
@@ -416,6 +418,7 @@ plan_with_op AS (
                 WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'UPDATE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 ELSE false
             END
     )
@@ -699,12 +702,14 @@ active_source_rows AS (
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        WHEN 'MERGE_ENTITY_UPSERT' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
         WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
         WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
         ELSE false
     END
 ),
@@ -949,6 +954,7 @@ plan_with_op AS (
                 WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'UPDATE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 ELSE false
             END
     )
@@ -1262,12 +1268,14 @@ active_source_rows AS (
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
+        WHEN 'MERGE_ENTITY_UPSERT' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
         WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
         WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
         WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
         ELSE false
     END
 ),
@@ -1512,6 +1520,7 @@ plan_with_op AS (
                 WHEN 'PATCH_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'REPLACE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 WHEN 'DELETE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
+                WHEN 'UPDATE_FOR_PORTION_OF' THEN NOT sr.target_entity_exists
                 ELSE false
             END
     )

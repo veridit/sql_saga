@@ -237,9 +237,22 @@ CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
     'INSERT_NEW_ENTITIES',
     'PATCH_FOR_PORTION_OF',
     'REPLACE_FOR_PORTION_OF',
-    'DELETE_FOR_PORTION_OF'
+    'DELETE_FOR_PORTION_OF',
+
+    -- New stateless modes
+    'MERGE_ENTITY_UPSERT',
+    'UPDATE_FOR_PORTION_OF'
 );
-COMMENT ON TYPE sql_saga.temporal_merge_mode IS 'Defines the behavior of the temporal_merge procedure, specifying how source data should be applied to the target table (e.g., insert and update, or only insert).';
+COMMENT ON TYPE sql_saga.temporal_merge_mode IS
+'Defines the behavior of the temporal_merge procedure.
+- MERGE_ENTITY_PATCH: Merges source with target, patching data and carrying forward NULL values.
+- MERGE_ENTITY_REPLACE: Merges source with target, replacing overlapping data.
+- MERGE_ENTITY_UPSERT: Inserts new entities or performs a partial update on existing timelines. NULL is treated as an explicit value.
+- INSERT_NEW_ENTITIES: Inserts only new entities.
+- PATCH_FOR_PORTION_OF: Applies a surgical patch to a time portion of an existing entity.
+- REPLACE_FOR_PORTION_OF: Applies a surgical replacement of a time portion of an existing entity.
+- UPDATE_FOR_PORTION_OF: Applies a surgical partial update to a time portion of an existing entity. Skips new entities.
+- DELETE_FOR_PORTION_OF: Performs a surgical deletion of a time portion from an existing entity.';
 
 DO $$ BEGIN
     CREATE TYPE sql_saga.temporal_merge_delete_mode AS ENUM (

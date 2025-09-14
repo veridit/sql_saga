@@ -260,5 +260,80 @@ SELECT * FROM (VALUES
 TABLE tmm.target ORDER BY id, valid_from;
 ROLLBACK TO SAVEPOINT s6;
 
+--------------------------------------------------------------------------------
+\echo 'Scenario 7: `MERGE_ENTITY_UPSERT`'
+\echo 'Use Case: The new workhorse. Partial update on existing, insert for new. NULLs are explicit.'
+--------------------------------------------------------------------------------
+SAVEPOINT s7;
+CALL tmm.reset_target();
+CREATE TEMP TABLE source_7 (row_id int, id int, value text, valid_from date, valid_until date) ON COMMIT DROP;
+INSERT INTO source_7 VALUES
+    -- 7.1: Overwrite slice 2 with NULL, but don't provide edit_comment (it should be preserved)
+    (701, 1, NULL, '2024-02-10', '2024-02-20'),
+    -- 7.2: Insert a new entity 3
+    (702, 3, 'C', '2024-01-01', '2025-01-01');
+
+\echo '--- Target: Initial State ---'
+TABLE tmm.target ORDER BY id, valid_from;
+\echo '--- Source: Data to merge ---'
+TABLE source_7 ORDER BY row_id;
+
+CALL sql_saga.temporal_merge(target_table => 'tmm.target'::regclass, source_table => 'source_7'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode, era_name => 'valid');
+
+\echo '--- Planner: Actual Plan ---'
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- Executor: Actual Feedback ---'
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+\echo '--- Target: Expected Final State ---'
+SELECT * FROM (VALUES
+    (1, 'A1', 'Slice 1', '2024-01-01'::date, '2024-02-01'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-01'::date, '2024-02-10'::date),
+    (1, NULL, 'Slice 2 (Adjacent)', '2024-02-10'::date, '2024-02-20'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-20'::date, '2024-03-01'::date),
+    (1, 'A3', 'Slice 3 (After Gap)', '2024-04-01'::date, '2024-05-01'::date),
+    (2, 'B',  'Long-lived',        '2023-01-01'::date, '2026-01-01'::date),
+    (3, 'C', NULL, '2024-01-01'::date, '2025-01-01'::date)
+) t(id, value, edit_comment, valid_from, valid_until) ORDER BY id, valid_from;
+\echo '--- Target: Final State ---'
+TABLE tmm.target ORDER BY id, valid_from;
+ROLLBACK TO SAVEPOINT s7;
+
+--------------------------------------------------------------------------------
+\echo 'Scenario 8: `UPDATE_FOR_PORTION_OF`'
+\echo 'Use Case: Surgical partial update on existing entities only; new entities are ignored.'
+--------------------------------------------------------------------------------
+SAVEPOINT s8;
+CALL tmm.reset_target();
+CREATE TEMP TABLE source_8 (row_id int, id int, value text, valid_from date, valid_until date) ON COMMIT DROP;
+INSERT INTO source_8 VALUES
+    -- 8.1: Surgical update on slice 2. edit_comment is not provided and should be preserved.
+    (801, 1, 'A2-updated', '2024-02-10', '2024-02-20'),
+    -- 8.2: Attempt to insert a new entity 3 (should be skipped)
+    (802, 3, 'C', '2024-01-01', '2025-01-01');
+
+\echo '--- Target: Initial State ---'
+TABLE tmm.target ORDER BY id, valid_from;
+\echo '--- Source: Data to merge ---'
+TABLE source_8 ORDER BY row_id;
+
+CALL sql_saga.temporal_merge(target_table => 'tmm.target'::regclass, source_table => 'source_8'::regclass, identity_columns => '{id}'::text[], ephemeral_columns => '{edit_comment}'::text[], mode => 'UPDATE_FOR_PORTION_OF'::sql_saga.temporal_merge_mode, era_name => 'valid');
+
+\echo '--- Planner: Actual Plan ---'
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- Executor: Actual Feedback ---'
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+\echo '--- Target: Expected Final State ---'
+SELECT * FROM (VALUES
+    (1, 'A1', 'Slice 1', '2024-01-01'::date, '2024-02-01'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-01'::date, '2024-02-10'::date),
+    (1, 'A2-updated', 'Slice 2 (Adjacent)', '2024-02-10'::date, '2024-02-20'::date),
+    (1, 'A2', 'Slice 2 (Adjacent)', '2024-02-20'::date, '2024-03-01'::date),
+    (1, 'A3', 'Slice 3 (After Gap)', '2024-04-01'::date, '2024-05-01'::date),
+    (2, 'B',  'Long-lived',        '2023-01-01'::date, '2026-01-01'::date)
+) t(id, value, edit_comment, valid_from, valid_until) ORDER BY id, valid_from;
+\echo '--- Target: Final State ---'
+TABLE tmm.target ORDER BY id, valid_from;
+ROLLBACK TO SAVEPOINT s8;
+
 ROLLBACK;
 \i sql/include/test_teardown.sql
