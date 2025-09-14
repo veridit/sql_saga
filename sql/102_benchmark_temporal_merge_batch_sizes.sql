@@ -1,5 +1,25 @@
 \i sql/include/test_setup.sql
 
+-- Helper function to check trigger status. Must be created before SET ROLE.
+CREATE SCHEMA mtt;
+CREATE OR REPLACE FUNCTION mtt.get_trigger_status(p_table_oid regclass)
+RETURNS TABLE(trigger_name name, is_enabled text) AS $$
+    SELECT tgname,
+           CASE tgenabled
+               WHEN 'O' THEN 'enabled' -- Origin and local
+               WHEN 'R' THEN 'enabled' -- Replica
+               WHEN 'A' THEN 'enabled' -- Always
+               WHEN 'D' THEN 'disabled'
+           END
+    FROM pg_trigger
+    WHERE tgrelid = p_table_oid
+      AND NOT tgisinternal
+    ORDER BY tgname;
+$$ LANGUAGE sql;
+
+GRANT USAGE ON SCHEMA mtt TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON FUNCTION mtt.get_trigger_status(regclass) TO sql_saga_unprivileged_user;
+
 SET ROLE TO sql_saga_unprivileged_user;
 
 \i sql/include/benchmark_setup.sql
@@ -31,8 +51,11 @@ SELECT sql_saga.add_temporal_foreign_key(
 );
 
 
+CREATE TEMP TABLE trigger_log (event text, table_name text, trigger_name name, is_enabled text);
+
 DO $$
 DECLARE
+    v_first_run_logged boolean := false;
     v_batch_sizes int[] := ARRAY[100, 1000, 10000];
     v_modes text[] := ARRAY['MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE'];
     v_mode text;
@@ -78,10 +101,28 @@ BEGIN
             INSERT INTO legal_unit_source_bs SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
             INSERT INTO establishment_source_bs SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
 
+            IF NOT v_first_run_logged THEN
+                INSERT INTO trigger_log SELECT 'before disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+                INSERT INTO trigger_log SELECT 'before disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+            END IF;
+
             CALL sql_saga.disable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
+
+            IF NOT v_first_run_logged THEN
+                INSERT INTO trigger_log SELECT 'after disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+                INSERT INTO trigger_log SELECT 'after disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+            END IF;
+
             CALL sql_saga.temporal_merge('legal_unit_tm_bs_off'::regclass, 'legal_unit_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
             CALL sql_saga.temporal_merge('establishment_tm_bs_off'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+
             CALL sql_saga.enable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
+
+            IF NOT v_first_run_logged THEN
+                INSERT INTO trigger_log SELECT 'after enable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+                INSERT INTO trigger_log SELECT 'after enable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+                v_first_run_logged := true;
+            END IF;
             v_start_id := v_end_id + 1;
         END LOOP;
         INSERT INTO benchmark (event, row_count) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) end', v_batch_size, v_mode), v_total_rows * 2);
@@ -89,6 +130,9 @@ BEGIN
     END LOOP;
 END;
 $$;
+
+\echo '-- Trigger status log from benchmark --'
+SELECT * FROM trigger_log ORDER BY event, table_name, trigger_name;
 
 SELECT 'legal_unit_tm_bs_on' AS type, COUNT(*) AS count FROM legal_unit_tm_bs_on
 UNION ALL
@@ -112,6 +156,8 @@ SELECT sql_saga.drop_era('legal_unit_tm_bs_off', cleanup => true);
 
 INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
 
+RESET ROLE;
+DROP SCHEMA mtt CASCADE;
 DROP TABLE establishment_tm_bs_on;
 DROP TABLE legal_unit_tm_bs_on;
 DROP TABLE establishment_tm_bs_off;

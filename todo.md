@@ -5,7 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [ ] **Investigate and fix `disable_temporal_triggers`:** The procedure currently has no effect on performance, indicating it is not working as intended. This bug prevents accurate performance measurement and blocks efficient bulk data loading.
+- [ ] **(In Progress) Investigate and fix `disable_temporal_triggers`:** The procedure currently has no effect on performance, indicating it is not working as intended. This bug prevents accurate performance measurement and blocks efficient bulk data loading.
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Evolve `temporal_merge` API and Performance (Epic):**
