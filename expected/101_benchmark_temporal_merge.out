@@ -1,0 +1,372 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
+CREATE TEMPORARY TABLE benchmark (
+  timestamp TIMESTAMPTZ DEFAULT NOW(),
+  event TEXT,
+  row_count INTEGER
+);
+INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
+CREATE TABLE legal_unit_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  name varchar NOT NULL
+);
+CREATE TABLE establishment_tm (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  legal_unit_id INTEGER NOT NULL,
+  postal_place TEXT NOT NULL
+);
+-- Enable sql_saga constraints
+SELECT sql_saga.add_era(table_oid => 'legal_unit_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid');
+     add_unique_key     
+------------------------
+ legal_unit_tm_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
+      add_unique_key       
+---------------------------
+ establishment_tm_id_valid
+(1 row)
+
+SELECT sql_saga.add_temporal_foreign_key(
+    fk_table_oid => 'establishment_tm',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_tm_id_valid'
+);
+       add_temporal_foreign_key       
+--------------------------------------
+ establishment_tm_legal_unit_id_valid
+(1 row)
+
+-- Seed 80% of the data.
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers ON) start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers ON) end', 16000);
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) start', 0);
+BEGIN;
+  CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  -- Source data for 80% PATCH
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
+  -- Source data for 20% INSERT
+  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
+  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) end', 20000);
+SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm
+UNION ALL
+SELECT 'establishment_tm' AS type, COUNT(*) AS count FROM establishment_tm;
+       type       | count 
+------------------+-------
+ legal_unit_tm    | 10000
+ establishment_tm | 10000
+(2 rows)
+
+--
+-- Benchmark with temporal_merge (Triggers Disabled)
+--
+CREATE TABLE legal_unit_tm_dt (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  name varchar NOT NULL
+);
+CREATE TABLE establishment_tm_dt (
+  id INTEGER,
+  valid_from date,
+  valid_until date,
+  legal_unit_id INTEGER NOT NULL,
+  postal_place TEXT NOT NULL
+);
+-- Enable sql_saga constraints
+SELECT sql_saga.add_era(table_oid => 'legal_unit_tm_dt', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_era(table_oid => 'establishment_tm_dt', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_dt', column_names => ARRAY['id'], era_name => 'valid');
+      add_unique_key       
+---------------------------
+ legal_unit_tm_dt_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_dt', column_names => ARRAY['id'], era_name => 'valid');
+        add_unique_key        
+------------------------------
+ establishment_tm_dt_id_valid
+(1 row)
+
+SELECT sql_saga.add_temporal_foreign_key(
+    fk_table_oid => 'establishment_tm_dt',
+    fk_column_names => ARRAY['legal_unit_id'],
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_tm_dt_id_valid'
+);
+        add_temporal_foreign_key         
+-----------------------------------------
+ establishment_tm_dt_legal_unit_id_valid
+(1 row)
+
+-- Seed 80% of the data.
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers OFF) start', 0);
+BEGIN;
+  CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
+  CREATE TEMPORARY TABLE legal_unit_seed_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_seed_source_dt (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  INSERT INTO legal_unit_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_seed_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_seed_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers OFF) end', 16000);
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) start', 0);
+BEGIN;
+  CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
+  CREATE TEMPORARY TABLE legal_unit_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
+  CREATE TEMPORARY TABLE establishment_source_dt (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  -- Source data for 80% PATCH
+  INSERT INTO legal_unit_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
+  INSERT INTO establishment_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
+  -- Source data for 20% INSERT
+  INSERT INTO legal_unit_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
+  INSERT INTO establishment_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
+  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
+END;
+INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) end', 20000);
+SELECT 'legal_unit_tm_dt' AS type, COUNT(*) AS count FROM legal_unit_tm_dt
+UNION ALL
+SELECT 'establishment_tm_dt' AS type, COUNT(*) AS count FROM establishment_tm_dt;
+        type         | count 
+---------------------+-------
+ legal_unit_tm_dt    | 10000
+ establishment_tm_dt | 10000
+(2 rows)
+
+-- Teardown for temporal_merge tables
+SELECT sql_saga.drop_foreign_key('establishment_tm', ARRAY['legal_unit_id'], 'valid');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('establishment_tm', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('establishment_tm', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('legal_unit_tm', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('legal_unit_tm', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+-- Teardown for temporal_merge tables with disabled triggers
+SELECT sql_saga.drop_foreign_key('establishment_tm_dt', ARRAY['legal_unit_id'], 'valid');
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('establishment_tm_dt', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('establishment_tm_dt', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_unique_key('legal_unit_tm_dt', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('legal_unit_tm_dt', cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+DROP TABLE establishment_tm;
+DROP TABLE legal_unit_tm;
+DROP TABLE establishment_tm_dt;
+DROP TABLE legal_unit_tm_dt;
+INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+-- Verify the benchmark events and row counts, but exclude volatile timing data
+-- from the regression test output to ensure stability.
+SELECT event, row_count FROM benchmark ORDER BY timestamp;
+                          event                           | row_count 
+----------------------------------------------------------+-----------
+ BEGIN                                                    |         0
+ Temporal Merge SEED (Triggers ON) start                  |         0
+ Temporal Merge SEED (Triggers ON) end                    |     16000
+ Temporal Merge 20% INSERT 80% PATCH (Triggers ON) start  |         0
+ Temporal Merge 20% INSERT 80% PATCH (Triggers ON) end    |     20000
+ Temporal Merge SEED (Triggers OFF) start                 |         0
+ Temporal Merge SEED (Triggers OFF) end                   |     16000
+ Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) start |         0
+ Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) end   |     20000
+ Constraints disabled                                     |         0
+ Tear down complete                                       |         0
+(11 rows)
+
+-- Capture performance metrics to a separate file for manual review.
+\o expected/101_benchmark_temporal_merge_performance.out
+-- Calculate rows per second
+CREATE OR REPLACE FUNCTION round_to_nearest_100(value FLOAT8) RETURNS FLOAT8 AS $$
+BEGIN
+    RETURN round(value / 100.0) * 100.0;
+END;
+$$ LANGUAGE plpgsql;
+WITH benchmark_events AS (
+  SELECT
+    timestamp,
+    event,
+    row_count,
+    regexp_replace(event, ' (start|end)$', '') AS operation,
+    CASE
+      WHEN event LIKE '% start' THEN 'start'
+      WHEN event LIKE '% end' THEN 'end'
+      ELSE 'milestone'
+    END AS phase,
+    FIRST_VALUE(timestamp) OVER (ORDER BY timestamp) as benchmark_start_time,
+    LAG(timestamp) OVER (ORDER BY timestamp) as prev_event_time
+  FROM
+    benchmark
+),
+benchmark_durations AS (
+  SELECT
+    *,
+    LAG(timestamp) OVER (PARTITION BY operation ORDER BY timestamp) AS operation_start_time
+  FROM
+    benchmark_events
+)
+SELECT
+  CASE WHEN phase = 'end' THEN operation ELSE event END AS event,
+  row_count,
+  ROUND(EXTRACT(EPOCH FROM (timestamp - benchmark_start_time)))::numeric || ' secs' AS time_from_start,
+  COALESCE(
+    CASE
+      WHEN phase = 'end' THEN
+        ROUND(EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::numeric || ' secs'
+      WHEN phase = 'milestone' THEN
+        ROUND(EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::numeric || ' secs'
+    END,
+    ''
+  ) AS time_from_prev,
+  row_count || ' rows' AS row_count,
+  '~' || COALESCE(
+    CASE
+      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0 THEN
+        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0 AND row_count > 0 THEN
+        round_to_nearest_100(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
+      ELSE
+        '0'
+    END,
+    '0'
+  ) || ' rows/s' AS rows_per_second
+FROM
+  benchmark_durations
+WHERE phase <> 'start'
+ORDER BY
+  timestamp;
+-- Stop redirecting output
+\o
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

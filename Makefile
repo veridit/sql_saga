@@ -13,16 +13,19 @@ DOCS = README.md
 #README.html: README.md
 #	jq --slurp --raw-input '{"text": "\(.)", "mode": "markdown"}' < README.md | curl --data @- https://api.github.com/markdown > README.html
 
-SQL_FILES = $(wildcard sql/[0-9]*_*.sql)
+SQL_FILES = $(wildcard sql/[0-9][0-9][0-9]_*.sql)
 
 REGRESS_ALL = $(patsubst sql/%.sql,%,$(SQL_FILES))
 BENCHMARK_TESTS = $(foreach test,$(REGRESS_ALL),$(if $(findstring benchmark,$(test)),$(test)))
 REGRESS_FAST_LIST = $(filter-out $(BENCHMARK_TESTS),$(REGRESS_ALL))
 
-# By default, run all tests. If 'fast' is a command line goal, run the fast subset.
+# By default, run all tests. If 'fast' or 'benchmark' are goals, run the respective subset.
 REGRESS_TO_RUN = $(REGRESS_ALL)
 ifeq (fast,$(filter fast,$(MAKECMDGOALS)))
 	REGRESS_TO_RUN = $(REGRESS_FAST_LIST)
+endif
+ifeq (benchmark,$(filter benchmark,$(MAKECMDGOALS)))
+	REGRESS_TO_RUN = $(BENCHMARK_TESTS)
 endif
 
 REGRESS = $(if $(TESTS),$(patsubst sql/%,%,$(TESTS)),$(REGRESS_TO_RUN))
@@ -48,16 +51,12 @@ install: $(EXTENSION)--$(EXTVERSION).sql
 $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
 	cat $^ > $@
 
-# New target for benchmark regression test. It depends on `install` to ensure
-# the extension is built and installed before the test is run.
-benchmark: install
-	@$(MAKE) installcheck REGRESS="43_benchmark"
-
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`
 # To run fast tests (excluding benchmarks): `make test fast`
-# To run a single test: `make test TESTS=21_init`
-# To run a subset of tests: `make test TESTS="21_init 22_covers_without_gaps_test"`
+# To run benchmark tests: `make test benchmark`
+# To run a single test: `make test TESTS=001_install`
+# To run a subset of tests: `make test TESTS="001_install 002_era"`
 .PHONY: test setup_test_files
 test: setup_test_files installcheck
 
@@ -71,10 +70,13 @@ setup_test_files:
 		fi; \
 	done
 
-# The 'fast' target is a dummy. Its presence in `make test fast` is used to
-# trigger the conditional logic that selects the fast test suite.
-.PHONY: fast
+# 'fast' and 'benchmark' are dummy targets. Their presence in the command line
+# (e.g., `make test fast`) is used to trigger the conditional logic that
+# selects the desired test suite.
+.PHONY: fast benchmark
 fast:
+	@:
+benchmark:
 	@:
 
 # Target to show diff for failing tests. Use with 'vim' for vimdiff.

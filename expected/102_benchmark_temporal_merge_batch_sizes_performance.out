@@ -1,0 +1,13 @@
+              event              | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
+---------------------------------+-----------+-----------------+----------------+------------+-----------------
+ BEGIN                           |         0 | 0 secs          |                | 0 rows     | ~0 rows/s
+ Batch Size 100 (Triggers ON)    |     20000 | 0 secs          | 0 secs         | 20000 rows | ~0 rows/s
+ Batch Size 1000 (Triggers OFF)  |     20000 | 0 secs          | 0 secs         | 20000 rows | ~0 rows/s
+ Batch Size 1000 (Triggers ON)   |     20000 | 0 secs          |                | 20000 rows | ~0 rows/s
+ Batch Size 10000 (Triggers OFF) |     20000 | 0 secs          | 0 secs         | 20000 rows | ~0 rows/s
+ Batch Size 10000 (Triggers ON)  |     20000 | 0 secs          |                | 20000 rows | ~0 rows/s
+ Batch Size 100 (Triggers OFF)   |     20000 | 0 secs          |                | 20000 rows | ~0 rows/s
+ Constraints disabled            |         0 | 134 secs        | 134 secs       | 0 rows     | ~0 rows/s
+ Tear down complete              |         0 | 134 secs        | 0 secs         | 0 rows     | ~0 rows/s
+(9 rows)
+

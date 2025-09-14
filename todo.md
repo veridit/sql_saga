@@ -17,6 +17,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 ## Done
+- [x] **Split benchmark tests and adopt 3-digit numbering:** Split the monolithic `99_benchmark.sql` into four smaller, self-contained tests (`100` through `103`). Renamed all regression tests to use three-digit numbering for consistency.
 - [x] **Analyzed `periods` event triggers:** Confirmed `sql_saga`'s implementation is a correct and optimized subset.
 - [x] **Analyzed `time_for_keys` FK implementation:** Confirmed `sql_saga`'s C-based triggers are more performant.
 - [x] **Analyzed `periods` and `time_for_keys` gap coverage:** Confirmed `sql_saga`'s `covers_without_gaps` is more performant, generic, and correct.
