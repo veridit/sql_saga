@@ -47,9 +47,10 @@ CREATE TEMPORARY TABLE benchmark (
   seq_id BIGINT GENERATED ALWAYS AS IDENTITY,
   timestamp TIMESTAMPTZ DEFAULT clock_timestamp(),
   event TEXT,
-  row_count INTEGER
+  row_count INTEGER,
+  is_performance_benchmark BOOLEAN NOT NULL
 );
-INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('BEGIN', 0, false);
 CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL);
 CREATE TABLE establishment_tm_bs_on (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
 SELECT sql_saga.add_era(table_oid => 'legal_unit_tm_bs_on', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
@@ -132,7 +133,7 @@ DECLARE
     v_modes text[] := ARRAY['MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE'];
     v_mode text;
     v_batch_size int;
-    v_total_rows int := 2000;
+    v_total_rows int;
     v_start_id int;
     v_end_id int;
 BEGIN
@@ -141,11 +142,57 @@ BEGIN
 
     FOREACH v_batch_size IN ARRAY v_batch_sizes
     LOOP
+        v_total_rows := CASE v_batch_size
+            WHEN 100 THEN 2000
+            WHEN 1000 THEN 4000
+            ELSE 20000
+        END;
         FOREACH v_mode IN ARRAY v_modes
         LOOP
-            -- Triggers ON
-            TRUNCATE legal_unit_tm_bs_on, establishment_tm_bs_on;
-            INSERT INTO benchmark (event, row_count) VALUES (format('tm_loop, batch %s / %s (Triggers ON) start', v_batch_size, v_mode), 0);
+
+        -- Triggers OFF
+        TRUNCATE legal_unit_tm_bs_off, establishment_tm_bs_off;
+
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) disable start', v_batch_size, v_mode), 0, false);
+        IF NOT v_first_run_logged THEN
+            INSERT INTO trigger_log SELECT 'before disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+            INSERT INTO trigger_log SELECT 'before disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+        END IF;
+        CALL sql_saga.disable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
+        IF NOT v_first_run_logged THEN
+            INSERT INTO trigger_log SELECT 'after disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+            INSERT INTO trigger_log SELECT 'after disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+        END IF;
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) disable end', v_batch_size, v_mode), 0, false);
+
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) merge start', v_batch_size, v_mode), 0, false);
+        v_start_id := 1;
+        WHILE v_start_id <= v_total_rows LOOP
+            v_end_id := v_start_id + v_batch_size - 1;
+            IF v_end_id > v_total_rows THEN v_end_id := v_total_rows; END IF;
+
+            TRUNCATE legal_unit_source_bs, establishment_source_bs;
+            INSERT INTO legal_unit_source_bs SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+            INSERT INTO establishment_source_bs SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+
+            CALL sql_saga.temporal_merge('legal_unit_tm_bs_off'::regclass, 'legal_unit_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            CALL sql_saga.temporal_merge('establishment_tm_bs_off'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            v_start_id := v_end_id + 1;
+        END LOOP;
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) merge end', v_batch_size, v_mode), v_total_rows * 2, true);
+
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) enable start', v_batch_size, v_mode), 0, false);
+        CALL sql_saga.enable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
+        IF NOT v_first_run_logged THEN
+            INSERT INTO trigger_log SELECT 'after enable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
+            INSERT INTO trigger_log SELECT 'after enable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
+            v_first_run_logged := true;
+        END IF;
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) enable end', v_batch_size, v_mode), 0, false);
+
+        -- Triggers ON
+        TRUNCATE legal_unit_tm_bs_on, establishment_tm_bs_on;
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers ON) merge start', v_batch_size, v_mode), 0, false);
         v_start_id := 1;
         WHILE v_start_id <= v_total_rows LOOP
             v_end_id := v_start_id + v_batch_size - 1;
@@ -159,45 +206,7 @@ BEGIN
             CALL sql_saga.temporal_merge('establishment_tm_bs_on'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
             v_start_id := v_end_id + 1;
         END LOOP;
-        INSERT INTO benchmark (event, row_count) VALUES (format('tm_loop, batch %s / %s (Triggers ON) end', v_batch_size, v_mode), v_total_rows * 2);
-
-        -- Triggers OFF
-        TRUNCATE legal_unit_tm_bs_off, establishment_tm_bs_off;
-        INSERT INTO benchmark (event, row_count) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) start', v_batch_size, v_mode), 0);
-        v_start_id := 1;
-        WHILE v_start_id <= v_total_rows LOOP
-            v_end_id := v_start_id + v_batch_size - 1;
-            IF v_end_id > v_total_rows THEN v_end_id := v_total_rows; END IF;
-
-            TRUNCATE legal_unit_source_bs, establishment_source_bs;
-            INSERT INTO legal_unit_source_bs SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
-            INSERT INTO establishment_source_bs SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
-
-            IF NOT v_first_run_logged THEN
-                INSERT INTO trigger_log SELECT 'before disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
-                INSERT INTO trigger_log SELECT 'before disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
-            END IF;
-
-            CALL sql_saga.disable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
-
-            IF NOT v_first_run_logged THEN
-                INSERT INTO trigger_log SELECT 'after disable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
-                INSERT INTO trigger_log SELECT 'after disable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
-            END IF;
-
-            CALL sql_saga.temporal_merge('legal_unit_tm_bs_off'::regclass, 'legal_unit_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
-            CALL sql_saga.temporal_merge('establishment_tm_bs_off'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
-
-            CALL sql_saga.enable_temporal_triggers('legal_unit_tm_bs_off', 'establishment_tm_bs_off');
-
-            IF NOT v_first_run_logged THEN
-                INSERT INTO trigger_log SELECT 'after enable', 'legal_unit_tm_bs_off', s.* FROM mtt.get_trigger_status('legal_unit_tm_bs_off') s;
-                INSERT INTO trigger_log SELECT 'after enable', 'establishment_tm_bs_off', s.* FROM mtt.get_trigger_status('establishment_tm_bs_off') s;
-                v_first_run_logged := true;
-            END IF;
-            v_start_id := v_end_id + 1;
-        END LOOP;
-        INSERT INTO benchmark (event, row_count) VALUES (format('tm_loop, batch %s / %s (Triggers OFF) end', v_batch_size, v_mode), v_total_rows * 2);
+        INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s (Triggers ON) merge end', v_batch_size, v_mode), v_total_rows * 2, true);
         END LOOP;
     END LOOP;
 END;
@@ -230,10 +239,10 @@ UNION ALL
 SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_tm_bs_off;
           type           | count 
 -------------------------+-------
- legal_unit_tm_bs_on     |  2000
- establishment_tm_bs_on  |  2000
- legal_unit_tm_bs_off    |  2000
- establishment_tm_bs_off |  2000
+ legal_unit_tm_bs_on     | 20000
+ establishment_tm_bs_on  | 20000
+ legal_unit_tm_bs_off    | 20000
+ establishment_tm_bs_off | 20000
 (4 rows)
 
 -- Teardown for batch size benchmark tables
@@ -297,7 +306,7 @@ SELECT sql_saga.drop_era('legal_unit_tm_bs_off', cleanup => true);
  t
 (1 row)
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 RESET ROLE;
 DROP SCHEMA mtt CASCADE;
 NOTICE:  drop cascades to function mtt.get_trigger_status(regclass)
@@ -305,40 +314,64 @@ DROP TABLE establishment_tm_bs_on;
 DROP TABLE legal_unit_tm_bs_on;
 DROP TABLE establishment_tm_bs_off;
 DROP TABLE legal_unit_tm_bs_off;
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
-                              event                               | row_count 
-------------------------------------------------------------------+-----------
- BEGIN                                                            |         0
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) start      |         0
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) end        |      4000
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) start     |         0
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) end       |      4000
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) start    |         0
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) end      |      4000
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) start   |         0
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) end     |      4000
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) start     |         0
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) end       |      4000
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) start    |         0
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) end      |      4000
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) start   |         0
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) end     |      4000
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) start  |         0
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) end    |      4000
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) start    |         0
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) end      |      4000
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) start   |         0
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) end     |      4000
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) start  |         0
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) end    |      4000
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) start |         0
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) end   |      4000
- Constraints disabled                                             |         0
- Tear down complete                                               |         0
-(27 rows)
+                                  event                                   | row_count 
+--------------------------------------------------------------------------+-----------
+ BEGIN                                                                    |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) disable start     |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) disable end       |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) merge start       |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) merge end         |      4000
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) enable start      |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) enable end        |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) merge start        |         0
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) merge end          |      4000
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) disable start   |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) disable end     |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) merge start     |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) merge end       |      4000
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) enable start    |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) enable end      |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) merge start      |         0
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) merge end        |      4000
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) disable start    |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) disable end      |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) merge start      |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) merge end        |      8000
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) enable start     |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) enable end       |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) merge start       |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) merge end         |      8000
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable start  |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable end    |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge start    |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge end      |      8000
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable start   |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable end     |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) merge start     |         0
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) merge end       |      8000
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) disable start   |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) disable end     |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) merge start     |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) merge end       |     40000
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) enable start    |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) enable end      |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) merge start      |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) merge end        |     40000
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable start |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable end   |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge start   |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge end     |     40000
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable start  |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable end    |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) merge start    |         0
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) merge end      |     40000
+ Constraints disabled                                                     |         0
+ Tear down complete                                                       |         0
+(51 rows)
 
 -- Capture performance metrics to a separate file for manual review.
 \o expected/102_benchmark_temporal_merge_batch_sizes_performance.out
@@ -360,6 +393,7 @@ WITH benchmark_events AS (
     timestamp,
     event,
     row_count,
+    is_performance_benchmark,
     regexp_replace(event, ' (start|end)$', '') AS operation,
     CASE
       WHEN event LIKE '% start' THEN 'start'
@@ -388,16 +422,19 @@ SELECT
     ELSE ''
   END AS time_from_prev,
   row_count || ' rows' AS row_count,
-  '~' ||
-    CASE
-      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0.001 AND row_count > 0 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
-      ELSE
-        '0'
-    END
-  || ' rows/s' AS rows_per_second
+  CASE
+    WHEN is_performance_benchmark AND phase = 'end' THEN
+        '~' ||
+            CASE
+            WHEN EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
+                ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+            ELSE
+                '0'
+            END
+        || ' rows/s'
+    ELSE
+        ''
+  END AS rows_per_second
 FROM
   benchmark_durations
 WHERE phase <> 'start'

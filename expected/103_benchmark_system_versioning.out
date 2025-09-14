@@ -29,9 +29,10 @@ CREATE TEMPORARY TABLE benchmark (
   seq_id BIGINT GENERATED ALWAYS AS IDENTITY,
   timestamp TIMESTAMPTZ DEFAULT clock_timestamp(),
   event TEXT,
-  row_count INTEGER
+  row_count INTEGER,
+  is_performance_benchmark BOOLEAN NOT NULL
 );
-INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('BEGIN', 0, false);
 --
 -- Benchmark with System Versioning ONLY
 --
@@ -57,9 +58,9 @@ SELECT sql_saga.add_system_versioning(table_oid => 'establishment_sv');
  
 (1 row)
 
-INSERT INTO benchmark (event, row_count) VALUES ('History Only Benchmark', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Only Benchmark', 0, false);
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('History INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -69,13 +70,13 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('History INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs end', 10000, true);
 -- UPDATE
-INSERT INTO benchmark (event, row_count) VALUES ('History Update start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update start', 0, false);
 BEGIN;
   UPDATE legal_unit_sv SET name = 'New ' || name WHERE id <= 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('History Update end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update end', 10000, true);
 SELECT 'legal_unit_sv' AS type, COUNT(*) AS count FROM legal_unit_sv
 UNION ALL
 SELECT 'establishment_sv' AS type, COUNT(*) AS count FROM establishment_sv;
@@ -149,9 +150,9 @@ SELECT sql_saga.add_system_versioning(table_oid => 'establishment_era_history');
  
 (1 row)
 
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Benchmark', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Benchmark', 0, false);
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -161,22 +162,22 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs end', 10000, true);
 -- UPDATE with delayed commit checking
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update deferred constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints start', 0, false);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit_era_history SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
   INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) SELECT id, '2016-01-01', 'infinity', name FROM legal_unit_era_history WHERE valid_until = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update deferred constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints end', 10000, true);
 -- UPDATE with immediate constraints (non-key column)
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update non-key start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key start', 0, false);
 BEGIN;
   UPDATE legal_unit_era_history SET name = 'New ' || name WHERE id <= 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update non-key end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key end', 10000, true);
 SELECT 'legal_unit_era_history' AS type, COUNT(*) AS count FROM legal_unit_era_history
 UNION ALL
 SELECT 'establishment_era_history' AS type, COUNT(*) AS count FROM establishment_era_history;
@@ -242,12 +243,12 @@ SELECT sql_saga.drop_era('legal_unit_era_history', cleanup => true);
  t
 (1 row)
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 DROP TABLE establishment_sv;
 DROP TABLE legal_unit_sv;
 DROP TABLE establishment_era_history;
 DROP TABLE legal_unit_era_history;
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
@@ -284,12 +285,14 @@ BEGIN
     END IF;
 END;
 $$ LANGUAGE plpgsql;
+psql:sql/include/benchmark_report.sql:11: ERROR:  must be owner of function format_duration
 WITH benchmark_events AS (
   SELECT
     seq_id,
     timestamp,
     event,
     row_count,
+    is_performance_benchmark,
     regexp_replace(event, ' (start|end)$', '') AS operation,
     CASE
       WHEN event LIKE '% start' THEN 'start'
@@ -318,16 +321,19 @@ SELECT
     ELSE ''
   END AS time_from_prev,
   row_count || ' rows' AS row_count,
-  '~' ||
-    CASE
-      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0.001 AND row_count > 0 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
-      ELSE
-        '0'
-    END
-  || ' rows/s' AS rows_per_second
+  CASE
+    WHEN is_performance_benchmark AND phase = 'end' THEN
+        '~' ||
+            CASE
+            WHEN EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
+                ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+            ELSE
+                '0'
+            END
+        || ' rows/s'
+    ELSE
+        ''
+  END AS rows_per_second
 FROM
   benchmark_durations
 WHERE phase <> 'start'

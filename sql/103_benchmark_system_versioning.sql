@@ -23,10 +23,10 @@ CREATE TABLE establishment_sv (
 SELECT sql_saga.add_system_versioning(table_oid => 'legal_unit_sv');
 SELECT sql_saga.add_system_versioning(table_oid => 'establishment_sv');
 
-INSERT INTO benchmark (event, row_count) VALUES ('History Only Benchmark', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Only Benchmark', 0, false);
 
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('History INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -36,14 +36,14 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('History INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs end', 10000, true);
 
 -- UPDATE
-INSERT INTO benchmark (event, row_count) VALUES ('History Update start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update start', 0, false);
 BEGIN;
   UPDATE legal_unit_sv SET name = 'New ' || name WHERE id <= 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('History Update end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update end', 10000, true);
 
 SELECT 'legal_unit_sv' AS type, COUNT(*) AS count FROM legal_unit_sv
 UNION ALL
@@ -84,10 +84,10 @@ SELECT sql_saga.add_system_versioning(table_oid => 'legal_unit_era_history');
 SELECT sql_saga.add_system_versioning(table_oid => 'establishment_era_history');
 
 
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Benchmark', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Benchmark', 0, false);
 
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -97,24 +97,24 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs end', 10000, true);
 
 -- UPDATE with delayed commit checking
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update deferred constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints start', 0, false);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit_era_history SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
   INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) SELECT id, '2016-01-01', 'infinity', name FROM legal_unit_era_history WHERE valid_until = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update deferred constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints end', 10000, true);
 
 -- UPDATE with immediate constraints (non-key column)
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update non-key start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key start', 0, false);
 BEGIN;
   UPDATE legal_unit_era_history SET name = 'New ' || name WHERE id <= 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era + History Update non-key end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key end', 10000, true);
 
 SELECT 'legal_unit_era_history' AS type, COUNT(*) AS count FROM legal_unit_era_history
 UNION ALL
@@ -135,14 +135,14 @@ SELECT sql_saga.drop_unique_key('legal_unit_era_history', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_system_versioning('legal_unit_era_history', cleanup => true);
 SELECT sql_saga.drop_era('legal_unit_era_history', cleanup => true);
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 
 DROP TABLE establishment_sv;
 DROP TABLE legal_unit_sv;
 DROP TABLE establishment_era_history;
 DROP TABLE legal_unit_era_history;
 
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.

@@ -42,9 +42,10 @@ CREATE TEMPORARY TABLE benchmark (
   seq_id BIGINT GENERATED ALWAYS AS IDENTITY,
   timestamp TIMESTAMPTZ DEFAULT clock_timestamp(),
   event TEXT,
-  row_count INTEGER
+  row_count INTEGER,
+  is_performance_benchmark BOOLEAN NOT NULL
 );
-INSERT INTO benchmark (event, row_count) VALUES ('BEGIN', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('BEGIN', 0, false);
 -- Record the start of the setup
 -- Enable sql_saga constraints
 SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
@@ -83,7 +84,7 @@ SELECT sql_saga.add_temporal_foreign_key(
 (1 row)
 
 -- Record after enabling constraints
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints enabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints enabled', 0, false);
 -- Count number of different units before, during, and after.
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
@@ -95,7 +96,7 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 -- With delayed constraints
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs delayed constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints start', 0, false);
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
 DO $$
@@ -110,7 +111,7 @@ BEGIN
 END; $$;
 SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs delayed constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints end', 10000, true);
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
@@ -121,7 +122,7 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -134,7 +135,7 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs end', 10000, true);
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
@@ -145,7 +146,7 @@ SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 (2 rows)
 
 -- UPDATE with delayed commit checking
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update deferred constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints start', 0, false);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
@@ -154,13 +155,13 @@ BEGIN;
     FROM legal_unit WHERE valid_until = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update deferred constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints end', 10000, true);
 -- UPDATE with immediate constraints (non-key column)
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update non-key start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key start', 0, false);
 BEGIN;
   UPDATE legal_unit SET name = 'New ' || name WHERE id > 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update non-key end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key end', 10000, true);
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
@@ -201,10 +202,10 @@ SELECT sql_saga.drop_era('legal_unit', cleanup => true);
  t
 (1 row)
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 DROP TABLE establishment;
 DROP TABLE legal_unit;
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
@@ -244,6 +245,7 @@ WITH benchmark_events AS (
     timestamp,
     event,
     row_count,
+    is_performance_benchmark,
     regexp_replace(event, ' (start|end)$', '') AS operation,
     CASE
       WHEN event LIKE '% start' THEN 'start'
@@ -272,16 +274,19 @@ SELECT
     ELSE ''
   END AS time_from_prev,
   row_count || ' rows' AS row_count,
-  '~' ||
-    CASE
-      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0.001 AND row_count > 0 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
-      ELSE
-        '0'
-    END
-  || ' rows/s' AS rows_per_second
+  CASE
+    WHEN is_performance_benchmark AND phase = 'end' THEN
+        '~' ||
+            CASE
+            WHEN EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
+                ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+            ELSE
+                '0'
+            END
+        || ' rows/s'
+    ELSE
+        ''
+  END AS rows_per_second
 FROM
   benchmark_durations
 WHERE phase <> 'start'

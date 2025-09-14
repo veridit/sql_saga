@@ -16,6 +16,7 @@ WITH benchmark_events AS (
     timestamp,
     event,
     row_count,
+    is_performance_benchmark,
     regexp_replace(event, ' (start|end)$', '') AS operation,
     CASE
       WHEN event LIKE '% start' THEN 'start'
@@ -44,16 +45,19 @@ SELECT
     ELSE ''
   END AS time_from_prev,
   row_count || ' rows' AS row_count,
-  '~' ||
-    CASE
-      WHEN phase = 'end' AND EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-      WHEN phase = 'milestone' AND EXTRACT(EPOCH FROM (timestamp - prev_event_time)) > 0.001 AND row_count > 0 THEN
-        ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - prev_event_time)))::text
-      ELSE
-        '0'
-    END
-  || ' rows/s' AS rows_per_second
+  CASE
+    WHEN is_performance_benchmark AND phase = 'end' THEN
+        '~' ||
+            CASE
+            WHEN EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
+                ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
+            ELSE
+                '0'
+            END
+        || ' rows/s'
+    ELSE
+        ''
+  END AS rows_per_second
 FROM
   benchmark_durations
 WHERE phase <> 'start'

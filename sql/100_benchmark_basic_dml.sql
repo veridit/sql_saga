@@ -34,7 +34,7 @@ SELECT sql_saga.add_temporal_foreign_key(
 );
 
 -- Record after enabling constraints
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints enabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints enabled', 0, false);
 
 -- Count number of different units before, during, and after.
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
@@ -42,7 +42,7 @@ UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- With delayed constraints
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs delayed constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints start', 0, false);
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
 
@@ -59,7 +59,7 @@ END; $$;
 
 SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs delayed constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints end', 10000, true);
 
 
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
@@ -67,7 +67,7 @@ UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs start', 0, false);
 BEGIN;
 DO $$
 BEGIN
@@ -80,14 +80,14 @@ BEGIN
   END LOOP;
 END; $$;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era INSERTs end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs end', 10000, true);
 
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
 SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
 
 -- UPDATE with delayed commit checking
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update deferred constraints start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints start', 0, false);
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
@@ -98,14 +98,14 @@ BEGIN;
 
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update deferred constraints end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints end', 10000, true);
 
 -- UPDATE with immediate constraints (non-key column)
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update non-key start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key start', 0, false);
 BEGIN;
   UPDATE legal_unit SET name = 'New ' || name WHERE id > 10000;
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Era Update non-key end', 10000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key end', 10000, true);
 
 SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
 UNION ALL
@@ -119,12 +119,12 @@ SELECT sql_saga.drop_era('establishment', cleanup => true);
 SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_era('legal_unit', cleanup => true);
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 
 DROP TABLE establishment;
 DROP TABLE legal_unit;
 
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.

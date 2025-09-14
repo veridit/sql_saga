@@ -32,7 +32,7 @@ SELECT sql_saga.add_temporal_foreign_key(
 );
 
 -- Seed 80% of the data.
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers ON) start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED (Triggers ON) start', 0, false);
 BEGIN;
   CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_from date, valid_until date, name varchar);
   CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
@@ -43,10 +43,10 @@ BEGIN;
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_seed_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers ON) end', 16000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED (Triggers ON) end', 16000, true);
 
 
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) start', 0, false);
 BEGIN;
   CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
   CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
@@ -62,7 +62,7 @@ BEGIN;
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) end', 20000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers ON) end', 20000, true);
 
 SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm
 UNION ALL
@@ -101,7 +101,7 @@ SELECT sql_saga.add_temporal_foreign_key(
 );
 
 -- Seed 80% of the data.
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers OFF) start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED (Triggers OFF) start', 0, false);
 BEGIN;
   CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
   CREATE TEMPORARY TABLE legal_unit_seed_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
@@ -114,10 +114,10 @@ BEGIN;
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_seed_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
   CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge SEED (Triggers OFF) end', 16000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED (Triggers OFF) end', 16000, true);
 
 
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) start', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) start', 0, false);
 BEGIN;
   CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
   CREATE TEMPORARY TABLE legal_unit_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
@@ -135,7 +135,7 @@ BEGIN;
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_source_dt'::regclass, identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
   CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
 END;
-INSERT INTO benchmark (event, row_count) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) end', 20000);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) end', 20000, true);
 
 SELECT 'legal_unit_tm_dt' AS type, COUNT(*) AS count FROM legal_unit_tm_dt
 UNION ALL
@@ -156,14 +156,14 @@ SELECT sql_saga.drop_era('establishment_tm_dt', cleanup => true);
 SELECT sql_saga.drop_unique_key('legal_unit_tm_dt', ARRAY['id'], 'valid');
 SELECT sql_saga.drop_era('legal_unit_tm_dt', cleanup => true);
 
-INSERT INTO benchmark (event, row_count) VALUES ('Constraints disabled', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
 
 DROP TABLE establishment_tm;
 DROP TABLE legal_unit_tm;
 DROP TABLE establishment_tm_dt;
 DROP TABLE legal_unit_tm_dt;
 
-INSERT INTO benchmark (event, row_count) VALUES ('Tear down complete', 0);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
