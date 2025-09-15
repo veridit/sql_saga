@@ -1,31 +1,31 @@
                                event                                | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 --------------------------------------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                                                              |         0 | 0 ms            |                | 0 rows     | 
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) disable     |         0 | 54 ms           | 12 ms          | 0 rows     | 
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) merge       |      4000 | 364 ms          | 309 ms         | 4000 rows  | ~12940 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) enable      |         0 | 375 ms          | 11 ms          | 0 rows     | 
- tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) merge        |      4000 | 687 ms          | 310 ms         | 4000 rows  | ~12890 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) disable   |         0 | 700 ms          | 10 ms          | 0 rows     | 
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) merge     |      4000 | 983 ms          | 283 ms         | 4000 rows  | ~14122 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) enable    |         0 | 994 ms          | 11 ms          | 0 rows     | 
- tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) merge      |      4000 | 1 secs          | 300 ms         | 4000 rows  | ~13329 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) disable    |         0 | 1 secs          | 11 ms          | 0 rows     | 
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) merge      |      8000 | 4 secs          | 3 secs         | 8000 rows  | ~3177 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) enable     |         0 | 4 secs          | 21 ms          | 0 rows     | 
- tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) merge       |      8000 | 6 secs          | 3 secs         | 8000 rows  | ~3103 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable  |         0 | 6 secs          | 11 ms          | 0 rows     | 
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge    |      8000 | 9 secs          | 3 secs         | 8000 rows  | ~3089 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable   |         0 | 9 secs          | 11 ms          | 0 rows     | 
- tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) merge     |      8000 | 12 secs         | 3 secs         | 8000 rows  | ~3185 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) disable   |         0 | 12 secs         | 11 ms          | 0 rows     | 
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) merge     |     40000 | 128 secs        | 117 secs       | 40000 rows | ~343 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) enable    |         0 | 128 secs        | 15 ms          | 0 rows     | 
- tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) merge      |     40000 | 245 secs        | 117 secs       | 40000 rows | ~342 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable |         0 | 245 secs        | 10 ms          | 0 rows     | 
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge   |     40000 | 362 secs        | 117 secs       | 40000 rows | ~341 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable  |         0 | 362 secs        | 11 ms          | 0 rows     | 
- tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) merge    |     40000 | 480 secs        | 117 secs       | 40000 rows | ~341 rows/s
- Constraints disabled                                               |         0 | 480 secs        | 53 ms          | 0 rows     | 
- Tear down complete                                                 |         0 | 480 secs        | 6 ms           | 0 rows     | 
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) disable     |         0 | 58 ms           | 11 ms          | 0 rows     | 
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) merge       |      4000 | 370 ms          | 312 ms         | 4000 rows  | ~12816 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers OFF) enable      |         0 | 382 ms          | 12 ms          | 0 rows     | 
+ tm_loop, batch 100 / MERGE_ENTITY_PATCH (Triggers ON) merge        |      4000 | 721 ms          | 336 ms         | 4000 rows  | ~11888 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) disable   |         0 | 735 ms          | 11 ms          | 0 rows     | 
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) merge     |      4000 | 1 secs          | 304 ms         | 4000 rows  | ~13171 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers OFF) enable    |         0 | 1 secs          | 11 ms          | 0 rows     | 
+ tm_loop, batch 100 / MERGE_ENTITY_REPLACE (Triggers ON) merge      |      4000 | 1 secs          | 323 ms         | 4000 rows  | ~12380 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) disable    |         0 | 1 secs          | 10 ms          | 0 rows     | 
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) merge      |      8000 | 4 secs          | 3 secs         | 8000 rows  | ~3178 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers OFF) enable     |         0 | 4 secs          | 11 ms          | 0 rows     | 
+ tm_loop, batch 1000 / MERGE_ENTITY_PATCH (Triggers ON) merge       |      8000 | 6 secs          | 3 secs         | 8000 rows  | ~3157 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable  |         0 | 6 secs          | 10 ms          | 0 rows     | 
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge    |      8000 | 9 secs          | 2 secs         | 8000 rows  | ~3234 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable   |         0 | 9 secs          | 15 ms          | 0 rows     | 
+ tm_loop, batch 1000 / MERGE_ENTITY_REPLACE (Triggers ON) merge     |      8000 | 11 secs         | 3 secs         | 8000 rows  | ~3181 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) disable   |         0 | 11 secs         | 10 ms          | 0 rows     | 
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) merge     |     40000 | 129 secs        | 117 secs       | 40000 rows | ~341 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers OFF) enable    |         0 | 129 secs        | 11 ms          | 0 rows     | 
+ tm_loop, batch 10000 / MERGE_ENTITY_PATCH (Triggers ON) merge      |     40000 | 246 secs        | 118 secs       | 40000 rows | ~340 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) disable |         0 | 246 secs        | 10 ms          | 0 rows     | 
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) merge   |     40000 | 365 secs        | 119 secs       | 40000 rows | ~337 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers OFF) enable  |         0 | 365 secs        | 11 ms          | 0 rows     | 
+ tm_loop, batch 10000 / MERGE_ENTITY_REPLACE (Triggers ON) merge    |     40000 | 486 secs        | 121 secs       | 40000 rows | ~332 rows/s
+ Constraints disabled                                               |         0 | 486 secs        | 120 ms         | 0 rows     | 
+ Tear down complete                                                 |         0 | 486 secs        | 12 ms          | 0 rows     | 
 (27 rows)
 

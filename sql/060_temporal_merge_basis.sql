@@ -1325,7 +1325,7 @@ SELECT * FROM (VALUES (301, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_m
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 
-\echo '--- Orchestrator: Calling with `patch_only`... ---'
+\echo '--- Orchestrator: Calling with `MERGE_ENTITY_PATCH` to extend the timeline... ---'
 TRUNCATE temp_source_35;
 INSERT INTO temp_source_35 VALUES (302, 1, 3, '2022-01-01', '2023-01-01', NULL, 15, 'Successful Update');
 
@@ -1339,7 +1339,7 @@ CALL sql_saga.temporal_merge(
     source_table => 'temp_source_35',
     identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
-    mode => 'PATCH_FOR_PORTION_OF',
+    mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1348,9 +1348,13 @@ SELECT * FROM (VALUES (302, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_m
 SELECT * FROM pg_temp.temporal_merge_feedback;
 
 \echo '--- Orchestrator: Final state of target table (expected complete history) ---'
+-- NOTE: The `name` column for the second row is now NULL. This is the correct, expected
+-- behavior of the new stateless PATCH logic. It does not "carry forward" values from
+-- previous time segments. The source data for this segment had a NULL name, which is
+-- stripped by PATCH, resulting in a final NULL value as there is no target data to inherit from.
 SELECT * FROM (VALUES
     (3, 1, '2021-01-01'::DATE, '2022-01-01'::DATE, 'NewCo INSERT'::TEXT, 10, 'Initial Insert'::TEXT),
-    (3, 1, '2022-01-01'::DATE, '2023-01-01'::DATE, 'NewCo INSERT'::TEXT, 15, 'Successful Update'::TEXT)
+    (3, 1, '2022-01-01'::DATE, '2023-01-01'::DATE, NULL::TEXT, 15, 'Successful Update'::TEXT)
 ) AS t (id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment);
 \echo '--- Orchestrator: Actual state of target table ---'
 SELECT id, legal_unit_id, valid_from, valid_until, name, employees, edit_comment FROM temporal_merge_test.establishment WHERE id = 3 ORDER BY valid_from;
@@ -1559,7 +1563,7 @@ CALL sql_saga.temporal_merge(
 
 \echo '--- Planner: Expected Plan (A single UPDATE extending the target row) ---'
 SELECT * FROM (VALUES
-    (1, '{701}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"id": 7}'::JSONB, '2023-01-01'::DATE, '2023-01-01'::DATE, '2024-01-01'::DATE, '{"name": "Existing Op", "employees": 60, "edit_comment": null, "legal_unit_id": 1}'::JSONB, 'started by'::sql_saga.allen_interval_relation)
+    (1, '{701}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"id": 7}'::JSONB, '2023-01-01'::DATE, '2023-01-01'::DATE, '2024-01-01'::DATE, '{"name": "Existing Op", "employees": 60, "legal_unit_id": 1}'::JSONB, 'started by'::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
@@ -2237,6 +2241,71 @@ SELECT * FROM (VALUES
 TABLE tm_44_not_null_test.test_unit ORDER BY id, valid_from;
 
 ROLLBACK TO SAVEPOINT s46;
+
+--------------------------------------------------------------------------------
+\echo 'Scenario 47: `PATCH_FOR_PORTION_OF` performs a surgical update on an existing slice'
+--------------------------------------------------------------------------------
+-- This test validates the corrected "clipping" behavior of PATCH_FOR_PORTION_OF.
+-- The source data only partially overlaps with the target, and it only contains
+-- a value for `employees`. The expected outcome is that the target is split
+-- into three pieces, with the `name` correctly inherited from the original
+-- target data for the patched segment.
+SAVEPOINT s47;
+-- Setup a simple temporal table
+CREATE SCHEMA tm_47_surgical_patch;
+CREATE TABLE tm_47_surgical_patch.test_target (
+    id int,
+    name text,
+    employees int,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('tm_47_surgical_patch.test_target'::regclass);
+SELECT sql_saga.add_unique_key('tm_47_surgical_patch.test_target'::regclass, ARRAY['id']);
+
+-- Insert an initial record
+INSERT INTO tm_47_surgical_patch.test_target (id, name, employees, valid_from, valid_until)
+VALUES (1, 'Surgical Inc.', 10, '2024-01-01', '2025-01-01');
+
+-- Create a source table for the patch. It contains an explicit NULL for `name`.
+CREATE TEMP TABLE source_47 (
+    row_id int,
+    id int,
+    name text,
+    employees int,
+    valid_from date,
+    valid_until date
+) ON COMMIT DROP;
+INSERT INTO source_47 (row_id, id, name, employees, valid_from, valid_until) VALUES (1, 1, NULL, 15, '2024-06-01', '2024-09-01');
+
+\echo '--- Target: Initial State ---'
+TABLE tm_47_surgical_patch.test_target;
+\echo '--- Source: Data to merge (only updates employees for a portion of time) ---'
+TABLE source_47;
+
+CALL sql_saga.temporal_merge(
+  target_table => 'tm_47_surgical_patch.test_target'::regclass,
+  source_table => 'source_47'::regclass,
+  identity_columns => ARRAY['id'],
+  mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode,
+  source_row_id_column => 'row_id'
+);
+
+\echo '--- Planner: Actual Plan ---'
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- Executor: Actual Feedback ---'
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+\echo '--- Target: Expected Final State (timeline is split, name is inherited) ---'
+SELECT * FROM (VALUES
+    (1, 'Surgical Inc.', 10, '2024-01-01'::date, '2024-06-01'::date),
+    (1, 'Surgical Inc.', 15, '2024-06-01'::date, '2024-09-01'::date),
+    (1, 'Surgical Inc.', 10, '2024-09-01'::date, '2025-01-01'::date)
+) AS v(id, name, value, valid_from, valid_until) ORDER BY id, valid_from;
+\echo '--- Target: Final State ---'
+TABLE tm_47_surgical_patch.test_target ORDER BY id, valid_from;
+
+ROLLBACK TO SAVEPOINT s47;
+
 
 -- Final Cleanup
 DROP TABLE temporal_merge_test_multi_insert.test_target;

@@ -76,3 +76,57 @@ After the plan is calculated, adjacent segments with identical data payloads (ex
     3.  `[Mar-01, May-01)` -> `{ "dept": "Sales", ... }` (Merged segment)
 
 The `temporal_merge` planner will pick the data payload from the *last* atomic segment in a group, so the final `edit_comment` for the `[Mar-01, May-01)` slice will be "Data fix".
+
+---
+
+## Scenario 3: Source Extends Beyond Target (`overlaps` relation)
+
+- **Target Data:** `[Jan-01, Mar-01)` -> `{ "A": 1, "B": 2 }`
+- **Source Data:** `[Feb-01, Apr-01)` -> `{ "B": 99, "C": null }`
+
+This creates three atomic time segments:
+1.  `[Jan-01, Feb-01)`: (Target only)
+2.  `[Feb-01, Mar-01)`: (Overlap: Target and Source)
+3.  `[Mar-01, Apr-01)`: (Source only)
+
+### `MERGE_ENTITY_UPSERT`
+
+- **Rule:** A partial update. The source extends the entity's timeline.
+- **Segment 1 `[Jan-01, Feb-01)`:** Unchanged from target: `{ "A": 1, "B": 2 }`
+- **Segment 2 `[Feb-01, Mar-01)`:** `target || source` -> `{ "A": 1, "B": 99, "C": null }`
+- **Segment 3 `[Mar-01, Apr-01)`:** No target data, so it becomes the source data: `{ "B": 99, "C": null }`
+- **Coalesced Final Plan:**
+    1.  `[Jan-01, Feb-01)` -> `{ "A": 1, "B": 2 }` (Original)
+    2.  `[Feb-01, Mar-01)` -> `{ "A": 1, "B": 99, "C": null }` (Merged)
+    3.  `[Mar-01, Apr-01)` -> `{ "B": 99, "C": null }` (New slice from source)
+
+### `UPDATE_FOR_PORTION_OF`
+
+- **Rule:** A surgical update. The source is **clipped** to the target's timeline. The portion of the source that extends beyond the target is ignored.
+- **Segment 1 `[Jan-01, Feb-01)`:** Unchanged from target: `{ "A": 1, "B": 2 }`
+- **Segment 2 `[Feb-01, Mar-01)`:** `target || source` -> `{ "A": 1, "B": 99, "C": null }`
+- **Segment 3 `[Mar-01, Apr-01)`:** Source is ignored. This time segment does not exist in the final plan.
+- **Coalesced Final Plan:**
+    1.  `[Jan-01, Feb-01)` -> `{ "A": 1, "B": 2 }` (Original)
+    2.  `[Feb-01, Mar-01)` -> `{ "A": 1, "B": 99, "C": null }` (Updated portion)
+
+### `MERGE_ENTITY_REPLACE`
+
+- **Rule:** Source replaces target in the overlap, and extends the timeline.
+- **Segment 1 `[Jan-01, Feb-01)`:** Unchanged from target: `{ "A": 1, "B": 2 }`
+- **Segment 2 `[Feb-01, Mar-01)`:** Replaced by source: `{ "B": 99, "C": null }`
+- **Segment 3 `[Mar-01, Apr-01)`:** No target data, so it becomes the source data: `{ "B": 99, "C": null }`
+- **Coalesced Final Plan:**
+    1.  `[Jan-01, Feb-01)` -> `{ "A": 1, "B": 2 }` (Original)
+    2.  `[Feb-01, Apr-01)` -> `{ "B": 99, "C": null }` (Segments 2 and 3 are identical and merge)
+
+### `MERGE_ENTITY_PATCH`
+
+- **Rule:** A partial update that ignores explicit `NULL`s and extends the timeline.
+- **Segment 1 `[Jan-01, Feb-01)`:** Unchanged from target: `{ "A": 1, "B": 2 }`
+- **Segment 2 `[Feb-01, Mar-01)`:** `target || jsonb_strip_nulls(source)` -> `{ "A": 1, "B": 99 }`
+- **Segment 3 `[Mar-01, Apr-01)`:** No target data, so it becomes `jsonb_strip_nulls(source)` -> `{ "B": 99 }`
+- **Coalesced Final Plan:**
+    1.  `[Jan-01, Feb-01)` -> `{ "A": 1, "B": 2 }` (Original)
+    2.  `[Feb-01, Mar-01)` -> `{ "A": 1, "B": 99 }` (Merged, `C` is ignored)
+    3.  `[Mar-01, Apr-01)` -> `{ "B": 99 }` (New slice from source, `C` is ignored)

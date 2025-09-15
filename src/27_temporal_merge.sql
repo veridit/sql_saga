@@ -426,43 +426,10 @@ BEGIN
             )$$;
         END IF;
 
-        -- Third, determine payload resolution logic based on the mode and timeline strategy.
-        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
-            -- In PATCH modes, we need to compute a running payload that carries forward values
-            -- from one atomic segment to the next. A recursive CTE is the most robust way to do this.
-            v_resolver_ctes := $$,
-numbered_segments AS (
-    SELECT
-        *,
-        row_number() OVER (PARTITION BY entity_id ORDER BY valid_from) as rn
-    FROM resolved_atomic_segments_with_payloads
-),
-running_payload_cte AS (
-    -- Anchor: The first segment for each entity. Its base payload is its own target payload, or empty.
-    SELECT
-        s.*,
-        (COALESCE(s.t_data_payload, '{}'::jsonb) || COALESCE(s.s_data_payload, '{}'::jsonb)) AS data_payload
-    FROM numbered_segments s
-    WHERE s.rn = 1
-
-    UNION ALL
-
-    -- Recursive step: The next segment's payload is the previous segment's final payload,
-    -- potentially overridden by the current segment's target payload (if any), and then patched
-    -- with the current segment's source payload.
-    SELECT
-        s.*,
-        (
-            COALESCE(s.t_data_payload, p.data_payload) || COALESCE(s.s_data_payload, '{}'::jsonb)
-        )::jsonb AS data_payload
-    FROM numbered_segments s
-    JOIN running_payload_cte p ON s.entity_id = p.entity_id AND s.rn = p.rn + 1
-)
-$$;
-            v_resolver_from := 'running_payload_cte';
-            v_final_data_payload_expr := 'data_payload';
-        ELSIF temporal_merge_plan.mode IN ('MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF') THEN
-            -- In UPSERT modes, we do a stateless partial update.
+        -- Third, determine payload resolution logic based on the mode. All modes are now stateless.
+        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF', 'MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF') THEN
+            -- In PATCH and UPSERT modes, we do a stateless partial update.
+            -- The difference is handled by v_source_data_payload_expr, which strips NULLs for PATCH.
             v_resolver_ctes := '';
             v_resolver_from := 'resolved_atomic_segments_with_payloads';
             v_final_data_payload_expr := $$COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)$$;
@@ -630,6 +597,15 @@ resolved_atomic_segments_with_payloads AS (
             ) s ON true
             WHERE seg.valid_from < seg.valid_until
               AND (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+              -- For surgical ..._FOR_PORTION_OF modes, we must clip the source to the target's timeline.
+              -- We do this by only processing atomic segments that have data in the target.
+              AND CASE %7$L::sql_saga.temporal_merge_mode
+                  WHEN 'PATCH_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
+                  WHEN 'REPLACE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
+                  WHEN 'DELETE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
+                  WHEN 'UPDATE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
+                  ELSE true
+              END
         ) with_base_payload
 )
 %9$s,

@@ -232,26 +232,32 @@ COMMENT ON TABLE sql_saga.system_versioning IS 'A registry of tables with SYSTEM
 -- Types for temporal_merge
 DROP TYPE IF EXISTS sql_saga.temporal_merge_mode CASCADE;
 CREATE TYPE sql_saga.temporal_merge_mode AS ENUM (
-    'MERGE_ENTITY_PATCH',
-    'MERGE_ENTITY_REPLACE',
-    'INSERT_NEW_ENTITIES',
-    'PATCH_FOR_PORTION_OF',
-    'REPLACE_FOR_PORTION_OF',
-    'DELETE_FOR_PORTION_OF',
-
-    -- New stateless modes
+     -- The main workhorse.
     'MERGE_ENTITY_UPSERT',
-    'UPDATE_FOR_PORTION_OF'
+    'UPDATE_FOR_PORTION_OF',
+    -- Variety of UPSERT/UPDATE where NULL's are ignored.
+    'MERGE_ENTITY_PATCH',
+    'PATCH_FOR_PORTION_OF',
+    -- Variety of UPSERT/UPDATE where everything is replaced.
+    'MERGE_ENTITY_REPLACE',
+    'REPLACE_FOR_PORTION_OF',
+    -- Special purpose restricted operations.
+    'INSERT_NEW_ENTITIES',
+    'DELETE_FOR_PORTION_OF'
 );
 COMMENT ON TYPE sql_saga.temporal_merge_mode IS
 'Defines the behavior of the temporal_merge procedure.
-- MERGE_ENTITY_PATCH: Merges source with target, patching data and carrying forward NULL values.
-- MERGE_ENTITY_REPLACE: Merges source with target, replacing overlapping data.
+-- The main workhorse.
 - MERGE_ENTITY_UPSERT: Inserts new entities or performs a partial update on existing timelines. NULL is treated as an explicit value.
-- INSERT_NEW_ENTITIES: Inserts only new entities.
-- PATCH_FOR_PORTION_OF: Applies a surgical patch to a time portion of an existing entity.
-- REPLACE_FOR_PORTION_OF: Applies a surgical replacement of a time portion of an existing entity.
 - UPDATE_FOR_PORTION_OF: Applies a surgical partial update to a time portion of an existing entity. Skips new entities.
+-- Variety of UPSERT/UPDATE where NULL''s are ignored.
+- MERGE_ENTITY_PATCH: Merges source with target, patching data by ignoring NULL values in the source.
+- PATCH_FOR_PORTION_OF: Applies a surgical patch to a time portion of an existing entity, ignoring NULL values in the source.
+-- Variety of UPSERT/UPDATE where everything is replaced.
+- MERGE_ENTITY_REPLACE: Merges source with target, replacing overlapping data.
+- REPLACE_FOR_PORTION_OF: Applies a surgical replacement of a time portion of an existing entity.
+-- Special purpose restricted operations.
+- INSERT_NEW_ENTITIES: Inserts only new entities.
 - DELETE_FOR_PORTION_OF: Performs a surgical deletion of a time portion from an existing entity.';
 
 DO $$ BEGIN

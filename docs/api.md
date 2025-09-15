@@ -102,14 +102,14 @@ This document is automatically generated from the database schema by the `80_gen
 > - DELETE_FOR_PORTION_OF: Performs a surgical deletion of a time portion from an existing entity.
 
 ```sql
-- MERGE_ENTITY_PATCH
-- MERGE_ENTITY_REPLACE
-- INSERT_NEW_ENTITIES
-- PATCH_FOR_PORTION_OF
-- REPLACE_FOR_PORTION_OF
-- DELETE_FOR_PORTION_OF
 - MERGE_ENTITY_UPSERT
 - UPDATE_FOR_PORTION_OF
+- MERGE_ENTITY_PATCH
+- PATCH_FOR_PORTION_OF
+- MERGE_ENTITY_REPLACE
+- REPLACE_FOR_PORTION_OF
+- INSERT_NEW_ENTITIES
+- DELETE_FOR_PORTION_OF
 ```
 
 ### temporal_merge_plan_action
