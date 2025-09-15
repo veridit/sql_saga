@@ -6,11 +6,11 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 ## High Priority - Bugs & Core Features
 - [ ] **Evolve `temporal_merge` API and Performance (Epic):**
-  - **Justification:** Benchmarks reveal the current planner scales poorly even for stateless modes like `REPLACE`, with performance decreasing as batch size increases. A new, high-performance backend with near-linear scaling is required for efficient bulk data loading.
+  - **Justification:** Benchmarks reveal the current planner scales poorly, with performance decreasing as batch size increases. A new, high-performance backend with near-linear scaling is required for efficient bulk data loading.
   - [x] **Step 1: Implement `MERGE_ENTITY_UPSERT` and `UPDATE_FOR_PORTION_OF` modes.** Add new, intuitive modes that provide stateless partial-update semantics. This will become the recommended default for most use cases.
-  - [ ] **Step 2: Implement GUC-based dispatcher.** Refactor `temporal_merge` into a public dispatcher that calls an internal `_temporal_merge_reference` implementation. This enables performance experimentation without breaking the API.
-  - [ ] **Step 3: Implement high-performance `multirange` backend.** Create a new `_temporal_merge_multirange` implementation for stateless modes (`UPSERT`, `REPLACE`, `DELETE`), offering significantly better performance for common ETL patterns.
-  - [ ] **Step 4: Update documentation and deprecate `PATCH` modes.** Formally deprecate the complex, stateful `PATCH` modes in the documentation, guiding users toward the simpler and more performant `UPSERT`, `REPLACE`, and `INSERT_NEW_ENTITIES` modes.
+  - [ ] **Step 2: Make `temporal_merge` planner fully stateless.** Refactor the planner to remove the stateful, recursive CTE for `PATCH` modes. All modes (`UPSERT`, `REPLACE`, `PATCH`) will now be implemented with simple, stateless payload logic as defined in `docs/semantical_principles.md`. This makes `UPSERT` the base mode, with `REPLACE` and `PATCH` as simple variations.
+  - [ ] **Step 3: Re-implement planner using `multirange` for performance.** Rewrite the core of the now-stateless planner to use `multirange` types. The current approach of creating atomic time segments is inefficient. The new approach will aggregate source and target timelines into multiranges and use `multirange` operators to calculate the differences, which is expected to be significantly faster and simpler.
+  - [ ] **Step 4: Update documentation.** Update the README and API docs to reflect the new, simpler, and high-performance implementation. The `PATCH` modes are no longer considered complex or slow.
 - [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
 
 ## Medium Priority - Refactoring & API Improvements
