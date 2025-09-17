@@ -1,6 +1,7 @@
 CREATE FUNCTION sql_saga.drop_foreign_key_by_name(
     table_oid regclass,
-    key_name name)
+    key_name name,
+    drop_index boolean DEFAULT true)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -34,7 +35,14 @@ BEGIN
         WHERE (table_oid IS NULL OR (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name))
           AND (fk.foreign_key_name = key_name OR key_name IS NULL)
     LOOP
-        -- Delete the metadata record first, so the drop_protection trigger doesn't fire.
+        -- Drop the auto-created index if it exists and requested.
+        -- We do this before deleting the metadata record so we can access fk_index_name.
+        IF drop_index AND foreign_key_row.fk_index_name IS NOT NULL THEN
+            RAISE NOTICE 'Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
+            EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
+        END IF;
+
+        -- Delete the metadata record first, so the drop_protection trigger doesn't fire on the main objects.
         DELETE FROM sql_saga.foreign_keys AS fk
         WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
 

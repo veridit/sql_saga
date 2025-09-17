@@ -168,6 +168,7 @@ CREATE TABLE sql_saga.foreign_keys (
     -- These are always on the unique key's table
     uk_update_trigger name NOT NULL,
     uk_delete_trigger name NOT NULL,
+    fk_index_name name, -- Stores the name of an index created automatically on the FK table
 
     PRIMARY KEY (foreign_key_name),
 

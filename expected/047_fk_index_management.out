@@ -1,0 +1,487 @@
+\set ON_ERROR_STOP on
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+CREATE SCHEMA fk_idx;
+SET search_path TO fk_idx, sql_saga, public;
+-----------------------------------------
+-- Temporal to Temporal Foreign Keys
+-----------------------------------------
+\echo '--- Temporal to Temporal FKs ---'
+--- Temporal to Temporal FKs ---
+\echo 'Scenario 1: Auto-create index (default behavior)'
+Scenario 1: Auto-create index (default behavior)
+CREATE TABLE parent_t (id int, valid_from date, valid_until date);
+SELECT add_era('parent_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+  add_unique_key   
+-------------------
+ parent_t_id_valid
+(1 row)
+
+CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
+SELECT add_era('child_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_foreign_key(
+    fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_fk_1'
+);
+NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+  add_foreign_key  
+-------------------
+ child_parent_fk_1
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_fk_1';
+ foreign_key_name  |          fk_index_name           
+-------------------+----------------------------------
+ child_parent_fk_1 | child_t_parent_id_valid_gist_idx
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    child_parent_fk_1_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_1', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    child_parent_fk_1_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_1', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+
+\echo '-> Dropping FK should also drop the auto-created index'
+-> Dropping FK should also drop the auto-created index
+SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_1');
+NOTICE:  Dropping automatically created index "child_t_parent_id_valid_gist_idx" for foreign key "child_parent_fk_1"
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+DROP TABLE parent_t, child_t CASCADE;
+\echo 'Scenario 2: Disable auto-creation of index'
+Scenario 2: Disable auto-creation of index
+CREATE TABLE parent_t (id int, valid_from date, valid_until date);
+SELECT add_era('parent_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+  add_unique_key   
+-------------------
+ parent_t_id_valid
+(1 row)
+
+CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
+SELECT add_era('child_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_foreign_key(
+    fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_fk_2', create_index => false
+);
+WARNING:  No index found on table child_t for foreign key columns ({parent_id}). Performance may be poor.
+HINT:  Consider creating this index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+  add_foreign_key  
+-------------------
+ child_parent_fk_2
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_fk_2';
+ foreign_key_name  | fk_index_name 
+-------------------+---------------
+ child_parent_fk_2 | 
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    child_parent_fk_2_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_2', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    child_parent_fk_2_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_2', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+
+SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_2');
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+DROP TABLE parent_t, child_t CASCADE;
+\echo 'Scenario 3: Manually created index exists'
+Scenario 3: Manually created index exists
+CREATE TABLE parent_t (id int, valid_from date, valid_until date);
+SELECT add_era('parent_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+  add_unique_key   
+-------------------
+ parent_t_id_valid
+(1 row)
+
+CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
+SELECT add_era('child_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+CREATE INDEX manual_child_t_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until));
+SELECT add_foreign_key(
+    fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_fk_3'
+);
+  add_foreign_key  
+-------------------
+ child_parent_fk_3
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_fk_3';
+ foreign_key_name  | fk_index_name 
+-------------------+---------------
+ child_parent_fk_3 | 
+(1 row)
+
+\echo '-> Dropping FK should NOT drop the manually created index'
+-> Dropping FK should NOT drop the manually created index
+SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_3');
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "manual_child_t_idx" gist (parent_id, daterange(valid_from, valid_until))
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+DROP TABLE parent_t, child_t CASCADE;
+\echo 'Scenario 4: Auto-created index is not dropped when requested'
+Scenario 4: Auto-created index is not dropped when requested
+CREATE TABLE parent_t (id int, valid_from date, valid_until date);
+SELECT add_era('parent_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+  add_unique_key   
+-------------------
+ parent_t_id_valid
+(1 row)
+
+CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
+SELECT add_era('child_t'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_foreign_key(
+    fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_fk_4'
+);
+NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+  add_foreign_key  
+-------------------
+ child_parent_fk_4
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    child_parent_fk_4_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_4', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    child_parent_fk_4_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_4', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+
+\echo '-> Dropping with drop_index=false should not drop the index'
+-> Dropping with drop_index=false should not drop the index
+SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_4', drop_index := false);
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+\d child_t
+                     Table "fk_idx.child_t"
+   Column    |  Type   | Collation | Nullable |     Default      
+-------------+---------+-----------+----------+------------------
+ id          | integer |           |          | 
+ parent_id   | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_until | date    |           | not null | 'infinity'::date
+Indexes:
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+Check constraints:
+    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+
+DROP TABLE parent_t, child_t CASCADE;
+-----------------------------------------
+-- Regular to Temporal Foreign Keys
+-----------------------------------------
+\echo '--- Regular to Temporal FKs ---'
+--- Regular to Temporal FKs ---
+\echo 'Scenario 1: Auto-create index (default behavior)'
+Scenario 1: Auto-create index (default behavior)
+CREATE TABLE parent_r (id int, valid_from date, valid_until date);
+SELECT add_era('parent_r'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+  add_unique_key   
+-------------------
+ parent_r_id_valid
+(1 row)
+
+CREATE TABLE child_r (id int, parent_id int);
+SELECT add_foreign_key(
+    fk_table_oid => 'child_r'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_r'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_r_fk_1'
+);
+NOTICE:  No compatible index found for foreign key on table child_r. Creating new index: CREATE INDEX child_r_parent_id_idx ON child_r USING BTREE (parent_id)
+   add_foreign_key   
+---------------------
+ child_parent_r_fk_1
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_r_fk_1';
+  foreign_key_name   |     fk_index_name     
+---------------------+-----------------------
+ child_parent_r_fk_1 | child_r_parent_id_idx
+(1 row)
+
+\d child_r
+                Table "fk_idx.child_r"
+  Column   |  Type   | Collation | Nullable | Default 
+-----------+---------+-----------+----------+---------
+ id        | integer |           |          | 
+ parent_id | integer |           |          | 
+Indexes:
+    "child_r_parent_id_idx" btree (parent_id)
+Check constraints:
+    "child_r_parent_id_check" CHECK (parent_r_id_exists(parent_id))
+
+\echo '-> Dropping FK should also drop the auto-created index'
+-> Dropping FK should also drop the auto-created index
+SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_1');
+NOTICE:  Dropping automatically created index "child_r_parent_id_idx" for foreign key "child_parent_r_fk_1"
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+\d child_r
+                Table "fk_idx.child_r"
+  Column   |  Type   | Collation | Nullable | Default 
+-----------+---------+-----------+----------+---------
+ id        | integer |           |          | 
+ parent_id | integer |           |          | 
+
+DROP TABLE parent_r, child_r CASCADE;
+\echo 'Scenario 2: Disable auto-creation of index'
+Scenario 2: Disable auto-creation of index
+CREATE TABLE parent_r (id int, valid_from date, valid_until date);
+SELECT add_era('parent_r'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+  add_unique_key   
+-------------------
+ parent_r_id_valid
+(1 row)
+
+CREATE TABLE child_r (id int, parent_id int);
+SELECT add_foreign_key(
+    fk_table_oid => 'child_r'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_r'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_r_fk_2', create_index => false
+);
+WARNING:  No index found on table child_r for foreign key columns ({parent_id}). Performance may be poor.
+HINT:  Consider creating this index: CREATE INDEX child_r_parent_id_idx ON child_r USING BTREE (parent_id)
+   add_foreign_key   
+---------------------
+ child_parent_r_fk_2
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_r_fk_2';
+  foreign_key_name   | fk_index_name 
+---------------------+---------------
+ child_parent_r_fk_2 | 
+(1 row)
+
+\d child_r
+                Table "fk_idx.child_r"
+  Column   |  Type   | Collation | Nullable | Default 
+-----------+---------+-----------+----------+---------
+ id        | integer |           |          | 
+ parent_id | integer |           |          | 
+Check constraints:
+    "child_r_parent_id_check" CHECK (parent_r_id_exists(parent_id))
+
+SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_2');
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+DROP TABLE parent_r, child_r CASCADE;
+\echo 'Scenario 3: Manually created index exists'
+Scenario 3: Manually created index exists
+CREATE TABLE parent_r (id int, valid_from date, valid_until date);
+SELECT add_era('parent_r'::regclass);
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+  add_unique_key   
+-------------------
+ parent_r_id_valid
+(1 row)
+
+CREATE TABLE child_r (id int, parent_id int);
+CREATE INDEX manual_child_r_idx ON child_r (parent_id);
+SELECT add_foreign_key(
+    fk_table_oid => 'child_r'::regclass, fk_column_names => ARRAY['parent_id'],
+    pk_table_oid => 'parent_r'::regclass, pk_column_names => ARRAY['id'],
+    foreign_key_name => 'child_parent_r_fk_3'
+);
+   add_foreign_key   
+---------------------
+ child_parent_r_fk_3
+(1 row)
+
+SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name = 'child_parent_r_fk_3';
+  foreign_key_name   | fk_index_name 
+---------------------+---------------
+ child_parent_r_fk_3 | 
+(1 row)
+
+\echo '-> Dropping FK should NOT drop the manually created index'
+-> Dropping FK should NOT drop the manually created index
+SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_3');
+ drop_foreign_key_by_name 
+--------------------------
+ t
+(1 row)
+
+\d child_r
+                Table "fk_idx.child_r"
+  Column   |  Type   | Collation | Nullable | Default 
+-----------+---------+-----------+----------+---------
+ id        | integer |           |          | 
+ parent_id | integer |           |          | 
+Indexes:
+    "manual_child_r_idx" btree (parent_id)
+
+DROP TABLE parent_r, child_r CASCADE;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

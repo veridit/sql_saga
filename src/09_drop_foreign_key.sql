@@ -2,7 +2,8 @@ CREATE FUNCTION sql_saga.drop_foreign_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT NULL,
-    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'
+    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
+    drop_index boolean DEFAULT true
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -52,7 +53,7 @@ BEGIN
         END IF;
     END IF;
 
-    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, key_name_found);
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, key_name_found, drop_index);
 END;
 $function$;
 

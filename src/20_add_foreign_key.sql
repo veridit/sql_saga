@@ -1,3 +1,102 @@
+CREATE OR REPLACE FUNCTION sql_saga._internal_find_or_create_fk_index(
+    p_fk_table_oid regclass,
+    p_fk_column_names name[],
+    p_fk_era_row sql_saga.era,
+    p_type sql_saga.fg_type,
+    p_create_index boolean
+) RETURNS name
+LANGUAGE plpgsql
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    v_fk_schema_name name;
+    v_fk_table_name name;
+    v_index_def text;
+    v_index_name name;
+    v_index_type name;
+    v_existing_index_name name;
+    v_fk_attnums smallint[];
+BEGIN
+    SELECT n.nspname, c.relname INTO v_fk_schema_name, v_fk_table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = p_fk_table_oid;
+
+    SELECT array_agg(a.attnum ORDER BY u.ord) INTO v_fk_attnums
+    FROM unnest(p_fk_column_names) WITH ORDINALITY u(col, ord)
+    JOIN pg_attribute a ON a.attrelid = p_fk_table_oid AND a.attname = u.col;
+
+    IF p_type = 'temporal_to_temporal' THEN
+        -- For temporal FKs, we need a GiST index on the columns and the era range.
+        -- Finding a compatible index is very complex due to expression indexes.
+        -- This check is intentionally basic: it finds a GiST index where the FK columns are a prefix.
+        -- It does not validate the rest of the index (e.g., the range expression), as that is not
+        -- feasible in PL/pgSQL. It is a best-effort check to avoid creating a redundant index.
+        v_index_type := 'GIST';
+        v_index_name := sql_saga.__internal_make_name(
+            ARRAY[v_fk_table_name] || p_fk_column_names || ARRAY[p_fk_era_row.era_name, 'gist', 'idx']
+        );
+        v_index_def := format(
+            'CREATE INDEX %I ON %s USING GIST (%s, %s(%I, %I))',
+            v_index_name,
+            p_fk_table_oid::text,
+            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(p_fk_column_names) AS c),
+            p_fk_era_row.range_type,
+            p_fk_era_row.valid_from_column_name,
+            p_fk_era_row.valid_until_column_name
+        );
+
+        SELECT c.relname INTO v_existing_index_name
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+        JOIN pg_catalog.pg_am am ON am.oid = c.relam
+        WHERE i.indrelid = p_fk_table_oid
+          AND i.indisvalid AND am.amname = 'gist'
+          AND i.indnkeyatts >= array_length(v_fk_attnums, 1)
+          AND (i.indkey::smallint[])[0:array_length(v_fk_attnums, 1)-1] = v_fk_attnums
+        LIMIT 1;
+
+    ELSE -- regular_to_temporal
+        v_index_type := 'BTREE';
+        v_index_name := sql_saga.__internal_make_name(
+            ARRAY[v_fk_table_name] || p_fk_column_names || ARRAY['idx']
+        );
+        v_index_def := format(
+            'CREATE INDEX %I ON %s USING BTREE (%s)',
+            v_index_name,
+            p_fk_table_oid::text,
+            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(p_fk_column_names) AS c)
+        );
+
+        -- Look for an existing btree index where the FK columns are a prefix.
+        SELECT c.relname INTO v_existing_index_name
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+        JOIN pg_catalog.pg_am am ON am.oid = c.relam
+        WHERE i.indrelid = p_fk_table_oid
+          AND i.indisvalid AND am.amname = 'btree'
+          AND i.indnkeyatts >= array_length(v_fk_attnums, 1)
+          AND (i.indkey::smallint[])[0:array_length(v_fk_attnums, 1)-1] = v_fk_attnums
+        LIMIT 1;
+    END IF;
+
+    IF v_existing_index_name IS NOT NULL THEN
+        RAISE DEBUG 'Found existing compatible index "%" for foreign key on table %', v_existing_index_name, p_fk_table_oid::text;
+        RETURN NULL; -- Compatible index exists, do nothing.
+    END IF;
+
+    IF p_create_index THEN
+        RAISE NOTICE 'No compatible index found for foreign key on table %. Creating new index: %', p_fk_table_oid::text, v_index_def;
+        EXECUTE v_index_def;
+        RETURN v_index_name;
+    ELSE
+        RAISE WARNING 'No index found on table % for foreign key columns (%). Performance may be poor.',
+            p_fk_table_oid::text, p_fk_column_names
+        USING HINT = format('Consider creating this index: %s', v_index_def);
+        RETURN NULL;
+    END IF;
+END;
+$function$;
+
 -- Declarative wrapper for creating foreign keys.
 -- This function automatically determines whether to create a temporal or regular FK
 -- and looks up the internal unique key name.
@@ -10,7 +109,8 @@ CREATE FUNCTION sql_saga.add_foreign_key(
         match_type sql_saga.fk_match_types DEFAULT 'SIMPLE',
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
-        foreign_key_name name DEFAULT NULL
+        foreign_key_name name DEFAULT NULL,
+        create_index boolean DEFAULT true
 )
 RETURNS name
 LANGUAGE plpgsql
@@ -81,7 +181,8 @@ BEGIN
             match_type => match_type,
             update_action => update_action,
             delete_action => delete_action,
-            foreign_key_name => foreign_key_name
+            foreign_key_name => foreign_key_name,
+            create_index => create_index
         );
     ELSE
         RETURN sql_saga.add_regular_foreign_key(
@@ -91,7 +192,8 @@ BEGIN
             match_type => match_type,
             update_action => update_action,
             delete_action => delete_action,
-            foreign_key_name => foreign_key_name
+            foreign_key_name => foreign_key_name,
+            create_index => create_index
         );
     END IF;
 END;
@@ -110,7 +212,8 @@ CREATE FUNCTION sql_saga.add_regular_foreign_key(
         fk_check_constraint name DEFAULT NULL,
         fk_helper_function text DEFAULT NULL,
         uk_update_trigger name DEFAULT NULL,
-        uk_delete_trigger name DEFAULT NULL)
+        uk_delete_trigger name DEFAULT NULL,
+        create_index boolean DEFAULT true)
  RETURNS name
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -130,6 +233,7 @@ DECLARE
     unique_columns_with_era_columns text;
     uk_where_clause text;
     helper_signature text;
+    v_fk_index_name name;
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -172,6 +276,14 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
+
+    v_fk_index_name := sql_saga._internal_find_or_create_fk_index(
+        fk_table_oid,
+        fk_column_names,
+        NULL, -- no era row for regular fk
+        'regular_to_temporal',
+        create_index
+    );
 
     /* Check that all the columns match */
     IF EXISTS (
@@ -333,9 +445,9 @@ BEGIN
     END;
 
     INSERT INTO sql_saga.foreign_keys
-        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger)
+        ( foreign_key_name, type,              table_schema,   table_name,    column_names,    fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, fk_helper_function, uk_update_trigger, uk_delete_trigger, fk_index_name)
     VALUES
-        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger);
+        ( foreign_key_name, 'regular_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_check_constraint, helper_signature, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
 
 
     /* Validate the constraint on existing data. */
@@ -390,7 +502,8 @@ CREATE FUNCTION sql_saga.add_temporal_foreign_key(
         fk_insert_trigger name DEFAULT NULL,
         fk_update_trigger name DEFAULT NULL,
         uk_update_trigger name DEFAULT NULL,
-        uk_delete_trigger name DEFAULT NULL)
+        uk_delete_trigger name DEFAULT NULL,
+        create_index boolean DEFAULT true)
  RETURNS name
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -414,6 +527,7 @@ DECLARE
     del_action text DEFAULT '';
     foreign_columns_with_era_columns text;
     unique_columns_with_era_columns text;
+    v_fk_index_name name;
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -490,6 +604,14 @@ BEGIN
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
+
+    v_fk_index_name := sql_saga._internal_find_or_create_fk_index(
+        fk_table_oid,
+        fk_column_names,
+        fk_era_row,
+        'temporal_to_temporal',
+        create_index
+    );
 
     /* Check that all the columns match */
     IF EXISTS (
@@ -679,9 +801,9 @@ BEGIN
         );
 
         INSERT INTO sql_saga.foreign_keys
-            ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
+            ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger, fk_index_name)
         VALUES
-            ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger);
+            ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
 
         /* Validate the constraint on existing data. */
         DECLARE
@@ -768,11 +890,11 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name) IS
+COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
 'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
 
-COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name) IS
+COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name, boolean) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
 
-COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name) IS
+COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS
 'Adds a foreign key constraint. This is a declarative wrapper that automatically determines whether to create a temporal or regular foreign key by introspecting the schema, and looks up the internal unique key name.';
