@@ -94,6 +94,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid
@@ -534,6 +535,7 @@ COMMIT;
 -- COMMIT;
 -- Manual Cleanup
 SELECT sql_saga.drop_foreign_key('rooms', ARRAY['house_id'], 'valid');
+NOTICE:  Dropping automatically created index "rooms_house_id_valid_gist_idx" for foreign key "rooms_house_id_valid"
  drop_foreign_key 
 ------------------
  

@@ -47,6 +47,7 @@ SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -54,95 +55,102 @@ SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::
 
 -- Test overloaded drop_foreign_key for temporal-to-temporal
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q');
+NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key 
 ------------------
  
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 -- Test original drop_foreign_key (with positional and named arguments)
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
 (1 row)
 
 -- by name (positional)
 SELECT sql_saga.drop_foreign_key_by_name('child'::regclass, 'child_parent_id_q');
+NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key_by_name 
 --------------------------
  t
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
 (1 row)
 
 -- by name (named)
 SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child'::regclass, key_name => 'child_parent_id_q');
+NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key_by_name 
 --------------------------
  t
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 -- Test overloaded drop_foreign_key for regular-to-temporal
 CREATE TABLE regular_child(id int, parent_id int);
 SELECT sql_saga.add_regular_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
+NOTICE:  No compatible index found for foreign key on table regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON regular_child USING BTREE (parent_id)
    add_regular_foreign_key    
 ------------------------------
  regular_child_parent_id_fkey
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger |      fk_check_constraint      |        fk_helper_function        |           uk_update_trigger            |           uk_delete_trigger            
-------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------------------+----------------------------------+----------------------------------------+----------------------------------------
- regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   | regular_child_parent_id_check | public.parent_id_exists(integer) | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete
+       foreign_key_name       |        type         | table_schema |  table_name   | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger |      fk_check_constraint      |        fk_helper_function        |           uk_update_trigger            |           uk_delete_trigger            |        fk_index_name        
+------------------------------+---------------------+--------------+---------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+-------------------------------+----------------------------------+----------------------------------------+----------------------------------------+-----------------------------
+ regular_child_parent_id_fkey | regular_to_temporal | public       | regular_child | {parent_id}  |             | {id,parent_id}            | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   | regular_child_parent_id_check | public.parent_id_exists(integer) | regular_child_parent_id_fkey_uk_update | regular_child_parent_id_fkey_uk_delete | regular_child_parent_id_idx
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
+NOTICE:  Dropping automatically created index "regular_child_parent_id_idx" for foreign key "regular_child_parent_id_fkey"
  drop_foreign_key 
 ------------------
  
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 DROP TABLE regular_child;

@@ -110,6 +110,7 @@ SELECT sql_saga.add_temporal_foreign_key(
 SELECT sql_saga.add_temporal_foreign_key(
     'nk_unit_employment'::regclass, ARRAY['establishment_id'], 'valid', 'nk_establishment_establishment_id_valid'
 );
+NOTICE:  No compatible index found for foreign key on table nk_unit_employment. Creating new index: CREATE INDEX nk_unit_employment_establishment_id_valid_gist_idx ON nk_unit_employment USING GIST (establishment_id, daterange(valid_from, valid_until))
          add_temporal_foreign_key          
 -------------------------------------------
  nk_unit_employment_establishment_id_valid

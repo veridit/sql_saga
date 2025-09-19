@@ -8,12 +8,7 @@ CREATE TYPE sql_saga.fk_match_types AS ENUM ('FULL', 'PARTIAL', 'SIMPLE');
 CREATE TYPE sql_saga.fg_type AS ENUM ('temporal_to_temporal', 'regular_to_temporal');
 COMMENT ON TYPE sql_saga.fg_type IS 'Distinguishes between foreign keys from a temporal table to another temporal table, and from a regular (non-temporal) table to a temporal table.';
 
--- A DO block is used to allow this to fail gracefully if the type already exists.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.unique_key_type AS ENUM ('primary', 'natural', 'predicated');
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.unique_key_type AS ENUM ('primary', 'natural', 'predicated');
 COMMENT ON TYPE sql_saga.unique_key_type IS 'Distinguishes between a temporal primary key, a natural key (unique, for FKs), and a predicated key (a unique index with a WHERE clause).';
 
 -- This enum represents Allen's Interval Algebra, a set of thirteen mutually
@@ -24,8 +19,7 @@ COMMENT ON TYPE sql_saga.unique_key_type IS 'Distinguishes between a temporal pr
 -- The relations are defined for two intervals, X and Y, with start and end points
 -- X.start, X.end, Y.start, Y.end. For sql_saga, which uses inclusive-start and
 -- exclusive-end intervals `[)`, the conditions are adapted accordingly.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.allen_interval_relation AS ENUM (
+CREATE TYPE sql_saga.allen_interval_relation AS ENUM (
         -- X [) entirely before Y [)
         -- Condition: X.end < Y.start
         'precedes',
@@ -55,9 +49,6 @@ DO $$ BEGIN
         'contains',      -- Y is during X
         'finished by'    -- Y finishes X
     );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
 
 
 /*
@@ -261,16 +252,12 @@ COMMENT ON TYPE sql_saga.temporal_merge_mode IS
 - INSERT_NEW_ENTITIES: Inserts only new entities.
 - DELETE_FOR_PORTION_OF: Performs a surgical deletion of a time portion from an existing entity.';
 
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_delete_mode AS ENUM (
-        'NONE',
-        'DELETE_MISSING_TIMELINE',
-        'DELETE_MISSING_ENTITIES',
-        'DELETE_MISSING_TIMELINE_AND_ENTITIES'
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_delete_mode AS ENUM (
+    'NONE',
+    'DELETE_MISSING_TIMELINE',
+    'DELETE_MISSING_ENTITIES',
+    'DELETE_MISSING_TIMELINE_AND_ENTITIES'
+);
 
 COMMENT ON TYPE sql_saga.temporal_merge_delete_mode IS
 'Controls deletion behavior for `replace` modes.
@@ -279,17 +266,13 @@ COMMENT ON TYPE sql_saga.temporal_merge_delete_mode IS
 - DELETE_MISSING_ENTITIES: Any entity in the target that is not present in the source is completely deleted.
 - DELETE_MISSING_TIMELINE_AND_ENTITIES: A combination of both timeline and entity deletion.';
 
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_feedback_status AS ENUM (
-        'APPLIED',
-        'SKIPPED_IDENTICAL',
-        'SKIPPED_FILTERED',
-        'SKIPPED_NO_TARGET',
-        'ERROR'
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_feedback_status AS ENUM (
+    'APPLIED',
+    'SKIPPED_IDENTICAL',
+    'SKIPPED_FILTERED',
+    'SKIPPED_NO_TARGET',
+    'ERROR'
+);
 
 COMMENT ON TYPE sql_saga.temporal_merge_feedback_status IS
 'Defines the possible return statuses for a row processed by the `temporal_merge` executor.
@@ -297,19 +280,17 @@ COMMENT ON TYPE sql_saga.temporal_merge_feedback_status IS
 - SKIPPED_IDENTICAL: A benign no-op where the source data was identical to the target data.
 - SKIPPED_FILTERED: A benign no-op where the source row was correctly filtered by the mode''s logic (e.g., an `INSERT_NEW_ENTITIES` for an entity that already exists).
 - SKIPPED_NO_TARGET: An actionable no-op where the operation failed because the target entity was not found. This signals a potential data quality issue.
-- ERROR: A catastrophic failure occurred. The transaction was rolled back, and the `error_message` column will be populated.';
+- ERROR: A catastrophic planner failure occurred, indicating a bug in the merge logic. The `error_message` column will be populated.';
 
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_plan_action AS ENUM (
-        'INSERT',
-        'UPDATE',
-        'DELETE',
-        'SKIP_IDENTICAL',
-        'SKIP_NO_TARGET'
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_plan_action AS ENUM (
+    'INSERT',
+    'UPDATE',
+    'DELETE',
+    'SKIP_IDENTICAL',
+    'SKIP_NO_TARGET',
+    'SKIP_FILTERED',
+    'ERROR'
+);
 
 COMMENT ON TYPE sql_saga.temporal_merge_plan_action IS
 'Represents the internal DML action to be taken by the executor for a given atomical time segment, as determined by the planner.
@@ -321,57 +302,48 @@ that is check on the intermediate MVCC snapshots between the changes in the same
 - UPDATE: An existing historical record will be modified (typically by shortening its period).
 - DELETE: An existing historical record will be deleted.
 - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
-- SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.';
+- SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.
+- SKIP_FILTERED: A source row should be skipped because it was correctly filtered by the mode''s logic (e.g. INSERT_NEW_ENTITIES for an entity that already exists).
+- ERROR: A safeguard action indicating the planner could not generate a valid plan for a row, signaling a bug.';
 
 -- Defines the effect of an UPDATE on a timeline, used for ordering DML.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_update_effect AS ENUM (
-        'GROW',   -- The new period is a superset of the old one.
-        'SHRINK', -- The new period is a subset of the old one.
-        'MOVE',   -- The period shifts without being a pure grow or shrink.
-        'NONE'    -- The period is unchanged (a data-only update).
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_update_effect AS ENUM (
+    'GROW',   -- The new period is a superset of the old one.
+    'NONE',   -- The period is unchanged (a data-only update).
+    'MOVE',   -- The period shifts without being a pure grow or shrink.
+    'SHRINK'  -- The new period is a subset of the old one.
+);
 
 COMMENT ON TYPE sql_saga.temporal_merge_update_effect IS
 'Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations to ensure temporal integrity.
+The planner relies on this specific ENUM order for sorting: timeline-extending operations must execute before timeline-shortening operations.
 - GROW: The new period is a superset of the old one. These are executed first.
-- SHRINK: The new period is a subset of the old one. These are executed after GROWs.
-- MOVE: The period shifts without being a pure grow or shrink. Also executed after GROWs.
-- NONE: The period is unchanged (a data-only update).';
+- NONE: The period is unchanged (a data-only update).
+- MOVE: The period shifts without being a pure grow or shrink.
+- SHRINK: The new period is a subset of the old one. These are executed last.';
 
--- Defines the structure for a single row in a temporal execution plan.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_plan AS (
-        plan_op_seq BIGINT,
-        source_row_ids BIGINT[],
-        operation sql_saga.temporal_merge_plan_action,
-        timeline_update_effect sql_saga.temporal_merge_update_effect,
-        entity_ids JSONB, -- A JSONB object representing the composite key, e.g. {"id": 1} or {"stat_definition_id": 1, "establishment_id": 101}
-        old_valid_from TEXT,
-        old_valid_until TEXT,
-        new_valid_from TEXT,
-        new_valid_until TEXT,
-        data JSONB,
-        relation sql_saga.allen_interval_relation
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_plan AS (
+    plan_op_seq BIGINT,
+    row_ids BIGINT[],
+    operation sql_saga.temporal_merge_plan_action,
+    update_effect sql_saga.temporal_merge_update_effect,
+    entity_ids JSONB,
+    relation sql_saga.allen_interval_relation,
+    old_valid_from TEXT,
+    old_valid_until TEXT,
+    new_valid_from TEXT,
+    new_valid_until TEXT,
+    data JSONB,
+    trace JSONB
+);
 
 -- Defines the structure for a temporal executor feedback result.
-DO $$ BEGIN
-    CREATE TYPE sql_saga.temporal_merge_feedback AS (
-        source_row_id BIGINT,
-        target_entity_ids JSONB,
-        status sql_saga.temporal_merge_feedback_status,
-        error_message TEXT
-    );
-EXCEPTION
-    WHEN duplicate_object THEN null;
-END $$;
+CREATE TYPE sql_saga.temporal_merge_feedback AS (
+    source_row_id BIGINT,
+    target_entity_ids JSONB,
+    status sql_saga.temporal_merge_feedback_status,
+    error_message TEXT
+);
 
 
 CREATE TYPE sql_saga.updatable_view_type AS ENUM ('for_portion_of', 'current');

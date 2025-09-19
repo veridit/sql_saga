@@ -107,7 +107,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    source_row_id_column => 'synthetic_row_id',
+    row_id_column => 'synthetic_row_id',
     identity_correlation_column => 'founding_key',
     update_source_with_identity => true
 );

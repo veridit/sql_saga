@@ -2,129 +2,251 @@
 
 SET ROLE TO sql_saga_unprivileged_user;
 
-CREATE TABLE legal_unit (
-  id INTEGER,
-  valid_from date,
-  valid_until date,
-  name varchar NOT NULL
-);
-
-CREATE TABLE establishment (
-  id INTEGER,
-  valid_from date,
-  valid_until date,
-  legal_unit_id INTEGER NOT NULL,
-  postal_place TEXT NOT NULL
-);
-
 \i sql/include/benchmark_setup.sql
 
--- Record the start of the setup
+-- Enable detailed temporal_merge index logging for this benchmark session.
+--SET sql_saga.temporal_merge.log_index_checks = true;
+
+CREATE TABLE legal_unit (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL, PRIMARY KEY (id, valid_from));
+CREATE TABLE establishment (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL, PRIMARY KEY (id, valid_from));
+CREATE TABLE projects (id serial primary key, name text, legal_unit_id int);
+
+\echo '--- Populating tables ---'
+INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 20000) i;
+-- Establishments only for the first 10,000 legal units
+INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 10000) i;
+INSERT INTO projects (name, legal_unit_id) SELECT 'Project ' || i, i FROM generate_series(1, 10000) i;
+ANALYZE legal_unit;
+ANALYZE establishment;
+ANALYZE projects;
+
+--------------------------------------------------------------------------------
+\echo '--- DML on Plain Tables (No sql_saga constraints) ---'
+--------------------------------------------------------------------------------
+
+-- Parent DML
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (Plain)', 0, false);
+INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(20001, 21000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (Plain)', 0, false);
+UPDATE legal_unit SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (Plain)', 0, false);
+UPDATE legal_unit SET name = 'Updated Company' WHERE id BETWEEN 1001 AND 2000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Plain)', 0, false);
+DELETE FROM legal_unit WHERE id BETWEEN 15001 AND 16000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Plain) end', 1000, true);
+
+-- Child DML
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (Plain)', 0, false);
+INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (Plain)', 0, false);
+UPDATE establishment SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (Plain)', 0, false);
+UPDATE establishment SET postal_place = 'New Place' WHERE id BETWEEN 1001 AND 2000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (Plain)', 0, false);
+DELETE FROM establishment WHERE id BETWEEN 9001 AND 10000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (Plain) end', 1000, true);
+
+-- Regular Table DML
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (Plain)', 0, false);
+INSERT INTO projects (name, legal_unit_id) SELECT 'New Project ' || i, i FROM generate_series(10001, 11000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (Plain)', 0, false);
+UPDATE projects SET name = 'Updated Project' WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (Plain) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (Plain)', 0, false);
+DELETE FROM projects WHERE id BETWEEN 9001 AND 10000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (Plain) end', 1000, true);
+
+
+\echo '--- Resetting tables and enabling sql_saga constraints ---'
+TRUNCATE legal_unit, establishment, projects;
+INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 20000) i;
+INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 10000) i;
+INSERT INTO projects (name, legal_unit_id) SELECT 'Project ' || i, i FROM generate_series(1, 10000) i;
+ANALYZE legal_unit;
+ANALYZE establishment;
+ANALYZE projects;
 
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era(table_oid => 'legal_unit', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_era(table_oid => 'establishment', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit', column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.add_unique_key(table_oid => 'establishment', column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.add_temporal_foreign_key(
-    fk_table_oid => 'establishment',
-    fk_column_names => ARRAY['legal_unit_id'],
-    fk_era_name => 'valid',
-    unique_key_name => 'legal_unit_id_valid'
-);
+SELECT sql_saga.add_era('legal_unit'::regclass);
+SELECT sql_saga.add_era('establishment'::regclass);
+SELECT sql_saga.add_unique_key('legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key('establishment'::regclass, column_names => ARRAY['id']);
+SELECT sql_saga.add_foreign_key('establishment'::regclass, ARRAY['legal_unit_id'], 'legal_unit'::regclass, ARRAY['id'], fk_era_name => 'valid', create_index => false);
+SELECT sql_saga.add_foreign_key('projects', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id']);
 
--- Record after enabling constraints
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints enabled', 0, false);
+--------------------------------------------------------------------------------
+\echo '--- DML on sql_saga Tables (No Performance Index) ---'
+--------------------------------------------------------------------------------
 
--- Count number of different units before, during, and after.
-SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
-UNION ALL
-SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
+-- Parent DML (fires uk_*_triggers)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (No Index)', 0, false);
+INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(20001, 21000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (No Index) end', 1000, true);
 
--- With delayed constraints
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints start', 0, false);
-BEGIN;
-SET CONSTRAINTS ALL DEFERRED;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (No Index)', 0, false);
+UPDATE legal_unit SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (No Index) end', 1000, true);
 
-DO $$
-BEGIN
-  FOR i IN 1..10000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
-    (i, '2015-01-01', 'infinity', 'Company ' || i);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (No Index)', 0, false);
+UPDATE legal_unit SET name = 'Updated Company' WHERE id BETWEEN 1001 AND 2000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (No Index) end', 1000, true);
 
-    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
-    (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
-  END LOOP;
-END; $$;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (No Index)', 0, false);
+DELETE FROM legal_unit WHERE id BETWEEN 15001 AND 16000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (No Index) end', 1000, true);
 
-SET CONSTRAINTS ALL IMMEDIATE;
-END;
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs delayed constraints end', 10000, true);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Check Only, No Index)', 0, false);
+-- Delete a batch of parent rows that have no children; exercises FK check path without violations.
+DELETE FROM legal_unit WHERE id BETWEEN 20001 AND 21000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Check Only, No Index) end', 1000, true);
+
+-- Child DML (fires fk_*_triggers)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (No Index)', 0, false);
+INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (No Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (No Index)', 0, false);
+UPDATE establishment SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (No Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (No Index)', 0, false);
+UPDATE establishment SET postal_place = 'New Place' WHERE id BETWEEN 1001 AND 2000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (No Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (No Index)', 0, false);
+DELETE FROM establishment WHERE id BETWEEN 9001 AND 10000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (No Index) end', 1000, true);
+
+-- Regular Table DML (fires CHECK constraint)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (No Index)', 0, false);
+INSERT INTO projects (name, legal_unit_id) SELECT 'New Project ' || i, i FROM generate_series(10001, 11000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (No Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (No Index)', 0, false);
+UPDATE projects SET legal_unit_id = id + 1 WHERE id BETWEEN 1 AND 1000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (No Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (No Index)', 0, false);
+DELETE FROM projects WHERE id BETWEEN 9001 AND 10000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (No Index) end', 1000, true);
 
 
-SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
-UNION ALL
-SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
+\echo '--- Adding performance index to child table ---'
+CREATE INDEX ON establishment USING GIST (legal_unit_id, daterange(valid_from, valid_until));
 
--- With immediate constraints (the default)
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs start', 0, false);
-BEGIN;
-DO $$
-BEGIN
-  FOR i IN 10001..20000 LOOP
-    INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
-    (i, '2015-01-01', 'infinity', 'Company ' || i);
+--------------------------------------------------------------------------------
+\echo '--- DML on sql_saga Tables (With Performance Index) ---'
+--------------------------------------------------------------------------------
 
-    INSERT INTO establishment (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
-    (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
-  END LOOP;
-END; $$;
-END;
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era INSERTs end', 10000, true);
+-- Parent DML (fires uk_*_triggers, now with index)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (With Index)', 0, false);
+INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(21001, 22000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (With Index) end', 1000, true);
 
-SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
-UNION ALL
-SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (With Index)', 0, false);
+UPDATE legal_unit SET valid_from = '2013-01-01' WHERE id BETWEEN 2001 AND 3000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (With Index) end', 1000, true);
 
--- UPDATE with delayed commit checking
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints start', 0, false);
-BEGIN;
-  SET CONSTRAINTS ALL DEFERRED;
-  UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (With Index)', 0, false);
+UPDATE legal_unit SET name = 'Updated Again Company' WHERE id BETWEEN 3001 AND 4000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Non-Key (With Index) end', 1000, true);
 
-  INSERT INTO legal_unit (id, valid_from, valid_until, name)
-    SELECT id, '2016-01-01', 'infinity', name
-    FROM legal_unit WHERE valid_until = '2016-01-01';
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (With Index)', 0, false);
+DELETE FROM legal_unit WHERE id BETWEEN 16001 AND 17000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (With Index) end', 1000, true);
 
-  SET CONSTRAINTS ALL IMMEDIATE;
-END;
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update deferred constraints end', 10000, true);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Check Only, With Index)', 0, false);
+-- Delete a batch of parent rows that have no children; exercises FK check path without violations.
+DELETE FROM legal_unit WHERE id BETWEEN 21001 AND 22000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent DELETE (Check Only, With Index) end', 1000, true);
 
--- UPDATE with immediate constraints (non-key column)
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key start', 0, false);
-BEGIN;
-  UPDATE legal_unit SET name = 'New ' || name WHERE id > 10000;
-END;
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era Update non-key end', 10000, true);
+-- Child DML (fires fk_*_triggers, should be unaffected by index on parent)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (With Index)', 0, false);
+INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(11001, 12000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (With Index) end', 1000, true);
 
-SELECT 'legal_unit' AS type, COUNT(*) AS count FROM legal_unit
-UNION ALL
-SELECT 'establishment' AS type, COUNT(*) AS count FROM establishment;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (With Index)', 0, false);
+UPDATE establishment SET valid_from = '2013-01-01' WHERE id BETWEEN 2001 AND 3000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (With Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (With Index)', 0, false);
+UPDATE establishment SET postal_place = 'New Place Again' WHERE id BETWEEN 3001 AND 4000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Non-Key (With Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (With Index)', 0, false);
+DELETE FROM establishment WHERE id BETWEEN 8001 AND 9000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child DELETE (With Index) end', 1000, true);
+
+-- Regular Table DML (fires CHECK constraint)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (With Index)', 0, false);
+INSERT INTO projects (name, legal_unit_id) SELECT 'New Project ' || i, i FROM generate_series(11001, 12000) i;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular INSERT (With Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (With Index)', 0, false);
+UPDATE projects SET legal_unit_id = id + 2 WHERE id BETWEEN 1001 AND 2000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular UPDATE (With Index) end', 1000, true);
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (With Index)', 0, false);
+DELETE FROM projects WHERE id BETWEEN 8001 AND 9000;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regular DELETE (With Index) end', 1000, true);
+
+
+--------------------------------------------------------------------------------
+\echo '--- temporal_merge on sql_saga Tables (With Performance Index) ---'
+--------------------------------------------------------------------------------
+-- Prepare recommended indices by temporal_merge
+CREATE INDEX ON legal_unit USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+
+-- Parent table merge
+CREATE TEMP TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
+INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
+CREATE INDEX ON legal_unit_source(id);
+CREATE INDEX ON legal_unit_source USING GIST (daterange(valid_from, valid_until, '[)'));
+ANALYZE legal_unit_source;
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Parent (With Index)', 0, false);
+CALL sql_saga.temporal_merge('legal_unit'::regclass, 'legal_unit_source'::regclass, ARRAY['id']);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Parent (With Index) end', 1000, true);
+
+-- Child table merge
+CREATE TEMP TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
+CREATE INDEX ON establishment_source(id);
+CREATE INDEX ON establishment_source USING GIST (daterange(valid_from, valid_until, '[)'));
+ANALYZE establishment_source;
+
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Child (With Index)', 0, false);
+CALL sql_saga.temporal_merge('establishment'::regclass, 'establishment_source'::regclass, ARRAY['id']);
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Child (With Index) end', 1000, true);
 
 
 -- Teardown sql_saga constraints
-SELECT sql_saga.drop_foreign_key('establishment', ARRAY['legal_unit_id'], 'valid');
-SELECT sql_saga.drop_unique_key('establishment', ARRAY['id'], 'valid');
-SELECT sql_saga.drop_era('establishment', cleanup => true);
-SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
-SELECT sql_saga.drop_era('legal_unit', cleanup => true);
-
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Constraints disabled', 0, false);
+SELECT sql_saga.drop_foreign_key('projects', ARRAY['legal_unit_id']);
+SELECT sql_saga.drop_foreign_key('establishment'::regclass, ARRAY['legal_unit_id'], 'valid');
+SELECT sql_saga.drop_unique_key('establishment'::regclass, ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('establishment'::regclass, cleanup => true);
+SELECT sql_saga.drop_unique_key('legal_unit'::regclass, ARRAY['id'], 'valid');
+SELECT sql_saga.drop_era('legal_unit'::regclass, cleanup => true);
 
 DROP TABLE establishment;
 DROP TABLE legal_unit;
-
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
+DROP TABLE projects;
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.

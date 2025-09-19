@@ -9,7 +9,7 @@ BEGIN;
 \echo '  straddle adjacent historical slices.'
 \echo '----------------------------------------------------------------------------'
 
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA tm_portion_of;
 CREATE TABLE tm_portion_of.target(
     id int,
@@ -171,7 +171,7 @@ CALL sql_saga.temporal_merge(
   identity_columns => ARRAY['id'],
   ephemeral_columns => ARRAY[]::TEXT[],
   mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode,
-  source_row_id_column => 'row_id'
+  row_id_column => 'row_id'
 );
 
 \echo '--- Planner: Actual Plan ---'

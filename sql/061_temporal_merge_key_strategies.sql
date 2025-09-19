@@ -28,7 +28,7 @@ BEGIN;
 --   - Scenario 12: Natural key with NULLs on a simple surrogate key table (known anti-pattern)
 --
 --------------------------------------------------------------------------------
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 
 -- Setup: Create necessary schema and tables for this test
 CREATE SCHEMA IF NOT EXISTS tmtc;
@@ -190,10 +190,10 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -246,10 +246,10 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Original Value"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -302,10 +302,10 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -352,10 +352,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -405,10 +405,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -458,10 +458,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{104}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (104, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -511,10 +511,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{105}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (105, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -564,10 +564,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Orchestrator: Expected Feedback ---'
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
@@ -619,9 +619,6 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_9;
-SET sql_saga.temporal_merge.log_id_seed = 'scen9a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -631,8 +628,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: After back-fill ---'
@@ -643,9 +638,6 @@ TRUNCATE temp_source_9;
 INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_9;
-SET sql_saga.temporal_merge.log_id_seed = 'scen9b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -655,8 +647,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: Final after back-fill ---'
@@ -687,9 +677,6 @@ SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until F
 INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_10;
-SET sql_saga.temporal_merge.log_id_seed = 'scen10a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -699,8 +686,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
 
@@ -709,9 +694,6 @@ TRUNCATE temp_source_10;
 INSERT INTO temp_source_10 VALUES (2, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_10;
-SET sql_saga.temporal_merge.log_id_seed = 'scen10b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -721,8 +703,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
 DROP TABLE temp_source_10;
@@ -753,9 +733,6 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_11 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_11;
-SET sql_saga.temporal_merge.log_id_seed = 'scen11a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -765,8 +742,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: After back-fill ---'
@@ -777,9 +752,6 @@ TRUNCATE temp_source_11;
 INSERT INTO temp_source_11 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_11;
-SET sql_saga.temporal_merge.log_id_seed = 'scen11b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -789,8 +761,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: Final after back-fill ---'
@@ -832,8 +802,6 @@ SAVEPOINT expect_error;
 -- the main transaction. This allows us to see the raw error message and then
 -- continue with subsequent tests.
 \echo '--- Plan and Feedback (from failing call) ---'
-SET sql_saga.temporal_merge.log_id_seed = 'scen12a';
-SET sql_saga.temporal_merge.log_plan = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
     source_table => 'temp_source_12',
@@ -844,7 +812,6 @@ CALL sql_saga.temporal_merge(
     update_source_with_identity => true
 );
 ROLLBACK TO SAVEPOINT expect_error;
-SET sql_saga.temporal_merge.log_plan = false;
 
 \echo '--- Target: After merge (should be unchanged) ---'
 SELECT id, stat_definition_id, establishment_id, value, valid_from, valid_until FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
@@ -852,7 +819,6 @@ SELECT id, stat_definition_id, establishment_id, value, valid_from, valid_until 
 TABLE temp_source_12;
 DROP TABLE temp_source_12;
 RELEASE SAVEPOINT scenario_12;
-RESET client_min_messages;
 
 -- Final Cleanup
 DROP PROCEDURE tmtc.reset_target();
@@ -860,7 +826,5 @@ DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_g
 DROP TABLE tmtc.legal_unit, tmtc.establishment;
 DROP TABLE tmtc.stat_definition;
 DROP SCHEMA tmtc CASCADE;
-
-SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

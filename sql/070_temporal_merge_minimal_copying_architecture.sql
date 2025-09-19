@@ -255,14 +255,8 @@ BEGIN
         feedback_error_key => 'legal_unit'
     );
 
-    RAISE NOTICE '--- Plan from temporal_merge (legal_unit) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
-    RAISE NOTICE '--- Feedback from temporal_merge (legal_unit) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
+    EXECUTE format('CREATE TEMP TABLE plan_lu_batch_%s AS SELECT * FROM pg_temp.temporal_merge_plan', p_batch_id);
+    EXECUTE format('CREATE TEMP TABLE feedback_lu_batch_%s AS SELECT * FROM pg_temp.temporal_merge_feedback', p_batch_id);
 
     -- Intra-batch back-propagation: Fill the generated legal_unit_id into all
     -- other rows in this batch that belong to the same conceptual entity. This
@@ -340,14 +334,8 @@ BEGIN
         feedback_error_key => 'physical_location'
     );
 
-    RAISE NOTICE '--- Plan from temporal_merge (physical_location) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
-    RAISE NOTICE '--- Feedback from temporal_merge (physical_location) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
+    EXECUTE format('CREATE TEMP TABLE plan_loc_phys_batch_%s AS SELECT * FROM pg_temp.temporal_merge_plan', p_batch_id);
+    EXECUTE format('CREATE TEMP TABLE feedback_loc_phys_batch_%s AS SELECT * FROM pg_temp.temporal_merge_feedback', p_batch_id);
 
     -- Intra-batch back-propagation for physical_location_id.
     UPDATE etl.data_table dt
@@ -414,14 +402,8 @@ BEGIN
         feedback_error_key => 'postal_location'
     );
 
-    RAISE NOTICE '--- Plan from temporal_merge (postal_location) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
-    RAISE NOTICE '--- Feedback from temporal_merge (postal_location) ---';
-    FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-        RAISE NOTICE '%', to_jsonb(v_rec);
-    END LOOP;
+    EXECUTE format('CREATE TEMP TABLE plan_loc_post_batch_%s AS SELECT * FROM pg_temp.temporal_merge_plan', p_batch_id);
+    EXECUTE format('CREATE TEMP TABLE feedback_loc_post_batch_%s AS SELECT * FROM pg_temp.temporal_merge_feedback', p_batch_id);
 
     -- Intra-batch back-propagation for postal_location_id.
     UPDATE etl.data_table dt
@@ -505,14 +487,8 @@ BEGIN
             feedback_error_key => v_stat_def.code
         );
 
-        RAISE NOTICE '--- Plan from temporal_merge (stat: %) ---', v_stat_def.code;
-        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
-            RAISE NOTICE '%', to_jsonb(v_rec);
-        END LOOP;
-        RAISE NOTICE '--- Feedback from temporal_merge (stat: %) ---', v_stat_def.code;
-        FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-            RAISE NOTICE '%', to_jsonb(v_rec);
-        END LOOP;
+        EXECUTE format('CREATE TEMP TABLE plan_stat_%s_batch_%s AS SELECT * FROM pg_temp.temporal_merge_plan', v_stat_def.code, p_batch_id);
+        EXECUTE format('CREATE TEMP TABLE feedback_stat_%s_batch_%s AS SELECT * FROM pg_temp.temporal_merge_feedback', v_stat_def.code, p_batch_id);
 
         -- Intra-batch back-propagation for the current statistic's ID.
         EXECUTE format(
@@ -665,14 +641,8 @@ BEGIN
                 feedback_error_key => 'activity'
             );
 
-            RAISE NOTICE '--- Plan from temporal_merge (activity: %) ---', v_activity_type.code;
-            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_plan ORDER BY source_row_ids LOOP
-                RAISE NOTICE '%', to_jsonb(v_rec);
-            END LOOP;
-            RAISE NOTICE '--- Feedback from temporal_merge (activity: %) ---', v_activity_type.code;
-            FOR v_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-                RAISE NOTICE '%', to_jsonb(v_rec);
-            END LOOP;
+            EXECUTE format('CREATE TEMP TABLE plan_activity_%s_batch_%s AS SELECT * FROM pg_temp.temporal_merge_plan', v_activity_type.code, p_batch_id);
+            EXECUTE format('CREATE TEMP TABLE feedback_activity_%s_batch_%s AS SELECT * FROM pg_temp.temporal_merge_feedback', v_activity_type.code, p_batch_id);
         END IF;
     END LOOP;
 END;
@@ -723,6 +693,91 @@ BEGIN
     END LOOP;
 END;
 $do$;
+
+\echo '--- ETL Plans and Feedback ---'
+
+\echo '--- Batch 1 ---'
+\echo '--- legal_unit ---'
+TABLE plan_lu_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_lu_batch_1 ORDER BY source_row_id;
+\echo '--- physical_location ---'
+TABLE plan_loc_phys_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_loc_phys_batch_1 ORDER BY source_row_id;
+\echo '--- postal_location ---'
+TABLE plan_loc_post_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_loc_post_batch_1 ORDER BY source_row_id;
+\echo '--- stat_employees ---'
+TABLE plan_stat_employees_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_stat_employees_batch_1 ORDER BY source_row_id;
+\echo '--- stat_turnover ---'
+TABLE plan_stat_turnover_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_stat_turnover_batch_1 ORDER BY source_row_id;
+\echo '--- activity_manufacturing ---'
+TABLE plan_activity_manufacturing_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_activity_manufacturing_batch_1 ORDER BY source_row_id;
+\echo '--- activity_retail ---'
+TABLE plan_activity_retail_batch_1 ORDER BY plan_op_seq;
+TABLE feedback_activity_retail_batch_1 ORDER BY source_row_id;
+
+\echo '--- Batch 2 ---'
+\echo '--- legal_unit ---'
+TABLE plan_lu_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_lu_batch_2 ORDER BY source_row_id;
+\echo '--- physical_location ---'
+TABLE plan_loc_phys_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_loc_phys_batch_2 ORDER BY source_row_id;
+\echo '--- postal_location ---'
+TABLE plan_loc_post_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_loc_post_batch_2 ORDER BY source_row_id;
+\echo '--- stat_employees ---'
+TABLE plan_stat_employees_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_stat_employees_batch_2 ORDER BY source_row_id;
+\echo '--- stat_turnover ---'
+TABLE plan_stat_turnover_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_stat_turnover_batch_2 ORDER BY source_row_id;
+\echo '--- activity_retail ---'
+TABLE plan_activity_retail_batch_2 ORDER BY plan_op_seq;
+TABLE feedback_activity_retail_batch_2 ORDER BY source_row_id;
+
+\echo '--- Batch 3 ---'
+\echo '--- legal_unit ---'
+TABLE plan_lu_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_lu_batch_3 ORDER BY source_row_id;
+\echo '--- physical_location ---'
+TABLE plan_loc_phys_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_loc_phys_batch_3 ORDER BY source_row_id;
+\echo '--- postal_location ---'
+TABLE plan_loc_post_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_loc_post_batch_3 ORDER BY source_row_id;
+\echo '--- stat_employees ---'
+TABLE plan_stat_employees_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_stat_employees_batch_3 ORDER BY source_row_id;
+\echo '--- stat_turnover ---'
+TABLE plan_stat_turnover_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_stat_turnover_batch_3 ORDER BY source_row_id;
+\echo '--- activity_retail ---'
+TABLE plan_activity_retail_batch_3 ORDER BY plan_op_seq;
+TABLE feedback_activity_retail_batch_3 ORDER BY source_row_id;
+
+\echo '--- Batch 4 ---'
+\echo '--- legal_unit ---'
+TABLE plan_lu_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_lu_batch_4 ORDER BY source_row_id;
+\echo '--- physical_location ---'
+TABLE plan_loc_phys_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_loc_phys_batch_4 ORDER BY source_row_id;
+\echo '--- postal_location ---'
+TABLE plan_loc_post_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_loc_post_batch_4 ORDER BY source_row_id;
+\echo '--- stat_employees ---'
+TABLE plan_stat_employees_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_stat_employees_batch_4 ORDER BY source_row_id;
+\echo '--- stat_turnover ---'
+TABLE plan_stat_turnover_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_stat_turnover_batch_4 ORDER BY source_row_id;
+\echo '--- activity_retail ---'
+TABLE plan_activity_retail_batch_4 ORDER BY plan_op_seq;
+TABLE feedback_activity_retail_batch_4 ORDER BY source_row_id;
 
 \echo '--- ETL Data Table: Final State (all generated IDs are populated) ---'
 TABLE etl.data_table ORDER BY identity_correlation, row_id;

@@ -50,12 +50,32 @@ TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 
 
--- Test simple UPDATE (Historical correction, should be disallowed)
-SAVEPOINT simple_update_should_fail;
-UPDATE products__for_portion_of_valid SET price = 1250 WHERE id = 1 AND valid_from = '2023-01-01';
-ROLLBACK TO simple_update_should_fail;
+-- Test simple UPDATE (no temporal bounds in SET clause)
+-- This is now allowed as a "bulk historical correction".
+-- It will update the price on ALL historical records for entity 1.
+SAVEPOINT simple_update_should_succeed;
+UPDATE products__for_portion_of_valid SET price = 1250 WHERE id = 1;
+-- Verify both rows for product 1 are updated.
+TABLE products ORDER BY id, valid_from;
+ROLLBACK TO simple_update_should_succeed;
 
--- Price should be unchanged.
+-- The table should be unchanged.
+TABLE products ORDER BY id, valid_from;
+
+-- Test exact match UPDATE (data correction on a specific historical slice)
+-- This is now allowed.
+SAVEPOINT exact_match_update_should_succeed;
+UPDATE products__for_portion_of_valid
+SET
+    price = 1250,
+    valid_from = '2023-01-01',
+    valid_until = '2024-01-01'
+WHERE id = 1;
+-- Verify price is updated on just that one row.
+TABLE products ORDER BY id, valid_from;
+ROLLBACK TO exact_match_update_should_succeed;
+
+-- Verify state is restored
 TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 
@@ -91,6 +111,7 @@ SET
     valid_until = '2024-04-01'
 WHERE id = 1;
 
+-- This should now result in a single coalesced record for the 1180 price.
 TABLE products ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
 

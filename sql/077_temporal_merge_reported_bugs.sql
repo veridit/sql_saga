@@ -194,6 +194,8 @@ TRUNCATE source_data_2;
 INSERT INTO source_data_2 VALUES (2, 1, 1, 100, 5, '2023-04-01', '2023-07-01');
 \echo '--- Source for second import ---'
 TABLE source_data_2;
+\echo '--- Target for second import ---'
+TABLE tmrb.my_stat_for_unit_good_pk;
 
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_good_pk',
@@ -204,7 +206,7 @@ CALL sql_saga.temporal_merge(
 );
 
 \echo '--- Planner output for Case 2b ---'
-SELECT plan_op_seq, source_row_ids, operation, timeline_update_effect, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+SELECT plan_op_seq, row_ids, operation, update_effect, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 SELECT * FROM tmrb.my_stat_for_unit_good_pk ORDER BY id, valid_from;

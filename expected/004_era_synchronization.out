@@ -49,7 +49,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_colum
 -------------+---------+-----------+----------+---------
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
- valid_to    | date    |           | not null | 
+ valid_to    | date    |           |          | 
  valid_until | date    |           | not null | 
 Check constraints:
     "sync_test_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -118,7 +118,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_c
  id         | integer |           |          | 
  start_date | date    |           | not null | 
  until_date | date    |           | not null | 
- to_date    | date    |           | not null | 
+ to_date    | date    |           |          | 
 Check constraints:
     "sync_test_custom_name_valid_check" CHECK (start_date < until_date AND start_date > '-infinity'::date)
 Triggers:
@@ -150,7 +150,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_col
  id          | integer |           |          | 
  valid_from  | date    |           | not null | 
  valid_until | date    |           | not null | 
- valid_to    | date    |           | not null | generated always as ((valid_until - '@ 1 day'::interval)) stored
+ valid_to    | date    |           |          | generated always as ((valid_until - '@ 1 day'::interval)) stored
 Check constraints:
     "sync_test_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -194,6 +194,103 @@ SELECT id, valid_from, valid_until, valid_to FROM sync_test_wrong_type;
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_5;
+\echo '--- 6. Test NOT NULL on synchronized columns ---'
+--- 6. Test NOT NULL on synchronized columns ---
+SAVEPOINT test_6_top;
+SAVEPOINT test_6a;
+\echo '--- 6a. Trigger populates NOT NULL column when other bound is provided ---'
+--- 6a. Trigger populates NOT NULL column when other bound is provided ---
+-- valid_to is NOT NULL, but the trigger should populate it before the constraint is checked.
+CREATE TABLE sync_test_not_null (id int, valid_from date, valid_to date NOT NULL, valid_until date);
+SELECT sql_saga.add_era('sync_test_not_null', synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "sync_test_not_null_synchronize_temporal_columns_trigger" on table sync_test_not_null to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+-- Verify schema. Note that valid_from and valid_until are NOT NULL because
+-- add_era adds the constraint, and valid_to is NOT NULL because we declared it.
+\d sync_test_not_null
+           Table "public.sync_test_not_null"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_to    | date    |           | not null | 
+ valid_until | date    |           | not null | 
+Check constraints:
+    "sync_test_not_null_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    sync_test_not_null_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_not_null FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
+
+-- This insert omits valid_to, but provides valid_until. The trigger will derive
+-- valid_to, and the INSERT should succeed.
+INSERT INTO sync_test_not_null (id, valid_from, valid_until) VALUES (1, '2024-01-01', '2025-01-01');
+SELECT id, valid_from, valid_until, valid_to FROM sync_test_not_null;
+ id | valid_from | valid_until |  valid_to  
+----+------------+-------------+------------
+  1 | 2024-01-01 | 2025-01-01  | 2024-12-31
+(1 row)
+
+RELEASE SAVEPOINT test_6a;
+SAVEPOINT test_6b;
+\echo '--- 6b. INSERT fails when no temporal bounds are provided and defaults are off ---'
+--- 6b. INSERT fails when no temporal bounds are provided and defaults are off ---
+CREATE TABLE sync_test_no_defaults (id int, valid_from date, valid_to date NOT NULL, valid_until date);
+-- Note: add_defaults := false
+-- This prevents the trigger from defaulting valid_until to 'infinity'.
+SELECT sql_saga.add_era('sync_test_no_defaults', synchronize_valid_to_column := 'valid_to', add_defaults := false);
+NOTICE:  sql_saga: Created trigger "sync_test_no_defaults_synchronize_temporal_columns_trigger" on table sync_test_no_defaults to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+-- This should fail with a NOT NULL violation because no upper bound was
+-- provided and defaults are disabled. The trigger has no source to derive
+-- the values from, so they remain NULL, violating a NOT NULL constraint
+-- (either on valid_until or the synchronized valid_to).
+INSERT INTO sync_test_no_defaults (id, valid_from) VALUES (1, '2024-01-01');
+ERROR:  null value in column "valid_to" of relation "sync_test_no_defaults" violates not-null constraint
+DETAIL:  Failing row contains (1, 2024-01-01, null, null).
+ROLLBACK TO SAVEPOINT test_6b;
+SAVEPOINT test_6c;
+\echo '--- 6c. INSERT succeeds with defaults enabled when only lower bound is provided ---'
+--- 6c. INSERT succeeds with defaults enabled when only lower bound is provided ---
+CREATE TABLE sync_test_nullable_with_defaults (id int, valid_from date NOT NULL, valid_to date, valid_until date);
+-- Note: add_defaults := true (default)
+SELECT sql_saga.add_era('sync_test_nullable_with_defaults', synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "sync_test_nullable_with_defaults_synchronize_temporal_columns_t" on table sync_test_nullable_with_defaults to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+\d sync_test_nullable_with_defaults
+    Table "public.sync_test_nullable_with_defaults"
+   Column    |  Type   | Collation | Nullable | Default 
+-------------+---------+-----------+----------+---------
+ id          | integer |           |          | 
+ valid_from  | date    |           | not null | 
+ valid_to    | date    |           |          | 
+ valid_until | date    |           | not null | 
+Check constraints:
+    "sync_test_nullable_with_defaults_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+Triggers:
+    sync_test_nullable_with_defaults_synchronize_temporal_columns_t BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON sync_test_nullable_with_defaults FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
+
+-- This should succeed. The trigger will see that valid_until is NULL, apply the
+-- 'infinity' default, and then derive valid_to from that.
+INSERT INTO sync_test_nullable_with_defaults (id, valid_from) VALUES (1, '2024-01-01');
+SELECT id, valid_from, valid_until, valid_to FROM sync_test_nullable_with_defaults;
+ id | valid_from | valid_until | valid_to 
+----+------------+-------------+----------
+  1 | 2024-01-01 | infinity    | infinity
+(1 row)
+
+RELEASE SAVEPOINT test_6c;
+ROLLBACK TO SAVEPOINT test_6_top;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

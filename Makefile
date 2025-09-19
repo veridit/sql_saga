@@ -94,13 +94,15 @@ diff-fail-all diff-fail-first:
 			VIM_CMD="vim -d -o"; \
 		fi; \
 		for test in $$FAILED_TESTS; do \
-			echo "Next test: $$test"; \
-			echo "Press C to continue, s to skip, or b to break (default: C)"; \
-			read -n 1 -s input < /dev/tty; \
-			if [ "$$input" = "b" ]; then \
-				break; \
-			elif [ "$$input" = "s" ]; then \
-				continue; \
+			if [ "$@" = "diff-fail-all" ]; then \
+				echo "Next test: $$test"; \
+				echo "Press C to continue, s to skip, or b to break (default: C)"; \
+				read -n 1 -s input < /dev/tty; \
+				if [ "$$input" = "b" ]; then \
+					break; \
+				elif [ "$$input" = "s" ]; then \
+					continue; \
+				fi; \
 			fi; \
 			echo "Running $$VIM_CMD for test: $$test"; \
 			$$VIM_CMD "expected/$$test.out" "results/$$test.out" < /dev/tty; \

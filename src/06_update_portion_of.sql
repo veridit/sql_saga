@@ -1,55 +1,26 @@
 CREATE FUNCTION sql_saga.for_portion_of_trigger()
  RETURNS trigger
  LANGUAGE plpgsql
-AS
-$function$
+AS $function$
 #variable_conflict use_variable
 DECLARE
     info record;
-    identifier_columns name[];
-    where_clause text;
-    set_clause text;
-
-    -- For UPDATE logic
     jnew jsonb;
-    fromval jsonb;
-    toval jsonb;
-    jold jsonb;
-    bstartval jsonb;
-    bendval jsonb;
-    pre_row jsonb;
-    new_row jsonb;
-    post_row jsonb;
-    pre_assigned boolean;
-    post_assigned boolean;
-    test boolean;
-    generated_columns_sql text;
-    generated_columns text[];
-
-    SERVER_VERSION CONSTANT integer := current_setting('server_version_num')::integer;
-    TEST_SQL CONSTANT text := 'VALUES (CAST(%2$L AS %1$s) < CAST(%3$L AS %1$s) AND CAST(%3$L AS %1$s) < CAST(%4$L AS %1$s))';
-    GENERATED_COLUMNS_SQL_PRE_10 CONSTANT text := 'SELECT array_agg(a.attname) FROM pg_catalog.pg_attribute AS a LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') OR EXISTS (SELECT 1 FROM sql_saga.era AS _p JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
-    GENERATED_COLUMNS_SQL_PRE_12 CONSTANT text := 'SELECT array_agg(a.attname) FROM pg_catalog.pg_attribute AS a LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') OR a.attidentity <> '''' OR EXISTS (SELECT 1 FROM sql_saga.era AS _p JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
-    GENERATED_COLUMNS_SQL_CURRENT CONSTANT text := 'SELECT array_agg(a.attname) FROM pg_catalog.pg_attribute AS a LEFT JOIN pg_catalog.pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum WHERE a.attrelid = $1 AND a.attnum > 0 AND NOT a.attisdropped AND (pg_catalog.pg_get_serial_sequence(a.attrelid::regclass::text, a.attname) IS NOT NULL OR (a.atthasdef AND pg_catalog.pg_get_expr(ad.adbin, ad.adrelid) LIKE ''nextval(%)'') OR a.attidentity <> '''' OR a.attgenerated <> '''' OR EXISTS (SELECT 1 FROM sql_saga.era AS _p JOIN pg_catalog.pg_class _c ON _c.relname = _p.table_name JOIN pg_catalog.pg_namespace _n ON _n.oid = _c.relnamespace AND _n.nspname = _p.table_schema WHERE _c.oid = a.attrelid AND _p.era_name = ''system_time'' AND a.attname IN (_p.valid_from_column_name, _p.valid_until_column_name)))';
-
+    identifier_columns text[];
+    source_table_name text;
 BEGIN
-    -- This view only supports UPDATE operations to apply changes to a specific time slice.
-    -- For INSERTs, DELETEs, or simple historical corrections, use the base table directly.
+    -- This view only supports UPDATE operations
     IF TG_OP <> 'UPDATE' THEN
         RAISE EXCEPTION 'sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.';
     END IF;
 
-    -- Identifier columns are passed as trigger arguments for performance.
-    identifier_columns := TG_ARGV;
-
     -- Get metadata about the view's underlying table.
-    SELECT v.table_schema, v.table_name, v.era_name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column,
-           format_type(a.atttypid, a.atttypmod) AS datatype, c.oid AS table_oid
+    SELECT v.table_schema, v.table_name, v.era_name,
+           e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column,
+           e.range_subtype_category
     INTO info
     FROM sql_saga.updatable_view AS v
     JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
-    JOIN pg_catalog.pg_class AS c ON (c.relnamespace, c.relname) = (to_regnamespace(v.table_schema), v.table_name)
-    JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (c.oid, e.valid_from_column_name)
     WHERE v.view_schema = TG_TABLE_SCHEMA AND v.view_name = TG_TABLE_NAME
       AND v.view_type = 'for_portion_of';
 
@@ -57,125 +28,88 @@ BEGIN
          RAISE EXCEPTION 'sql_saga: could not find metadata for view %.%', quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
     END IF;
 
-    IF (TG_OP = 'UPDATE') THEN
-        jnew := to_jsonb(NEW);
-        jold := to_jsonb(OLD);
-        -- Enforce that this is a "time slice" update by requiring the temporal
-        -- bounds to be provided in the SET clause.
-        IF (jnew->info.valid_from_column_name, jnew->info.valid_until_column_name) IS NOT DISTINCT FROM (jold->info.valid_from_column_name, jold->info.valid_until_column_name) THEN
-            RAISE EXCEPTION 'sql_saga: To update a portion of the timeline, you must provide new values for "%" and "%" in the SET clause.', info.valid_from_column_name, info.valid_until_column_name
-                USING HINT = 'Simple historical corrections should be performed on the base table directly.';
-        END IF;
+    jnew := to_jsonb(NEW);
 
-        fromval := jnew->info.valid_from_column_name;
-        toval := jnew->info.valid_until_column_name;
-        bstartval := jold->info.valid_from_column_name;
-        bendval := jold->info.valid_until_column_name;
+    -- The conceptual entity identifier should not include the temporal columns.
+    -- We filter them out here to correct for cases where a PRIMARY KEY that
+    -- includes a temporal column was introspected by add_for_portion_of_view.
+    identifier_columns := array_remove(array_remove(TG_ARGV::text[], info.valid_from_column_name), info.valid_until_column_name);
 
-        EXECUTE format('SELECT NOT (%L::%s >= %L::%s OR %L::%s >= %L::%s)', fromval /* %L */, info.datatype /* %s */, bendval /* %L */, info.datatype /* %s */, bstartval /* %L */, info.datatype /* %s */, toval /* %L */, info.datatype /* %s */) INTO test;
-        IF NOT test THEN RETURN NULL; END IF;
+    -- Create a temporary table to hold the single source row. The table name
+    -- is based on the view's OID to be unique per view. It is created only if it
+    -- doesn't exist for the session to avoid noisy NOTICEs from CREATE IF NOT EXISTS,
+    -- and is truncated before use to ensure it's clean for each row trigger.
+    source_table_name := format('__temp_for_portion_of_%s', TG_RELID);
 
-        EXECUTE format('SELECT %L::%s < %L::%s AND %L::%s < %L::%s', bstartval /* %L */, info.datatype /* %s */, toval /* %L */, info.datatype /* %s */, fromval /* %L */, info.datatype /* %s */, bendval /* %L */, info.datatype /* %s */) INTO test;
-        IF NOT test THEN RETURN NULL; END IF;
+    IF to_regclass('pg_temp.' || quote_ident(source_table_name)) IS NULL THEN
+        DECLARE
+            v_cols_def text;
+        BEGIN
+            -- Build column definitions from the base table, but strip any GENERATED
+            -- or IDENTITY properties. Using LIKE ... INCLUDING ALL would copy them,
+            -- which would cause the subsequent INSERT of the NEW record to fail.
+            -- This approach ensures the temp table has plain columns of the correct types.
+            SELECT string_agg(
+                format('%I %s', pa.attname, format_type(pa.atttypid, pa.atttypmod)),
+                ', '
+            )
+            INTO v_cols_def
+            FROM pg_attribute pa
+            WHERE pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
+              AND pa.attnum > 0 AND NOT pa.attisdropped;
 
-        pre_row := jold;
-        new_row := jnew;
-        post_row := jold;
-
-        /* Reset the period columns in the new_row to match the old ones, as the new period is just a parameter */
-        new_row := jsonb_set(new_row, ARRAY[info.valid_from_column_name], bstartval);
-        new_row := jsonb_set(new_row, ARRAY[info.valid_until_column_name], bendval);
-
-        IF new_row = jold THEN RETURN NULL; END IF;
-
-        pre_assigned := false;
-        EXECUTE format(TEST_SQL, info.datatype /* %1$s */, bstartval /* %2$L */, fromval /* %3$L */, bendval /* %4$L */) INTO test;
-        IF test THEN
-            pre_assigned := true;
-            pre_row := jsonb_set(pre_row, ARRAY[info.valid_until_column_name], fromval);
-            new_row := jsonb_set(new_row, ARRAY[info.valid_from_column_name], fromval);
-        END IF;
-
-        post_assigned := false;
-        EXECUTE format(TEST_SQL, info.datatype /* %1$s */, bstartval /* %2$L */, toval /* %3$L */, bendval /* %4$L */) INTO test;
-        IF test THEN
-            post_assigned := true;
-            new_row := jsonb_set(new_row, ARRAY[info.valid_until_column_name], toval::jsonb);
-            post_row := jsonb_set(post_row, ARRAY[info.valid_from_column_name], toval::jsonb);
-        END IF;
-
-        IF pre_assigned OR post_assigned THEN
-            SET CONSTRAINTS ALL DEFERRED;
-            -- This is a transaction-scoped cache for generated column names.
-            -- It can be dropped in tests to verify cache-building logic.
-            IF to_regclass('__sql_saga_generated_columns_cache') IS NULL THEN
-                CREATE TEMP TABLE __sql_saga_generated_columns_cache (table_oid oid PRIMARY KEY, column_names name[]) ON COMMIT DROP;
-            END IF;
-            SELECT column_names INTO generated_columns FROM __sql_saga_generated_columns_cache WHERE table_oid = info.table_oid;
-            IF NOT FOUND THEN
-                IF SERVER_VERSION < 100000 THEN generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_10;
-                ELSIF SERVER_VERSION < 120000 THEN generated_columns_sql := GENERATED_COLUMNS_SQL_PRE_12;
-                ELSE generated_columns_sql := GENERATED_COLUMNS_SQL_CURRENT;
-                END IF;
-                EXECUTE generated_columns_sql INTO generated_columns USING info.table_oid;
-                INSERT INTO __sql_saga_generated_columns_cache (table_oid, column_names) VALUES (info.table_oid, generated_columns);
-            END IF;
-
-            IF info.synchronize_valid_to_column IS NOT NULL THEN
-                generated_columns := COALESCE(generated_columns, '{}'::name[]) || info.synchronize_valid_to_column;
-            END IF;
-            IF info.synchronize_range_column IS NOT NULL THEN
-                generated_columns := COALESCE(generated_columns, '{}'::name[]) || info.synchronize_range_column;
-            END IF;
-
-            IF generated_columns IS NOT NULL THEN
-                IF SERVER_VERSION < 100000 THEN
-                    SELECT jsonb_object_agg(e.key, e.value) INTO pre_row FROM jsonb_each(pre_row) AS e (key, value) WHERE e.key <> ALL (generated_columns);
-                    SELECT jsonb_object_agg(e.key, e.value) INTO post_row FROM jsonb_each(post_row) AS e (key, value) WHERE e.key <> ALL (generated_columns);
-                ELSE
-                    pre_row := pre_row - generated_columns;
-                    post_row := post_row - generated_columns;
-                END IF;
-            END IF;
-        END IF;
-
-        IF pre_assigned THEN
-            EXECUTE format('INSERT INTO %I.%I (%s) VALUES (%s)',
-                info.table_schema, /* %I */
-                info.table_name, /* %I */
-                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)), /* %s */
-                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(pre_row)) /* %s */
-            );
-        END IF;
-
-        EXECUTE format('UPDATE %I.%I SET %s WHERE %s AND %I = %s AND %I = %s',
-                       info.table_schema, /* %I */
-                       info.table_name, /* %I */
-                       (SELECT string_agg(format('%I = %L', j.key, j.value), ', ') FROM (SELECT key, value FROM jsonb_each_text(new_row) EXCEPT ALL SELECT key, value FROM jsonb_each_text(jold)) AS j), /* %s */
-                       (SELECT string_agg(format('%I = %L', j.key, j.value), ' AND ') FROM jsonb_each_text(jold) j WHERE j.key = ANY(identifier_columns)), /* %s */
-                       info.valid_from_column_name, /* %I */
-                       quote_literal(bstartval::text), /* %s */
-                       info.valid_until_column_name, /* %I */
-                       quote_literal(bendval::text) /* %s */
-        );
-
-        IF post_assigned THEN
-            EXECUTE format('INSERT INTO %I.%I (%s) VALUES (%s)',
-                info.table_schema, /* %I */
-                info.table_name, /* %I */
-                (SELECT string_agg(quote_ident(key), ', ' ORDER BY key) FROM jsonb_each_text(post_row)), /* %s */
-                (SELECT string_agg(quote_nullable(value), ', ' ORDER BY key) FROM jsonb_each_text(post_row)) /* %s */
-            );
-        END IF;
-
-        IF pre_assigned OR post_assigned THEN
-            SET CONSTRAINTS ALL IMMEDIATE;
-        END IF;
-
-        RETURN NEW;
+            EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s) ON COMMIT DROP',
+                source_table_name, v_cols_def);
+        END;
     END IF;
 
-    -- This should not be reachable due to the check at the top of the function.
-    RETURN NULL;
+    EXECUTE format('DELETE FROM %I', source_table_name);
+
+    -- Insert the NEW record, which contains the entity identifier, the data payload, and the time portion parameters.
+    -- Since this trigger operates row-by-row, a static row_id of 1 is sufficient.
+    -- If the user specified valid_to instead of valid_until, we must derive valid_until
+    -- before inserting the record into our temporary source table.
+    IF (jnew->info.valid_until_column_name IS NULL OR jnew->info.valid_until_column_name = 'null'::jsonb) AND jnew->info.synchronize_valid_to_column IS NOT NULL AND jnew->info.synchronize_valid_to_column <> 'null'::jsonb THEN
+        DECLARE
+            v_new_until jsonb;
+            v_rec record;
+        BEGIN
+            SELECT
+                CASE info.range_subtype_category
+                    WHEN 'N' THEN -- Numeric types (integer, bigint, numeric)
+                        to_jsonb( (jnew->>info.synchronize_valid_to_column)::numeric + 1 )
+                    WHEN 'D' THEN -- Date/time types
+                        to_jsonb( (jnew->>info.synchronize_valid_to_column)::date + 1 )
+                    ELSE
+                        NULL
+                END INTO v_new_until;
+
+            IF v_new_until IS NULL THEN
+                RAISE EXCEPTION 'sql_saga: do not know how to derive "%" from "%" for range subtype category ''%''',
+                    info.valid_until_column_name, info.synchronize_valid_to_column, info.range_subtype_category;
+            END IF;
+
+            jnew := jnew || jsonb_build_object(info.valid_until_column_name, v_new_until);
+            v_rec := jsonb_populate_record(null::record, jnew);
+
+            EXECUTE format('INSERT INTO %I SELECT 1, ($1).*', source_table_name)
+            USING v_rec;
+        END;
+    ELSE
+        -- The simple path: valid_until was provided directly.
+        EXECUTE format('INSERT INTO %I SELECT 1, ($1).*', source_table_name)
+        USING NEW;
+    END IF;
+
+    -- Use temporal_merge to apply the change.
+    CALL sql_saga.temporal_merge(
+        target_table => (info.table_schema || '.' || info.table_name)::regclass,
+        source_table => source_table_name::regclass,
+        identity_columns => identifier_columns,
+        mode => 'UPDATE_FOR_PORTION_OF',
+        era_name => info.era_name
+    );
+
+    RETURN NEW;
 END;
 $function$;

@@ -97,15 +97,16 @@ TABLE sql_saga.unique_keys;
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+NOTICE:  No compatible index found for foreign key on table location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON location USING GIST (legal_unit_id, daterange(valid_from, valid_until))
    add_temporal_foreign_key   
 ------------------------------
  location_legal_unit_id_valid
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-       foreign_key_name       |         type         | table_schema | table_name |  column_names   | fk_era_name |               fk_table_columns_snapshot                |   unique_key_name   | match_type | update_action | delete_action |           fk_insert_trigger            |           fk_update_trigger            | fk_check_constraint | fk_helper_function |           uk_update_trigger            |           uk_delete_trigger            
-------------------------------+----------------------+--------------+------------+-----------------+-------------+--------------------------------------------------------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+---------------------+--------------------+----------------------------------------+----------------------------------------
- location_legal_unit_id_valid | temporal_to_temporal | public       | location   | {legal_unit_id} | valid       | {id,valid_from,valid_until,legal_unit_id,postal_place} | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update |                     |                    | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete
+       foreign_key_name       |         type         | table_schema | table_name |  column_names   | fk_era_name |               fk_table_columns_snapshot                |   unique_key_name   | match_type | update_action | delete_action |           fk_insert_trigger            |           fk_update_trigger            | fk_check_constraint | fk_helper_function |           uk_update_trigger            |           uk_delete_trigger            |             fk_index_name             
+------------------------------+----------------------+--------------+------------+-----------------+-------------+--------------------------------------------------------+---------------------+------------+---------------+---------------+----------------------------------------+----------------------------------------+---------------------+--------------------+----------------------------------------+----------------------------------------+---------------------------------------
+ location_legal_unit_id_valid | temporal_to_temporal | public       | location   | {legal_unit_id} | valid       | {id,valid_from,valid_until,legal_unit_id,postal_place} | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | location_legal_unit_id_valid_fk_insert | location_legal_unit_id_valid_fk_update |                     |                    | location_legal_unit_id_valid_uk_update | location_legal_unit_id_valid_uk_delete | location_legal_unit_id_valid_gist_idx
 (1 row)
 
 -- While sql_saga is active
@@ -140,6 +141,7 @@ Indexes:
     "location_id_idx" btree (id)
     "location_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     "location_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "location_legal_unit_id_valid_gist_idx" gist (legal_unit_id, daterange(valid_from, valid_until))
 Check constraints:
     "location_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
 Triggers:
@@ -233,14 +235,15 @@ TABLE location;
 
 -- Teardown
 SELECT sql_saga.drop_foreign_key('location', ARRAY['legal_unit_id'], 'valid');
+NOTICE:  Dropping automatically created index "location_legal_unit_id_valid_gist_idx" for foreign key "location_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');

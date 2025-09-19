@@ -78,9 +78,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Executor: Expected Plan ---'
 SELECT * FROM (VALUES
     (1, '{1}'::int[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2}'::jsonb)
-) AS t(plan_op_seq, source_row_ids, operation, entity_ids);
+) AS t(plan_op_seq, row_ids, operation, entity_ids);
 \echo '--- Executor: Actual Plan ---'
-SELECT plan_op_seq, source_row_ids, operation, entity_ids
+SELECT plan_op_seq, row_ids, operation, entity_ids
 FROM pg_temp.temporal_merge_plan
 ORDER BY plan_op_seq;
 
@@ -137,18 +137,18 @@ CREATE TABLE tm_bad_cols_target (id int, value text, valid_from date, valid_unti
 SELECT sql_saga.add_era('tm_bad_cols_target', 'valid_from', 'valid_until');
 CREATE TEMP TABLE tm_bad_cols_source (real_row_id int, id int, value text, valid_from date, valid_until date, real_founding_id int);
 
--- Test with non-existent source_row_id_column
+-- Test with non-existent row_id_column
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
         target_table      := 'tm_bad_cols_target'::regclass,
         source_table      := 'tm_bad_cols_source'::regclass,
         identity_columns        := ARRAY['id'],
-        source_row_id_column := 'non_existent_row_id'::name
+        row_id_column := 'non_existent_row_id'::name
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for non-existent source_row_id_column';
+    RAISE EXCEPTION 'temporal_merge should have failed for non-existent row_id_column';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for non-existent source_row_id_column: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for non-existent row_id_column: %', SQLERRM;
 END;
 $$;
 
@@ -159,7 +159,7 @@ BEGIN
         target_table      := 'tm_bad_cols_target'::regclass,
         source_table      := 'tm_bad_cols_source'::regclass,
         identity_columns        := ARRAY['id'],
-        source_row_id_column := 'real_row_id',
+        row_id_column := 'real_row_id',
         identity_correlation_column := 'non_existent_founding_id'::name
     );
     RAISE EXCEPTION 'temporal_merge should have failed for non-existent identity_correlation_column';
@@ -170,7 +170,7 @@ $$;
 ROLLBACK TO SAVEPOINT scenario_10;
 
 SAVEPOINT scenario_11;
--- Scenario 11: Test using a non-default source_row_id_column name.
+-- Scenario 11: Test using a non-default row_id_column name.
 CREATE TABLE tm_custom_rowid_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('tm_custom_rowid_target', ARRAY['id']);
@@ -188,7 +188,7 @@ CALL sql_saga.temporal_merge(
     target_table      := 'tm_custom_rowid_target'::regclass,
     source_table      := 'tm_custom_rowid_source'::regclass,
     identity_columns        := ARRAY['id'],
-    source_row_id_column := 'source_pk'::name
+    row_id_column := 'source_pk'::name
 );
 
 -- Verify that the merge was successful and feedback works.
@@ -205,7 +205,7 @@ SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feed
 ROLLBACK TO SAVEPOINT scenario_11;
 
 SAVEPOINT scenario_12;
--- Scenario 12: Test that `temporal_merge` fails if the default source_row_id_column ('row_id') does not exist.
+-- Scenario 12: Test that `temporal_merge` fails if the default row_id_column ('row_id') does not exist.
 CREATE TABLE tm_no_rowid_target (id int, value text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_from', 'valid_until');
 CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, valid_from date, valid_until date);
@@ -216,7 +216,7 @@ BEGIN
         target_table      := 'tm_no_rowid_target'::regclass,
         source_table      := 'tm_no_rowid_sources'::regclass,
         identity_columns        := ARRAY['id']
-        -- source_row_id_column is deliberately omitted to test the default
+        -- row_id_column is deliberately omitted to test the default
     );
     RAISE EXCEPTION 'temporal_merge should have failed for missing default row_id column';
 EXCEPTION WHEN others THEN
@@ -250,7 +250,7 @@ CALL sql_saga.temporal_merge(
     source_table      := 'tm_weird_names_source'::regclass,
     identity_columns        := ARRAY['unit_pk'],
     era_name          := 'timeline'::name,
-    source_row_id_column := 'source_op_id'::name
+    row_id_column := 'source_op_id'::name
 );
 
 -- Verify merge was successful

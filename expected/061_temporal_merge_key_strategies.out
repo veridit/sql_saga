@@ -55,7 +55,7 @@ a single, unified suite using the new temporal_merge function.
 --   - Scenario 12: Natural key with NULLs on a simple surrogate key table (known anti-pattern)
 --
 --------------------------------------------------------------------------------
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 -- Setup: Create necessary schema and tables for this test
 CREATE SCHEMA IF NOT EXISTS tmtc;
 CREATE TYPE tmtc.location_type AS ENUM ('visiting', 'postal', 'physical');
@@ -215,12 +215,14 @@ SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establi
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (legal_unit_id, daterange(valid_from, valid_until))
         add_temporal_foreign_key        
 ----------------------------------------
  location_multi_key_legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_establishment_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (establishment_id, daterange(valid_from, valid_until))
          add_temporal_foreign_key          
 -------------------------------------------
  location_multi_key_establishment_id_valid
@@ -259,12 +261,14 @@ SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'e
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (legal_unit_id, daterange(valid_from, valid_until))
            add_temporal_foreign_key           
 ----------------------------------------------
  location_multi_key_no_id_legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_establishment_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (establishment_id, daterange(valid_from, valid_until))
             add_temporal_foreign_key             
 -------------------------------------------------
  location_multi_key_no_id_establishment_id_valid
@@ -326,22 +330,22 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           3 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
+-------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
+           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
+           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-           3 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -430,22 +434,22 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Original Value"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | starts
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} | 
-           3 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | starts
+           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} | 
+           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
 (3 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} | 
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
-           3 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | starts
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": null}             | 
+           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
+           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -484,7 +488,7 @@ SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edi
  stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
 --------------------+------------------+------------+-------------+-------+----------------
                  10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Original Value
+                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | 
                  10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
 (3 rows)
 
@@ -534,22 +538,22 @@ SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, '2024-01-01'::DATE, '2024-01-01'::DATE, '2024-04-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, 'starts'::sql_saga.allen_interval_relation),
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           3 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
+-------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
+           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
+           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+----------------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           2 | {1}            | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-           3 | {1}            | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -632,18 +636,18 @@ CALL sql_saga.temporal_merge(
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -736,18 +740,18 @@ CALL sql_saga.temporal_merge(
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -840,18 +844,18 @@ CALL sql_saga.temporal_merge(
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{104}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+----------------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {104}          | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
+-------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
+           1 | {104}   | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {104}          | INSERT    | {"id": 1, "row_id": "104", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                                  entity_ids                                   | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
+-------------+---------+-----------+---------------+-------------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
+           1 | {104}   | INSERT    |               | {"id": 1, "row_id": "104", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -944,18 +948,18 @@ CALL sql_saga.temporal_merge(
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{105}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+----------------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {105}          | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
+-------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
+           1 | {105}   | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                  entity_ids                                   | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+----------------+-----------+-------------------------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {105}          | INSERT    | {"id": 1, "row_id": "105", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                                  entity_ids                                   | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
+-------------+---------+-----------+---------------+-------------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
+           1 | {105}   | INSERT    |               | {"id": 1, "row_id": "105", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1048,18 +1052,18 @@ CALL sql_saga.temporal_merge(
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | source_row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
+ plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
+-------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
+           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |                                 entity_ids                                  | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+----------------+-----------+-----------------------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1157,9 +1161,6 @@ TABLE temp_source_9;
       1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen9a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -1169,13 +1170,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  temporal_merge plan (b91) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (b91) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change", "establishment_id": null}, "relation" : null}
-NOTICE:  (b91) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null, "establishment_id": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (b91) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (b91) {"source_row_id" : 1, "target_entity_ids" : [{"id": 1, "type": "visiting", "legal_unit_id": 200}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
@@ -1206,9 +1200,6 @@ TABLE temp_source_9;
       2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen9b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -1218,13 +1209,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  temporal_merge plan (e83) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (e83) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 2, "type": "visiting", "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change", "legal_unit_id": null}, "relation" : null}
-NOTICE:  (e83) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 2, "type": "visiting", "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null, "legal_unit_id": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (e83) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (e83) {"source_row_id" : 2, "target_entity_ids" : [{"id": 2, "type": "visiting", "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
@@ -1282,9 +1266,6 @@ TABLE temp_source_10;
       1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen10a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -1294,13 +1275,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-NOTICE:  temporal_merge plan (f96) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (f96) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"type": "visiting", "legal_unit_id": 200}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change", "establishment_id": null}, "relation" : null}
-NOTICE:  (f96) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"type": "visiting", "legal_unit_id": 200}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null, "establishment_id": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (f96) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,legal_unit_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (f96) {"source_row_id" : 1, "target_entity_ids" : [{"type": "visiting", "legal_unit_id": 200}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
@@ -1323,9 +1297,6 @@ TABLE temp_source_10;
       2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen10b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -1335,13 +1306,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
-NOTICE:  temporal_merge plan (e80) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (e80) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"type": "visiting", "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change", "legal_unit_id": null}, "relation" : null}
-NOTICE:  (e80) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"type": "visiting", "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null, "legal_unit_id": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (e80) on tmtc.location_multi_key_no_id: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>NULL, natural_identity_columns=>'{type,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (e80) {"source_row_id" : 2, "target_entity_ids" : [{"type": "visiting", "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
@@ -1393,9 +1357,6 @@ TABLE temp_source_11;
       1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen11a';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -1405,13 +1366,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  temporal_merge plan (328) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (328) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-06-01", "new_valid_until" : "infinity", "data" : {"address": "201 New Main St", "edit_comment": "LU address change"}, "relation" : null}
-NOTICE:  (328) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-06-01", "data" : {"address": "200 Main St", "edit_comment": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (328) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (328) {"source_row_id" : 1, "target_entity_ids" : [{"id": 1, "type": "visiting", "legal_unit_id": 200, "establishment_id": null}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
@@ -1442,9 +1396,6 @@ TABLE temp_source_11;
       2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
 (1 row)
 
-SET sql_saga.temporal_merge.log_id_seed = 'scen11b';
-SET sql_saga.temporal_merge.log_plan = true;
-SET sql_saga.temporal_merge.log_feedback = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -1454,13 +1405,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  temporal_merge plan (db5) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (db5) {"plan_op_seq" : 1, "source_row_ids" : [2], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-08-01", "new_valid_until" : "infinity", "data" : {"address": "101 New Business Park", "edit_comment": "Est address change"}, "relation" : null}
-NOTICE:  (db5) {"plan_op_seq" : 2, "source_row_ids" : [2], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-08-01", "data" : {"address": "100 Business Park", "edit_comment": null}, "relation" : "starts"}
-NOTICE:  temporal_merge feedback (db5) on tmtc.location_multi_key: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{type,legal_unit_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (db5) {"source_row_id" : 2, "target_entity_ids" : [{"id": 2, "type": "visiting", "legal_unit_id": null, "establishment_id": 100}], "status" : "APPLIED", "error_message" : null}
-SET sql_saga.temporal_merge.log_plan = false;
-SET sql_saga.temporal_merge.log_feedback = false;
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
@@ -1528,8 +1472,6 @@ SAVEPOINT expect_error;
 -- continue with subsequent tests.
 \echo '--- Plan and Feedback (from failing call) ---'
 --- Plan and Feedback (from failing call) ---
-SET sql_saga.temporal_merge.log_id_seed = 'scen12a';
-SET sql_saga.temporal_merge.log_plan = true;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
     source_table => 'temp_source_12',
@@ -1539,9 +1481,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
-NOTICE:  temporal_merge plan (35f) on tmtc.stat_for_unit_id_pk: mode=>MERGE_ENTITY_REPLACE, delete_mode=>NONE, identity_columns=>'{id}', natural_identity_columns=>'{stat_definition_id,establishment_id}', ephemeral_columns=>'{edit_comment}', identity_correlation_column=>NULL, source_row_id_column=>'row_id'
-NOTICE:  (35f) {"plan_op_seq" : 1, "source_row_ids" : [1], "operation" : "INSERT", "timeline_update_effect" : null, "entity_ids" : {"id": 1, "establishment_id": null, "stat_definition_id": 10}, "old_valid_from" : null, "old_valid_until" : null, "new_valid_from" : "2024-07-01", "new_valid_until" : "infinity", "data" : {"value": 550, "edit_comment": "Stat value update"}, "relation" : null}
-NOTICE:  (35f) {"plan_op_seq" : 2, "source_row_ids" : [1], "operation" : "UPDATE", "timeline_update_effect" : "SHRINK", "entity_ids" : {"id": 1, "establishment_id": null, "stat_definition_id": 10}, "old_valid_from" : "2024-01-01", "old_valid_until" : "infinity", "new_valid_from" : "2024-01-01", "new_valid_until" : "2024-07-01", "data" : {"value": 500, "edit_comment": null}, "relation" : "starts"}
 ERROR:  duplicate key value violates unique constraint "stat_for_unit_id_pk_pkey"
 DETAIL:  Key (id)=(1) already exists.
 CONTEXT:  SQL statement "
@@ -1566,9 +1505,8 @@ CONTEXT:  SQL statement "
                     FROM inserted_rows ir
                     WHERE p.plan_op_seq = ir.plan_op_seq;
                 "
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 339 at EXECUTE
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 612 at EXECUTE
 ROLLBACK TO SAVEPOINT expect_error;
-SET sql_saga.temporal_merge.log_plan = false;
 \echo '--- Target: After merge (should be unchanged) ---'
 --- Target: After merge (should be unchanged) ---
 SELECT id, stat_definition_id, establishment_id, value, valid_from, valid_until FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
@@ -1587,7 +1525,6 @@ TABLE temp_source_12;
 
 DROP TABLE temp_source_12;
 RELEASE SAVEPOINT scenario_12;
-RESET client_min_messages;
 -- Final Cleanup
 DROP PROCEDURE tmtc.reset_target();
 DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id;
@@ -1597,7 +1534,6 @@ DROP SCHEMA tmtc CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to type tmtc.location_type
 drop cascades to sequence tmtc.stat_for_unit_no_pk_id_seq
-SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

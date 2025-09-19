@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION sql_saga._internal_find_or_create_fk_index(
+CREATE OR REPLACE FUNCTION sql_saga.__find_or_create_fk_index(
     p_fk_table_oid regclass,
     p_fk_column_names name[],
     p_fk_era_row sql_saga.era,
@@ -277,7 +277,7 @@ BEGIN
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
 
-    v_fk_index_name := sql_saga._internal_find_or_create_fk_index(
+    v_fk_index_name := sql_saga.__find_or_create_fk_index(
         fk_table_oid,
         fk_column_names,
         NULL, -- no era row for regular fk
@@ -605,7 +605,7 @@ BEGIN
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
 
-    v_fk_index_name := sql_saga._internal_find_or_create_fk_index(
+    v_fk_index_name := sql_saga.__find_or_create_fk_index(
         fk_table_oid,
         fk_column_names,
         fk_era_row,

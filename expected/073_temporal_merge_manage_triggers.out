@@ -76,6 +76,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'parent_id_valid'
 );
+NOTICE:  No compatible index found for foreign key on table mtt.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON mtt.child USING GIST (parent_id, daterange(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_valid

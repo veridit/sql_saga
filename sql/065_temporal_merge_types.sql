@@ -8,7 +8,7 @@ BEGIN;
 \echo '  supported range types for temporal eras.'
 \echo '----------------------------------------------------------------------------'
 
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA tmt; -- Temporal Merge Types
 
 --------------------------------------------------------------------------------

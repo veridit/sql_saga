@@ -1,11 +1,5 @@
-                       event                        | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
-----------------------------------------------------+-----------+-----------------+----------------+------------+-----------------
- BEGIN                                              |         0 | 0 ms            |                | 0 rows     | 
- Temporal Merge SEED (Triggers ON)                  |     16000 | 38 secs         | 38 secs        | 16000 rows | ~418 rows/s
- Temporal Merge 20% INSERT 80% PATCH (Triggers ON)  |     20000 | 127 secs        | 89 secs        | 20000 rows | ~226 rows/s
- Temporal Merge SEED (Triggers OFF)                 |     16000 | 165 secs        | 38 secs        | 16000 rows | ~425 rows/s
- Temporal Merge 20% INSERT 80% PATCH (Triggers OFF) |     20000 | 251 secs        | 86 secs        | 20000 rows | ~232 rows/s
- Constraints disabled                               |         0 | 251 secs        | 34 ms          | 0 rows     | 
- Tear down complete                                 |         0 | 251 secs        | 5 ms           | 0 rows     | 
-(7 rows)
+ event | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
+-------+-----------+-----------------+----------------+-----------+-----------------
+ BEGIN |         0 | 0 ms            |                | 0 rows    | 
+(1 row)
 

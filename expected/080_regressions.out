@@ -54,6 +54,7 @@ SELECT sql_saga.add_unique_key('fk', ARRAY['id'], 'q');
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p');
+NOTICE:  No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, int4range(f, u))
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -68,9 +69,9 @@ TABLE sql_saga.era;
 (2 rows)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name |         type         | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   | fk_check_constraint | fk_helper_function |  uk_update_trigger   |  uk_delete_trigger   
-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+----------------------+----------------------+---------------------+--------------------+----------------------+----------------------
- fk_uk_id_q       | temporal_to_temporal | public       | fk         | {uk_id}      | q           | {id,uk_id,f,u}            | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update |                     |                    | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete
+ foreign_key_name |         type         | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action |  fk_insert_trigger   |  fk_update_trigger   | fk_check_constraint | fk_helper_function |  uk_update_trigger   |  uk_delete_trigger   |    fk_index_name    
+------------------+----------------------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+----------------------+----------------------+---------------------+--------------------+----------------------+----------------------+---------------------
+ fk_uk_id_q       | temporal_to_temporal | public       | fk         | {uk_id}      | q           | {id,uk_id,f,u}            | uk_id_p         | SIMPLE     | NO ACTION     | NO ACTION     | fk_uk_id_q_fk_insert | fk_uk_id_q_fk_update |                     |                    | fk_uk_id_q_uk_update | fk_uk_id_q_uk_delete | fk_uk_id_q_gist_idx
 (1 row)
 
 --
@@ -170,6 +171,7 @@ ERROR:  conflicting key value violates exclusion constraint "uk_id_p_excl"
 DETAIL:  Key (id, int4range(f, u))=(4, [3,5)) conflicts with existing key (id, int4range(f, u))=(4, [1,4)).
 ROLLBACK TO SAVEPOINT s5;
 SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
+NOTICE:  Dropping automatically created index "fk_uk_id_q_gist_idx" for foreign key "fk_uk_id_q"
  drop_foreign_key 
 ------------------
  
@@ -237,6 +239,7 @@ SELECT sql_saga.add_era('t_fk', 'valid_after', 'valid_to');
 -- valid_until_column_name and a column named 'valid_to' exists.
 SAVEPOINT s_fk_error;
 SELECT sql_saga.add_temporal_foreign_key('t_fk', ARRAY['uk_id'], 'valid', 't_uk_id_valid');
+NOTICE:  No compatible index found for foreign key on table t_fk. Creating new index: CREATE INDEX t_fk_uk_id_valid_gist_idx ON t_fk USING GIST (uk_id, daterange(valid_after, valid_to))
  add_temporal_foreign_key 
 --------------------------
  t_fk_uk_id_valid
@@ -302,6 +305,7 @@ NOTICE:  sql_saga: Created trigger "t_fk_gen_synchronize_temporal_columns_trigge
 
 -- This should succeed and create a trigger that watches valid_end_date
 SELECT sql_saga.add_temporal_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't_uk_gen_id_valid');
+NOTICE:  No compatible index found for foreign key on table t_fk_gen. Creating new index: CREATE INDEX t_fk_gen_uk_id_valid_gist_idx ON t_fk_gen USING GIST (uk_id, daterange(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  t_fk_gen_uk_id_valid
@@ -309,6 +313,7 @@ SELECT sql_saga.add_temporal_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid', 't
 
 -- cleanup
 SELECT sql_saga.drop_foreign_key('t_fk_gen', ARRAY['uk_id'], 'valid');
+NOTICE:  Dropping automatically created index "t_fk_gen_uk_id_valid_gist_idx" for foreign key "t_fk_gen_uk_id_valid"
  drop_foreign_key 
 ------------------
  
@@ -377,6 +382,7 @@ SELECT sql_saga.add_unique_key('establishment_bug', ARRAY['id']);
 
 -- Add the temporal foreign key constraint
 SELECT sql_saga.add_temporal_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid', 'legal_unit_bug_id_valid');
+NOTICE:  No compatible index found for foreign key on table establishment_bug. Creating new index: CREATE INDEX establishment_bug_legal_unit_id_valid_gist_idx ON establishment_bug USING GIST (legal_unit_id, daterange(valid_from, valid_until))
        add_temporal_foreign_key        
 ---------------------------------------
  establishment_bug_legal_unit_id_valid
@@ -395,6 +401,7 @@ SELECT * FROM establishment_bug;
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('establishment_bug', ARRAY['legal_unit_id'], 'valid');
+NOTICE:  Dropping automatically created index "establishment_bug_legal_unit_id_valid_gist_idx" for foreign key "establishment_bug_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  

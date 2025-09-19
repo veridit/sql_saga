@@ -38,7 +38,7 @@ functional. It covers the full lifecycle from setup to data loading
 with temporal_merge to teardown.
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA readme;
 --------------------------------------------------------------------------------
 \echo '--- 1. Setup: Create and Activate Tables (from README) ---'
@@ -76,6 +76,7 @@ CREATE TABLE readme.unit_with_range (
 -- Register the table as a temporal table (an "era") using default column names.
 -- Explicitly enable synchronization for the 'valid_to' column.
 SELECT sql_saga.add_era('readme.legal_unit'::regclass, synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table readme.legal_unit to synchronize columns: valid_to
  add_era 
 ---------
  t
@@ -132,6 +133,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'readme.legal_unit'::regclass,
     pk_column_names => ARRAY['id']
 );
+NOTICE:  No compatible index found for foreign key on table readme.establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON readme.establishment USING GIST (legal_unit_id, daterange(valid_from, valid_until))
           add_foreign_key          
 -----------------------------------
  establishment_legal_unit_id_valid
@@ -144,12 +146,14 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'readme.legal_unit'::regclass,
     pk_column_names => ARRAY['id']
 );
+NOTICE:  No compatible index found for foreign key on table readme.projects. Creating new index: CREATE INDEX projects_legal_unit_id_idx ON readme.projects USING BTREE (legal_unit_id)
        add_foreign_key       
 -----------------------------
  projects_legal_unit_id_fkey
 (1 row)
 
 SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', synchronize_range_column := 'num_range');
+NOTICE:  sql_saga: Created trigger "unit_with_range_synchronize_temporal_columns_trigger" on table readme.unit_with_range to synchronize columns: num_range
  add_era 
 ---------
  t
@@ -198,7 +202,7 @@ Demonstrates a realistic multi-step import process with ID back-filling.
 --------------------------------------------------------------------------------
 CREATE TEMP TABLE source_data (
     row_id INT,
-    founding_id INT, -- To group related rows for a single new entity
+    identity_correlation_id INT, -- To group related rows for a single new entity
     entity_type TEXT,
     legal_ident TEXT,
     legal_unit_id INT, -- Starts NULL, to be back-filled
@@ -212,8 +216,8 @@ INSERT INTO source_data VALUES
 -- Legal Unit 1: "SpareParts Corp" with a name change history
 (101, 1, 'legal_unit', 'LU001', NULL, 'AutoSpareParts INC', 'active', NULL, '2023-07-01', '2024-01-01'),
 (102, 1, 'legal_unit', 'LU001', NULL, 'SpareParts Corporation', 'active', NULL, '2024-01-01', 'infinity'),
--- Establishment 1, now belonging to Legal Unit 2 to avoid FK dependency during historical update test
-(201, 2, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-02-01', 'infinity'),
+-- Establishment 1, belonging to Legal Unit 1
+(201, 1, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-08-01', 'infinity'),
 -- Legal Unit 2: "General Refinement LLC"
 (103, 2, 'legal_unit', 'LU002', NULL, 'General Refinement LLC', 'active', NULL, '2023-01-01', 'infinity'),
 -- Establishment 2, belonging to Legal Unit 2
@@ -221,19 +225,19 @@ INSERT INTO source_data VALUES
 \echo '--- Source data for merge ---'
 --- Source data for merge ---
 SELECT * FROM source_data ORDER BY row_id;
- row_id | founding_id |  entity_type  | legal_ident | legal_unit_id |          name          | status |       address        | valid_from | valid_until 
---------+-------------+---------------+-------------+---------------+------------------------+--------+----------------------+------------+-------------
-    101 |           1 | legal_unit    | LU001       |               | AutoSpareParts INC     | active |                      | 2023-07-01 | 2024-01-01
-    102 |           1 | legal_unit    | LU001       |               | SpareParts Corporation | active |                      | 2024-01-01 | infinity
-    103 |           2 | legal_unit    | LU002       |               | General Refinement LLC | active |                      | 2023-01-01 | infinity
-    201 |           2 | establishment |             |               | Main Branch            |        | 123 Innovation Drive | 2023-02-01 | infinity
-    202 |           2 | establishment |             |               | Refinery Plant         |        | 456 Industrial Ave   | 2023-01-01 | infinity
+ row_id | identity_correlation_id |  entity_type  | legal_ident | legal_unit_id |          name          | status |       address        | valid_from | valid_until 
+--------+-------------------------+---------------+-------------+---------------+------------------------+--------+----------------------+------------+-------------
+    101 |                       1 | legal_unit    | LU001       |               | AutoSpareParts INC     | active |                      | 2023-07-01 | 2024-01-01
+    102 |                       1 | legal_unit    | LU001       |               | SpareParts Corporation | active |                      | 2024-01-01 | infinity
+    103 |                       2 | legal_unit    | LU002       |               | General Refinement LLC | active |                      | 2023-01-01 | infinity
+    201 |                       1 | establishment |             |               | Main Branch            |        | 123 Innovation Drive | 2023-08-01 | infinity
+    202 |                       2 | establishment |             |               | Refinery Plant         |        | 456 Industrial Ave   | 2023-01-01 | infinity
 (5 rows)
 
 \echo '\n--- Step 2a: Merge legal_unit data ---'
 
 --- Step 2a: Merge legal_unit data ---
-CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, founding_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
+CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_correlation_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
 CALL sql_saga.temporal_merge(
     target_table => 'readme.legal_unit'::regclass,
     source_table => 'source_legal_unit'::regclass,
@@ -241,11 +245,19 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    identity_correlation_column => 'identity_correlation_id',
     update_source_with_identity => true
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                entity_ids                 | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                  data                                                  | trace 
+-------------+---------+-----------+---------------+-------------------------------------------+----------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------------------------+-------
+           1 | {103}   | INSERT    |               | {"id": 2, "identity_correlation_id": "2"} |          |                |                 | 2023-01-01     | infinity        | {"name": "General Refinement LLC", "status": "active", "valid_to": "infinity", "legal_ident": "LU002"} | 
+           2 | {101}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2023-07-01     | 2024-01-01      | {"name": "AutoSpareParts INC", "status": "active", "valid_to": "2023-12-31", "legal_ident": "LU001"}   | 
+           3 | {102}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2024-01-01     | infinity        | {"name": "SpareParts Corporation", "status": "active", "valid_to": "infinity", "legal_ident": "LU001"} | 
+(3 rows)
+
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
  source_row_id | target_entity_ids | status  | error_message 
 ---------------+-------------------+---------+---------------
@@ -266,12 +278,12 @@ SELECT id, legal_ident, name, status, valid_from, valid_until FROM readme.legal_
 
 \echo '--- Verification: Check if IDs were back-filled into the source temp table ---'
 --- Verification: Check if IDs were back-filled into the source temp table ---
-SELECT row_id, founding_id, id AS legal_unit_id FROM source_legal_unit ORDER BY row_id;
- row_id | founding_id | legal_unit_id 
---------+-------------+---------------
-    101 |           1 |             1
-    102 |           1 |             1
-    103 |           2 |             2
+SELECT row_id, identity_correlation_id, id AS legal_unit_id FROM source_legal_unit ORDER BY row_id;
+ row_id | identity_correlation_id | legal_unit_id 
+--------+-------------------------+---------------
+    101 |                       1 |             1
+    102 |                       1 |             1
+    103 |                       2 |             2
 (3 rows)
 
 \echo '\n--- Step 2b: Back-fill generated legal_unit_id to main source table ---'
@@ -280,23 +292,23 @@ SELECT row_id, founding_id, id AS legal_unit_id FROM source_legal_unit ORDER BY 
 UPDATE source_data sd
 SET legal_unit_id = slu.id
 FROM source_legal_unit slu
-WHERE sd.founding_id = slu.founding_id;
+WHERE sd.identity_correlation_id = slu.identity_correlation_id;
 \echo '--- Verification: Main source table after ID back-fill ---'
 --- Verification: Main source table after ID back-fill ---
-SELECT row_id, founding_id, entity_type, legal_unit_id, name FROM source_data ORDER BY row_id;
- row_id | founding_id |  entity_type  | legal_unit_id |          name          
---------+-------------+---------------+---------------+------------------------
-    101 |           1 | legal_unit    |             1 | AutoSpareParts INC
-    102 |           1 | legal_unit    |             1 | SpareParts Corporation
-    103 |           2 | legal_unit    |             2 | General Refinement LLC
-    201 |           2 | establishment |             2 | Main Branch
-    202 |           2 | establishment |             2 | Refinery Plant
+SELECT row_id, identity_correlation_id, entity_type, legal_unit_id, name FROM source_data ORDER BY row_id;
+ row_id | identity_correlation_id |  entity_type  | legal_unit_id |          name          
+--------+-------------------------+---------------+---------------+------------------------
+    101 |                       1 | legal_unit    |             1 | AutoSpareParts INC
+    102 |                       1 | legal_unit    |             1 | SpareParts Corporation
+    103 |                       2 | legal_unit    |             2 | General Refinement LLC
+    201 |                       1 | establishment |             1 | Main Branch
+    202 |                       2 | establishment |             2 | Refinery Plant
 (5 rows)
 
 \echo '\n--- Step 2c: Merge establishment data ---'
 
 --- Step 2c: Merge establishment data ---
-CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, founding_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
+CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, identity_correlation_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
 CALL sql_saga.temporal_merge(
     target_table => 'readme.establishment'::regclass,
     source_table => 'source_establishment'::regclass,
@@ -304,24 +316,32 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id'
+    identity_correlation_column => 'identity_correlation_id'
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |                entity_ids                 | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | trace 
+-------------+---------+-----------+---------------+-------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+-------
+           1 | {202}   | INSERT    |               | {"id": 2, "identity_correlation_id": "2"} |          |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} | 
+           2 | {201}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  | 
+(2 rows)
+
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_ids |      status      | error_message 
----------------+-------------------+------------------+---------------
-           201 | []                | SKIPPED_FILTERED | 
-           202 | [{"id": 1}]       | APPLIED          | 
+ source_row_id | target_entity_ids | status  | error_message 
+---------------+-------------------+---------+---------------
+           201 | [{"id": 1}]       | APPLIED | 
+           202 | [{"id": 2}]       | APPLIED | 
 (2 rows)
 
 \echo '--- Verification: Final state of establishment table ---'
 --- Verification: Final state of establishment table ---
 SELECT id, name, address, legal_unit_id, valid_from, valid_until FROM readme.establishment ORDER BY id, valid_from;
- id |      name      |      address       | legal_unit_id | valid_from | valid_until 
-----+----------------+--------------------+---------------+------------+-------------
-  1 | Refinery Plant | 456 Industrial Ave |             2 | 2023-01-01 | infinity
-(1 row)
+ id |      name      |       address        | legal_unit_id | valid_from | valid_until 
+----+----------------+----------------------+---------------+------------+-------------
+  1 | Main Branch    | 123 Innovation Drive |             1 | 2023-08-01 | infinity
+  2 | Refinery Plant | 456 Industrial Ave   |             2 | 2023-01-01 | infinity
+(2 rows)
 
 --------------------------------------------------------------------------------
 \echo '\n--- 2.5. Updatable Views for Simplified Data Management ---'
@@ -406,9 +426,31 @@ WHERE id = 1;
 SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
  id |  status  | valid_from | valid_until 
 ----+----------+------------+-------------
+  1 | active   | 2023-07-01 | 2023-09-01
   1 | inactive | 2023-09-01 | 2023-11-01
+  1 | active   | 2023-11-01 | 2024-01-01
   1 | active   | 2024-01-01 | infinity
-(2 rows)
+(4 rows)
+
+\echo '\n--- Using the for_portion_of view (Historical Correction) ---'
+
+--- Using the for_portion_of view (Historical Correction) ---
+\echo 'Correct the name of legal_unit 1 across its entire history'
+Correct the name of legal_unit 1 across its entire history
+-- Note: This is a bulk update on all historical records for this entity.
+-- The valid_from/valid_until are NOT provided in the SET clause.
+UPDATE readme.legal_unit__for_portion_of_valid
+SET name = 'Corrected SpareParts'
+WHERE id = 1;
+\echo '--- Verification: legal_unit history after correction ---'
+--- Verification: legal_unit history after correction ---
+SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+ id |         name         | valid_from | valid_until 
+----+----------------------+------------+-------------
+  1 | Corrected SpareParts | 2023-07-01 | 2023-09-01
+  1 | Corrected SpareParts | 2023-09-01 | 2023-11-01
+  1 | Corrected SpareParts | 2023-11-01 | infinity
+(3 rows)
 
 \echo '\n--- Using the current view ---'
 
@@ -421,9 +463,9 @@ INSERT INTO readme.legal_unit__current_valid (legal_ident, name, status) VALUES 
 TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
  id | legal_ident |          name          | status | valid_from | valid_to | valid_until 
 ----+-------------+------------------------+--------+------------+----------+-------------
-  1 | LU001       | SpareParts Corporation | active | 2024-01-01 | infinity | infinity
+  1 | LU001       | Corrected SpareParts   | active | 2023-11-01 | infinity | infinity
   2 | LU002       | General Refinement LLC | active | 2023-01-01 | infinity | infinity
-  5 | LU003       | New Ventures Inc       | active | 2024-06-01 | infinity | infinity
+  3 | LU003       | New Ventures Inc       | active | 2024-06-01 | infinity | infinity
 (3 rows)
 
 \echo '\n--- UPDATE (SCD Type 2): Change the name of the new unit ---'
@@ -437,8 +479,8 @@ UPDATE readme.legal_unit__current_valid SET name = 'New Ventures LLC' WHERE lega
 SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
  id |       name       | valid_from | valid_until 
 ----+------------------+------------+-------------
-  5 | New Ventures Inc | 2024-06-01 | 2024-07-01
-  5 | New Ventures LLC | 2024-07-01 | infinity
+  3 | New Ventures Inc | 2024-06-01 | 2024-07-01
+  3 | New Ventures LLC | 2024-07-01 | infinity
 (2 rows)
 
 \echo '\n--- DELETE (Soft-Delete): Archive the new unit ---'
@@ -452,7 +494,7 @@ DELETE FROM readme.legal_unit__current_valid WHERE legal_ident = 'LU003';
 TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
  id | legal_ident |          name          | status | valid_from | valid_to | valid_until 
 ----+-------------+------------------------+--------+------------+----------+-------------
-  1 | LU001       | SpareParts Corporation | active | 2024-01-01 | infinity | infinity
+  1 | LU001       | Corrected SpareParts   | active | 2023-11-01 | infinity | infinity
   2 | LU002       | General Refinement LLC | active | 2023-01-01 | infinity | infinity
 (2 rows)
 
@@ -461,8 +503,8 @@ TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
 SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
  id | status | valid_from | valid_until 
 ----+--------+------------+-------------
-  5 | active | 2024-06-01 | 2024-07-01
-  5 | active | 2024-07-01 | 2024-08-01
+  3 | active | 2024-06-01 | 2024-07-01
+  3 | active | 2024-07-01 | 2024-08-01
 (2 rows)
 
 --------------------------------------------------------------------------------
@@ -497,6 +539,7 @@ SELECT sql_saga.drop_foreign_key(
     table_oid => 'readme.establishment'::regclass,
     column_names => ARRAY['legal_unit_id']
 );
+NOTICE:  Dropping automatically created index "establishment_legal_unit_id_valid_gist_idx" for foreign key "establishment_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  
@@ -507,6 +550,7 @@ SELECT sql_saga.drop_foreign_key(
     table_oid => 'readme.projects'::regclass,
     column_names => ARRAY['legal_unit_id']
 );
+NOTICE:  Dropping automatically created index "projects_legal_unit_id_idx" for foreign key "projects_legal_unit_id_fkey"
  drop_foreign_key 
 ------------------
  
@@ -581,8 +625,8 @@ SELECT * FROM sql_saga.unique_keys WHERE table_schema = 'readme';
 (0 rows)
 
 SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 --------------------------------------------------------------------------------
@@ -590,9 +634,8 @@ SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';
 --- 4. Cleanup ---
 --------------------------------------------------------------------------------
 DROP FUNCTION readme.test_now();
-DROP TABLE readme.legal_unit, readme.establishment, readme.projects, readme.unit_with_range;
+DROP TABLE readme.legal_unit, readme.establishment, readme.projects, readme.unit_with_range CASCADE;
 DROP SCHEMA readme;
-SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

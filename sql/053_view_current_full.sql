@@ -6,6 +6,7 @@ BEGIN;
 
 -- A stable function to override now() for deterministic testing
 CREATE FUNCTION test_now() RETURNS date AS $$ SELECT '2024-02-29'::date $$ LANGUAGE sql;
+GRANT EXECUTE ON FUNCTION test_now() TO PUBLIC;
 
 -- Scenario 1: Test with a table in a non-public schema
 CREATE SCHEMA test_schema;
@@ -24,6 +25,11 @@ TABLE sql_saga.updatable_view;
 
 INSERT INTO test_schema.schema_test__current_valid (id, value) VALUES (1, 'A');
 TABLE test_schema.schema_test;
+TABLE pg_temp.temporal_merge_plan;
+TABLE pg_temp.temporal_merge_feedback;
+DROP TABLE pg_temp.temporal_merge_plan;
+DROP TABLE pg_temp.temporal_merge_feedback;
+DROP TABLE pg_temp.temporal_merge_cache;
 
 SELECT sql_saga.drop_current_view('test_schema.schema_test'::regclass);
 
@@ -42,15 +48,25 @@ RESET ROLE;
 \d acl_test__current_valid
 TABLE sql_saga.updatable_view;
 
+SAVEPOINT preserve_role_and_state_before_no_permission;
 -- Verify that permissions are handled correctly
 GRANT SELECT ON acl_test TO sql_saga_unprivileged_user;
-SAVEPOINT no_insert;
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
+SAVEPOINT no_insert;
 -- Should fail, as we only have SELECT on the base table, which propagates to the
 -- view, but we do not have INSERT on the view.
 INSERT INTO acl_test__current_valid (id, value, status) VALUES (1, 'no', 'active');
 ROLLBACK TO no_insert;
+
+
+
+SAVEPOINT no_update;
+-- Should fail, as we only have SELECT on the base table, which propagates to the
+-- view, but we do not have UPDATE on the view.
+UPDATE acl_test__current_valid SET value = 'no update' WHERE id = 2;
+ROLLBACK TO no_update;
+ROLLBACK TO SAVEPOINT preserve_role_and_state_before_no_permission;
 
 -- Test that INSERT permission on base table doesn't grant UPDATE
 SAVEPOINT preserve_role_and_state_before_failing_update;
@@ -63,7 +79,7 @@ UPDATE acl_test__current_valid SET value = 'no update' WHERE id = 2;
 ROLLBACK TO preserve_role_and_state_before_failing_update;
 
 SAVEPOINT can_insert;
-GRANT INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
 
 -- Insert a record with an old start date to test non-empty range soft-delete
 INSERT INTO acl_test VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');

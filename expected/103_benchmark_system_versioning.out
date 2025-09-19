@@ -133,6 +133,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_era_history_id_valid'
 );
+NOTICE:  No compatible index found for foreign key on table establishment_era_history. Creating new index: CREATE INDEX establishment_era_history_legal_unit_id_valid_gist_idx ON establishment_era_history USING GIST (legal_unit_id, daterange(valid_from, valid_until))
            add_temporal_foreign_key            
 -----------------------------------------------
  establishment_era_history_legal_unit_id_valid
@@ -202,6 +203,7 @@ SELECT sql_saga.drop_system_versioning('legal_unit_sv', cleanup => true);
 
 -- Teardown for Era + History tables
 SELECT sql_saga.drop_foreign_key('establishment_era_history', ARRAY['legal_unit_id'], 'valid');
+NOTICE:  Dropping automatically created index "establishment_era_history_legal_unit_id_valid_gist_idx" for foreign key "establishment_era_history_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  

@@ -8,7 +8,7 @@ BEGIN;
 \echo '  using a rich target timeline to test interactions with gaps and adjacencies.'
 \echo '----------------------------------------------------------------------------'
 
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA tmd; -- Temporal Merge Delete
 
 -- Target table for all scenarios

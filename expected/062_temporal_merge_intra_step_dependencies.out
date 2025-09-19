@@ -127,20 +127,20 @@ CALL sql_saga.temporal_merge(
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-01-01'::DATE, '2023-06-01'::DATE, '{"name": "Initial Name", "edit_comment": "First slice"}'::JSONB, NULL::sql_saga.allen_interval_relation),
     (2, '{2}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "1"}'::JSONB, NULL::DATE, '2023-06-01'::DATE, '2023-12-31'::DATE, '{"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |          entity_ids           | old_valid_from | new_valid_from | new_valid_until |                                        data                                        | relation 
--------------+----------------+-----------+-------------------------------+----------------+----------------+-----------------+------------------------------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
-           2 | {2}            | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation |          entity_ids           | old_valid_from | new_valid_from | new_valid_until |                                        data                                        | relation 
+-------------+---------+-----------+-------------------------------+----------------+----------------+-----------------+------------------------------------------------------------------------------------+----------
+           1 | {1}     | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
+           2 | {2}     | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
 (2 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |          entity_ids           | old_valid_from | new_valid_from | new_valid_until |                                        data                                        | relation 
--------------+----------------+-----------+-------------------------------+----------------+----------------+-----------------+------------------------------------------------------------------------------------+----------
-           1 | {1}            | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
-           2 | {2}            | INSERT    | {"id": 1, "founding_id": "1"} |                | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |          entity_ids           | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                        data                                        | trace 
+-------------+---------+-----------+---------------+-------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | {"id": 1, "founding_id": "1"} |          |                |                 | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
+           2 | {2}     | INSERT    |               | {"id": 1, "founding_id": "1"} |          |                |                 | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -264,26 +264,26 @@ SELECT * FROM (VALUES
     (3, '{101}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "founding_id": "10"}'::JSONB, NULL::DATE, '2024-09-01'::DATE, '2024-12-31'::DATE, '{"name": "Entity 10 Original", "edit_comment": "E10-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
     (4, '{201}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Entity 20 Initial", "edit_comment": "E20-S1"}'::JSONB, NULL::sql_saga.allen_interval_relation),
     (5, '{202}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2, "founding_id": "20"}'::JSONB, NULL::DATE, '2025-07-01'::DATE, '2025-12-31'::DATE, '{"name": "Entity 20 New End", "edit_comment": "E20-S2"}'::JSONB, NULL::sql_saga.allen_interval_relation)
-) AS t (plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |           entity_ids           | old_valid_from | new_valid_from | new_valid_until |                           data                           | relation 
--------------+----------------+-----------+--------------------------------+----------------+----------------+-----------------+----------------------------------------------------------+----------
-           1 | {101}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           2 | {102}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
-           3 | {101}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           4 | {201}          | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
-           5 | {202}          | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
+) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation) ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation |           entity_ids           | old_valid_from | new_valid_from | new_valid_until |                           data                           | relation 
+-------------+---------+-----------+--------------------------------+----------------+----------------+-----------------+----------------------------------------------------------+----------
+           1 | {101}   | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           2 | {102}   | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
+           3 | {101}   | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           4 | {201}   | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
+           5 | {202}   | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
 (5 rows)
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
-SELECT plan_op_seq, source_row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation |           entity_ids           | old_valid_from | new_valid_from | new_valid_until |                           data                           | relation 
--------------+----------------+-----------+--------------------------------+----------------+----------------+-----------------+----------------------------------------------------------+----------
-           1 | {101}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           2 | {102}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
-           3 | {101}          | INSERT    | {"id": 1, "founding_id": "10"} |                | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           4 | {201}          | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
-           5 | {202}          | INSERT    | {"id": 2, "founding_id": "20"} |                | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect |           entity_ids           | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                           | trace 
+-------------+---------+-----------+---------------+--------------------------------+----------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------+-------
+           1 | {101}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           2 | {102}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
+           3 | {101}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           4 | {201}   | INSERT    |               | {"id": 2, "founding_id": "20"} |          |                |                 | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
+           5 | {202}   | INSERT    |               | {"id": 2, "founding_id": "20"} |          |                |                 | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
 (5 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'

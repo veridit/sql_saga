@@ -9,7 +9,7 @@ BEGIN;
 \echo 'with temporal_merge to teardown.'
 \echo '----------------------------------------------------------------------------'
 
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA readme;
 
 --------------------------------------------------------------------------------
@@ -95,7 +95,7 @@ SELECT table_schema, table_name, foreign_key_name FROM sql_saga.foreign_keys WHE
 --------------------------------------------------------------------------------
 CREATE TEMP TABLE source_data (
     row_id INT,
-    founding_id INT, -- To group related rows for a single new entity
+    identity_correlation_id INT, -- To group related rows for a single new entity
     entity_type TEXT,
     legal_ident TEXT,
     legal_unit_id INT, -- Starts NULL, to be back-filled
@@ -110,8 +110,8 @@ INSERT INTO source_data VALUES
 -- Legal Unit 1: "SpareParts Corp" with a name change history
 (101, 1, 'legal_unit', 'LU001', NULL, 'AutoSpareParts INC', 'active', NULL, '2023-07-01', '2024-01-01'),
 (102, 1, 'legal_unit', 'LU001', NULL, 'SpareParts Corporation', 'active', NULL, '2024-01-01', 'infinity'),
--- Establishment 1, now belonging to Legal Unit 2 to avoid FK dependency during historical update test
-(201, 2, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-02-01', 'infinity'),
+-- Establishment 1, belonging to Legal Unit 1
+(201, 1, 'establishment', NULL, NULL, 'Main Branch', NULL, '123 Innovation Drive', '2023-08-01', 'infinity'),
 -- Legal Unit 2: "General Refinement LLC"
 (103, 2, 'legal_unit', 'LU002', NULL, 'General Refinement LLC', 'active', NULL, '2023-01-01', 'infinity'),
 -- Establishment 2, belonging to Legal Unit 2
@@ -121,7 +121,8 @@ INSERT INTO source_data VALUES
 SELECT * FROM source_data ORDER BY row_id;
 
 \echo '\n--- Step 2a: Merge legal_unit data ---'
-CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, founding_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
+CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_correlation_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
+
 
 CALL sql_saga.temporal_merge(
     target_table => 'readme.legal_unit'::regclass,
@@ -130,30 +131,32 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    identity_correlation_column => 'identity_correlation_id',
     update_source_with_identity => true
 );
 
 \echo '--- Verification: Feedback from temporal_merge ---'
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Verification: Final state of legal_unit table ---'
 SELECT id, legal_ident, name, status, valid_from, valid_until FROM readme.legal_unit ORDER BY id, valid_from;
 
 \echo '--- Verification: Check if IDs were back-filled into the source temp table ---'
-SELECT row_id, founding_id, id AS legal_unit_id FROM source_legal_unit ORDER BY row_id;
+SELECT row_id, identity_correlation_id, id AS legal_unit_id FROM source_legal_unit ORDER BY row_id;
 
 \echo '\n--- Step 2b: Back-fill generated legal_unit_id to main source table ---'
 UPDATE source_data sd
 SET legal_unit_id = slu.id
 FROM source_legal_unit slu
-WHERE sd.founding_id = slu.founding_id;
+WHERE sd.identity_correlation_id = slu.identity_correlation_id;
 
 \echo '--- Verification: Main source table after ID back-fill ---'
-SELECT row_id, founding_id, entity_type, legal_unit_id, name FROM source_data ORDER BY row_id;
+SELECT row_id, identity_correlation_id, entity_type, legal_unit_id, name FROM source_data ORDER BY row_id;
 
 \echo '\n--- Step 2c: Merge establishment data ---'
-CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, founding_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
+CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, identity_correlation_id, NULL::INT AS id, legal_unit_id, name, address, valid_from, valid_until FROM source_data WHERE entity_type = 'establishment';
+
 
 CALL sql_saga.temporal_merge(
     target_table => 'readme.establishment'::regclass,
@@ -162,10 +165,11 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id'
+    identity_correlation_column => 'identity_correlation_id'
 );
 
 \echo '--- Verification: Feedback from temporal_merge ---'
+SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Verification: Final state of establishment table ---'
@@ -197,6 +201,18 @@ WHERE id = 1;
 
 \echo '--- Verification: legal_unit history after split ---'
 SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+
+\echo '\n--- Using the for_portion_of view (Historical Correction) ---'
+\echo 'Correct the name of legal_unit 1 across its entire history'
+-- Note: This is a bulk update on all historical records for this entity.
+-- The valid_from/valid_until are NOT provided in the SET clause.
+UPDATE readme.legal_unit__for_portion_of_valid
+SET name = 'Corrected SpareParts'
+WHERE id = 1;
+
+\echo '--- Verification: legal_unit history after correction ---'
+SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+
 
 \echo '\n--- Using the current view ---'
 \echo '--- INSERT: A new legal unit becomes active ---'
@@ -266,9 +282,8 @@ SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';
 \echo '--- 4. Cleanup ---'
 --------------------------------------------------------------------------------
 DROP FUNCTION readme.test_now();
-DROP TABLE readme.legal_unit, readme.establishment, readme.projects, readme.unit_with_range;
+DROP TABLE readme.legal_unit, readme.establishment, readme.projects, readme.unit_with_range CASCADE;
 DROP SCHEMA readme;
 
-SET client_min_messages TO NOTICE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

@@ -117,6 +117,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     'valid',
     'correct_table_uk' -- This UK is on saga_bug_test.legal_unit
 );
+NOTICE:  No compatible index found for foreign key on table establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON establishment USING GIST (legal_unit_id, daterange(valid_from, valid_until))
      add_temporal_foreign_key      
 -----------------------------------
  establishment_legal_unit_id_valid

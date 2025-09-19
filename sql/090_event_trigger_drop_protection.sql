@@ -45,6 +45,28 @@ ROLLBACK TO SAVEPOINT s6;
 SELECT sql_saga.drop_for_portion_of_view('dp', 'p');
 ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 
+CREATE TABLE dp_current (
+    id bigint,
+    s date NOT NULL,
+    e date NOT NULL
+);
+ALTER TABLE dp_current ADD CONSTRAINT dp_current_pkey PRIMARY KEY (id, s);
+SELECT sql_saga.add_era('dp_current', 's', 'e', 'p');
+SELECT sql_saga.add_current_view('dp_current', 'p');
+SAVEPOINT s_current_view;
+DROP VIEW dp_current__current_p; -- fails
+ROLLBACK TO SAVEPOINT s_current_view;
+SAVEPOINT s_current_trigger;
+DROP TRIGGER current_p ON dp_current__current_p; -- fails
+ROLLBACK TO SAVEPOINT s_current_trigger;
+SAVEPOINT s_current_pkey;
+ALTER TABLE dp_current DROP CONSTRAINT dp_current_pkey; -- fails
+ROLLBACK TO SAVEPOINT s_current_pkey;
+SELECT sql_saga.drop_current_view('dp_current', 'p');
+ALTER TABLE dp_current DROP CONSTRAINT dp_current_pkey;
+SELECT sql_saga.drop_era('dp_current', 'p');
+DROP TABLE dp_current;
+
 /* unique_keys */
 ALTER TABLE dp
     ADD CONSTRAINT u UNIQUE (id, s, e) DEFERRABLE,

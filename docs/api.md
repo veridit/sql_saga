@@ -79,7 +79,7 @@ This document is automatically generated from the database schema by the `80_gen
 > - SKIPPED_IDENTICAL: A benign no-op where the source data was identical to the target data.
 > - SKIPPED_FILTERED: A benign no-op where the source row was correctly filtered by the mode's logic (e.g., an `INSERT_NEW_ENTITIES` for an entity that already exists).
 > - SKIPPED_NO_TARGET: An actionable no-op where the operation failed because the target entity was not found. This signals a potential data quality issue.
-> - ERROR: A catastrophic failure occurred. The transaction was rolled back, and the `error_message` column will be populated.
+> - ERROR: A catastrophic planner failure occurred, indicating a bug in the merge logic. The `error_message` column will be populated.
 
 ```sql
 - APPLIED
@@ -92,13 +92,17 @@ This document is automatically generated from the database schema by the `80_gen
 ### temporal_merge_mode
 
 > Defines the behavior of the temporal_merge procedure.
-> - MERGE_ENTITY_PATCH: Merges source with target, patching data and carrying forward NULL values.
-> - MERGE_ENTITY_REPLACE: Merges source with target, replacing overlapping data.
+> -- The main workhorse.
 > - MERGE_ENTITY_UPSERT: Inserts new entities or performs a partial update on existing timelines. NULL is treated as an explicit value.
-> - INSERT_NEW_ENTITIES: Inserts only new entities.
-> - PATCH_FOR_PORTION_OF: Applies a surgical patch to a time portion of an existing entity.
-> - REPLACE_FOR_PORTION_OF: Applies a surgical replacement of a time portion of an existing entity.
 > - UPDATE_FOR_PORTION_OF: Applies a surgical partial update to a time portion of an existing entity. Skips new entities.
+> -- Variety of UPSERT/UPDATE where NULL's are ignored.
+> - MERGE_ENTITY_PATCH: Merges source with target, patching data by ignoring NULL values in the source.
+> - PATCH_FOR_PORTION_OF: Applies a surgical patch to a time portion of an existing entity, ignoring NULL values in the source.
+> -- Variety of UPSERT/UPDATE where everything is replaced.
+> - MERGE_ENTITY_REPLACE: Merges source with target, replacing overlapping data.
+> - REPLACE_FOR_PORTION_OF: Applies a surgical replacement of a time portion of an existing entity.
+> -- Special purpose restricted operations.
+> - INSERT_NEW_ENTITIES: Inserts only new entities.
 > - DELETE_FOR_PORTION_OF: Performs a surgical deletion of a time portion from an existing entity.
 
 ```sql
@@ -124,6 +128,8 @@ This document is automatically generated from the database schema by the `80_gen
 > - DELETE: An existing historical record will be deleted.
 > - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
 > - SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.
+> - SKIP_FILTERED: A source row should be skipped because it was correctly filtered by the mode's logic (e.g. INSERT_NEW_ENTITIES for an entity that already exists).
+> - ERROR: A safeguard action indicating the planner could not generate a valid plan for a row, signaling a bug.
 
 ```sql
 - INSERT
@@ -131,21 +137,24 @@ This document is automatically generated from the database schema by the `80_gen
 - DELETE
 - SKIP_IDENTICAL
 - SKIP_NO_TARGET
+- SKIP_FILTERED
+- ERROR
 ```
 
 ### temporal_merge_update_effect
 
 > Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations to ensure temporal integrity.
+> The planner relies on this specific ENUM order for sorting: timeline-extending operations must execute before timeline-shortening operations.
 > - GROW: The new period is a superset of the old one. These are executed first.
-> - SHRINK: The new period is a subset of the old one. These are executed after GROWs.
-> - MOVE: The period shifts without being a pure grow or shrink. Also executed after GROWs.
 > - NONE: The period is unchanged (a data-only update).
+> - MOVE: The period shifts without being a pure grow or shrink.
+> - SHRINK: The new period is a subset of the old one. These are executed last.
 
 ```sql
 - GROW
-- SHRINK
-- MOVE
 - NONE
+- MOVE
+- SHRINK
 ```
 
 ### trigger_action
@@ -279,7 +288,8 @@ FUNCTION add_foreign_key(
     match_type sql_saga.fk_match_types DEFAULT 'SIMPLE'::sql_saga.fk_match_types,
     update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
     delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
-    foreign_key_name name DEFAULT NULL::name
+    foreign_key_name name DEFAULT NULL::name,
+    create_index boolean DEFAULT true
 ) RETURNS name
 SECURITY DEFINER
 ```
@@ -300,7 +310,8 @@ FUNCTION add_regular_foreign_key(
     fk_check_constraint name DEFAULT NULL::name,
     fk_helper_function text DEFAULT NULL::text,
     uk_update_trigger name DEFAULT NULL::name,
-    uk_delete_trigger name DEFAULT NULL::name
+    uk_delete_trigger name DEFAULT NULL::name,
+    create_index boolean DEFAULT true
 ) RETURNS name
 SECURITY DEFINER
 ```
@@ -322,7 +333,8 @@ FUNCTION add_temporal_foreign_key(
     fk_insert_trigger name DEFAULT NULL::name,
     fk_update_trigger name DEFAULT NULL::name,
     uk_update_trigger name DEFAULT NULL::name,
-    uk_delete_trigger name DEFAULT NULL::name
+    uk_delete_trigger name DEFAULT NULL::name,
+    create_index boolean DEFAULT true
 ) RETURNS name
 SECURITY DEFINER
 ```
@@ -334,7 +346,8 @@ FUNCTION drop_foreign_key(
     table_oid regclass,
     column_names name[],
     era_name name DEFAULT NULL::name,
-    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior
+    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
+    drop_index boolean DEFAULT true
 ) RETURNS void
 SECURITY DEFINER
 ```
@@ -344,7 +357,8 @@ SECURITY DEFINER
 ```sql
 FUNCTION drop_foreign_key_by_name(
     table_oid regclass,
-    key_name name
+    key_name name,
+    drop_index boolean DEFAULT true
 ) RETURNS boolean
 SECURITY DEFINER
 ```
@@ -449,7 +463,7 @@ PROCEDURE temporal_merge(
     IN identity_columns text[],
     IN mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     IN era_name name DEFAULT 'valid'::name,
-    IN source_row_id_column name DEFAULT 'row_id'::name,
+    IN row_id_column name DEFAULT 'row_id'::name,
     IN identity_correlation_column name DEFAULT NULL::name,
     IN update_source_with_identity boolean DEFAULT false,
     IN natural_identity_columns text[] DEFAULT NULL::text[],

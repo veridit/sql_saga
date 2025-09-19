@@ -334,6 +334,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'parent_uk'
 );
+NOTICE:  No compatible index found for foreign key on table ss.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON ss.child USING GIST (parent_id, daterange(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_valid
@@ -507,6 +508,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'parent_uk_stm'
 );
+NOTICE:  No compatible index found for foreign key on table stm.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON stm.child USING GIST (parent_id, daterange(valid_from, valid_until))
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_valid
@@ -568,10 +570,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- temporal_merge plan ---'
 --- temporal_merge plan ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids | operation | timeline_update_effect | entity_ids | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data         | relation 
--------------+----------------+-----------+------------------------+------------+----------------+-----------------+----------------+-----------------+----------------------+----------
-           1 | {1}            | INSERT    |                        | {"id": 1}  |                |                 | 2024-05-01     | infinity        | {"value": "updated"} | 
-           2 | {1}            | UPDATE    | SHRINK                 | {"id": 1}  | 2024-01-01     | infinity        | 2024-01-01     | 2024-05-01      | {"value": "initial"} | starts
+ plan_op_seq | row_ids | operation | update_effect | entity_ids | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data         | trace 
+-------------+---------+-----------+---------------+------------+----------+----------------+-----------------+----------------+-----------------+----------------------+-------
+           1 | {1}     | INSERT    |               | {"id": 1}  | finishes | 2024-01-01     | infinity        | 2024-05-01     | infinity        | {"value": "updated"} | 
+           2 | {1}     | UPDATE    | SHRINK        | {"id": 1}  | starts   | 2024-01-01     | infinity        | 2024-01-01     | 2024-05-01      | {"value": "initial"} | 
 (2 rows)
 
 \echo '--- temporal_merge feedback ---'

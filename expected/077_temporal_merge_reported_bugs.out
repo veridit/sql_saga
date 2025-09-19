@@ -294,6 +294,14 @@ TABLE source_data_2;
       2 |               1 |  1 |           100 |         5 | 2023-04-01 | 2023-07-01
 (1 row)
 
+\echo '--- Target for second import ---'
+--- Target for second import ---
+TABLE tmrb.my_stat_for_unit_good_pk;
+ id | legal_unit_id | value_int | valid_from | valid_until 
+----+---------------+-----------+------------+-------------
+  1 |           100 |         4 | 2023-01-01 | 2023-04-01
+(1 row)
+
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_good_pk',
     source_table => 'source_data_2',
@@ -303,12 +311,11 @@ CALL sql_saga.temporal_merge(
 );
 \echo '--- Planner output for Case 2b ---'
 --- Planner output for Case 2b ---
-SELECT plan_op_seq, source_row_ids, operation, timeline_update_effect, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | source_row_ids |   operation    | timeline_update_effect | entity_ids | old_valid_from | new_valid_from | new_valid_until |                  data                  | relation 
--------------+----------------+----------------+------------------------+------------+----------------+----------------+-----------------+----------------------------------------+----------
-           1 | {2}            | INSERT         |                        | {"id": 1}  |                | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} | 
-           2 |                | SKIP_IDENTICAL |                        | {"id": 1}  | 2023-01-01     | 2023-01-01     | 2023-04-01      | {"value_int": 4, "legal_unit_id": 100} | equals
-(2 rows)
+SELECT plan_op_seq, row_ids, operation, update_effect, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | entity_ids | old_valid_from | new_valid_from | new_valid_until |                  data                  | relation 
+-------------+---------+-----------+---------------+------------+----------------+----------------+-----------------+----------------------------------------+----------
+           1 | {2}     | INSERT    |               | {"id": 1}  |                | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} | 
+(1 row)
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 --- Target after second import (CORRECT: 2 historical rows for id=1) ---
@@ -730,6 +737,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_fk_bug_id_valid'
 );
+NOTICE:  No compatible index found for foreign key on table tmrb.activity_fk_bug. Creating new index: CREATE INDEX activity_fk_bug_legal_unit_id_valid_gist_idx ON tmrb.activity_fk_bug USING GIST (legal_unit_id, daterange(valid_from, valid_until))
       add_temporal_foreign_key       
 -------------------------------------
  activity_fk_bug_legal_unit_id_valid

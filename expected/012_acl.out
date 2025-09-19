@@ -41,13 +41,13 @@ CREATE VIEW show_owners AS
            c.relowner::regrole AS owner
     FROM pg_class AS c
     WHERE c.relnamespace = 'public'::regnamespace
-      AND c.relname = ANY (ARRAY['owner_test', 'owner_test_history', 'owner_test_with_history', 'owner_test__for_portion_of_p'])
+      AND c.relname = ANY (ARRAY['owner_test', 'owner_test_history', 'owner_test_with_history', 'owner_test__for_portion_of_p', 'owner_test__current_p'])
     UNION ALL
     SELECT p.pronamespace, p.proname, 'function', p.proowner
     FROM pg_proc AS p
     WHERE p.pronamespace = 'public'::regnamespace
       AND p.proname = ANY (ARRAY['owner_test__as_of', 'owner_test__between', 'owner_test__between_symmetric', 'owner_test__from_to']);
-CREATE TABLE owner_test (col text PRIMARY KEY, f integer, u integer);
+CREATE TABLE owner_test (col text PRIMARY KEY, f date, u date);
 ALTER TABLE owner_test OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('owner_test', 'f', 'u', 'p');
  add_era 
@@ -61,12 +61,19 @@ SELECT sql_saga.add_for_portion_of_view('owner_test', 'p');
  t
 (1 row)
 
+SELECT sql_saga.add_current_view('owner_test', 'p');
+ add_current_view 
+------------------
+ t
+(1 row)
+
 TABLE show_owners ORDER BY object_name;
  schema_name |         object_name          | object_type |     owner     
 -------------+------------------------------+-------------+---------------
  public      | owner_test                   | table       | periods_acl_1
+ public      | owner_test__current_p        | view        | periods_acl_1
  public      | owner_test__for_portion_of_p | view        | periods_acl_1
-(2 rows)
+(3 rows)
 
 -- This should change everything
 ALTER TABLE owner_test OWNER TO periods_acl_2;
@@ -74,8 +81,15 @@ TABLE show_owners ORDER BY object_name;
  schema_name |         object_name          | object_type |     owner     
 -------------+------------------------------+-------------+---------------
  public      | owner_test                   | table       | periods_acl_2
+ public      | owner_test__current_p        | view        | periods_acl_2
  public      | owner_test__for_portion_of_p | view        | periods_acl_2
-(2 rows)
+(3 rows)
+
+SELECT sql_saga.drop_current_view('owner_test', 'p');
+ drop_current_view 
+-------------------
+ t
+(1 row)
 
 SELECT sql_saga.drop_for_portion_of_view('owner_test', 'p');
  drop_for_portion_of_view 
@@ -108,9 +122,9 @@ CREATE VIEW show_acls AS
                acl.privilege_type
         FROM pg_class AS c
         CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-        WHERE c.relname IN ('fpacl', 'fpacl__for_portion_of_p')
+        WHERE c.relname IN ('fpacl', 'fpacl__for_portion_of_p', 'fpacl__current_p')
     ) AS _;
-CREATE TABLE fpacl (col text PRIMARY KEY, f integer, u integer);
+CREATE TABLE fpacl (col text PRIMARY KEY, f date, u date);
 ALTER TABLE fpacl OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
  add_era 
@@ -121,6 +135,12 @@ SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
 SELECT sql_saga.add_for_portion_of_view('fpacl', 'p');
  add_for_portion_of_view 
 -------------------------
+ t
+(1 row)
+
+SELECT sql_saga.add_current_view('fpacl', 'p');
+ add_current_view 
+------------------
  t
 (1 row)
 
@@ -135,16 +155,27 @@ TABLE show_acls ORDER BY sort_order;
           6 | public      | fpacl                   | table       | periods_acl_1 | TRIGGER
           7 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
           8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
-          9 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-(16 rows)
+          9 | public      | fpacl__current_p        | view        | periods_acl_1 | DELETE
+         10 | public      | fpacl__current_p        | view        | periods_acl_1 | INSERT
+         11 | public      | fpacl__current_p        | view        | periods_acl_1 | MAINTAIN
+         12 | public      | fpacl__current_p        | view        | periods_acl_1 | REFERENCES
+         13 | public      | fpacl__current_p        | view        | periods_acl_1 | SELECT
+         14 | public      | fpacl__current_p        | view        | periods_acl_1 | TRIGGER
+         15 | public      | fpacl__current_p        | view        | periods_acl_1 | TRUNCATE
+         16 | public      | fpacl__current_p        | view        | periods_acl_1 | UPDATE
+         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         19 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         20 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         21 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         22 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         23 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         24 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+(24 rows)
 
+GRANT SELECT, UPDATE ON TABLE fpacl__current_p TO periods_acl_2; -- fail
+ERROR:  cannot grant SELECT directly to "fpacl__current_p"; grant SELECT to "fpacl" instead
+CONTEXT:  PL/pgSQL function health_checks() line 154 at RAISE
 GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2; -- fail
 ERROR:  cannot grant SELECT directly to "fpacl__for_portion_of_p"; grant SELECT to "fpacl" instead
 CONTEXT:  PL/pgSQL function health_checks() line 154 at RAISE
@@ -162,18 +193,31 @@ TABLE show_acls ORDER BY sort_order;
           8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
           9 | public      | fpacl                   | table       | periods_acl_2 | SELECT
          10 | public      | fpacl                   | table       | periods_acl_2 | UPDATE
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-         19 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
-         20 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | UPDATE
-(20 rows)
+         11 | public      | fpacl__current_p        | view        | periods_acl_1 | DELETE
+         12 | public      | fpacl__current_p        | view        | periods_acl_1 | INSERT
+         13 | public      | fpacl__current_p        | view        | periods_acl_1 | MAINTAIN
+         14 | public      | fpacl__current_p        | view        | periods_acl_1 | REFERENCES
+         15 | public      | fpacl__current_p        | view        | periods_acl_1 | SELECT
+         16 | public      | fpacl__current_p        | view        | periods_acl_1 | TRIGGER
+         17 | public      | fpacl__current_p        | view        | periods_acl_1 | TRUNCATE
+         18 | public      | fpacl__current_p        | view        | periods_acl_1 | UPDATE
+         19 | public      | fpacl__current_p        | view        | periods_acl_2 | SELECT
+         20 | public      | fpacl__current_p        | view        | periods_acl_2 | UPDATE
+         21 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         22 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         23 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         24 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         25 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         26 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         27 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         28 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+         29 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
+         30 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | UPDATE
+(30 rows)
 
+REVOKE UPDATE ON TABLE fpacl__current_p FROM periods_acl_2; -- fail
+ERROR:  cannot revoke UPDATE directly from "fpacl__current_p", revoke UPDATE from "fpacl" instead
+CONTEXT:  PL/pgSQL function health_checks() line 273 at RAISE
 REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2; -- fail
 ERROR:  cannot revoke UPDATE directly from "fpacl__for_portion_of_p", revoke UPDATE from "fpacl" instead
 CONTEXT:  PL/pgSQL function health_checks() line 273 at RAISE
@@ -190,16 +234,31 @@ TABLE show_acls ORDER BY sort_order;
           7 | public      | fpacl                   | table       | periods_acl_1 | TRUNCATE
           8 | public      | fpacl                   | table       | periods_acl_1 | UPDATE
           9 | public      | fpacl                   | table       | periods_acl_2 | SELECT
-         10 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
-         11 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
-         12 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
-         13 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
-         14 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
-         15 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
-         16 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
-         17 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
-         18 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
-(18 rows)
+         10 | public      | fpacl__current_p        | view        | periods_acl_1 | DELETE
+         11 | public      | fpacl__current_p        | view        | periods_acl_1 | INSERT
+         12 | public      | fpacl__current_p        | view        | periods_acl_1 | MAINTAIN
+         13 | public      | fpacl__current_p        | view        | periods_acl_1 | REFERENCES
+         14 | public      | fpacl__current_p        | view        | periods_acl_1 | SELECT
+         15 | public      | fpacl__current_p        | view        | periods_acl_1 | TRIGGER
+         16 | public      | fpacl__current_p        | view        | periods_acl_1 | TRUNCATE
+         17 | public      | fpacl__current_p        | view        | periods_acl_1 | UPDATE
+         18 | public      | fpacl__current_p        | view        | periods_acl_2 | SELECT
+         19 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | DELETE
+         20 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | INSERT
+         21 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | MAINTAIN
+         22 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | REFERENCES
+         23 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | SELECT
+         24 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRIGGER
+         25 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | TRUNCATE
+         26 | public      | fpacl__for_portion_of_p | view        | periods_acl_1 | UPDATE
+         27 | public      | fpacl__for_portion_of_p | view        | periods_acl_2 | SELECT
+(27 rows)
+
+SELECT sql_saga.drop_current_view('fpacl', 'p');
+ drop_current_view 
+-------------------
+ t
+(1 row)
 
 SELECT sql_saga.drop_for_portion_of_view('fpacl', 'p');
  drop_for_portion_of_view 

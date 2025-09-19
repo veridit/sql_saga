@@ -74,6 +74,7 @@ SELECT sql_saga.add_regular_foreign_key(
     fk_column_names => ARRAY['pk_id'],
     unique_key_name => 'temporal_pk_id_key'
 );
+NOTICE:  No compatible index found for foreign key on table regular_fk. Creating new index: CREATE INDEX regular_fk_pk_id_idx ON regular_fk USING BTREE (pk_id)
  add_regular_foreign_key 
 -------------------------
  regular_fk_pk_id_fkey
@@ -102,6 +103,7 @@ SELECT sql_saga.add_regular_foreign_key(
  name   | text    |           |          | 
 Indexes:
     "regular_fk_pkey" PRIMARY KEY, btree (id)
+    "regular_fk_pk_id_idx" btree (pk_id)
 Check constraints:
     "regular_fk_pk_id_check" CHECK (temporal_pk_id_exists(pk_id))
 
@@ -208,6 +210,7 @@ ROLLBACK TO SAVEPOINT before_ddl2;
 \echo "--- Drop Foreign Key ---"
 "--- Drop Foreign Key ---"
 SELECT sql_saga.drop_foreign_key('regular_fk'::regclass, ARRAY['pk_id']);
+NOTICE:  Dropping automatically created index "regular_fk_pk_id_idx" for foreign key "regular_fk_pk_id_fkey"
  drop_foreign_key 
 ------------------
  

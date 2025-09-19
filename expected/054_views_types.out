@@ -141,7 +141,7 @@ NOTICE:
 NOTICE:  --- Testing type: date ---
 NOTICE:  1. for_portion_of: INSERT
 ERROR:  sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.
-CONTEXT:  PL/pgSQL function for_portion_of_trigger() line 35 at RAISE
+CONTEXT:  PL/pgSQL function for_portion_of_trigger() line 11 at RAISE
 SQL statement "
             INSERT INTO test_table_date__for_portion_of_valid (id, value, valid_from, valid_until) VALUES (1, 'initial', '2024-01-10'::date, '2024-01-20'::date);
         "

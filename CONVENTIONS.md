@@ -133,22 +133,42 @@ With each new message from the user, especially one containing test results or c
 All development work is an iterative process of forming hypotheses and verifying them with real-world data. The core principle is to replace assumption with verification.
 
 ## The Iterative Development Cycle
-All development work, especially bug fixing, must follow this iterative cycle. Do not mark tasks as complete or "done" until the final step of the cycle has been successfully executed.
+All development work, especially bug fixing, must follow a rigorous, hypothesis-driven cycle to ensure progress is verifiable, correct, and does not waste time on flawed assumptions. A task is not complete until the final step of this cycle has been successfully executed. **A hypothesis is not confirmed until it is supported by direct, empirical observation.**
 
-### 1. Formulate and State a Hypothesis
-- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem in `tmp/journal.md`. This creates a locally persistent log of your thought process. You must also explicitly document the outcome of every hypothesis in the project's `todo.md` file, whether it is verified or falsified. This creates a permanent record of the debugging process and prevents repeating failed strategies. This is not optional; it is the most critical part of the process for complex bugs.
-- **Example:** "Hypothesis: The server crash is caused by a memory leak in `covers_without_gaps.c`, where pass-by-reference datums are not being freed before new ones are allocated in the aggregate's state."
+This cycle is designed to optimize for the shortest *overall* development time, not just the shortest "happy path". In a complex system, the probability of any given change being perfectly correct on the first attempt is low. A process that optimizes for the happy path (e.g., `CHANGE -> CLEANUP -> DONE`) results in a very long and costly sad path when the change is incorrect (`INCORRECT CHANGE -> CLEANUP -> ERROR -> RE-INVESTIGATE -> ...`).
 
-### 2. Create a Minimal Reproducing Test
-- **Action:** Before proposing a fix, add a test case that isolates the bug at the lowest possible level. If one already exists, identify it. This test must fail before the fix and pass after.
-- **Example:** "I will add a new test to `sql/22_covers_without_gaps_test.sql`. This test will call `covers_without_gaps` with a set of ranges that have a gap at the start of the target period, which is currently not being detected. This test is expected to fail."
+Our process deliberately adds verification steps (`CHANGE -> VERIFY -> CLEANUP -> DONE`), which makes the happy path slightly longer. However, it makes the sad path significantly shorter (`INCORRECT CHANGE -> VERIFY -> RE-HYPOTHESIZE -> ...`). By catching errors early and cheaply, we minimize wasted effort and ensure the average time to a correct solution is much lower.
 
-### 3. Propose a Change and State the Expected Outcome
-- **Action:** Propose the specific code changes (using SEARCH/REPLACE blocks). Alongside the changes, explicitly state your hope or assumption about what the change will achieve.
-- **Example:** "Hope/Assumption: Applying this fix will prevent the memory leak. The new test in `22_covers_without_gaps_test.sql` will now pass, and the cascading failures in foreign key tests (25, 41, 42) will be resolved."
+This cycle is designed to optimize for the shortest *overall* development time, not just the shortest "happy path". In a complex system, the probability of any given change being perfectly correct on the first attempt is low. A process that optimizes for the happy path (e.g., `CHANGE -> CLEANUP -> DONE`) results in a very long and costly sad path when the change is incorrect (`INCORRECT CHANGE -> CLEANUP -> ERROR -> RE-INVESTIGATE -> ...`).
 
-### 4. Gather Real-World Data
-- **Action:** After the user applies the changes, request that they run the relevant tests or commands to gather empirical evidence of the change's impact.
+Our process deliberately adds verification steps (`CHANGE -> VERIFY -> CLEANUP -> DONE`), which makes the happy path slightly longer. However, it makes the sad path significantly shorter (`INCORRECT CHANGE -> VERIFY -> RE-HYPOTHESIZE -> ...`). By catching errors early and cheaply, we minimize wasted effort and ensure the average time to a correct solution is much lower.
+
+### 1. Hypothesize: Formulate and State a Hypothesis
+- **Action:** Before making any code changes, clearly state your hypothesis about the root cause of the problem in `tmp/journal.md`. This creates a locally persistent log of your thought process.
+- **Example:** "Hypothesis: The import job hangs because the batch selection query is inefficient and confuses the query planner."
+
+### 2. Isolate: Create or Identify a Reproducing Test
+- **Action:** Ensure a test case exists that isolates the bug. This can be an existing pg_regress test or a temporary SQL script (`tmp/debug_*.sql`) that demonstrates the failure (e.g., a query that is slow or returns incorrect data).
+
+### 3. Prototype: Propose a Non-Destructive Verification
+- **Action:** Before proposing a permanent fix, create a temporary, non-destructive script (e.g., `tmp/verify_fix.sql`) to test your proposed change. This script must use tools like `EXPLAIN (ANALYZE, BUFFERS)` or read-only `SELECT` queries to gather performance data or check logic without altering the database state.
+- **Example:** Create a script that runs `EXPLAIN ANALYZE` on a simplified query to prove it is fast and returns the expected number of rows.
+
+### 4. Observe: Gather Empirical Evidence from the Prototype
+- **Action:** Suggest the user run the verification script from Step 3. **Do not proceed until you have observed the results.** This step is mandatory.
+- **Standard Command:** `psql -d sql_saga_regress < tmp/verify_fix.sql`
+
+### 5. Analyze & Refine: Analyze Prototype Results
+- **Action:** Carefully inspect the output from the verification script.
+  - **If Successful:** The prototype confirms the hypothesis (e.g., the new query is fast). You can now proceed to propose the permanent change.
+  - **If Unsuccessful:** The hypothesis was incorrect. The prototype failed (e.g., the query was still slow or returned zero rows). Analyze the new data, update `tmp/journal.md` with a new hypothesis, and return to Step 1.
+
+### 6. Implement: Propose the Permanent Change
+- **Action:** Only after the prototype has been successfully verified in Step 5, propose the specific code changes (using `SEARCH/REPLACE` blocks) for the permanent files (e.g., migrations, functions). State the expected outcome.
+- **Example:** "This change replaces the complex query with the simplified version that was verified to be fast in `tmp/verify_fix.sql`."
+
+### 7. Validate: Run Full Regression Tests
+- **Action:** After the user applies the permanent changes, request that they run the relevant test suite to ensure the fix works and has not introduced any regressions.
 - **Standard Command Format:** Always use the following command structure to run tests. This ensures the extension is installed before testing and that any failures are immediately diffed for analysis.
   - **Debugging Tip:** For complex SQL or C functions, prefer adding `RAISE DEBUG` statements over `RAISE NOTICE`. In the corresponding test file, temporarily wrap the relevant commands with `SET client_min_messages TO DEBUG;` and `RESET client_min_messages;`. This provides targeted diagnostic output without permanently cluttering the test results.
   - **Command:** `make install && make test ...; make diff-fail-all`
@@ -179,27 +199,33 @@ All development work, especially bug fixing, must follow this iterative cycle. D
           SELECT 'The transaction is still active';
           ```
 
-### 5. Analyze Results and Verify Hypothesis
-- **Action:** Carefully inspect the output of the tests or commands. Compare the actual results against the expected outcome from Step 3.
-  - **If Successful:** The hypothesis is confirmed. The fix worked as expected.
-  - **If Unsuccessful:**
-    1.  **Analyze Failure:** The hypothesis was incorrect, or the fix was incomplete. Analyze the new data (test failures, error messages) to form a new, more accurate hypothesis.
-    2.  **Revert Incorrect Changes:** If a proposed change did not solve the problem and does not have standalone merit, it must be reverted. Do not leave incorrect workarounds or convoluted code in the codebase. Propose a new set of `SEARCH/REPLACE` blocks to undo the incorrect change before proceeding.
-    3.  **Return to Step 1:** Begin the cycle again with the new hypothesis.
+#### `temporal_merge` Planner Tracing Protocol
+The `temporal_merge` planner includes a permanent `trace` column in its output (`temporal_merge_plan`). This is a critical architectural feature for debugging and must be handled with a strict protocol.
 
-### 6. Update Documentation and Conclude
-- **Action:** Only after the fix has been successfully verified in Step 5, update the relevant documentation.
-  - **For `todo.md`:** Move the task from a pending state (e.g., "High Priority") to the "Done" section. The description of the completed task should accurately reflect the *verified* solution.
-  - **For other documentation:** Update any other relevant documents, such as `README.md` or design documents.
+1.  **Trace is Permanent and Performant:** The `trace` column must **never** be removed from the planner's output or from any regression test that queries it. Its presence, even as `NULL`, is required for consistency and to allow for easy activation of tracing. The implementation is designed to have near-zero performance impact when tracing is disabled. The planner uses two patterns to achieve this:
+    - **Short-circuiting `||` operator:** When tracing is off, the trace seed is `NULL`. Subsequent `trace || jsonb_build_object(...)` operations are short-circuited by the PostgreSQL planner, which knows that `NULL || anything` is `NULL` and therefore does not execute the expensive `jsonb_build_object` call.
+    - **`CASE` statements:** In other areas, an explicit `CASE WHEN ...` statement is used, which also guarantees the expensive trace-building logic is skipped.
+    Both approaches ensure that the architectural decision to have a permanent `trace` column incurs no runtime overhead when tracing is not active.
 
-By strictly following this process, we ensure that progress is real, verifiable, and that the project's state remains consistently stable.
+2.  **Trace is Toggled via GUC:** Tracing is activated for a specific operation by setting the session-level GUC: `SET sql_saga.temporal_merge.log_trace = true;`. When `false` (the default), the planner populates the `trace` column with `NULL`.
+
+3.  **Debugging Protocol:** When a `temporal_merge` test fails and the root cause is not immediately obvious from the plan output, the following steps are mandatory:
+    a.  **Enable Trace:** In the test file, wrap the failing `CALL sql_saga.temporal_merge(...)` with `SET sql_saga.temporal_merge.log_trace = true;` and `SET sql_saga.temporal_merge.log_trace = false;`.
+    b.  **Isolate Trace in Diffs:** Run the test and inspect the diff in trace to gain understanding. The expected has NULL in trace, and the actual has the trace due to the GUC variable setting. The `SELECT`s must remain unchanged, such that when the the issue is fixed and the trace is disabled again it will mach. This technique ensures that if the plan's data is wrong, the test will fail, and the `diff` output will contain the full trace from the actual plan for analysis.
+
+4.  **Trace Aggregation:** When multiple atomic time segments are coalesced into a single final plan operation, their individual traces must be aggregated into a `jsonb` array (using `jsonb_agg`). This preserves the full history of the coalescing logic. Picking only the first or last trace is not acceptable as it loses valuable diagnostic information.
+
+### 8. Conclude: Update Documentation
+- **Action:** Only after the fix has been successfully validated in Step 7, update `todo.md` to move the task to a "done" state (e.g., `[x]`).
 
 ## General Development Principles
+- **Embrace Falsifiability**: Treat every hypothesis and plan as provisional until proven by direct, empirical observation. Frame plans as "Current Plan" or "Next Step," not "Final Plan." The goal is to be prepared to be wrong and to allow evidence to guide the development process. Optimism should be rooted in the rigor of the process itself, not in the assumed correctness of any single solution. This mindset is the primary defense against hubris and wasted effort.
 - **Fail Fast**:
   - Functionality that is expected to work should fail immediately and clearly if an unexpected state or error occurs.
   - Do not mask or work around problems; instead, provide sufficient error or debugging information to facilitate a solution. This is crucial for maintaining system integrity and simplifying troubleshooting, especially in backend processes and SQL procedures.
 - **Declarative Transparency**:
   - Where possible, store the inputs and intermediate results of complex calculations directly on the relevant records. This makes the system's state self-documenting and easier to debug, inspect, and trust, rather than relying on dynamic calculations that can appear magical.
+  - **Example:** The `temporal_merge` planner was refactored to separate ephemeral and non-ephemeral data into distinct payloads (`ephemeral_payload`, `data_payload`). This makes the core logic clearer, as the complex coalescing operations now work on a clean `data_payload`, instead of requiring repeated, on-the-fly stripping of ephemeral keys. This separation of concerns makes the algorithm's intent explicit.
 
 ### The "Observe, Verify, Implement" Protocol for Complex Changes
 When a task is complex or has a history of regressions (e.g., the `rename_following` trigger), a more rigorous, data-driven protocol is required to avoid speculative fixes. This protocol is a practical application of the "Observe first, then change" principle.

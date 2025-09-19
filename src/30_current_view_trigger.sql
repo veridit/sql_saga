@@ -75,10 +75,10 @@ BEGIN
             identity_columns        := identifier_columns::text[],
             ephemeral_columns := '{}'::text[],
             era_name          := info.era_name,
-            mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+            mode              := 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
+            row_id_column := 'row_id',
+            identity_correlation_column := 'row_id'
         );
-        DROP TABLE pg_temp.temporal_merge_feedback;
-        DROP TABLE pg_temp.temporal_merge_plan;
         RETURN NEW;
 
     ELSIF (TG_OP = 'UPDATE') THEN

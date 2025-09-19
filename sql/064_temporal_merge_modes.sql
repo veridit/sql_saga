@@ -10,7 +10,7 @@ BEGIN;
 \echo '  scenarios. Each scenario clearly prints the plan, feedback, and final state.'
 \echo '----------------------------------------------------------------------------'
 
-SET client_min_messages TO WARNING;
+SET client_min_messages TO NOTICE;
 CREATE SCHEMA tmm; -- Temporal Merge Modes
 
 -- Target table for all scenarios

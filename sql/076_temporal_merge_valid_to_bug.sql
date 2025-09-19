@@ -54,7 +54,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     identity_correlation_column => 'founding_row_id',
-    source_row_id_column => 'data_row_id'
+    row_id_column => 'data_row_id'
 );
 
 \echo '--- VERIFICATION: Final state of my_temporal_table ---'
@@ -109,7 +109,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => ARRAY['id'],
     ephemeral_columns => '{}',
     mode => 'DELETE_FOR_PORTION_OF',
-    source_row_id_column => 'data_row_id'
+    row_id_column => 'data_row_id'
 );
 
 \echo '--- VERIFICATION: Final state of my_temporal_table ---'

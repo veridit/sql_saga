@@ -99,33 +99,8 @@ To simplify common interactions with temporal data, `sql_saga` provides two type
 ##### The `for_portion_of` View: Applying Changes to a Time Slice
 This view is a specialized tool that provides a powerful feature that emulates the SQL:2011 `FOR PORTION OF` clause. It exists for one purpose: to apply a data change to a specific slice of an entity's timeline. The trigger will automatically split, update, and insert historical records to correctly reflect the change.
 
-- **Surgical `UPDATE` is the only supported operation.** To use it, you must provide `valid_from` and `valid_until` in the `SET` clause, which act as parameters defining the time period to be changed.
-- **`INSERT`, `DELETE`, and simple `UPDATE`s (e.g., historical corrections) are intentionally not supported on the view.** These operations should be performed directly on the base table. `DELETE` is unsupported because standard SQL provides no way to pass the required `[from, until)` parameters to a `DELETE` trigger, unlike `UPDATE` which can use the `SET` clause for this purpose. This focused design ensures the view's purpose is clear and prevents accidental misuse.
-
-**Known Limitation:** The trigger for this view performs `DELETE` and `INSERT` operations that can create a transient, inconsistent state. If the base table is referenced by a temporal foreign key from another table, an `UPDATE` that creates a temporary gap in history may cause the foreign key check to fail.
-
-For these more complex scenarios, the `temporal_merge` procedure is the recommended solution as it is designed to handle such dependencies correctly. However, if you must use the `for_portion_of` view, you can manually disable and re-enable the outgoing foreign key triggers on the referenced table within a transaction.
-
-**Manual Workaround Example:**
-You can find the trigger names to disable in the `uk_update_trigger` and `uk_delete_trigger` columns of the `sql_saga.foreign_keys` metadata table.
-```sql
-BEGIN;
-
--- Temporarily disable the outgoing FK triggers on the 'legal_unit' table.
-ALTER TABLE readme.legal_unit DISABLE TRIGGER establishment_legal_unit_id_valid_uk_update;
-ALTER TABLE readme.legal_unit DISABLE TRIGGER establishment_legal_unit_id_valid_uk_delete;
-
--- Perform the historical update via the view
-UPDATE readme.legal_unit__for_portion_of_valid
-SET status = 'inactive', valid_from = '2023-09-01', valid_until = '2023-11-01'
-WHERE id = 1;
-
--- Re-enable the triggers
-ALTER TABLE readme.legal_unit ENABLE TRIGGER establishment_legal_unit_id_valid_uk_update;
-ALTER TABLE readme.legal_unit ENABLE TRIGGER establishment_legal_unit_id_valid_uk_delete;
-
-COMMIT;
-```
+- **Surgical `UPDATE` is the primary supported operation.** To apply a change to a specific time slice, you must provide `valid_from` and `valid_until` in the `SET` clause. Simple `UPDATE`s that do not change the validity period are also permitted for historical corrections on existing records.
+- **`INSERT` and `DELETE` are intentionally not supported on the view.** These operations should be performed directly on the base table. `DELETE` is unsupported because standard SQL provides no way to pass the required `[from, until)` parameters to a `DELETE` trigger, unlike `UPDATE` which can use the `SET` clause for this purpose. This focused design ensures the view's purpose is clear and prevents accidental misuse.
 
 **Example: Marking a legal unit as inactive for a specific period**
 ```sql
@@ -213,14 +188,16 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - `natural_identity_columns`: An array of column names that form a "natural" or "business" key. This key is used to look up existing entities in the target table when the stable identifier in `identity_columns` is not known by the source (e.g., is `NULL` for new entities). This is the primary mechanism for preventing duplicate entities when loading data from external systems.
   - `ephemeral_columns`: (Optional, Default: `NULL`) An array of column names that should not be considered when comparing for data changes, but whose values should still be updated. This is ideal for metadata like `edit_comment` or `batch_id` that should be attached to a historical record without creating a new version of that record if only the metadata changes. Any synchronized temporal columns (e.g., a `valid_to` column) are automatically treated as ephemeral and do not need to be specified here.
   - `mode`: Controls the scope and payload semantics of the merge. By default, all modes are non-destructive to the timeline.
-    - `'MERGE_ENTITY_PATCH'`: (Default) Merges the source timeline with the target entity's full timeline, patching data for overlapping periods. This mode correctly handles sparse source data by "carrying forward" the last known value for any attribute that is `NULL` in a subsequent source row. It preserves non-overlapping parts of the target timeline.
-    - `'MERGE_ENTITY_REPLACE'`: Merges the source timeline with the target entity's full timeline, replacing data for overlapping periods. Preserves non-overlapping parts of the target timeline.
+    - `'MERGE_ENTITY_PATCH'`: (Default) Merges the source with the target timeline. For overlapping periods, it patches data by applying non-`NULL` values from the source; target data is preserved for any attribute that is `NULL` or absent in the source. This is a stateless operation. It preserves non-overlapping parts of the target timeline.
+    - `'MERGE_ENTITY_REPLACE'`: Merges the source timeline with the target entity's full timeline, completely replacing data for overlapping periods with the source data. Preserves non-overlapping parts of the target timeline.
+    - `'MERGE_ENTITY_UPSERT'`: A partial update mode similar to `PATCH`, but it treats `NULL` as an explicit value. `NULL` values in the source will overwrite existing data in the target.
     - `'INSERT_NEW_ENTITIES'`: Inserts entities that are entirely new to the target table.
-    - `'PATCH_FOR_PORTION_OF'`: Applies a surgical patch to a specific time portion of an existing entity.
+    - `'UPDATE_FOR_PORTION_OF'`: Applies a surgical partial update to a specific time portion of an existing entity, treating `NULL` as an explicit value. It ignores source rows for new entities.
+    - `'PATCH_FOR_PORTION_OF'`: Applies a surgical patch to a specific time portion of an existing entity, ignoring `NULL` values in the source.
     - `'REPLACE_FOR_PORTION_OF'`: Applies a surgical replacement of a specific time portion of an existing entity.
     - `'DELETE_FOR_PORTION_OF'`: Performs a surgical deletion of a specific time portion from an existing entity. This is a powerful feature for correcting historical errors. If the deleted portion is in the middle of an existing time slice, the procedure will automatically split the original record into two, leaving a gap where the deleted portion was. This is achieved by the planner assigning a special `NULL` data payload to the deleted segment, which prevents it from being coalesced with the surrounding, data-bearing segments.
-  - `source_row_id_column`: The name of the column in the source table that uniquely identifies and orders each row (default: `row_id`). This is required for feedback and for resolving temporal overlaps in the source.
-  - `identity_correlation_column`: The name of a column used to group multiple source rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If `NULL`, the `source_row_id_column` is used as the default.
+  - `row_id_column`: The name of the column in the source table that uniquely identifies and orders each row (default: `row_id`). This is required for feedback and for resolving temporal overlaps in the source.
+  - `identity_correlation_column`: The name of a column used to group multiple source rows that belong to the same *new* conceptual entity. This allows `temporal_merge` to resolve intra-batch dependencies (e.g., an `INSERT` and a `REPLACE` for the same new entity in one call). If `NULL`, the `row_id_column` is used as the default.
     - **Important:** The scope of a correlation identifier is limited to a single `temporal_merge` call. All rows belonging to a single "founding event" *must* be processed within the same source table in a single call.
   - `update_source_with_identity`: If `true`, the procedure will update the source table with any generated identity key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
   - `delete_mode`: Provides optional, destructive overrides.
@@ -359,6 +336,8 @@ SELECT sql_saga.add_foreign_key(
     pk_column_names => ARRAY['id']
 );
 ```
+
+To ensure performant foreign key checks, `add_foreign_key` automatically creates an optimal index (GIST for temporal tables, B-tree for regular tables) on the foreign key columns. This can be disabled via the `create_index` parameter. The index is automatically removed when the foreign key is dropped.
 
 #### Deactivate
 
