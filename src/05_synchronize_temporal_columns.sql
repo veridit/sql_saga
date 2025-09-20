@@ -84,6 +84,26 @@ BEGIN
         derived_until := 'infinity';
     END IF;
 
+    -- For UPDATEs, a NULL end date is a consistency violation. It must be infinity.
+    IF TG_OP = 'UPDATE' AND derived_until IS NULL THEN
+        DECLARE
+            culprit_col   name;
+            old_row       jsonb := to_jsonb(OLD);
+        BEGIN
+            -- Determine which column the user set to NULL to provide a more helpful error message.
+            IF to_col IS NOT NULL AND (new_row ->> to_col) IS DISTINCT FROM (old_row ->> to_col) AND (new_row ->> to_col) IS NULL THEN
+                culprit_col := to_col;
+            ELSIF range_col IS NOT NULL AND (new_row ->> range_col) IS DISTINCT FROM (old_row ->> range_col) AND (new_row ->> range_col) IS NULL THEN
+                culprit_col := range_col;
+            ELSE
+                -- Default to the main 'until' column if the specific cause isn't one of the other synchronized columns.
+                culprit_col := until_col;
+            END IF;
+
+            RAISE EXCEPTION 'An update resulted in an unbounded period by setting the end date to NULL. To make a period open-ended, set "%" to ''infinity''.', culprit_col;
+        END;
+    END IF;
+
     RAISE DEBUG 'Derived after Step 1: derived_from: %, derived_until: %', derived_from, derived_until;
 
     -- Step 2: From the derived bounds, derive all other representations.

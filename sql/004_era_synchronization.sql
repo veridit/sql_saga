@@ -107,6 +107,30 @@ RELEASE SAVEPOINT test_6c;
 
 ROLLBACK TO SAVEPOINT test_6_top;
 
+\echo '--- 7. Test UPDATEs setting synchronized columns to NULL ---'
+SAVEPOINT test_7_top;
+CREATE TABLE sync_test_null_update (id int, valid_from date, valid_to date, valid_until date);
+SELECT sql_saga.add_era('sync_test_null_update', synchronize_valid_to_column := 'valid_to');
+INSERT INTO sync_test_null_update (id, valid_from, valid_to) VALUES (1, '2024-01-01', '2024-12-31');
+
+\echo '--- 7a. UPDATE setting valid_to to NULL should fail ---'
+SAVEPOINT test_7a;
+-- This should fail because it creates an inconsistent state. The trigger raises an exception.
+UPDATE sync_test_null_update SET valid_to = NULL WHERE id = 1;
+ROLLBACK TO SAVEPOINT test_7a;
+
+\echo '--- 7b. UPDATE setting valid_until to NULL should fail ---'
+SAVEPOINT test_7b;
+-- This should also fail for the same reason.
+UPDATE sync_test_null_update SET valid_until = NULL WHERE id = 1;
+ROLLBACK TO SAVEPOINT test_7b;
+
+-- Verify the original row is unchanged after the failed updates
+SELECT * FROM sync_test_null_update;
+
+ROLLBACK TO SAVEPOINT test_7_top;
+
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql
