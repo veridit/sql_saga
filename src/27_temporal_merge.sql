@@ -737,7 +737,7 @@ $$, v_entity_partition_key_cols, v_resolver_from);
          * `trace` column incurs no runtime overhead when tracing is not active.
         */
         IF p_log_trace THEN
-            v_trace_seed_expr := format($$jsonb_build_object('cte', 'raswp', 'partition_key', jsonb_build_object(%1$s), 's_row_id', s.source_row_id, 's_data', s.data_payload, 't_data', t.data_payload, 's_ephemeral', s.ephemeral_payload, 't_ephemeral', t.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until), 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'identity_columns', %2$s, 'natural_identity_columns', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', s.corr_ent, 'causal_source_corr_ent', causal.corr_ent, 'causal_row_id', causal.source_row_id) as trace$$,
+            v_trace_seed_expr := format($$jsonb_build_object('cte', 'raswp', 'partition_key', jsonb_build_object(%1$s), 's_row_id', s.source_row_id, 's_data', s.data_payload, 't_data', t.data_payload, 's_ephemeral', s.ephemeral_payload, 't_ephemeral', t.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until), 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'identity_columns', %2$s, 'natural_identity_columns', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', s.corr_ent, 'causal_source_corr_ent', seg.causal_corr_ent, 'causal_row_id', seg.causal_source_row_id) as trace$$,
                 (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                 v_identity_cols_trace_expr,
                 v_natural_identity_cols_trace_expr
@@ -1038,6 +1038,33 @@ atomic_segments AS (
     ) with_lead
     WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
 ),
+-- CTE 11.5: atomic_segments_with_causal_info
+-- Purpose: Pre-calculates the "causal" source row for each atomic segment.
+-- This replaces an inefficient LATERAL join with a single, set-based join
+-- and a DISTINCT ON clause, which is a major performance optimization that
+-- avoids O(n^2) complexity on large batches.
+atomic_segments_with_causal_info AS (
+    SELECT DISTINCT ON (%61$s CASE WHEN seg.partition_by_corr_ent THEN seg.corr_ent ELSE NULL END, seg.valid_from)
+        seg.*,
+        sr.source_row_id as causal_source_row_id,
+        sr.corr_ent as causal_corr_ent
+    FROM atomic_segments seg
+    LEFT JOIN active_source_rows sr ON (%28$s)
+    ORDER BY
+        %61$s CASE WHEN seg.partition_by_corr_ent THEN seg.corr_ent ELSE NULL END, seg.valid_from,
+        -- Priority 1: A source row that directly overlaps the segment is the primary cause.
+        (%19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)) DESC,
+        -- Priority 2: For non-overlapping segments (gaps), prioritize an adjacent source row
+        -- that starts exactly where the segment ends (the "met by" relationship). This
+        -- correctly looks ahead to the next chronological change event.
+        (sr.valid_from = seg.valid_until) DESC,
+        -- Priority 3: If no row is ahead, prioritize an adjacent source row that ends
+        -- exactly where the segment starts (the "meets" relationship). This correctly
+        -- looks behind to the previous change event.
+        (sr.valid_until = seg.valid_from) DESC,
+        -- Priority 4: Final tie-breaker for stability.
+        sr.source_row_id DESC
+),
 -- CTE 12: resolved_atomic_segments_with_payloads
 -- Purpose: This is the main workhorse CTE. It enriches each atomic segment with the data payloads from the
 -- original source and target rows that cover its time range.
@@ -1061,7 +1088,7 @@ resolved_atomic_segments_with_payloads AS (
             seg.valid_from,
             seg.valid_until,
             t.t_valid_from,
-            causal.source_row_id,
+            seg.causal_source_row_id AS source_row_id,
             s.data_payload as s_data_payload,
             s.ephemeral_payload as s_ephemeral_payload,
             t.data_payload as t_data_payload,
@@ -1071,10 +1098,10 @@ resolved_atomic_segments_with_payloads AS (
             -- The canonical entity correlation ID is seg.corr_ent, which is passed through via the
             -- partition key (`v_partition_key_for_with_base_payload_expr`).
             s.corr_ent as s_corr_ent,
-            causal.corr_ent as causal_corr_ent,
+            seg.causal_corr_ent as causal_corr_ent,
             sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until) as s_t_relation,
             %47$s
-        FROM atomic_segments seg
+        FROM atomic_segments_with_causal_info seg
         -- Join to find the original target data for this time slice.
         -- Example: For an atomic segment (id:1, from:'2023-01-01', until:'2023-06-01'), this will find the
         -- original target row `(id:1, from:'2022-01-01', until:'2024-01-01', data:{...})` because the segment
@@ -1098,34 +1125,6 @@ resolved_atomic_segments_with_payloads AS (
             ORDER BY sr.source_row_id DESC
             LIMIT 1
         ) s ON true
-        -- This join finds the single, most relevant "causal" source row for any given atomic segment. Its purpose
-        -- is to provide a stable, deterministic link for sorting and feedback. This is especially critical for
-        -- "gap" segments (parts of the original target timeline that were not covered by any source data)
-        -- to ensure every change to an entity's timeline can be traced back to a single causal source row_id.
-        --
-        -- Example: A "gap" segment (from:'2023-06-01', until:'2023-09-01') has no overlapping source data.
-        -- The ORDER BY will prioritize a source row that starts at '2023-09-01' (look-ahead) over one that
-        -- ends at '2023-06-01' (look-behind), making the next chronological change the cause.
-        -- This is a declarative set of priority rules, not a stateful operation.
-        LEFT JOIN LATERAL (
-            SELECT sr.source_row_id, sr.corr_ent
-            FROM active_source_rows sr
-            WHERE %28$s -- Join on lookup keys
-            ORDER BY
-                -- Priority 1: A source row that directly overlaps the segment is the primary cause.
-                (%19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)) DESC,
-                -- Priority 2: For non-overlapping segments (gaps), prioritize an adjacent source row
-                -- that starts exactly where the segment ends (the "met by" relationship). This
-                -- correctly looks ahead to the next chronological change event.
-                (sr.valid_from = seg.valid_until) DESC,
-                -- Priority 3: If no row is ahead, prioritize an adjacent source row that ends
-                -- exactly where the segment starts (the "meets" relationship). This correctly
-                -- looks behind to the previous change event.
-                (sr.valid_until = seg.valid_from) DESC,
-                -- Priority 4: Final tie-breaker for stability.
-                sr.source_row_id DESC
-            LIMIT 1
-        ) causal ON true
         -- Filter out empty time segments where no source or target data exists.
         WHERE (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
           -- For surgical ..._FOR_PORTION_OF modes, we must clip the source to the target's timeline.

@@ -130,3 +130,56 @@ This creates three atomic time segments:
     1.  `[Jan-01, Feb-01)` -> `{ "A": 1, "B": 2 }` (Original)
     2.  `[Feb-01, Mar-01)` -> `{ "A": 1, "B": 99 }` (Merged, `C` is ignored)
     3.  `[Mar-01, Apr-01)` -> `{ "B": 99 }` (New slice from source, `C` is ignored)
+
+---
+
+## Performance Characteristics & Architectural Patterns
+
+The `temporal_merge` procedure is a powerful, set-based tool, but its performance characteristics vary significantly depending on the `mode` and the size of the data batch. Understanding these characteristics is key to designing efficient and scalable ETL processes.
+
+### Analysis of Performance Trends
+
+Benchmark testing reveals two key trends:
+
+1.  **Specialized Modes Are an Order of Magnitude Faster:** Operations with a narrow, well-defined scope, such as `UPDATE_FOR_PORTION_OF`, are significantly faster (often >70,000 rows/s) than general-purpose modes like `MERGE_ENTITY_UPSERT` (~2,000-7,000 rows/s).
+    -   **Underlying Cause:** The performance difference is due to the complexity of the problem being solved. A `..._FOR_PORTION_OF` mode knows it only needs to consider existing entities and can aggressively filter the data it reads from the target table. A `MERGE_ENTITY_*` mode must consider both new and existing entities, which requires a much more complex query plan to deconstruct and unify the timelines of all potentially related source and target records.
+
+2.  **`MERGE_ENTITY_*` Modes Have Non-Linear Scaling:** The performance of general-purpose merge modes does not scale linearly with batch size. Throughput often peaks with moderately sized batches (e.g., ~1,000 rows) and then degrades as the batch size grows larger (e.g., 10,000-20,000 rows).
+    -   **Underlying Cause:** This is a classic symptom of algorithmic complexity. The planner's core "deconstruct-reconstruct" algorithm involves creating a unified set of all time points from both the source and target. The number of these points, and the cost of the joins required to resolve data for each one, can grow quadratically in the worst case, leading to diminishing returns on larger batch sizes.
+
+### Architectural Strategies for High Performance
+
+To mitigate these effects and achieve maximum throughput, consider the following architectural patterns for your ETL jobs.
+
+#### 1. Batch Sharding & Parallelization
+
+Since performance is often optimal with smaller batches, a highly effective strategy is to shard a large source table into multiple smaller batches and process them in parallel.
+
+-   **Principle:** Process many small, fast batches concurrently instead of one large, slow batch.
+-   **Implementation:**
+    1.  **Shard Source Data:** Divide your main source table into smaller temporary tables. The sharding key **must be the entity's natural identifier**. This is critical to ensure that all records for a single conceptual entity are processed together in the same batch, avoiding race conditions and ensuring correctness.
+    2.  **Process in Parallel:** Use a parallel job runner (e.g., `pg_parallel`, `GNU parallel`) and a connection pooler (e.g., PgBouncer) to execute `temporal_merge` on each temporary table in a separate session.
+
+This pattern leverages the planner's peak performance at smaller batch sizes and makes effective use of modern multi-core processors.
+
+#### 2. Pre-filtering and Mode Specialization
+
+Leverage the massive performance gains of specialized modes by pre-classifying your source data.
+
+-   **Principle:** Break down a complex merge into a series of simpler, faster operations.
+-   **Implementation:**
+    1.  **Stage 1: Classify Source Rows:** In a preliminary step, join your source table against the target table on the natural key. Add a column to your source table to classify each row as a potential `INSERT` (no matching entity in target) or `UPDATE` (matching entity exists).
+    2.  **Stage 2: Execute Specialized Batches:** Call `temporal_merge` twice:
+        -   Once for all the `INSERT` rows, using the highly optimized `INSERT_NEW_ENTITIES` mode.
+        -   Once for all the `UPDATE` rows, using a fast `..._FOR_PORTION_OF` mode (e.g., `UPDATE_FOR_PORTION_OF`).
+
+This approach ensures that the planner is always using the most efficient query path for the specific task at hand.
+
+#### 3. Potential Future Planner Optimizations (Internal)
+
+While the above user-side architectural patterns are the primary method for achieving scalability, future versions of `sql_saga` may incorporate further internal optimizations, such as:
+
+-   **Temporal Filtering:** Enhancing the planner to filter the target table not just by entity, but also by the overall time range of the source batch. This would reduce the amount of history the planner needs to consider.
+-   **Algorithmic Refinements:** Further optimization of the most expensive CTEs in the planner to reduce their computational complexity.
+
+By combining these strategies, `temporal_merge` can be used to build highly performant, scalable, and robust temporal data warehouses.
