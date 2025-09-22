@@ -341,11 +341,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                     entity_ids                      | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
+-------------+---------+-----------+---------------+----------+---------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           2 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+           3 | {1}     | UPDATE    | SHRINK        | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -445,11 +445,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": null}             | 
-           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
-           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                     entity_ids                      | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+----------+---------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": null}             | 
+           2 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
+           3 | {1}     | UPDATE    | SHRINK        | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -549,11 +549,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                     entity_ids                      | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | during   | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           2 | {1}     | INSERT    |               | {"establishment_id": 100, "stat_definition_id": 10} | finishes | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-           3 | {1}     | UPDATE    | SHRINK        | {"establishment_id": 100, "stat_definition_id": 10} | starts   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                     entity_ids                      | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | trace 
+-------------+---------+-----------+---------------+----------+---------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
+           2 | {1}     | INSERT    |               | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
+           3 | {1}     | UPDATE    | SHRINK        | 1        | f       | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | 
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -645,9 +645,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                          entity_ids                          | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+----------+---------+--------------------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -749,9 +749,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                          entity_ids                          | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+----------+---------+--------------------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -853,9 +853,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                                  entity_ids                                   | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
--------------+---------+-----------+---------------+-------------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
-           1 | {104}   | INSERT    |               | {"id": 1, "row_id": "104", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                          entity_ids                          | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
+-------------+---------+-----------+---------------+----------+---------+--------------------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
+           1 | {104}   | INSERT    |               | 104      | t       | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -957,9 +957,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                                  entity_ids                                   | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
--------------+---------+-----------+---------------+-------------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
-           1 | {105}   | INSERT    |               | {"id": 1, "row_id": "105", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                          entity_ids                          | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | trace 
+-------------+---------+-----------+---------------+----------+---------+--------------------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+-------
+           1 | {105}   | INSERT    |               | 105      | t       | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1061,9 +1061,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                                 entity_ids                                  | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
--------------+---------+-----------+---------------+-----------------------------------------------------------------------------+----------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"id": 1, "row_id": "1", "establishment_id": 100, "stat_definition_id": 10} |          |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent |                          entity_ids                          | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | trace 
+-------------+---------+-----------+---------------+----------+---------+--------------------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1484,27 +1484,27 @@ CALL sql_saga.temporal_merge(
 ERROR:  duplicate key value violates unique constraint "stat_for_unit_id_pk_pkey"
 DETAIL:  Key (id)=(1) already exists.
 CONTEXT:  SQL statement "
-                    WITH
-                    source_for_insert AS (
-                        SELECT
-                            p.plan_op_seq, p.new_valid_from, p.new_valid_until,
-                            p.entity_ids || p.data as full_data
-                        FROM temporal_merge_plan p
-                        WHERE p.operation = 'INSERT' AND NOT (p.entity_ids ? 'row_id')
-                    ),
-                    inserted_rows AS (
-                        MERGE INTO tmtc.stat_for_unit_id_pk t
-                        USING source_for_insert s ON false
-                        WHEN NOT MATCHED THEN
-                            INSERT (stat_definition_id, edit_comment, establishment_id, value, id, valid_from, valid_until)
-                            VALUES ((s.full_data->>'stat_definition_id')::integer, (s.full_data->>'edit_comment')::text, (s.full_data->>'establishment_id')::integer, (s.full_data->>'value')::bigint, (s.full_data->>'id')::integer, s.new_valid_from::date, s.new_valid_until::date)
-                        RETURNING t.*, s.plan_op_seq
-                    )
-                    UPDATE temporal_merge_plan p
-                    SET entity_ids = jsonb_build_object('establishment_id', ir.establishment_id, 'id', ir.id, 'stat_definition_id', ir.stat_definition_id)
-                    FROM inserted_rows ir
-                    WHERE p.plan_op_seq = ir.plan_op_seq;
-                "
+                        WITH
+                        source_for_insert AS (
+                            SELECT
+                                p.plan_op_seq, p.new_valid_from, p.new_valid_until,
+                                p.entity_ids || p.data as full_data
+                            FROM temporal_merge_plan p
+                            WHERE p.operation = 'INSERT' AND NOT p.new_ent
+                        ),
+                        inserted_rows AS (
+                            MERGE INTO tmtc.stat_for_unit_id_pk t
+                            USING source_for_insert s ON false
+                            WHEN NOT MATCHED THEN
+                                INSERT (stat_definition_id, edit_comment, establishment_id, value, id, valid_from, valid_until)
+                                VALUES ((s.full_data->>'stat_definition_id')::integer, (s.full_data->>'edit_comment')::text, (s.full_data->>'establishment_id')::integer, (s.full_data->>'value')::bigint, (s.full_data->>'id')::integer, s.new_valid_from::date, s.new_valid_until::date)
+                            RETURNING t.*, s.plan_op_seq
+                        )
+                        UPDATE temporal_merge_plan p
+                        SET entity_ids = jsonb_build_object('establishment_id', ir.establishment_id, 'id', ir.id, 'stat_definition_id', ir.stat_definition_id)
+                        FROM inserted_rows ir
+                        WHERE p.plan_op_seq = ir.plan_op_seq;
+                    "
 PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 612 at EXECUTE
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Target: After merge (should be unchanged) ---'

@@ -6,7 +6,7 @@ BEGIN;
 --
 -- Future Scenarios to Test:
 --
--- 1. `identity_correlation_column` behavior:
+-- 1. `founding_id_column` behavior:
 --    - Scenario 1b (Existing Entity): Create a target entity. Create a source table
 --      with a `founding_id` and data that updates the existing entity. Verify
 --      that `founding_id` is correctly ignored and the operation proceeds as a
@@ -16,7 +16,7 @@ BEGIN;
 --
 -- 3. Parameter combinations:
 --    - Scenario 3a: Test `update_source_with_identity = true` in
---      conjunction with a multi-row `identity_correlation_column` scenario to ensure
+--      conjunction with a multi-row `founding_id_column` scenario to ensure
 --      the generated surrogate key is correctly back-filled to all source rows
 --      sharing the founding_id.
 
@@ -152,7 +152,7 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
--- Test with non-existent identity_correlation_column
+-- Test with non-existent founding_id_column
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
@@ -160,11 +160,11 @@ BEGIN
         source_table      := 'tm_bad_cols_source'::regclass,
         identity_columns        := ARRAY['id'],
         row_id_column := 'real_row_id',
-        identity_correlation_column := 'non_existent_founding_id'::name
+        founding_id_column := 'non_existent_founding_id'::name
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for non-existent identity_correlation_column';
+    RAISE EXCEPTION 'temporal_merge should have failed for non-existent founding_id_column';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for non-existent identity_correlation_column: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for non-existent founding_id_column: %', SQLERRM;
 END;
 $$;
 ROLLBACK TO SAVEPOINT scenario_10;
@@ -337,7 +337,7 @@ TABLE tm_extra_cols_target;
 ROLLBACK TO SAVEPOINT scenario_15;
 
 SAVEPOINT scenario_16;
--- Scenario 16: Test `identity_correlation_column` for creating a new entity from multiple source rows.
+-- Scenario 16: Test `founding_id_column` for creating a new entity from multiple source rows.
 CREATE TABLE tm_founding_target (
     id serial primary key,
     entity_ident text,
@@ -365,7 +365,7 @@ CALL sql_saga.temporal_merge(
     source_table      := 'tm_founding_source'::regclass,
     identity_columns        := ARRAY['entity_ident'],
     mode              := 'INSERT_NEW_ENTITIES',
-    identity_correlation_column := 'founding_group_id'::name
+    founding_id_column := 'founding_group_id'::name
 );
 
 -- Verify that a single new entity was created with two historical slices.

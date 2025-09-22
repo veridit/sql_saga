@@ -15,12 +15,12 @@ This document is automatically generated from the database schema by the `80_gen
 - during
 - finishes
 - equals
-- preceded by
-- met by
-- overlapped by
-- started by
+- preceded_by
+- met_by
+- overlapped_by
+- started_by
 - contains
-- finished by
+- finished_by
 ```
 
 ### drop_behavior
@@ -464,7 +464,7 @@ PROCEDURE temporal_merge(
     IN mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     IN era_name name DEFAULT 'valid'::name,
     IN row_id_column name DEFAULT 'row_id'::name,
-    IN identity_correlation_column name DEFAULT NULL::name,
+    IN founding_id_column name DEFAULT NULL::name,
     IN update_source_with_identity boolean DEFAULT false,
     IN natural_identity_columns text[] DEFAULT NULL::text[],
     IN delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE'::sql_saga.temporal_merge_delete_mode,
@@ -566,20 +566,6 @@ SECURITY DEFINER
 
 ## Internal and Helper Functions
 
-### allen_get_relation
-
-> Calculates the Allen's Interval Algebra relation between two intervals.
-
-```sql
-FUNCTION allen_get_relation(
-    x_from anycompatible,
-    x_until anycompatible,
-    y_from anycompatible,
-    y_until anycompatible
-) RETURNS sql_saga.allen_interval_relation
-SECURITY INVOKER
-```
-
 ### drop_protection
 
 > An event trigger function that prevents accidental dropping of sql_saga-managed objects.
@@ -587,6 +573,20 @@ SECURITY INVOKER
 ```sql
 FUNCTION drop_protection() RETURNS event_trigger
 SECURITY DEFINER
+```
+
+### get_allen_relation
+
+> Calculates the Allen's Interval Algebra relation between two intervals. This is a high-performance, inlinable SQL function.
+
+```sql
+FUNCTION get_allen_relation(
+    x_from anycompatible,
+    x_until anycompatible,
+    y_from anycompatible,
+    y_until anycompatible
+) RETURNS sql_saga.allen_interval_relation
+SECURITY INVOKER
 ```
 
 ### rename_following

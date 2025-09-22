@@ -108,7 +108,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
     row_id_column => 'synthetic_row_id',
-    identity_correlation_column => 'founding_key',
+    founding_id_column => 'founding_key',
     update_source_with_identity => true
 );
 

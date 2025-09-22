@@ -28,7 +28,7 @@ BEGIN;
 --
 -- Future Scenarios to Test:
 --
--- 1. `identity_correlation_column` behavior:
+-- 1. `founding_id_column` behavior:
 --    - Scenario 1b (Existing Entity): Create a target entity. Create a source table
 --      with a `founding_id` and data that updates the existing entity. Verify
 --      that `founding_id` is correctly ignored and the operation proceeds as a
@@ -38,7 +38,7 @@ BEGIN;
 --
 -- 3. Parameter combinations:
 --    - Scenario 3a: Test `update_source_with_identity = true` in
---      conjunction with a multi-row `identity_correlation_column` scenario to ensure
+--      conjunction with a multi-row `founding_id_column` scenario to ensure
 --      the generated surrogate key is correctly back-filled to all source rows
 --      sharing the founding_id.
 SAVEPOINT scenario_6;
@@ -230,7 +230,7 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 NOTICE:  Caught expected error for non-existent row_id_column: row_id_column "non_existent_row_id" does not exist in source table tm_bad_cols_sources
--- Test with non-existent identity_correlation_column
+-- Test with non-existent founding_id_column
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
@@ -238,14 +238,14 @@ BEGIN
         source_table      := 'tm_bad_cols_source'::regclass,
         identity_columns        := ARRAY['id'],
         row_id_column := 'real_row_id',
-        identity_correlation_column := 'non_existent_founding_id'::name
+        founding_id_column := 'non_existent_founding_id'::name
     );
-    RAISE EXCEPTION 'temporal_merge should have failed for non-existent identity_correlation_column';
+    RAISE EXCEPTION 'temporal_merge should have failed for non-existent founding_id_column';
 EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error for non-existent identity_correlation_column: %', SQLERRM;
+    RAISE NOTICE 'Caught expected error for non-existent founding_id_column: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for non-existent identity_correlation_column: identity_correlation_column "non_existent_founding_id" does not exist in source table tm_bad_cols_sources
+NOTICE:  Caught expected error for non-existent founding_id_column: founding_id_column "non_existent_founding_id" does not exist in source table tm_bad_cols_sources
 ROLLBACK TO SAVEPOINT scenario_10;
 SAVEPOINT scenario_11;
 -- Scenario 11: Test using a non-default row_id_column name.
@@ -524,7 +524,7 @@ TABLE tm_extra_cols_target;
 
 ROLLBACK TO SAVEPOINT scenario_15;
 SAVEPOINT scenario_16;
--- Scenario 16: Test `identity_correlation_column` for creating a new entity from multiple source rows.
+-- Scenario 16: Test `founding_id_column` for creating a new entity from multiple source rows.
 CREATE TABLE tm_founding_target (
     id serial primary key,
     entity_ident text,
@@ -560,7 +560,7 @@ CALL sql_saga.temporal_merge(
     source_table      := 'tm_founding_source'::regclass,
     identity_columns        := ARRAY['entity_ident'],
     mode              := 'INSERT_NEW_ENTITIES',
-    identity_correlation_column := 'founding_group_id'::name
+    founding_id_column := 'founding_group_id'::name
 );
 -- Verify that a single new entity was created with two historical slices.
 \echo '--- Executor: Expected Final State (A single entity with a consistent surrogate key) ---'
@@ -607,7 +607,7 @@ ORDER BY source_row_id;
  source_row_id |              target_entity_ids              
 ---------------+---------------------------------------------
              1 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]
-             2 | [{"id": 2, "entity_ident": "NEW_ENTITY_1"}]
+             2 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]
 (2 rows)
 
 ROLLBACK TO SAVEPOINT scenario_16;

@@ -32,8 +32,8 @@ Test: Temporal Merge with Dependent Row Support
 This test validates that temporal_merge can resolve dependencies within a
 \echo 'single batch (e.g., an INSERT and a subsequent REPLACE for the same new'
 single batch (e.g., an INSERT and a subsequent REPLACE for the same new
-\echo 'entity) using the identity_correlation_column parameter.'
-entity) using the identity_correlation_column parameter.
+\echo 'entity) using the founding_id_column parameter.'
+entity) using the founding_id_column parameter.
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
 -- Setup
@@ -119,7 +119,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
@@ -137,10 +137,10 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |          entity_ids           | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                        data                                        | trace 
--------------+---------+-----------+---------------+-------------------------------+----------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------+-------
-           1 | {1}     | INSERT    |               | {"id": 1, "founding_id": "1"} |          |                |                 | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
-           2 | {2}     | INSERT    |               | {"id": 1, "founding_id": "1"} |          |                |                 | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                        data                                        | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------+-------
+           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            | 
+           2 | {2}     | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} | 
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -253,7 +253,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 \echo '--- Planner: Expected Plan ---'
@@ -277,13 +277,13 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |           entity_ids           | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                           | trace 
--------------+---------+-----------+---------------+--------------------------------+----------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------+-------
-           1 | {101}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           2 | {102}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
-           3 | {101}   | INSERT    |               | {"id": 1, "founding_id": "10"} |          |                |                 | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
-           4 | {201}   | INSERT    |               | {"id": 2, "founding_id": "20"} |          |                |                 | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
-           5 | {202}   | INSERT    |               | {"id": 2, "founding_id": "20"} |          |                |                 | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                           | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------+-------
+           1 | {101}   | INSERT    |               | 10       | t       | {"id": 1}  |              |              |                |                 | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           2 | {102}   | INSERT    |               | 10       | t       | {"id": 1}  |              |              |                |                 | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   | 
+           3 | {101}   | INSERT    |               | 10       | t       | {"id": 1}  |              |              |                |                 | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} | 
+           4 | {201}   | INSERT    |               | 20       | t       | {"id": 2}  |              |              |                |                 | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  | 
+           5 | {202}   | INSERT    |               | 20       | t       | {"id": 2}  |              |              |                |                 | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  | 
 (5 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -429,7 +429,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 \echo '--- Target: State after first call (one new entity created) ---'
@@ -474,7 +474,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 \echo '--- Orchestrator: Expected Final State (Two separate entities created) ---'

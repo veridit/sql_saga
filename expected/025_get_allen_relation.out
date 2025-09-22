@@ -1,0 +1,172 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+\echo '----------------------------------------------------------------------------'
+----------------------------------------------------------------------------
+\echo 'Test: sql_saga.get_allen_relation'
+Test: sql_saga.get_allen_relation
+\echo 'This test provides comprehensive validation for the get_allen_relation function,'
+This test provides comprehensive validation for the get_allen_relation function,
+\echo 'covering all 13 of Allen''s Interval Algebra relations.'
+covering all 13 of Allen's Interval Algebra relations.
+\echo '----------------------------------------------------------------------------'
+----------------------------------------------------------------------------
+-- Helper to make test output clear
+CREATE FUNCTION test_relation(
+    x int4range,
+    y int4range,
+    expected_relation sql_saga.allen_interval_relation
+) RETURNS TABLE(test_case text, x_range text, y_range text, relation_is_correct boolean)
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_actual_relation sql_saga.allen_interval_relation;
+    v_actual_relation_inverse sql_saga.allen_interval_relation;
+    v_expected_relation_inverse sql_saga.allen_interval_relation;
+BEGIN
+    v_actual_relation := sql_saga.get_allen_relation(lower(x), upper(x), lower(y), upper(y));
+    v_actual_relation_inverse := sql_saga.get_allen_relation(lower(y), upper(y), lower(x), upper(x));
+
+    v_expected_relation_inverse := CASE expected_relation
+        WHEN 'precedes' THEN 'preceded_by'
+        WHEN 'meets' THEN 'met_by'
+        WHEN 'overlaps' THEN 'overlapped_by'
+        WHEN 'starts' THEN 'started_by'
+        WHEN 'during' THEN 'contains'
+        WHEN 'finishes' THEN 'finished_by'
+        WHEN 'equals' THEN 'equals'
+        WHEN 'preceded_by' THEN 'precedes'
+        WHEN 'met_by' THEN 'meets'
+        WHEN 'overlapped_by' THEN 'overlaps'
+        WHEN 'started_by' THEN 'starts'
+        WHEN 'contains' THEN 'during'
+        WHEN 'finished_by' THEN 'finishes'
+    END;
+
+    test_case := format('X %s Y', expected_relation);
+    x_range := x::text;
+    y_range := y::text;
+    relation_is_correct := (v_actual_relation = expected_relation AND v_actual_relation_inverse = v_expected_relation_inverse);
+
+    RETURN NEXT;
+END;
+$$;
+SELECT * FROM test_relation('[10,20)', '[30,40)', 'precedes');
+  test_case   | x_range | y_range | relation_is_correct 
+--------------+---------+---------+---------------------
+ X precedes Y | [10,20) | [30,40) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,20)', '[20,30)', 'meets');
+ test_case | x_range | y_range | relation_is_correct 
+-----------+---------+---------+---------------------
+ X meets Y | [10,20) | [20,30) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,30)', '[20,40)', 'overlaps');
+  test_case   | x_range | y_range | relation_is_correct 
+--------------+---------+---------+---------------------
+ X overlaps Y | [10,30) | [20,40) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,20)', '[10,30)', 'starts');
+ test_case  | x_range | y_range | relation_is_correct 
+------------+---------+---------+---------------------
+ X starts Y | [10,20) | [10,30) | t
+(1 row)
+
+SELECT * FROM test_relation('[20,30)', '[10,40)', 'during');
+ test_case  | x_range | y_range | relation_is_correct 
+------------+---------+---------+---------------------
+ X during Y | [20,30) | [10,40) | t
+(1 row)
+
+SELECT * FROM test_relation('[20,30)', '[10,30)', 'finishes');
+  test_case   | x_range | y_range | relation_is_correct 
+--------------+---------+---------+---------------------
+ X finishes Y | [20,30) | [10,30) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,20)', '[10,20)', 'equals');
+ test_case  | x_range | y_range | relation_is_correct 
+------------+---------+---------+---------------------
+ X equals Y | [10,20) | [10,20) | t
+(1 row)
+
+SELECT * FROM test_relation('[30,40)', '[10,20)', 'preceded_by');
+    test_case    | x_range | y_range | relation_is_correct 
+-----------------+---------+---------+---------------------
+ X preceded_by Y | [30,40) | [10,20) | t
+(1 row)
+
+SELECT * FROM test_relation('[20,30)', '[10,20)', 'met_by');
+ test_case  | x_range | y_range | relation_is_correct 
+------------+---------+---------+---------------------
+ X met_by Y | [20,30) | [10,20) | t
+(1 row)
+
+SELECT * FROM test_relation('[20,40)', '[10,30)', 'overlapped_by');
+     test_case     | x_range | y_range | relation_is_correct 
+-------------------+---------+---------+---------------------
+ X overlapped_by Y | [20,40) | [10,30) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,30)', '[10,20)', 'started_by');
+   test_case    | x_range | y_range | relation_is_correct 
+----------------+---------+---------+---------------------
+ X started_by Y | [10,30) | [10,20) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,40)', '[20,30)', 'contains');
+  test_case   | x_range | y_range | relation_is_correct 
+--------------+---------+---------+---------------------
+ X contains Y | [10,40) | [20,30) | t
+(1 row)
+
+SELECT * FROM test_relation('[10,30)', '[20,30)', 'finished_by');
+    test_case    | x_range | y_range | relation_is_correct 
+-----------------+---------+---------+---------------------
+ X finished_by Y | [10,30) | [20,30) | t
+(1 row)
+
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

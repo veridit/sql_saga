@@ -24,7 +24,6 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
-\set ON_ERROR_STOP on
 CREATE EXTENSION IF NOT EXISTS sql_saga;
 NOTICE:  extension "sql_saga" already exists, skipping
 CREATE SCHEMA mtt;

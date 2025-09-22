@@ -1,4 +1,4 @@
-\set ON_ERROR_STOP on
+
 \i sql/include/test_setup.sql
 
 CREATE SCHEMA fk_idx;

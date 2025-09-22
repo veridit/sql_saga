@@ -213,7 +213,7 @@ The `temporal_merge` planner includes a permanent `trace` column in its output (
     a.  **Enable Trace:** In the test file, wrap the failing `CALL sql_saga.temporal_merge(...)` with `SET sql_saga.temporal_merge.log_trace = true;` and `SET sql_saga.temporal_merge.log_trace = false;`.
     b.  **Isolate Trace in Diffs:** Run the test and inspect the diff in trace to gain understanding. The expected has NULL in trace, and the actual has the trace due to the GUC variable setting. The `SELECT`s must remain unchanged, such that when the the issue is fixed and the trace is disabled again it will mach. This technique ensures that if the plan's data is wrong, the test will fail, and the `diff` output will contain the full trace from the actual plan for analysis.
 
-4.  **Trace Aggregation:** When multiple atomic time segments are coalesced into a single final plan operation, their individual traces must be aggregated into a `jsonb` array (using `jsonb_agg`). This preserves the full history of the coalescing logic. Picking only the first or last trace is not acceptable as it loses valuable diagnostic information.
+4.  **Trace Aggregation:** When multiple atomic time segments are coalesced into a single final plan operation, their individual traces must be aggregated into a `jsonb` array using `jsonb_agg`. This provides a complete diagnostic record of all atomic segments that were merged into the final operation. The trace for each atomic segment includes the Allen Interval Relation (`s_t_relation`) between the covering source and target rows, providing detailed insight into the initial temporal interaction that created the segment.
 
 ### 8. Conclude: Update Documentation
 - **Action:** Only after the fix has been successfully validated in Step 7, update `todo.md` to move the task to a "done" state (e.g., `[x]`).
@@ -226,6 +226,8 @@ The `temporal_merge` planner includes a permanent `trace` column in its output (
 - **Declarative Transparency**:
   - Where possible, store the inputs and intermediate results of complex calculations directly on the relevant records. This makes the system's state self-documenting and easier to debug, inspect, and trust, rather than relying on dynamic calculations that can appear magical.
   - **Example:** The `temporal_merge` planner was refactored to separate ephemeral and non-ephemeral data into distinct payloads (`ephemeral_payload`, `data_payload`). This makes the core logic clearer, as the complex coalescing operations now work on a clean `data_payload`, instead of requiring repeated, on-the-fly stripping of ephemeral keys. This separation of concerns makes the algorithm's intent explicit.
+  - **Example:** The `time_points_unified` CTE is the key to this. It uses a `FIRST_VALUE` window function to establish a single, authoritative `corr_ent` for each entity, which is then used as a stable partitioning key throughout the rest of the plan. This prevents the timeline for a single conceptual entity from being fragmented.
+  - **Example:** The planner's logic for determining if a source row represents a "new" entity is a critical declarative step. The `new_ent` flag is derived from information that is already available (`stable_key IS NULL` and `target_entity_exists`), rather than being passed down through complex state. This makes the logic for partitioning timelines robust and correct across multiple batches.
 
 ### The "Observe, Verify, Implement" Protocol for Complex Changes
 When a task is complex or has a history of regressions (e.g., the `rename_following` trigger), a more rigorous, data-driven protocol is required to avoid speculative fixes. This protocol is a practical application of the "Observe first, then change" principle.
@@ -259,6 +261,11 @@ This section documents incorrect assumptions that have been disproven through te
         1.  **Always `CAST` to `oid` in SQL:** In all SPI queries, explicitly cast `regclass` columns to `oid` for both `SELECT` lists and `WHERE` clauses (e.g., `SELECT table_oid::oid ...`, `... WHERE table_oid::oid = $1`).
         2.  **Use `OIDOID` for Parameters:** When using `SPI_execute_with_args`, specify the parameter type as `OIDOID` for relation identifiers.
         3.  **Perform Lookups in C:** Fetch raw OIDs from the database. Any conversion from an OID to a textual name for error messages must be done manually in the C code (e.g., using `regclassout`) *after* the query has successfully completed.
+
+*   **`IGNORE NULLS` in Window Functions:** PostgreSQL does **not** support the `IGNORE NULLS` clause for window functions like `LAG`, `LEAD`, or `FIRST_VALUE`. This is a common pitfall.
+    *   **The Problem:** Attempting to use `FIRST_VALUE(my_col) IGNORE NULLS OVER (...)` will result in a syntax error.
+    *   **The Solution:** The standard and most robust workaround is a "gaps-and-islands" approach. This involves creating a new grouping key using a conditional `SUM()` window function that increments every time a non-`NULL` value is encountered. This partitions the data into "islands" where a value can be safely propagated to adjacent `NULL`s using an aggregate like `MAX()` or a carefully framed `FIRST_VALUE()`.
+    *   **Example:** The `diff_with_propagated_ids` CTE in the `temporal_merge` planner is a canonical example of this pattern, using both forward (`look_behind_grp`) and backward (`look_ahead_grp`) running sums to find the nearest non-`NULL` value in either direction.
 
 ## When the Cycle Fails: Changing Strategy
 When repeated iterations of the hypothesis-driven cycle fail to resolve a persistent and complex bug (such as a memory corruption crash), it is a sign that the underlying assumptions are wrong and a change in strategy is required.

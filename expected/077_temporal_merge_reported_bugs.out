@@ -24,10 +24,6 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
--- For psql execution, stop on first error
-\set ON_ERROR_STOP on
-CREATE EXTENSION IF NOT EXISTS sql_saga;
-NOTICE:  extension "sql_saga" already exists, skipping
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 \echo 'Scenario 1: Demonstrate correct timeline extension with natural keys'
@@ -90,7 +86,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
-    identity_correlation_column => 'founding_row_id'
+    founding_id_column => 'founding_row_id'
 );
 \echo '--- Target Table after First Import (Expect 1 row) ---'
 --- Target Table after First Import (Expect 1 row) ---
@@ -124,7 +120,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
-    identity_correlation_column => 'founding_row_id'
+    founding_id_column => 'founding_row_id'
 );
 \echo '--- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---'
 --- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---
@@ -145,7 +141,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => '{id}',
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
-    identity_correlation_column => 'founding_row_id'
+    founding_id_column => 'founding_row_id'
 );
 \echo '--- Case 1b: Correct Usage (with natural key) ---'
 --- Case 1b: Correct Usage (with natural key) ---
@@ -157,7 +153,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['legal_unit_id'],
     ephemeral_columns => NULL,
-    identity_correlation_column => 'founding_row_id'
+    founding_id_column => 'founding_row_id'
 );
 \echo '--- Target Table after Second Import (CORRECT: 1 extended row) ---'
 --- Target Table after Second Import (CORRECT: 1 extended row) ---
@@ -311,10 +307,10 @@ CALL sql_saga.temporal_merge(
 );
 \echo '--- Planner output for Case 2b ---'
 --- Planner output for Case 2b ---
-SELECT plan_op_seq, row_ids, operation, update_effect, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | entity_ids | old_valid_from | new_valid_from | new_valid_until |                  data                  | relation 
--------------+---------+-----------+---------------+------------+----------------+----------------+-----------------+----------------------------------------+----------
-           1 | {2}     | INSERT    |               | {"id": 1}  |                | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} | 
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+-------
+           1 | {2}     | INSERT    |               | 2        | f       | {"id": 1}  |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} | 
 (1 row)
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
@@ -377,7 +373,7 @@ CALL sql_saga.temporal_merge(
     identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
-    identity_correlation_column => 'founding_row_id'
+    founding_id_column => 'founding_row_id'
 );
 EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
@@ -611,7 +607,7 @@ CALL sql_saga.temporal_merge(
     target_table => 'tmrb.legal_unit_kranloft'::regclass,
     source_table => 'source_data_kranloft'::regclass,
     identity_columns => '{id}'::text[],
-    identity_correlation_column => 'founding_row_id',
+    founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
     ephemeral_columns => NULL
@@ -760,7 +756,7 @@ CALL sql_saga.temporal_merge(
     target_table => 'tmrb.legal_unit_fk_bug'::regclass,
     source_table => 'source_data_fk_bug'::regclass,
     identity_columns => '{id}'::text[],
-    identity_correlation_column => 'founding_row_id',
+    founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
 );
@@ -815,7 +811,7 @@ CALL sql_saga.temporal_merge(
     target_table => 'tmrb.unit_default_bug'::regclass,
     source_table => 'source_data_default_bug'::regclass,
     identity_columns => '{id}'::text[],
-    identity_correlation_column => 'founding_row_id',
+    founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
 );
