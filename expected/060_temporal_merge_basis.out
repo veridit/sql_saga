@@ -1901,7 +1901,7 @@ TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | trace 
 -------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+-------
            1 | {124}   | INSERT    |               | 124      | f       | {"id": 24} | during       | contains     | 2024-01-01     | 2028-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Patch 1", "employees": 15, "edit_comment": "First patch", "legal_unit_id": 1}     | 
-           2 | {125}   | INSERT    |               | 124      | f       | {"id": 24} | finishes     | contains     | 2024-01-01     | 2028-01-01      | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | 
+           2 | {124}   | INSERT    |               | 124      | f       | {"id": 24} | during       | contains     | 2024-01-01     | 2028-01-01      | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | 
            3 | {125}   | INSERT    |               | 124      | f       | {"id": 24} | finishes     | finished_by  | 2024-01-01     | 2028-01-01      | 2027-01-01     | 2028-01-01      | {"name": "Patch 2", "employees": 20, "edit_comment": "Second patch", "legal_unit_id": 1}    | 
            4 | {124}   | UPDATE    | SHRINK        | 124      | f       | {"id": 24} | during       | started_by   | 2024-01-01     | 2028-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} | 
 (4 rows)
@@ -2396,7 +2396,7 @@ CALL sql_saga.temporal_merge(
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                             | trace 
 -------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------+-------
-           1 | {701}   | UPDATE    | GROW          | 701      | f       | {"id": 7}  | met_by       | starts       | 2023-01-01     | 2023-07-01      | 2023-01-01     | 2024-01-01      | {"name": "Existing Op", "employees": 60, "legal_unit_id": 1} | 
+           1 | {701}   | UPDATE    | GROW          | 701      | f       | {"id": 7}  |              | starts       | 2023-01-01     | 2023-07-01      | 2023-01-01     | 2024-01-01      | {"name": "Existing Op", "employees": 60, "legal_unit_id": 1} | 
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'

@@ -230,15 +230,15 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - **For `INSERT`s:** You must process the parent table first to generate the ID that the child table will reference.
   - **For timeline-shrinking `UPDATE`s or `DELETE`s:** You must process the child table first. If you shorten or delete the parent's timeline first, its `AFTER` trigger will fire and see that the child timeline is no longer covered, causing a foreign key violation.
 
-  Since a single ETL batch can contain both `INSERT`s and `DELETE`s/`UPDATE`s, there is no single fixed processing order that is always correct. The standard and most robust solution for this pattern is to **temporarily disable all relevant foreign key triggers** for the duration of the batch transaction. This allows the transaction to reach a temporarily inconsistent state, with the guarantee that the database's deferred uniqueness constraints on each table will still ensure the final state of each timeline is internally consistent.
+  Since a single ETL batch can contain both `INSERT`s and `DELETE`s/`UPDATE`s, there is no single fixed processing order that is always correct. The standard and most robust solution for this pattern is to **temporarily disable all relevant temporal foreign key triggers** for the duration of the batch transaction using `sql_saga`'s helper procedures. This allows the transaction to reach a temporarily inconsistent state, with the guarantee that the database's deferred uniqueness constraints on each table will still ensure the final state of each timeline is internally consistent. `sql_saga` provides `disable_temporal_triggers` and `enable_temporal_triggers` for this purpose, which are safer than a broad `ALTER TABLE ... DISABLE TRIGGER USER` because they only affect `sql_saga`-managed foreign key triggers.
 
   **Example: Disabling Triggers for a Batch Operation**
   ```sql
   BEGIN;
-  -- Disable all relevant foreign key triggers.
-  ALTER TABLE etl.legal_unit DISABLE TRIGGER USER;
-  ALTER TABLE etl.location DISABLE TRIGGER USER;
-  -- ...disable triggers on other dependent tables...
+  -- Disable all sql_saga-managed temporal foreign key triggers for the tables in this batch.
+  -- This is a targeted alternative to ALTER TABLE ... DISABLE TRIGGER USER and does not affect
+  -- non-FK triggers, such as those for synchronized columns.
+  CALL sql_saga.disable_temporal_triggers('etl.legal_unit', 'etl.location');
 
   -- Process all changes in their logical order.
   CALL etl.process_legal_units(p_batch_id);
@@ -246,9 +246,7 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   -- ...process other dependent tables...
 
   -- Re-enable the triggers. The final state is now consistent.
-  ALTER TABLE etl.legal_unit ENABLE TRIGGER USER;
-  ALTER TABLE etl.location ENABLE TRIGGER USER;
-  -- ...enable triggers on other dependent tables...
+  CALL sql_saga.enable_temporal_triggers('etl.legal_unit', 'etl.location');
   COMMIT;
   ```
 

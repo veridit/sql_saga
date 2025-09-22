@@ -676,12 +676,12 @@ BEGIN
         IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- We need to add a flag to identify entities that are present in the source.
             -- This CTE is chained onto any previous resolver CTEs by using v_resolver_from.
-            v_resolver_ctes := v_resolver_ctes || format($$,
+            v_resolver_ctes := v_resolver_ctes || format($$
     resolved_atomic_segments_with_flag AS (
         SELECT *,
             bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY %s) as entity_is_in_source
         FROM %s
-    )
+    ),
 $$, v_entity_partition_key_cols, v_resolver_from);
             v_resolver_from := 'resolved_atomic_segments_with_flag';
 
@@ -757,7 +757,7 @@ $$, v_entity_partition_key_cols, v_resolver_from);
          * `trace` column incurs no runtime overhead when tracing is not active.
         */
         IF p_log_trace THEN
-            v_trace_seed_expr := format($$jsonb_build_object('cte', 'raswp', 'partition_key', jsonb_build_object(%1$s), 's_row_id', s.source_row_id, 's_data', s.data_payload, 't_data', t.data_payload, 's_ephemeral', s.ephemeral_payload, 't_ephemeral', t.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until), 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'identity_columns', %2$s, 'natural_identity_columns', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', s.corr_ent, 'causal_source_corr_ent', seg.causal_corr_ent, 'causal_row_id', seg.causal_source_row_id) as trace$$,
+            v_trace_seed_expr := format($$jsonb_build_object('cte', 'raswp', 'partition_key', jsonb_build_object(%1$s), 's_row_id', s.source_row_id, 's_data', s.data_payload, 't_data', t.data_payload, 's_ephemeral', s.ephemeral_payload, 't_ephemeral', t.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until), 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'identity_columns', %2$s, 'natural_identity_columns', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', s.corr_ent) as trace$$,
                 (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                 v_identity_cols_trace_expr,
                 v_natural_identity_cols_trace_expr
@@ -1058,33 +1058,6 @@ atomic_segments AS (
     ) with_lead
     WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
 ),
--- CTE 11.5: atomic_segments_with_causal_info
--- Purpose: Pre-calculates the "causal" source row for each atomic segment.
--- This replaces an inefficient LATERAL join with a single, set-based join
--- and a DISTINCT ON clause, which is a major performance optimization that
--- avoids O(n^2) complexity on large batches.
-atomic_segments_with_causal_info AS (
-    SELECT DISTINCT ON (%61$s CASE WHEN seg.partition_by_corr_ent THEN seg.corr_ent ELSE NULL END, seg.valid_from)
-        seg.*,
-        sr.source_row_id as causal_source_row_id,
-        sr.corr_ent as causal_corr_ent
-    FROM atomic_segments seg
-    LEFT JOIN active_source_rows sr ON (%28$s)
-    ORDER BY
-        %61$s CASE WHEN seg.partition_by_corr_ent THEN seg.corr_ent ELSE NULL END, seg.valid_from,
-        -- Priority 1: A source row that directly overlaps the segment is the primary cause.
-        (%19$I(sr.valid_from, sr.valid_until) && %19$I(seg.valid_from, seg.valid_until)) DESC,
-        -- Priority 2: For non-overlapping segments (gaps), prioritize an adjacent source row
-        -- that starts exactly where the segment ends (the "met by" relationship). This
-        -- correctly looks ahead to the next chronological change event.
-        (sr.valid_from = seg.valid_until) DESC,
-        -- Priority 3: If no row is ahead, prioritize an adjacent source row that ends
-        -- exactly where the segment starts (the "meets" relationship). This correctly
-        -- looks behind to the previous change event.
-        (sr.valid_until = seg.valid_from) DESC,
-        -- Priority 4: Final tie-breaker for stability.
-        sr.source_row_id DESC
-),
 -- CTE 12: resolved_atomic_segments_with_payloads
 -- Purpose: This is the main workhorse CTE. It enriches each atomic segment with the data payloads from the
 -- original source and target rows that cover its time range.
@@ -1108,7 +1081,8 @@ resolved_atomic_segments_with_payloads AS (
             seg.valid_from,
             seg.valid_until,
             t.t_valid_from,
-            seg.causal_source_row_id AS source_row_id,
+            t.t_valid_until,
+            s.source_row_id,
             s.data_payload as s_data_payload,
             s.ephemeral_payload as s_ephemeral_payload,
             t.data_payload as t_data_payload,
@@ -1118,10 +1092,11 @@ resolved_atomic_segments_with_payloads AS (
             -- The canonical entity correlation ID is seg.corr_ent, which is passed through via the
             -- partition key (`v_partition_key_for_with_base_payload_expr`).
             s.corr_ent as s_corr_ent,
-            seg.causal_corr_ent as causal_corr_ent,
-            sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until) as s_t_relation,
+            s.corr_ent as causal_corr_ent, -- This is now just for placeholder stability, the value is from the direct source.
+            s.valid_from AS s_valid_from,
+            s.valid_until AS s_valid_until,
             %47$s
-        FROM atomic_segments_with_causal_info seg
+        FROM atomic_segments seg
         -- Join to find the original target data for this time slice.
         -- Example: For an atomic segment (id:1, from:'2023-01-01', until:'2023-06-01'), this will find the
         -- original target row `(id:1, from:'2022-01-01', until:'2024-01-01', data:{...})` because the segment
@@ -1157,8 +1132,34 @@ resolved_atomic_segments_with_payloads AS (
               ELSE true
           END
     ) with_base_payload
-)
-%9$s,
+),
+%9$sresolved_atomic_segments_with_propagated_ids AS (
+    SELECT
+        *,
+        -- This COALESCE implements the causal priority: look-behind is preferred over look-ahead.
+        COALESCE(
+            source_row_id,
+            (max(source_row_id) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
+            (max(source_row_id) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+        ) as propagated_source_row_id,
+        COALESCE(
+            s_valid_from,
+            (max(s_valid_from) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
+            (max(s_valid_from) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+        ) as propagated_s_valid_from,
+        COALESCE(
+            s_valid_until,
+            (max(s_valid_until) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
+            (max(s_valid_until) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+        ) as propagated_s_valid_until
+    FROM (
+        SELECT
+            *,
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from) AS look_behind_grp,
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from DESC) AS look_ahead_grp
+        FROM %10$s
+    ) with_grp
+),
 -- CTE 11: resolved_atomic_segments
 -- Purpose: Applies the high-level semantic logic for each mode (PATCH, REPLACE, etc.) to calculate
 -- the final data payload for each atomic segment.
@@ -1174,13 +1175,16 @@ resolved_atomic_segments AS (
         valid_from,
         valid_until,
         t_valid_from,
-        source_row_id,
+        t_valid_until,
+        propagated_s_valid_from,
+        propagated_s_valid_until,
+        propagated_source_row_id as source_row_id,
         corr_ent,
         propagated_stable_pk_payload AS stable_pk_payload,
         s_data_payload IS NULL AS unaffected_target_only_segment,
         s_data_payload,
         t_data_payload,
-        s_t_relation,
+        sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
         %8$s as data_payload,
         md5((%8$s - %5$L::text[])::text) as data_hash,
         COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) as ephemeral_payload,
@@ -1193,7 +1197,7 @@ resolved_atomic_segments AS (
              ELSE NULL
         END as trace,
         CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
-    FROM %10$s
+    FROM resolved_atomic_segments_with_propagated_ids
 ),
 -- CTE 12: coalesced_final_segments
 -- Purpose: Merges adjacent atomic segments that have identical data payloads (ignoring ephemeral columns).
@@ -1355,56 +1359,6 @@ diff_ranked AS (
         END as update_rank
     FROM diff d
 ),
--- CTE 15: diff_with_propagated_ids
--- Purpose: Fill in NULL causal row IDs for "gap" segments. This is a critical step to ensure that every
--- change to an entity's timeline can be traced back to a single causal source row.
--- Formulation: This CTE uses a "nearest neighbor" approach implemented with window functions for high performance.
--- It creates two running groups (one forward, one backward) to find the nearest segment with a source row ID
--- in each direction, and then coalesces the results.
---
--- Battle Wisdom: PostgreSQL does not support `IGNORE NULLS` for window functions like `FIRST_VALUE`.
--- The standard and most robust workaround for this is a "gaps-and-islands" pattern. We first
--- create a grouping key (`look_behind_grp`, `look_ahead_grp`) using a conditional SUM(). This
--- partitions the data into "islands" where a value can be safely propagated. Within each
--- island, there is only one non-NULL value for `f_row_ids`. Therefore, using a simple aggregate
--- like `max()` over the partition correctly and efficiently propagates that single value to all
--- other rows (which are NULLs) within that island. This achieves the same result as a hypothetical
--- `FIRST_VALUE(...) IGNORE NULLS` but uses standard, performant SQL.
-diff_with_propagated_ids AS (
-    SELECT
-        *,
-        COALESCE(
-            max(f_row_ids) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp),
-            max(f_row_ids) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp)
-        ) as propagated_f_row_ids,
-        COALESCE(
-            max(corr_ent) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp),
-            max(corr_ent) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp)
-        ) as propagated_corr_ent
-    FROM (
-        SELECT
-            *,
-            -- Create a running group scanning forward ("last observation carried forward").
-            -- The group ID is constant for a non-NULL value and all subsequent NULLs.
-            sum(CASE WHEN f_row_ids IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY f_from) AS look_behind_grp,
-            -- Create a running group scanning backward ("next observation carried backward").
-            -- The group ID is constant for a non-NULL value and all preceding NULLs.
-            sum(CASE WHEN f_row_ids IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY f_from DESC) AS look_ahead_grp
-        FROM diff_ranked
-    ) with_grps
-),
--- CTE 16: diff_with_propagated_relation
--- Purpose: Calculates the final source-to-target Allen relation based on the propagated causal source row.
--- This ensures that segments without a direct source overlap (e.g., gaps) still get a meaningful relation.
--- Formulation: A LEFT JOIN back to the source rows using the propagated causal row ID allows for a final,
--- definitive calculation of the relation.
-diff_with_propagated_relation AS (
-    SELECT
-        d.*,
-        sql_saga.get_allen_relation(s.valid_from, s.valid_until, d.t_from, d.t_until) as propagated_s_t_relation
-    FROM diff_with_propagated_ids d
-    LEFT JOIN active_source_rows s ON s.source_row_id = (COALESCE(d.f_row_ids, d.propagated_f_row_ids))[1]
-),
 -- CTE 17: plan_with_op
 -- Purpose: Assigns the final DML operation (`INSERT`, `UPDATE`, `DELETE`, `SKIP_IDENTICAL`) to each segment
 -- based on the results of the `diff` and `diff_ranked` CTEs.
@@ -1415,12 +1369,8 @@ plan_with_op AS (
     (
         SELECT * FROM (
             SELECT
-                -- The causal row IDs are propagated to all segments. This COALESCE is a fallback
-                -- for "gap" segments that don't directly have a source row. It uses the "last
-                -- observation carried forward" pattern to find the causal ID from the last
-                -- non-gap segment.
-                COALESCE(d.f_row_ids, d.propagated_f_row_ids) as row_ids,
-                d.propagated_s_t_relation as s_t_relation,
+                d.f_row_ids as row_ids,
+                d.s_t_relation,
                 d.new_ent,
                 -- Determine the final DML operation based on the diff and rank.
                 CASE
@@ -1440,16 +1390,16 @@ plan_with_op AS (
                 END as operation,
                 %26$s,
                 %31$s as entity_id_json, -- v_plan_with_op_entity_id_json_build_expr
-                COALESCE(d.corr_ent, d.propagated_corr_ent) as corr_ent,
+                d.corr_ent,
                 d.t_from as old_valid_from,
                 d.t_until as old_valid_until,
                 d.f_from as new_valid_from,
                 d.f_until as new_valid_until,
                 d.f_data as data,
                 d.b_a_relation,
-                CASE WHEN %54$L::boolean THEN d.trace || jsonb_build_object('cte', 'plan_with_op', 'd_new_ent', d.new_ent, 'd_corr_ent', d.corr_ent, 'propagated_corr_ent', d.propagated_corr_ent) ELSE NULL END as trace
-            FROM diff_with_propagated_relation d
-            WHERE d.f_row_ids IS NOT NULL OR d.propagated_f_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
+                CASE WHEN %54$L::boolean THEN d.trace || jsonb_build_object('cte', 'plan_with_op', 'd_new_ent', d.new_ent, 'd_corr_ent', d.corr_ent) ELSE NULL END as trace
+            FROM diff_ranked d
+            WHERE d.f_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
         ) with_op
         WHERE with_op.operation IS NOT NULL
     )

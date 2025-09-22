@@ -1,21 +1,21 @@
                            event                           | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 -----------------------------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                                                     |         0 | 0 ms            |                | 0 rows     | 
- Temporal Merge SEED Parent (Triggers ON)                  |         0 | 79 ms           | 79 ms          | 0 rows     | 
- Temporal Merge SEED Parent (Triggers ON)                  |      8000 | 9 secs          | 9 secs         | 8000 rows  | ~934 rows/s
- Temporal Merge SEED Child (Triggers ON)                   |         0 | 9 secs          | 0 ms           | 0 rows     | 
- Temporal Merge SEED Child (Triggers ON)                   |      8000 | 18 secs         | 9 secs         | 8000 rows  | ~890 rows/s
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)  |         0 | 18 secs         | 97 ms          | 0 rows     | 
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)  |     10000 | 60 secs         | 42 secs        | 10000 rows | ~236 rows/s
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)   |         0 | 60 secs         | 0 ms           | 0 rows     | 
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)   |     10000 | 101 secs        | 40 secs        | 10000 rows | ~248 rows/s
- Temporal Merge SEED Parent (Triggers OFF)                 |         0 | 101 secs        | 85 ms          | 0 rows     | 
- Temporal Merge SEED Parent (Triggers OFF)                 |      8000 | 108 secs        | 8 secs         | 8000 rows  | ~1064 rows/s
- Temporal Merge SEED Child (Triggers OFF)                  |         0 | 108 secs        | 0 ms           | 0 rows     | 
- Temporal Merge SEED Child (Triggers OFF)                  |      8000 | 116 secs        | 8 secs         | 8000 rows  | ~1008 rows/s
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) |         0 | 116 secs        | 94 ms          | 0 rows     | 
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) |     10000 | 155 secs        | 39 secs        | 10000 rows | ~257 rows/s
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)  |         0 | 155 secs        | 0 ms           | 0 rows     | 
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)  |     10000 | 199 secs        | 44 secs        | 10000 rows | ~230 rows/s
+ Temporal Merge SEED Parent (Triggers ON)                  |         0 | 105 ms          | 105 ms         | 0 rows     | 
+ Temporal Merge SEED Parent (Triggers ON)                  |      8000 | 4 secs          | 4 secs         | 8000 rows  | ~2251 rows/s
+ Temporal Merge SEED Child (Triggers ON)                   |         0 | 4 secs          | 0 ms           | 0 rows     | 
+ Temporal Merge SEED Child (Triggers ON)                   |      8000 | 8 secs          | 4 secs         | 8000 rows  | ~2062 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)  |         0 | 8 secs          | 57 ms          | 0 rows     | 
+ Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)  |     10000 | 38 secs         | 30 secs        | 10000 rows | ~332 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)   |         0 | 38 secs         | 0 ms           | 0 rows     | 
+ Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)   |     10000 | 69 secs         | 31 secs        | 10000 rows | ~324 rows/s
+ Temporal Merge SEED Parent (Triggers OFF)                 |         0 | 69 secs         | 85 ms          | 0 rows     | 
+ Temporal Merge SEED Parent (Triggers OFF)                 |      8000 | 72 secs         | 3 secs         | 8000 rows  | ~2302 rows/s
+ Temporal Merge SEED Child (Triggers OFF)                  |         0 | 72 secs         | 0 ms           | 0 rows     | 
+ Temporal Merge SEED Child (Triggers OFF)                  |      8000 | 76 secs         | 4 secs         | 8000 rows  | ~2092 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) |         0 | 76 secs         | 84 ms          | 0 rows     | 
+ Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) |     10000 | 106 secs        | 30 secs        | 10000 rows | ~336 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)  |         0 | 106 secs        | 0 ms           | 0 rows     | 
+ Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)  |     10000 | 137 secs        | 31 secs        | 10000 rows | ~324 rows/s
 (17 rows)
 

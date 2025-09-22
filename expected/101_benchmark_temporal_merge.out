@@ -115,19 +115,18 @@ END;
 BEGIN;
   CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
   CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-  -- Add indices suggested by temporal_merge warning.
-  CREATE INDEX ON legal_unit_seed_source USING BTREE (id);
-  CREATE INDEX ON legal_unit_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
-  CREATE INDEX ON establishment_seed_source USING BTREE (id);
-  CREATE INDEX ON establishment_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
   -- Source data for 80% PATCH
   INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
   INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
   -- Source data for 20% INSERT
   INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
   INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
-  -- Add indices suggested by temporal_merge warning.
+  -- Add indices suggested by temporal_merge performance hints.
+  -- The BTREE index on the lookup key (`id`) is critical for the initial filtering of target rows.
+  -- The GIST index on the temporal range is critical for the main timeline reconstruction logic.
+  CREATE INDEX ON legal_unit_source USING BTREE (id);
   CREATE INDEX ON legal_unit_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_source USING BTREE (id);
   CREATE INDEX ON establishment_source USING GIST (daterange(valid_from, valid_until, '[)'));
   ANALYZE legal_unit_source;
   ANALYZE establishment_source;
@@ -210,7 +209,9 @@ BEGIN;
   INSERT INTO legal_unit_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
   INSERT INTO establishment_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
   -- Add indices suggested by temporal_merge warning.
+  CREATE INDEX ON legal_unit_seed_source_dt USING BTREE (id);
   CREATE INDEX ON legal_unit_seed_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_seed_source_dt USING BTREE (id);
   CREATE INDEX ON establishment_seed_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
   ANALYZE legal_unit_seed_source_dt;
   ANALYZE establishment_seed_source_dt;
@@ -233,7 +234,9 @@ BEGIN;
   INSERT INTO legal_unit_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
   INSERT INTO establishment_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
   -- Add indices suggested by temporal_merge warning.
+  CREATE INDEX ON legal_unit_source_dt USING BTREE (id);
   CREATE INDEX ON legal_unit_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_source_dt USING BTREE (id);
   CREATE INDEX ON establishment_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
   ANALYZE legal_unit_source_dt;
   ANALYZE establishment_source_dt;
