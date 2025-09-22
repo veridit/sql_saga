@@ -450,6 +450,8 @@ BEGIN
             v_target_rows_filter := v_target_table_ident || ' t';
         ELSE
             -- By default, we optimize by only scanning target entities that are present in the source.
+            -- This is a critical performance optimization. We dynamically generate the most efficient
+            -- query to filter the target table based on the nullability of the lookup columns.
             DECLARE
                 v_any_nullable_lookup_cols BOOLEAN;
             BEGIN
@@ -469,15 +471,20 @@ BEGIN
                 v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
 
                 IF NOT v_any_nullable_lookup_cols THEN
-                    -- OPTIMIZED PATH: If all lookup columns are defined as NOT NULL in both tables,
-                    -- we can use a simple, fast, SARGable query.
+                    -- OPTIMIZED PATH 1: SARGable IN clause.
+                    -- If all lookup columns are defined as NOT NULL in both tables, we can use a simple,
+                    -- fast, SARGable query. A "SARGable" (Search ARGument-able) query is one that
+                    -- allows the database to efficiently use an index. The `IN (SELECT DISTINCT ...)`
+                    -- pattern is highly optimizable by PostgreSQL.
                     v_target_rows_filter := format($$(
                         SELECT * FROM %1$s inner_t
                         WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si)
                     )$$, v_target_table_ident, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_lookup_columns) col), v_lookup_cols_si_alias_select_list);
                 ELSE
-                    -- NULL-SAFE PATH: If any lookup column is nullable, we separate the logic
-                    -- for non-NULL and NULL keys into two queries combined by a UNION.
+                    -- OPTIMIZED PATH 2: NULL-safe UNION-based filtering.
+                    -- If any lookup column is nullable, we separate the logic for non-NULL and NULL
+                    -- keys into two queries combined by a UNION. This allows the planner to use
+                    -- indexes for the non-NULL part and a specialized strategy for the NULL part.
                     DECLARE
                         v_sargable_part TEXT;
                         v_null_part TEXT;
@@ -500,7 +507,9 @@ BEGIN
                             'true'
                         );
 
-                        -- SARGable part for non-NULL keys using an IN clause.
+                        -- SARGable part for non-NULL keys using an IN clause. This is identical to the
+                        -- fully non-nullable path, but it filters the source rows to exclude any
+                        -- keys that contain a NULL.
                         v_sargable_part := format($$(
                             SELECT * FROM %1$s inner_t
                             WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si WHERE %4$s)
@@ -525,10 +534,11 @@ BEGIN
                                 WHERE NOT a.attnotnull
                             );
 
+                            -- OPTIMIZED PATH 2a: Handling multiple nullable keys (e.g., XOR keys).
                             -- Heuristic: If there are multiple nullable columns, we assume it's a
-                            -- complex XOR-style key that relies on partial indexes for performance.
-                            -- In this case, we use a UNION ALL of queries with '=' joins, which is
-                            -- known to be planner-friendly for this pattern.
+                            -- complex XOR-style key that likely relies on partial indexes for performance.
+                            -- In this case, we generate a `UNION ALL` of simple `=` joins, a pattern that is
+                            -- highly effective at enabling the PostgreSQL planner to use those partial indexes.
                             IF array_length(v_nullable_cols, 1) > 1 THEN
                                 DECLARE
                                     v_union_parts TEXT[];
@@ -577,21 +587,31 @@ BEGIN
                                     v_null_part := array_to_string(v_union_parts, ' UNION ALL ');
                                 END;
                             ELSE
-                                -- For a single nullable key column (or no nullable columns, as a fallback),
-                                -- we use a series of index-friendly, null-safe comparisons.
-                                -- This pattern `(a = b OR (a IS NULL AND b IS NULL))` is functionally
-                                -- equivalent to `a IS NOT DISTINCT FROM b` but allows the planner
-                                -- to use standard B-Tree indexes, which is critical for performance.
-                                v_join_clause := COALESCE(
-                                    (SELECT string_agg(format('(si.%1$I = inner_t.%1$I OR (si.%1$I IS NULL AND inner_t.%1$I IS NULL))', c), ' AND ') FROM unnest(v_lookup_columns) c),
-                                    'true'
-                                );
-                                v_null_part := format($$(
-                                    SELECT DISTINCT ON (%4$s) inner_t.*
-                                    FROM %1$s inner_t
-                                    JOIN source_initial si ON (%2$s)
-                                    WHERE %3$s
-                                )$$, v_target_table_ident, v_join_clause, v_lookup_cols_is_null_condition, v_distinct_on_cols_list);
+                                -- OPTIMIZED PATH 2b: Handling a single nullable key.
+                                -- We join the target against a pre-filtered, distinct set of source keys.
+                                -- This mirrors the performant `IN (SELECT DISTINCT ...)` pattern from the
+                                -- SARGable part, but uses a JOIN with a null-safe condition. By pre-filtering
+                                -- the source keys, we avoid a very expensive join against the entire source CTE.
+                                DECLARE
+                                    v_distinct_source_with_nulls TEXT;
+                                BEGIN
+                                    v_distinct_source_with_nulls := format(
+                                        '(SELECT DISTINCT %s FROM source_initial si WHERE %s)',
+                                        v_lookup_cols_si_alias_select_list,
+                                        v_lookup_cols_is_null_condition
+                                    );
+
+                                    v_join_clause := COALESCE(
+                                        (SELECT string_agg(format('(si.%1$I = inner_t.%1$I OR (si.%1$I IS NULL AND inner_t.%1$I IS NULL))', c), ' AND ') FROM unnest(v_lookup_columns) c),
+                                        'true'
+                                    );
+
+                                    v_null_part := format($$(
+                                        SELECT DISTINCT ON (%3$s) inner_t.*
+                                        FROM %1$s inner_t
+                                        JOIN %4$s AS si ON (%2$s)
+                                    )$$, v_target_table_ident, v_join_clause, v_distinct_on_cols_list, v_distinct_source_with_nulls);
+                                END;
                             END IF;
                         END;
 
@@ -2175,15 +2195,19 @@ BEGIN
                 FROM feedback_id_cols;
 
                 -- Stage 1: Handle "founding" inserts for new entities that need generated keys.
-                -- This unified "Smart Merge" logic now handles all such cases.
+                -- This unified "Smart Merge" logic is a critical part of the executor. It handles
+                -- the complex case where new entities need to be created and have their database-generated
+                -- identifiers (e.g., from a SERIAL column) captured and back-filled into all
+                -- other plan operations for that same new entity, all within a single, set-based operation.
                 IF v_needs_founding_insert THEN
+                    -- This temporary table acts as a map to store the generated ID for each new
+                    -- conceptual entity, keyed by its correlation ID (`corr_ent`).
                     CREATE TEMP TABLE temporal_merge_entity_id_map (corr_ent TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
 
-                    -- Step 1.1: Insert just ONE row for each new conceptual entity to generate its ID.
-                    -- This uses a "pure INSERT" MERGE pattern (`ON false`). This is a robust way to
-                    -- perform a bulk INSERT that needs to return columns from both the source data (`s`)
-                    -- and the newly inserted target rows (`t`), which a standard `INSERT ... SELECT ... RETURNING`
-                    -- cannot do as easily.
+                    -- Step 1.1: Insert just ONE "founding" row for each new conceptual entity to generate its ID.
+                    -- The `MERGE ... ON false` pattern is a robust way to perform a bulk INSERT that needs
+                    -- to return columns from both the source data (`s`) and the newly inserted target
+                    -- rows (`t`), which a standard `INSERT ... SELECT ... RETURNING` cannot do as easily.
                     EXECUTE format($$
                         WITH founding_plan_ops AS (
                             SELECT DISTINCT ON (p.corr_ent)
@@ -2221,7 +2245,8 @@ BEGIN
                         v_valid_until_col_type          /* %9$s */
                     );
 
-                    -- Step 1.2: Back-fill the generated IDs into the plan for all dependent operations.
+                    -- Step 1.2: Back-fill the captured, generated IDs into the plan for all other
+                    -- operations that belong to the same new entity.
                     EXECUTE format($$
                         UPDATE temporal_merge_plan p
                         SET entity_ids = m.new_entity_ids
@@ -2229,7 +2254,9 @@ BEGIN
                         WHERE p.corr_ent = m.corr_ent;
                     $$);
 
-                    -- Step 1.3: Insert the remaining slices for the new entities, which now have the correct foreign key.
+                    -- Step 1.3: Insert the remaining historical slices for the new entities. These
+                    -- slices now have the correct, generated entity ID (e.g., foreign key),
+                    -- which was back-filled into their `entity_ids` payload in the previous step.
                     EXECUTE format($$
                         INSERT INTO %1$s (%2$s, %4$I, %5$I)
                         SELECT %3$s, p.new_valid_from::%7$s, p.new_valid_until::%8$s
@@ -2262,7 +2289,10 @@ BEGIN
                     DROP TABLE temporal_merge_entity_id_map;
                 END IF;
 
-                -- Stage 2: Handle "non-founding" inserts (e.g., for SCD-2), which have pre-existing keys.
+                -- Stage 2: Handle "non-founding" inserts. These are typically for SCD-2 style
+                -- history, where a new historical record is inserted for an entity that already
+                -- exists in the target table. These operations already have the correct stable
+                -- identifier and do not need any keys to be generated.
                 BEGIN
                     EXECUTE format($$
                         WITH
