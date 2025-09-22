@@ -1505,7 +1505,7 @@ CONTEXT:  SQL statement "
                         FROM inserted_rows ir
                         WHERE p.plan_op_seq = ir.plan_op_seq;
                     "
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 612 at EXECUTE
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 613 at EXECUTE
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Target: After merge (should be unchanged) ---'
 --- Target: After merge (should be unchanged) ---

@@ -146,7 +146,6 @@ BEGIN
         v_target_ephemeral_cols_jsonb_build TEXT;
         v_target_ephemeral_cols_jsonb_build_bare TEXT;
         v_target_data_cols_jsonb_build_bare TEXT;
-        v_entity_id_as_jsonb TEXT;
         v_lookup_cols_select_list TEXT;
         v_lookup_cols_select_list_no_alias TEXT;
         v_source_schema_name TEXT;
@@ -159,7 +158,6 @@ BEGIN
         v_diff_join_condition TEXT;
         v_entity_id_check_is_null_expr TEXT;
         v_ident_corr_select_expr TEXT;
-        v_planner_entity_id_expr TEXT;
         v_target_rows_filter TEXT;
         v_stable_pk_cols_jsonb_build TEXT;
         v_join_on_lookup_cols TEXT;
@@ -710,8 +708,8 @@ $$, v_entity_partition_key_cols, v_resolver_from);
          *
          * 1. `NULL || jsonb_build_object(...)`: When `p_log_trace` is false, the
          *    trace seed is set to `NULL::jsonb`. Subsequent trace-building operations
-         *    use the pattern `trace || jsonb_build_object(...)`. As demonstrated by
-         *    the runnable example below (see also `tmp/null-logic-and-work.sql`), this
+         *    use the pattern `trace || jsonb_build_object(...)`.
+         *    As demonstrated by the runnable example below, this
          *    pattern is short-circuited by the PostgreSQL query planner. Because the
          *    `jsonb ||` operator is "strict" (returns `NULL` on `NULL` input), the
          *    planner knows `NULL || anything` will be `NULL` and therefore does not
@@ -819,9 +817,9 @@ $$, v_entity_partition_key_cols, v_resolver_from);
             RAISE NOTICE '(%) v_s_founding_join_condition (%%38$s): %', v_log_id, v_s_founding_join_condition;
             RAISE NOTICE '(%) v_tr_qualified_lookup_cols (%%39$s): %', v_log_id, v_tr_qualified_lookup_cols;
             RAISE NOTICE '(%) v_ident_corr_column_type (%%40$s): %', v_log_id, v_ident_corr_column_type;
-            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list (%%41$s -- OBSOLETE): %', v_log_id, v_non_temporal_lookup_cols_select_list;
-            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list_no_alias (%%42$s -- OBSOLETE): %', v_log_id, v_non_temporal_lookup_cols_select_list_no_alias;
-            RAISE NOTICE '(%) v_non_temporal_tr_qualified_lookup_cols (%%43$s -- OBSOLETE): %', v_log_id, v_non_temporal_tr_qualified_lookup_cols;
+            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list (%%41$s): %', v_log_id, v_non_temporal_lookup_cols_select_list;
+            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list_no_alias (%%42$s): %', v_log_id, v_non_temporal_lookup_cols_select_list_no_alias;
+            RAISE NOTICE '(%) v_non_temporal_tr_qualified_lookup_cols (%%43$s): %', v_log_id, v_non_temporal_tr_qualified_lookup_cols;
             RAISE NOTICE '(%) v_lookup_cols_sans_valid_from (%%44$s): %', v_log_id, v_lookup_cols_sans_valid_from;
             RAISE NOTICE '(%) v_unqualified_id_cols_sans_vf (%%45$s): %', v_log_id, v_unqualified_id_cols_sans_vf;
             RAISE NOTICE '(%) v_trace_select_list (%%46$s): %', v_log_id, v_trace_select_list;
@@ -1533,86 +1531,86 @@ SELECT
 FROM plan p
 ORDER BY plan_op_seq;
 $SQL$,
-            v_entity_id_as_jsonb,           /* %1$s -- OBSOLETE, but kept for arg numbering stability for now */
-            v_source_data_payload_expr,     /* %2$s */
-            v_source_table_ident,           /* %3$s */
-            v_target_table_ident,           /* %4$s */
-            v_ephemeral_columns,            /* %5$L */
-            v_target_data_cols_jsonb_build, /* %6$s */
-            temporal_merge_plan.mode,                           /* %7$L */
-            v_final_data_payload_expr,      /* %8$s */
-            v_resolver_ctes,                /* %9$s */
-            v_resolver_from,                /* %10$s */
-            v_diff_join_condition,          /* %11$s */
-            '',    /* %12$s -- OBSOLETE */
-            v_entity_id_check_is_null_expr, /* %13$s */
-            v_valid_from_col,               /* %14$I */
-            v_valid_until_col,              /* %15$I */
-            v_ident_corr_select_expr,      /* %16$s */
-            '', -- v_planner_entity_id_expr,       /* %17$s -- OBSOLETE */
-            temporal_merge_plan.row_id_column,           /* %18$I */
-            v_range_constructor,            /* %19$I */
-            v_target_rows_filter,           /* %20$s */
-            v_stable_pk_cols_jsonb_build,   /* %21$s */
-            v_all_id_cols,                  /* %22$L */
-            v_lookup_cols_select_list,      /* %23$s */
-            v_target_rows_lookup_cols_expr, /* %24$s */
-            v_source_rows_exists_join_expr, /* %25$s */
-            v_lookup_cols_select_list_no_alias, /* %26$s */
-            v_atomic_segments_select_list_expr, /* %27$s */
-            v_lateral_join_sr_to_seg,       /* %28$s */
-            v_lateral_join_tr_to_seg,       /* %29$s */
-            v_diff_select_expr,             /* %30$s */
-            v_plan_with_op_entity_id_json_build_expr, /* %31$s */
-            v_skip_no_target_entity_id_json_build_expr, /* %32$s */
-            v_correlation_col,              /* %33$L */
-            v_final_order_by_expr,          /* %34$s */
-            NULL,           /* %35$s -- OBSOLETE v_partition_key_cols */
-            v_partition_key_for_with_base_payload_expr, /* %36$s */
-            v_entity_partition_key_cols,    /* %37$s */
-            v_s_founding_join_condition,    /* %38$s */
-            v_tr_qualified_lookup_cols,     /* %39$s */
-            v_ident_corr_column_type,       /* %40$s */
-            v_non_temporal_lookup_cols_select_list, /* %41$s */
-            v_non_temporal_lookup_cols_select_list_no_alias, /* %42$s */
-            v_non_temporal_tr_qualified_lookup_cols, /* %43$s */
-            v_lookup_cols_sans_valid_from,   /* %44$s */
-            v_unqualified_id_cols_sans_vf, /* %45$s */
-            v_trace_select_list,            /* %46$s */
-            v_trace_seed_expr,              /* %47$s */
-            v_stable_id_aggregates_expr,    /* %48$s */
-            v_stable_id_projection_expr,     /* %49$s */
-            v_target_data_cols_jsonb_build_bare, /* %50$s */
-            v_stable_pk_cols_jsonb_build_bare,  /* %51$s */
-            v_rcte_join_condition,           /* %52$s */
-            v_qualified_r_id_cols_sans_vf,   /* %53$s */
-            p_log_trace,                     /* %54$L */
-            v_entity_id_check_is_null_expr_no_alias, /* %55$s */
-            v_source_ephemeral_cols_jsonb_build, /* %56$s */
-            v_target_ephemeral_cols_jsonb_build_bare, /* %57$s */
-            v_target_ephemeral_cols_jsonb_build, /* %58$s */
-            v_coalesced_payload_expr,        /* %59$s */
-            v_stable_id_aggregates_expr_prefixed_with_comma, /* %60$s */
-            v_entity_partition_key_cols_prefix, /* %61$s */
-            v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %62$s */
-            v_stable_id_projection_expr_prefix, /* %63$s */
-            v_non_temporal_lookup_cols_select_list_prefix, /* %64$s */
-            v_non_temporal_tr_qualified_lookup_cols_prefix, /* %65$s */
-            v_lookup_cols_sans_valid_from_prefix, /* %66$s */
-            NULL,                                 /* %67$s -- not used */
-            v_lateral_join_entity_id_clause,       /* %68$s */
-            NULL, /* %69$s placeholder */
-            v_identity_cols_trace_expr,     /* %70$s */
-            v_natural_identity_cols_trace_expr, /* %71$s */
-            v_natural_identity_cols_are_null_expr, /* %72$s */
-            NULL, /* %73$s placeholder */
-            NULL, /* %74$s placeholder */
-            NULL, /* %75$s placeholder */
-            NULL, /* %76$s placeholder */
-            NULL, /* %77$s placeholder */
-            NULL, /* %78$s placeholder */
-            NULL, /* %79$s placeholder */
-            NULL  /* %80$s placeholder */
+            NULL,                           /* %1$s - v_entity_id_as_jsonb (OBSOLETE) */
+            v_source_data_payload_expr,     /* %2$s - v_source_data_payload_expr */
+            v_source_table_ident,           /* %3$s - v_source_table_ident */
+            v_target_table_ident,           /* %4$s - v_target_table_ident */
+            v_ephemeral_columns,            /* %5$L - v_ephemeral_columns */
+            v_target_data_cols_jsonb_build, /* %6$s - v_target_data_cols_jsonb_build */
+            temporal_merge_plan.mode,       /* %7$L - temporal_merge_plan.mode */
+            v_final_data_payload_expr,      /* %8$s - v_final_data_payload_expr */
+            v_resolver_ctes,                /* %9$s - v_resolver_ctes */
+            v_resolver_from,                /* %10$s - v_resolver_from */
+            v_diff_join_condition,          /* %11$s - v_diff_join_condition */
+            '',                             /* %12$s - (OBSOLETE) */
+            v_entity_id_check_is_null_expr, /* %13$s - v_entity_id_check_is_null_expr */
+            v_valid_from_col,               /* %14$I - v_valid_from_col */
+            v_valid_until_col,              /* %15$I - v_valid_until_col */
+            v_ident_corr_select_expr,       /* %16$s - v_ident_corr_select_expr */
+            NULL,                           /* %17$s - v_planner_entity_id_expr (OBSOLETE) */
+            temporal_merge_plan.row_id_column, /* %18$I - temporal_merge_plan.row_id_column */
+            v_range_constructor,            /* %19$I - v_range_constructor */
+            v_target_rows_filter,           /* %20$s - v_target_rows_filter */
+            v_stable_pk_cols_jsonb_build,   /* %21$s - v_stable_pk_cols_jsonb_build */
+            v_all_id_cols,                  /* %22$L - v_all_id_cols */
+            v_lookup_cols_select_list,      /* %23$s - v_lookup_cols_select_list */
+            v_target_rows_lookup_cols_expr, /* %24$s - v_target_rows_lookup_cols_expr */
+            v_source_rows_exists_join_expr, /* %25$s - v_source_rows_exists_join_expr */
+            v_lookup_cols_select_list_no_alias, /* %26$s - v_lookup_cols_select_list_no_alias */
+            v_atomic_segments_select_list_expr, /* %27$s - v_atomic_segments_select_list_expr */
+            v_lateral_join_sr_to_seg,       /* %28$s - v_lateral_join_sr_to_seg */
+            v_lateral_join_tr_to_seg,       /* %29$s - v_lateral_join_tr_to_seg */
+            v_diff_select_expr,             /* %30$s - v_diff_select_expr */
+            v_plan_with_op_entity_id_json_build_expr, /* %31$s - v_plan_with_op_entity_id_json_build_expr */
+            v_skip_no_target_entity_id_json_build_expr, /* %32$s - v_skip_no_target_entity_id_json_build_expr */
+            v_correlation_col,              /* %33$L - v_correlation_col */
+            v_final_order_by_expr,          /* %34$s - v_final_order_by_expr */
+            NULL,                           /* %35$s - v_partition_key_cols (OBSOLETE) */
+            v_partition_key_for_with_base_payload_expr, /* %36$s - v_partition_key_for_with_base_payload_expr */
+            v_entity_partition_key_cols,    /* %37$s - v_entity_partition_key_cols */
+            v_s_founding_join_condition,    /* %38$s - v_s_founding_join_condition */
+            v_tr_qualified_lookup_cols,     /* %39$s - v_tr_qualified_lookup_cols */
+            v_ident_corr_column_type,       /* %40$s - v_ident_corr_column_type */
+            v_non_temporal_lookup_cols_select_list, /* %41$s - v_non_temporal_lookup_cols_select_list */
+            v_non_temporal_lookup_cols_select_list_no_alias, /* %42$s - v_non_temporal_lookup_cols_select_list_no_alias */
+            v_non_temporal_tr_qualified_lookup_cols, /* %43$s - v_non_temporal_tr_qualified_lookup_cols */
+            v_lookup_cols_sans_valid_from,  /* %44$s - v_lookup_cols_sans_valid_from */
+            v_unqualified_id_cols_sans_vf,  /* %45$s - v_unqualified_id_cols_sans_vf */
+            v_trace_select_list,            /* %46$s - v_trace_select_list */
+            v_trace_seed_expr,              /* %47$s - v_trace_seed_expr */
+            v_stable_id_aggregates_expr,    /* %48$s - v_stable_id_aggregates_expr */
+            v_stable_id_projection_expr,    /* %49$s - v_stable_id_projection_expr */
+            v_target_data_cols_jsonb_build_bare, /* %50$s - v_target_data_cols_jsonb_build_bare */
+            v_stable_pk_cols_jsonb_build_bare, /* %51$s - v_stable_pk_cols_jsonb_build_bare */
+            v_rcte_join_condition,          /* %52$s - v_rcte_join_condition */
+            v_qualified_r_id_cols_sans_vf,  /* %53$s - v_qualified_r_id_cols_sans_vf */
+            p_log_trace,                    /* %54$L - p_log_trace */
+            v_entity_id_check_is_null_expr_no_alias, /* %55$s - v_entity_id_check_is_null_expr_no_alias */
+            v_source_ephemeral_cols_jsonb_build, /* %56$s - v_source_ephemeral_cols_jsonb_build */
+            v_target_ephemeral_cols_jsonb_build_bare, /* %57$s - v_target_ephemeral_cols_jsonb_build_bare */
+            v_target_ephemeral_cols_jsonb_build, /* %58$s - v_target_ephemeral_cols_jsonb_build */
+            v_coalesced_payload_expr,       /* %59$s - v_coalesced_payload_expr */
+            v_stable_id_aggregates_expr_prefixed_with_comma, /* %60$s - v_stable_id_aggregates_expr_prefixed_with_comma */
+            v_entity_partition_key_cols_prefix, /* %61$s - v_entity_partition_key_cols_prefix */
+            v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %62$s - v_non_temporal_lookup_cols_select_list_no_alias_prefix */
+            v_stable_id_projection_expr_prefix, /* %63$s - v_stable_id_projection_expr_prefix */
+            v_non_temporal_lookup_cols_select_list_prefix, /* %64$s - v_non_temporal_lookup_cols_select_list_prefix */
+            v_non_temporal_tr_qualified_lookup_cols_prefix, /* %65$s - v_non_temporal_tr_qualified_lookup_cols_prefix */
+            v_lookup_cols_sans_valid_from_prefix, /* %66$s - v_lookup_cols_sans_valid_from_prefix */
+            NULL,                                 /* %67$s - (not used) */
+            v_lateral_join_entity_id_clause, /* %68$s - v_lateral_join_entity_id_clause */
+            NULL,                                 /* %69$s - (placeholder) */
+            v_identity_cols_trace_expr,     /* %70$s - v_identity_cols_trace_expr */
+            v_natural_identity_cols_trace_expr, /* %71$s - v_natural_identity_cols_trace_expr */
+            v_natural_identity_cols_are_null_expr, /* %72$s - v_natural_identity_cols_are_null_expr */
+            NULL,                                 /* %73$s - (placeholder) */
+            NULL,                                 /* %74$s - (placeholder) */
+            NULL,                                 /* %75$s - (placeholder) */
+            NULL,                                 /* %76$s - (placeholder) */
+            NULL,                                 /* %77$s - (placeholder) */
+            NULL,                                 /* %78$s - (placeholder) */
+            NULL,                                 /* %79$s - (placeholder) */
+            NULL                                  /* %80$s - (placeholder) */
         );
 
         -- Conditionally log the generated SQL for debugging.
@@ -1690,7 +1688,6 @@ DECLARE
     v_all_cols_from_jsonb TEXT;
     v_founding_all_cols_ident TEXT;
     v_founding_all_cols_from_jsonb TEXT;
-    v_internal_keys_to_remove TEXT[];
     v_pk_cols name[];
     v_feedback_set_clause TEXT;
     v_sql TEXT;
@@ -1734,8 +1731,6 @@ BEGIN
     FROM pg_constraint c
     JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
     WHERE c.conrelid = temporal_merge.target_table AND c.contype = 'p';
-
-    v_internal_keys_to_remove := ARRAY[]::name[];
 
     -- To ensure idempotency and avoid permission errors in complex transactions
     -- with role changes, we drop and recreate the feedback table for each call.
@@ -2186,6 +2181,10 @@ BEGIN
                     CREATE TEMP TABLE temporal_merge_entity_id_map (corr_ent TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
 
                     -- Step 1.1: Insert just ONE row for each new conceptual entity to generate its ID.
+                    -- This uses a "pure INSERT" MERGE pattern (`ON false`). This is a robust way to
+                    -- perform a bulk INSERT that needs to return columns from both the source data (`s`)
+                    -- and the newly inserted target rows (`t`), which a standard `INSERT ... SELECT ... RETURNING`
+                    -- cannot do as easily.
                     EXECUTE format($$
                         WITH founding_plan_ops AS (
                             SELECT DISTINCT ON (p.corr_ent)
@@ -2452,7 +2451,7 @@ BEGIN
                     -- Aggregate all distinct operations for this source row.
                     array_agg(DISTINCT pu.operation) FILTER (WHERE pu.operation IS NOT NULL) as operations,
                     -- Aggregate all distinct entity IDs this source row touched.
-                    COALESCE(jsonb_agg(DISTINCT (pu.entity_ids - %3$L::text[])) FILTER (WHERE pu.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids
+                    COALESCE(jsonb_agg(DISTINCT pu.entity_ids) FILTER (WHERE pu.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids
                 FROM all_source_rows asr
                 LEFT JOIN plan_unnested pu ON asr.source_row_id = pu.source_row_id
                 GROUP BY asr.source_row_id
@@ -2495,9 +2494,8 @@ BEGIN
                 FROM feedback_groups fg
                 ORDER BY fg.source_row_id;
         $$,
-            temporal_merge.source_table::text,       -- 1
-            temporal_merge.row_id_column,     -- 2
-            v_internal_keys_to_remove   -- 3
+            temporal_merge.source_table::text,       -- %1$s
+            temporal_merge.row_id_column      -- %2$I
         );
         EXECUTE v_sql;
 
