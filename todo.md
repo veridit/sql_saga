@@ -14,7 +14,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
-- [x] **Clarify `temporal_merge` identity column requirements:** The initial goal was to allow identity columns to be absent from the source table. After review, this was deemed semantically incorrect. The new requirement is that if `identity_columns` or `natural_identity_columns` are provided, they **must** exist in both the source and target tables. Validation will be added to enforce this.
+- [x] **Clarify `temporal_merge` identity column requirements:** If `identity_columns` or `natural_identity_columns` are provided, they **must** exist in both the source and target tables. Validation enforces this.
 - [x] **Fix regression in `temporal_merge` coalescing:** Adjacent timeline segments are not being coalesced if the update that creates the second segment only changes ephemeral data or if the entity is identified by a natural key. This leads to timeline fragmentation.
 - [x] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
 - [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.

@@ -67,6 +67,29 @@ BEGIN
         END IF;
     END IF;
 
+    -- Validate that identity columns exist in both source and target tables.
+    DECLARE
+        v_col TEXT;
+    BEGIN
+        IF temporal_merge_plan.identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.identity_columns) > 0 THEN
+            FOREACH v_col IN ARRAY temporal_merge_plan.identity_columns LOOP
+                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in source table %', quote_ident(v_col), temporal_merge_plan.source_table; END IF;
+                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_col), temporal_merge_plan.target_table; END IF;
+            END LOOP;
+        END IF;
+
+        IF temporal_merge_plan.natural_identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.natural_identity_columns) > 0 THEN
+            FOREACH v_col IN ARRAY temporal_merge_plan.natural_identity_columns LOOP
+                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in source table %', quote_ident(v_col), temporal_merge_plan.source_table; END IF;
+                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in target table %', quote_ident(v_col), temporal_merge_plan.target_table; END IF;
+            END LOOP;
+        END IF;
+    END;
+
     -- Introspect just enough to get the range constructor, which is part of the cache key.
     SELECT n.nspname, c.relname
     INTO v_target_schema_name, v_target_table_name_only
