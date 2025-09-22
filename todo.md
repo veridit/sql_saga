@@ -5,23 +5,18 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [ ] **Fix `temporal_merge` planner to not require `identity_columns` in source:** The planner generates SQL that attempts to select `identity_columns` from the source table, causing a "column does not exist" error if they are not present. The planner should only require these columns to exist on the target table.
-- [ ] **Fix regression in `temporal_merge` coalescing:** Adjacent timeline segments are not being coalesced if the update that creates the second segment only changes ephemeral data or if the entity is identified by a natural key. This leads to timeline fragmentation.
-- [ ] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
-- [ ] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
-- [ ] temporal_merge: Optional session prewarm helper (low priority) if cold planning dominates in long-lived sessions
-- [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
-
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 
 ## Low Priority - Future Work & New Features
-- [ ] **Investigate constraint performance:** After the `_multirange` backend is implemented, investigate the performance of `sql_saga`'s unique/exclusion constraints. Check for correct index usage and analyze the overhead of re-enabling constraints after large data loads.
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+- [x] **Clarify `temporal_merge` identity column requirements:** The initial goal was to allow identity columns to be absent from the source table. After review, this was deemed semantically incorrect. The new requirement is that if `identity_columns` or `natural_identity_columns` are provided, they **must** exist in both the source and target tables. Validation will be added to enforce this.
+- [x] **Fix regression in `temporal_merge` coalescing:** Adjacent timeline segments are not being coalesced if the update that creates the second segment only changes ephemeral data or if the entity is identified by a natural key. This leads to timeline fragmentation.
+- [x] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
 - [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
 - [x] **Fix `temporal_merge` causal propagation logic:** Corrected a regression where the planner failed to propagate causal information (source row ID, Allen relation) to adjacent timeline segments, causing incorrect `DELETE` operations and `UPDATE`s. The propagation logic now correctly carries forward the causal source row's period, re-calculates the Allen relation at the correct step, and prefers look-behind causality for timeline splits. The propagation is now also correctly partitioned by the original target row's start time, preventing causality from "bleeding" across historical segments.
 - [x] **Fix `temporal_merge` type error with mixed-type correlation keys:** Corrected the planner to handle cases where `founding_id_column` (e.g., `TEXT`) and the fallback `row_id_column` (`INTEGER`) have different data types. The planner now explicitly casts the fallback to the primary column's type, resolving `COALESCE` type mismatch errors.
