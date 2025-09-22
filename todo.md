@@ -5,11 +5,25 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
-- [x] **Fix `temporal_merge` causal propagation logic:** Corrected a regression where the planner failed to propagate causal information (source row ID, Allen relation) to adjacent timeline segments, causing incorrect `DELETE` operations and `UPDATE`s. The propagation logic now correctly carries forward the causal source row's period, re-calculates the Allen relation at the correct step, and prefers look-behind causality for timeline splits. The propagation is now also correctly partitioned by the original target row's start time, preventing causality from "bleeding" across historical segments.
 - [ ] **Fix `temporal_merge` planner to not require `identity_columns` in source:** The planner generates SQL that attempts to select `identity_columns` from the source table, causing a "column does not exist" error if they are not present. The planner should only require these columns to exist on the target table.
 - [ ] **Fix regression in `temporal_merge` coalescing:** Adjacent timeline segments are not being coalesced if the update that creates the second segment only changes ephemeral data or if the entity is identified by a natural key. This leads to timeline fragmentation.
 - [ ] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
+- [ ] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
+- [ ] temporal_merge: Optional session prewarm helper (low priority) if cold planning dominates in long-lived sessions
+- [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
+
+## Medium Priority - Refactoring & API Improvements
+- [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
+
+## Low Priority - Future Work & New Features
+- [ ] **Investigate constraint performance:** After the `_multirange` backend is implemented, investigate the performance of `sql_saga`'s unique/exclusion constraints. Check for correct index usage and analyze the overhead of re-enabling constraints after large data loads.
+- [ ] **Package `sql_saga` with pgxman for distribution:**
+  - **Issue:** The extension currently requires manual installation.
+  - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
+
+# Done
+- [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
+- [x] **Fix `temporal_merge` causal propagation logic:** Corrected a regression where the planner failed to propagate causal information (source row ID, Allen relation) to adjacent timeline segments, causing incorrect `DELETE` operations and `UPDATE`s. The propagation logic now correctly carries forward the causal source row's period, re-calculates the Allen relation at the correct step, and prefers look-behind causality for timeline splits. The propagation is now also correctly partitioned by the original target row's start time, preventing causality from "bleeding" across historical segments.
 - [x] **Fix `temporal_merge` type error with mixed-type correlation keys:** Corrected the planner to handle cases where `founding_id_column` (e.g., `TEXT`) and the fallback `row_id_column` (`INTEGER`) have different data types. The planner now explicitly casts the fallback to the primary column's type, resolving `COALESCE` type mismatch errors.
 - [x] **Fix regression in `temporal_merge` planner with mixed identity keys:** Corrected a bug where a faulty partitioning key caused the planner's window functions to fail, leading to incorrect timeline coalescing and exclusion constraint violations. The progressive trace was instrumental in identifying that the `LAG` function was not seeing adjacent rows. The fix involved removing the incorrect `CASE` statement from the partition key, ensuring all segments for a single entity are processed together.
 - [x] **Fix regression in `temporal_merge` planner DML order and entity identification:** Corrected a bug in the planner's `diff` CTE where an incorrect join condition on the correlation ID (`ident_corr`) caused it to misidentify unchanged timeline segments. This led to redundant `INSERT` operations, which in turn could cause duplicate key violations during `..._FOR_PORTION_OF` updates. The flawed join condition has been removed, restoring correct change detection.
@@ -35,7 +49,6 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 - [x] **Fix `s_t_relation` propagation for all modes:** Refactored the planner's propagation logic to use a robust and performant "nearest neighbor" search implemented with window functions. This ensures that the causal `s_t_relation` and source row ID are correctly propagated to all timeline segments that result from a single source operation, including complex splits caused by `DELETE_FOR_PORTION_OF`.
 - [x] **Fix regression in `temporal_merge` coalescing:** Corrected the planner's logic for identifying "new" entities. It now correctly uses the `target_entity_exists` flag, which allows it to properly partition timelines and coalesce adjacent, identical time segments across multiple ETL batches. This resolves a critical bug that led to timeline fragmentation.
 - [x] **Fix `temporal_merge` planner to correctly coalesce history:** Corrected a critical bug in the planner's logic for identifying new entities. It now correctly uses the `target_entity_exists` flag, which allows it to properly partition timelines and coalesce adjacent, identical time segments across multiple ETL batches. This resolves a critical bug that led to timeline fragmentation.
-- [ ] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
 - [x] **Clarify `temporal_merge` planner semantics:** Refactored the planner to distinguish between a `SKIP_IDENTICAL` operation caused by a source row and a target segment that is merely unaffected by the source. Unaffected target-only segments are now correctly filtered out of the final plan, making the output more concise and semantically aligned with a "plan of action". The logic is confirmed to correctly preserve `DELETE` operations for destructive modes.
 - [x] **(CRITICAL REGRESSION) Fix `temporal_merge` planner `corr_ent` propagation:** Resolved a regression where a single entity affected by multiple source rows in one batch would have its timeline operations incorrectly associated with multiple correlation IDs. The planner now correctly establishes a single, authoritative correlation ID for each entity at the start of the plan (`time_points_unified` CTE) and propagates it throughout all subsequent operations, ensuring plan stability and correctness.
 - [x] **Document `temporal_merge` planner:** Added comprehensive, explanatory comments to the main planner query's CTEs to document the stateless, declarative architecture and make the code easier to maintain. This also included a logic correction to the `all_rows` CTE to robustly propagate the correlation identifier to target rows.
@@ -46,7 +59,6 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 - [x] temporal_merge: Add performance hints
   - [x] Warn if target table lacks GiST index on temporal range
   - [x] Hint to create BTREE index on target lookup columns used for filtering
-- [ ] temporal_merge: Optional session prewarm helper (low priority) if cold planning dominates in long-lived sessions
 - [x] Make _for_portion_of_ practically usable
   - [x] Rewrite _for_portion_of_ to use temporal_merge by creating a mini table from
   the `NEW` record and calling `temporal_merge`. This fixes the bug where edits
@@ -57,23 +69,10 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - [x] Refine `for_portion_of` view semantics to correctly handle historical data corrections. The view now permits `UPDATE`s that do not change the validity period, treating them as corrections on existing time slices.
   - [x] Verify _for_portion_of_ merges adjacent equal atomic segments after rewrite to use temporal_merge.
   - [x] Add ACL and drop protection tests for `current` views.
-
 - [x] **Add performance warnings to `temporal_merge`:** Enhance `temporal_merge` to check for the existence of a GIST index on both the `source_table` and `target_table`. If a suitable index is not found, issue a `WARNING` with a `HINT` suggesting the optimal `CREATE INDEX` command. This check is now robust and correctly inspects the base table when the source is a view.
 - [x] **Enhance `add_foreign_key` with index management:**
   - **Justification:** Foreign key checks on temporal tables can be slow without proper indexing. Automating index creation improves performance out-of-the-box and prevents common user errors.
   - **Details:** The `add_foreign_key` function and its variants now have a `create_index` parameter. If `true` (the default), a performance-optimal index is created on the referencing table and its name is stored in metadata. `NOTICE` and `WARNING` messages are issued to inform the user of actions taken. The `drop_foreign_key` functions have a corresponding `drop_index` parameter to automatically clean up the created index.
-- [ ] **Refactor tests to use `SAVEPOINT`s:** Modify regression tests to use `SAVEPOINT` and `ROLLBACK TO SAVEPOINT` to isolate test cases within a single transaction, instead of relying on `TRUNCATE` to reset state. This will make tests more robust and self-contained.
-
-## Medium Priority - Refactoring & API Improvements
-- [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
-
-## Low Priority - Future Work & New Features
-- [ ] **Investigate constraint performance:** After the `_multirange` backend is implemented, investigate the performance of `sql_saga`'s unique/exclusion constraints. Check for correct index usage and analyze the overhead of re-enabling constraints after large data loads.
-- [ ] **Package `sql_saga` with pgxman for distribution:**
-  - **Issue:** The extension currently requires manual installation.
-  - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
-
-## Done
 - [x] **Document `temporal_merge` planner tracing:** Expanded comments in the planner to explain the performance characteristics of the GUC-toggled tracing mechanism, with a runnable example demonstrating that the `NULL || jsonb_build_object()` pattern is short-circuited by the query planner and incurs no overhead when tracing is disabled.
 - [x] **Fix `add_era` to not require `NOT NULL` on synchronized columns:** Removed the logic that applied a `NOT NULL` constraint on synchronized columns (e.g., `valid_to`), as the synchronization trigger is responsible for populating them. Added a regression test to verify correct behavior.
 - [x] **Verify and accept all `temporal_merge` planner regressions:** Completed a full review of the test suite after the planner refactoring. Confirmed that all plan outputs are correct, and updated the brittle `070_...` test to use a robust, readable `TABLE` format for its output. All related regressions are now fixed and verified.
