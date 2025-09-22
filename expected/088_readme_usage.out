@@ -245,17 +245,17 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'identity_correlation_id',
+    founding_id_column => 'identity_correlation_id',
     update_source_with_identity => true
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                entity_ids                 | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                  data                                                  | trace 
--------------+---------+-----------+---------------+-------------------------------------------+----------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------------------------+-------
-           1 | {103}   | INSERT    |               | {"id": 2, "identity_correlation_id": "2"} |          |                |                 | 2023-01-01     | infinity        | {"name": "General Refinement LLC", "status": "active", "valid_to": "infinity", "legal_ident": "LU002"} | 
-           2 | {101}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2023-07-01     | 2024-01-01      | {"name": "AutoSpareParts INC", "status": "active", "valid_to": "2023-12-31", "legal_ident": "LU001"}   | 
-           3 | {102}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2024-01-01     | infinity        | {"name": "SpareParts Corporation", "status": "active", "valid_to": "infinity", "legal_ident": "LU001"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                  data                                                  | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------------------------+-------
+           1 | {103}   | INSERT    |               | 2        | t       | {"id": 2}  |              |              |                |                 | 2023-01-01     | infinity        | {"name": "General Refinement LLC", "status": "active", "valid_to": "infinity", "legal_ident": "LU002"} | 
+           2 | {101}   | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"name": "AutoSpareParts INC", "status": "active", "valid_to": "2023-12-31", "legal_ident": "LU001"}   | 
+           3 | {102}   | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2024-01-01     | infinity        | {"name": "SpareParts Corporation", "status": "active", "valid_to": "infinity", "legal_ident": "LU001"} | 
 (3 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -316,15 +316,15 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'identity_correlation_id'
+    founding_id_column => 'identity_correlation_id'
 );
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect |                entity_ids                 | relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | trace 
--------------+---------+-----------+---------------+-------------------------------------------+----------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+-------
-           1 | {202}   | INSERT    |               | {"id": 2, "identity_correlation_id": "2"} |          |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} | 
-           2 | {201}   | INSERT    |               | {"id": 1, "identity_correlation_id": "1"} |          |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+-------
+           1 | {202}   | INSERT    |               | 2        | t       | {"id": 2}  |              |              |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} | 
+           2 | {201}   | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  | 
 (2 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;

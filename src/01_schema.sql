@@ -42,12 +42,12 @@ CREATE TYPE sql_saga.allen_interval_relation AS ENUM (
         -- Condition: X.start = Y.start AND X.end = Y.end
         'equals',
         -- Inverse relations (Y relative to X)
-        'preceded by',   -- Y precedes X
-        'met by',        -- Y meets X
-        'overlapped by', -- Y overlaps X
-        'started by',    -- Y starts X
+        'preceded_by',   -- Y precedes X
+        'met_by',        -- Y meets X
+        'overlapped_by', -- Y overlaps X
+        'started_by',    -- Y starts X
         'contains',      -- Y is during X
-        'finished by'    -- Y finishes X
+        'finished_by'    -- Y finishes X
     );
 
 
@@ -327,8 +327,11 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     row_ids BIGINT[],
     operation sql_saga.temporal_merge_plan_action,
     update_effect sql_saga.temporal_merge_update_effect,
+    corr_ent TEXT,
+    new_ent BOOLEAN,
     entity_ids JSONB,
-    relation sql_saga.allen_interval_relation,
+    s_t_relation sql_saga.allen_interval_relation,
+    b_a_relation sql_saga.allen_interval_relation,
     old_valid_from TEXT,
     old_valid_until TEXT,
     new_valid_from TEXT,

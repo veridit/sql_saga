@@ -5,7 +5,7 @@ BEGIN;
 \echo 'Test: Temporal Merge with Dependent Row Support'
 \echo 'This test validates that temporal_merge can resolve dependencies within a'
 \echo 'single batch (e.g., an INSERT and a subsequent REPLACE for the same new'
-\echo 'entity) using the identity_correlation_column parameter.'
+\echo 'entity) using the founding_id_column parameter.'
 \echo '----------------------------------------------------------------------------'
 
 -- Setup
@@ -75,7 +75,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 
@@ -150,7 +150,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 
@@ -242,7 +242,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 
@@ -269,7 +269,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'founding_id',
+    founding_id_column => 'founding_id',
     update_source_with_identity => true
 );
 

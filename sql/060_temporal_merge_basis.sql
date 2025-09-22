@@ -143,18 +143,9 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
-SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
-
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{101}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 1}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "New EST", "employees": 10, "edit_comment": "Initial Insert", "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (101, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -193,17 +184,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{102}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 2}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Original", "employees": 20, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (2, '{102}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 2}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 25, "legal_unit_id": 1, "edit_comment": "Starts patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (102, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -242,17 +224,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{103}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 3}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Patched", "employees": 35, "legal_unit_id": 1, "edit_comment": "Finishes patch"}'::JSONB, NULL::JSONB),
-    (2, '{103}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 3}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original", "employees": 30, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (103, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -291,18 +265,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{104}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 4}'::JSONB,  'during'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-07-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 45, "legal_unit_id": 1, "edit_comment": "During patch"}'::JSONB, NULL::JSONB),
-    (2, '{104}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 4}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Original", "employees": 40, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (3, '{104}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 4}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2024-07-01'::DATE, '{"name": "Original", "employees": 40, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (104, '[{"id": 4}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -342,17 +306,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{105}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 5}'::JSONB, 'overlapped by'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-07-01'::DATE, '2025-07-01'::DATE, '{"name": "Patched", "employees": 55, "legal_unit_id": 1, "edit_comment": "Overlaps patch"}'::JSONB, NULL::JSONB),
-    (2, '{105}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 5}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2024-07-01'::DATE, '{"name": "Original", "employees": 50, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (105, '[{"id": 5}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -391,17 +346,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{106}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 6}'::JSONB, 'overlaps'::sql_saga.allen_interval_relation, '2024-07-01'::DATE, '2025-07-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 65, "legal_unit_id": 1, "edit_comment": "Overlapped by patch"}'::JSONB, NULL::JSONB),
-    (2, '{106}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 6}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-07-01'::DATE, '2025-07-01'::DATE, '2025-01-01'::DATE, '2025-07-01'::DATE, '{"name": "Original", "employees": 60, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (106, '[{"id": 6}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -440,16 +386,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{107}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 7}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::date, NULL::date, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 75, "legal_unit_id": 1, "edit_comment": "Meets patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (107, '[{"id": 7}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -488,16 +426,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{108}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 8}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::date, NULL::date, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Patched", "employees": 85, "legal_unit_id": 1, "edit_comment": "Met by patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (108, '[{"id": 8}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -536,16 +466,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{109}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 9}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::date, NULL::date, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 95, "legal_unit_id": 1, "edit_comment": "Before patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (109, '[{"id": 9}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -584,16 +506,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{110}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 10}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::date, NULL::date, '2025-01-02'::DATE, '2026-01-01'::DATE, '{"name": "Patched", "employees": 105, "legal_unit_id": 1, "edit_comment": "After patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (110, '[{"id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -632,16 +546,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{111}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 11}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "employees": 115, "legal_unit_id": 1, "edit_comment": "Equals patch"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (111, '[{"id": 11}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -685,16 +591,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{112}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 12}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Replaced", "employees": 25, "legal_unit_id": 1, "edit_comment": "Starts replace"}'::JSONB, NULL::JSONB),
-    (2, '{112}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 12}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Original", "employees": 20, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (112, '[{"id": 12}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -733,16 +632,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{113}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 13}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original", "employees": 30, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (2, '{113}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 13}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Replaced", "employees": 35, "legal_unit_id": 1, "edit_comment": "Finishes replace"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (113, '[{"id": 13}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -781,17 +673,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{114}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 14}'::JSONB, 'during'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-07-01'::DATE, '2025-01-01'::DATE, '{"name": "Replaced", "employees": 45, "legal_unit_id": 1, "edit_comment": "During replace"}'::JSONB, NULL::JSONB),
-    (2, '{114}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 14}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Original", "employees": 40, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (3, '{114}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 14}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2024-07-01'::DATE, '{"name": "Original", "employees": 40, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (114, '[{"id": 14}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -831,16 +715,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{115}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 15}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2024-07-01'::DATE, '{"name": "Original", "employees": 50, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (2, '{115}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 15}'::JSONB, 'overlapped by'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-07-01'::DATE, '2025-07-01'::DATE, '{"name": "Replaced", "employees": 55, "legal_unit_id": 1, "edit_comment": "Overlaps replace"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (115, '[{"id": 15}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -879,15 +756,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{116}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 16}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Replaced", "employees": 115, "legal_unit_id": 1, "edit_comment": "Equals replace"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (116, '[{"id": 16}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -923,16 +794,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{117}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 17}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": null, "employees": null, "legal_unit_id": 1, "edit_comment": "Replaced with NULL"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (117, '[{"id": 17}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -974,16 +837,10 @@ CALL sql_saga.temporal_merge(
     mode => 'PATCH_FOR_PORTION_OF',
     era_name => 'valid'
 );
-SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
-SELECT source_row_id, target_entity_ids, status, error_message FROM pg_temp.temporal_merge_feedback;
 -- Verify plan
-\echo '--- Planner: Expected Plan (Empty since not found) ---'
-SELECT * FROM pg_temp.temporal_merge_plan WHERE FALSE;
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (118, '[]'::JSONB, 'SKIPPED_NO_TARGET'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1018,13 +875,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan (Empty since not found) ---'
-SELECT * FROM pg_temp.temporal_merge_plan WHERE FALSE;
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (119, '[]'::JSONB, 'SKIPPED_NO_TARGET'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1062,15 +915,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{120}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 20}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original Name", "employees": 15, "legal_unit_id": 1, "edit_comment": "Patch with NULL"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (120, '[{"id": 20}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1109,15 +956,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{121}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 21}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original Name", "employees": 15, "legal_unit_id": 1, "edit_comment": "Patch with NULL"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (121, '[{"id": 21}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1158,15 +999,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{122}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'NONE'::sql_saga.temporal_merge_update_effect, '{"id": 22}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Same", "employees": 10, "legal_unit_id": 1, "edit_comment": "New Comment"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (122, '[{"id": 22}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1205,15 +1040,9 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 -- Verify plan
-\echo '--- Planner: Expected Plan (a single IDENTICAL operation) ---'
-SELECT * FROM (VALUES
-    (1, '{123}'::INT[], 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 23}'::JSONB, 'equals'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2025-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Same", "employees": 10, "edit_comment": "Same Comment", "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback (SKIPPED because data is identical) ---'
-SELECT * FROM (VALUES (123, '[]'::JSONB, 'SKIPPED_IDENTICAL'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 -- Verify final state
@@ -1255,22 +1084,11 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
+
 -- Verify plan
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{124}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 24}'::JSONB, 'during'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2028-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Patch 1", "employees": 15, "legal_unit_id": 1, "edit_comment": "First patch"}'::JSONB, NULL::JSONB),
-    (2, '{125}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 24}'::JSONB, 'during'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2028-01-01'::DATE, '2026-01-01'::DATE, '2027-01-01'::DATE, '{"name": "Original", "employees": 10, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB),
-    (3, '{125}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 24}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2028-01-01'::DATE, '2027-01-01'::DATE, '2028-01-01'::DATE, '{"name": "Patch 2", "employees": 20, "legal_unit_id": 1, "edit_comment": "Second patch"}'::JSONB, NULL::JSONB),
-    (4, '{124}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 24}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2028-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Original", "employees": 10, "legal_unit_id": 1, "edit_comment": "Original slice"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 -- Verify feedback
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (124, '[{"id": 24}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (125, '[{"id": 24}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 -- Verify final state
@@ -1311,8 +1129,6 @@ CALL sql_saga.temporal_merge(
     mode => 'PATCH_FOR_PORTION_OF',
     era_name => 'valid'
 );
-\echo '--- Orchestrator: Expected Feedback (MISSING_TARGET) ---'
-SELECT * FROM (VALUES (301, '[]'::JSONB, 'SKIPPED_NO_TARGET'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 \echo '--- Orchestrator: Final state of target table (expected empty, proving data loss) ---'
@@ -1339,8 +1155,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (301, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 
@@ -1361,8 +1175,6 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (302, '[{"id": 3}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
 
@@ -1419,19 +1231,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (A single INSERT for the full period) ---'
-SELECT * FROM (VALUES
-    (1, '{401,402}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 4, "row_id": "401"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2023-01-02'::DATE, '2024-01-01'::DATE, '{"name": "Continuous Op", "employees": 20, "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (401, '[{"id": 4}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (402, '[{"id": 4}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1473,20 +1274,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (A single INSERT for the full period) ---'
-SELECT * FROM (VALUES
-    (1, '{501,502,503}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 5, "row_id": "501"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2023-01-02'::DATE, '2023-10-01'::DATE, '{"name": "Three-part Op", "employees": 30, "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (501, '[{"id": 5}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (502, '[{"id": 5}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (503, '[{"id": 5}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1526,20 +1315,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (Two separate INSERTs) ---'
-SELECT * FROM (VALUES
-    (1, '{601}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 6, "row_id": "601"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2023-01-02'::DATE, '2023-07-01'::DATE, '{"name": "First Part", "employees": 40, "legal_unit_id": 1}'::JSONB, NULL::JSONB),
-    (2, '{602}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 6, "row_id": "602"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2023-07-01'::DATE, '2024-01-01'::DATE, '{"name": "Second Part", "employees": 50, "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (601, '[{"id": 6}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (602, '[{"id": 6}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1580,16 +1357,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (A single UPDATE extending the target row) ---'
-SELECT * FROM (VALUES
-    (1, '{701}'::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'GROW'::sql_saga.temporal_merge_update_effect, '{"id": 7}'::JSONB, 'started by'::sql_saga.allen_interval_relation, '2023-01-01'::DATE, '2023-07-01'::DATE, '2023-01-01'::DATE, '2024-01-01'::DATE, '{"name": "Existing Op", "employees": 60, "legal_unit_id": 1, "edit_comment": null}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (701, '[{"id": 7}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -1689,17 +1458,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
--- The planner should NOT include `created_at` in the data payload, allowing the DB default to apply.
-SELECT * FROM (VALUES
-    (1, '{801}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 40, "row_id": "801"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Default Test", "employees": 10, "edit_comment": "Default Insert", "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (801, '[{"id": 40}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -1781,17 +1541,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, NULL::INT[], 'UPDATE'::sql_saga.temporal_merge_plan_action, 'SHRINK'::sql_saga.temporal_merge_update_effect, '{"id": 1}'::JSONB, 'finishes'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2025-01-01'::DATE, '2026-01-01'::DATE, '{"name": "Original", "valid_to": "2025-12-31"}'::JSONB, NULL::JSONB),
-    (2, '{901}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 1}'::JSONB, 'starts'::sql_saga.allen_interval_relation, '2024-01-01'::DATE, '2026-01-01'::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Patched", "valid_to": "2024-12-31"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES (901, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -1871,23 +1622,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (Entity 1 should have one INSERT, Entity 2 should have two) ---'
-SELECT * FROM (VALUES
-    (1, '{101}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 1, "row_id": "101"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2010-01-01'::DATE, 'infinity'::DATE, '{"status": "active"}'::JSONB, NULL::JSONB),
-    (2, '{102}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 2, "row_id": "102"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2010-01-01'::DATE, '2011-01-01'::DATE, '{"status": "active"}'::JSONB, NULL::JSONB),
-    (3, '{103}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 2, "row_id": "103"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2011-01-01'::DATE, 'infinity'::DATE, '{"status": "passive"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace)
-ORDER BY (entity_ids->>'id')::INT, new_valid_from;
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY (entity_ids->>'id')::INT, new_valid_from;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (101, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (102, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (103, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1981,23 +1717,8 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid'
 );
 
-\echo '--- Planner: Expected Plan (Entity 10 should have one INSERT, Entity 20 should have two) ---'
-SELECT * FROM (VALUES
-    (1, '{1001}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 10, "row_id": "1001"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2010-01-01'::DATE, 'infinity'::DATE,   '{"name": "Continuous", "employees": 50, "edit_comment": "comment", "legal_unit_id": 1}'::JSONB, NULL::JSONB),
-    (2, '{1002}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 20, "row_id": "1002"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2010-01-01'::DATE, '2011-01-01'::DATE, '{"name": "Changes", "employees": 100, "edit_comment": "comment", "legal_unit_id": 1}'::JSONB, NULL::JSONB),
-    (3, '{1003}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": 20, "row_id": "1003"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2011-01-01'::DATE, 'infinity'::DATE,   '{"name": "Changes", "employees": 150, "edit_comment": "comment", "legal_unit_id": 1}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace)
-ORDER BY (entity_ids->>'id')::INT, new_valid_from;
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY (entity_ids->>'id')::INT, new_valid_from;
-
-\echo '--- Orchestrator: Expected Feedback ---'
-SELECT * FROM (VALUES
-    (1001, '[{"id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (1002, '[{"id": 20}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (1003, '[{"id": 20}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -2071,16 +1792,8 @@ CALL sql_saga.temporal_merge(
     update_source_with_identity => true
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{1001}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": null, "row_id": "1001"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Serial Widget"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback (Should return generated ID 1) ---'
-SELECT * FROM (VALUES (1001, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback;
@@ -2149,20 +1862,8 @@ CALL sql_saga.temporal_merge(
     update_source_with_identity => true
 );
 
-\echo '--- Planner: Expected Plan ---'
-SELECT * FROM (VALUES
-    (1, '{2001}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": null, "row_id": "2001"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Entity One"}'::JSONB, NULL::JSONB),
-    (2, '{2002}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, NULL::sql_saga.temporal_merge_update_effect, '{"id": null, "row_id": "2002"}'::JSONB, NULL::sql_saga.allen_interval_relation, NULL::DATE, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"name": "Entity Two"}'::JSONB, NULL::JSONB)
-) AS t (plan_op_seq, row_ids, operation, update_effect, entity_ids, relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, data, trace);
-
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
-
-\echo '--- Orchestrator: Expected Feedback (One distinct result per source row) ---'
-SELECT * FROM (VALUES
-    (2001, '[{"id": 1}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT),
-    (2002, '[{"id": 2}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)
-) AS t (source_row_id, target_entity_ids, status, error_message) ORDER BY source_row_id;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;

@@ -1,7 +1,6 @@
 \i sql/include/test_setup.sql
 
 BEGIN;
-\set ON_ERROR_STOP on
 CREATE EXTENSION IF NOT EXISTS sql_saga;
 
 CREATE SCHEMA mtt;

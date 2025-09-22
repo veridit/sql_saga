@@ -77,7 +77,7 @@ BEGIN
             era_name          := info.era_name,
             mode              := 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
             row_id_column := 'row_id',
-            identity_correlation_column := 'row_id'
+            founding_id_column := 'row_id'
         );
         RETURN NEW;
 

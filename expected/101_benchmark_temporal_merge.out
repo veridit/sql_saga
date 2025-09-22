@@ -33,6 +33,8 @@ CREATE TEMPORARY TABLE benchmark (
   is_performance_benchmark BOOLEAN NOT NULL
 );
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('BEGIN', 0, false);
+-- Enable detailed temporal_merge index logging for this benchmark session.
+--SET sql_saga.temporal_merge.log_index_checks = true;
 CREATE TABLE legal_unit_tm (
   id INTEGER,
   valid_from date,
@@ -97,7 +99,9 @@ BEGIN;
   INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
   INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
   -- Add indices suggested by temporal_merge warning.
+  CREATE INDEX ON legal_unit_seed_source USING BTREE (id);
   CREATE INDEX ON legal_unit_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_seed_source USING BTREE (id);
   CREATE INDEX ON establishment_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
   ANALYZE legal_unit_seed_source;
   ANALYZE establishment_seed_source;
@@ -111,6 +115,11 @@ END;
 BEGIN;
   CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
   CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
+  -- Add indices suggested by temporal_merge warning.
+  CREATE INDEX ON legal_unit_seed_source USING BTREE (id);
+  CREATE INDEX ON legal_unit_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_seed_source USING BTREE (id);
+  CREATE INDEX ON establishment_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
   -- Source data for 80% PATCH
   INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
   INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;

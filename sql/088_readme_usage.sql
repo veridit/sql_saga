@@ -131,7 +131,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'identity_correlation_id',
+    founding_id_column => 'identity_correlation_id',
     update_source_with_identity => true
 );
 
@@ -165,7 +165,7 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
-    identity_correlation_column => 'identity_correlation_id'
+    founding_id_column => 'identity_correlation_id'
 );
 
 \echo '--- Verification: Feedback from temporal_merge ---'

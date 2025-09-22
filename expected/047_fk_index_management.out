@@ -1,4 +1,3 @@
-\set ON_ERROR_STOP on
 \i sql/include/test_setup.sql
 --
 -- test_setup.sql
