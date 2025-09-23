@@ -114,7 +114,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         -- Exclude other internal helper functions that are not triggers
         AND p.proname NOT LIKE E'\\_\\_%'
         AND p.proname NOT IN (
-            'temporal_merge_plan',
+            'temporal_merge_plan', 'temporal_merge_execute',
             'covers_without_gaps_transfn', 'covers_without_gaps_finalfn',
             'first_sfunc'
         );

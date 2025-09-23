@@ -1505,7 +1505,26 @@ CONTEXT:  SQL statement "
                         FROM inserted_rows ir
                         WHERE p.plan_op_seq = ir.plan_op_seq;
                     "
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 623 at EXECUTE
+PL/pgSQL function sql_saga.temporal_merge_execute(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 569 at EXECUTE
+SQL statement "CALL sql_saga.temporal_merge_execute(
+        target_table => temporal_merge.target_table,
+        source_table => temporal_merge.source_table,
+        identity_columns => temporal_merge.identity_columns,
+        mode => temporal_merge.mode,
+        era_name => temporal_merge.era_name,
+        row_id_column => temporal_merge.row_id_column,
+        founding_id_column => temporal_merge.founding_id_column,
+        update_source_with_identity => temporal_merge.update_source_with_identity,
+        natural_identity_columns => temporal_merge.natural_identity_columns,
+        delete_mode => temporal_merge.delete_mode,
+        update_source_with_feedback => temporal_merge.update_source_with_feedback,
+        feedback_status_column => temporal_merge.feedback_status_column,
+        feedback_status_key => temporal_merge.feedback_status_key,
+        feedback_error_column => temporal_merge.feedback_error_column,
+        feedback_error_key => temporal_merge.feedback_error_key,
+        ephemeral_columns => temporal_merge.ephemeral_columns
+    )"
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[]) line 81 at CALL
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Target: After merge (should be unchanged) ---'
 --- Target: After merge (should be unchanged) ---

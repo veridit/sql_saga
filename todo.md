@@ -6,6 +6,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 ## High Priority - Bugs & Core Features
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Refactor `temporal_merge` to use convention-over-configuration for identity columns.** The `identity_columns` and `natural_identity_columns` parameters should default to being automatically discovered from `sql_saga.unique_keys` metadata, simplifying the API.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 
 ## Low Priority - Future Work & New Features
