@@ -69,7 +69,7 @@ expected:
 		echo "All tests passed. Nothing to update."; \
 		exit 0; \
 	fi
-	@TESTS_TO_UPDATE=$$(awk '/^(not )?ok/ {print $$4}' regression.out); \
+	@TESTS_TO_UPDATE=$$(awk -F ' - ' '/^(not )?ok/ {print $$2}' regression.out | awk '{print $$1}'); \
 	if [ -z "$$TESTS_TO_UPDATE" ]; then \
 		echo "No tests found in regression.out. Nothing to update."; \
 		exit 0; \
@@ -107,7 +107,7 @@ benchmark:
 # `make diff-fail-first`: shows the first failure.
 .PHONY: diff-fail-all diff-fail-first vim vimo
 diff-fail-all diff-fail-first:
-	@FAILED_TESTS=`grep 'not ok' regression.out 2>/dev/null | awk 'BEGIN { FS = "[[:space:]]+" } {print $$5}'`; \
+	@FAILED_TESTS=$$(grep 'not ok' regression.out 2>/dev/null | awk -F ' - ' '{print $$2}' | awk '{print $$1}'); \
 	if [ "$@" = "diff-fail-first" ]; then \
 		FAILED_TESTS=`echo "$$FAILED_TESTS" | head -n 1`; \
 	fi; \
