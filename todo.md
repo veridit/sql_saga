@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
