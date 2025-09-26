@@ -90,9 +90,9 @@ CREATE TABLE etl.activity_type (id int primary key, code text unique);
 INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
 
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.legal_unit');
-SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
 
 -- External Identifiers table (not temporal)
 CREATE TABLE etl.ident (
@@ -110,12 +110,12 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.location');
-SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], unique_key_name => 'location_id_valid');
--- A legal unit can only have one of each location type (e.g., one 'physical' address) at any given time.
--- This serves as a natural key for physical locations.
-SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], unique_key_name => 'location_legal_unit_id_type_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'location_id_valid');
+-- A legal unit can only have one 'physical' address at any given time.
+-- This is a predicated natural key.
+SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], key_type => 'predicated', predicate => 'type = ''physical''', unique_key_name => 'location_legal_unit_id_type_valid');
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.location'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
@@ -124,9 +124,9 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
 SELECT sql_saga.add_era('etl.stat_for_unit');
-SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'stat_for_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'stat_for_unit_id_valid');
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.stat_for_unit'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
@@ -140,12 +140,11 @@ CREATE TABLE etl.activity (
     activity_type_id int,
     comment text,
     valid_from date,
-    valid_until date,
-    PRIMARY KEY (legal_unit_id, activity_type_id, valid_from)
+    valid_until date
 );
 SELECT sql_saga.add_era('etl.activity');
 -- The "unique key" for a natural-key table is the set of natural key columns.
-SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], key_type => 'primary', unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.activity'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
@@ -391,6 +390,9 @@ BEGIN
         target_table => 'etl.location',
         source_table => 'source_view_loc_post',
         identity_columns => ARRAY['id'],
+        -- Explicitly disable natural key discovery for this call. Postal locations
+        -- are only identified by their surrogate 'id'.
+        natural_identity_columns => ARRAY[]::text[],
         ephemeral_columns => ARRAY['comment'],
         mode => 'MERGE_ENTITY_PATCH',
         founding_id_column => 'founding_id',

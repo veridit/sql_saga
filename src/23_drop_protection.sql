@@ -252,6 +252,7 @@ BEGIN
         -- Only check tables that still exist.
         WHERE pg_catalog.to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
     LOOP
+        RAISE DEBUG 'drop_protection: checking unique_key %', row_to_json(r);
         -- If the table this key belongs to is being dropped, skip protection checks.
         IF EXISTS (
             SELECT 1 FROM pg_event_trigger_dropped_objects() dobj
@@ -261,8 +262,56 @@ BEGIN
             CONTINUE;
         END IF;
 
-        -- Check unique constraint (for non-predicated keys) or unique index (for predicated keys)
-        IF r.predicate IS NULL THEN
+        -- Check unique constraint or unique index(es)
+        IF r.mutually_exclusive_columns IS NOT NULL THEN
+            -- For XOR keys, check_constraint is the CHECK constraint.
+            IF r.check_constraint IS NOT NULL AND NOT EXISTS (
+                SELECT FROM pg_catalog.pg_constraint AS c
+                WHERE (c.conrelid, c.conname) = (r.table_oid, r.check_constraint)
+            ) THEN
+                RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
+                    r.check_constraint, r.table_oid, r.unique_key_name;
+            END IF;
+
+            -- Mutually exclusive keys also have multiple partial indexes and constraints.
+            IF r.partial_exclude_constraint_names IS NOT NULL THEN
+                DECLARE
+                    v_constraint_name name;
+                BEGIN
+                    FOREACH v_constraint_name IN ARRAY r.partial_exclude_constraint_names
+                    LOOP
+                        IF NOT EXISTS (
+                            SELECT FROM pg_catalog.pg_constraint AS c
+                            WHERE (c.conrelid, c.conname) = (r.table_oid, v_constraint_name)
+                        ) THEN
+                            RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
+                                v_constraint_name, r.table_oid, r.unique_key_name;
+                        END IF;
+                    END LOOP;
+                END;
+            END IF;
+
+            IF r.partial_index_names IS NOT NULL THEN
+                DECLARE
+                    v_index_name name;
+                BEGIN
+                    FOREACH v_index_name IN ARRAY r.partial_index_names
+                    LOOP
+                        IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, v_index_name)) IS NULL THEN
+                            RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
+                                v_index_name, r.table_oid, r.unique_key_name;
+                        END IF;
+                    END LOOP;
+                END;
+            END IF;
+        ELSIF r.predicate IS NOT NULL THEN
+            -- Predicated keys use a unique index, not a constraint.
+            IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
+                 RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
+                    r.unique_constraint, r.table_oid, r.unique_key_name;
+            END IF;
+        ELSE
+            -- Standard keys use a unique constraint.
             IF NOT EXISTS (
                 SELECT FROM pg_catalog.pg_constraint AS c
                 WHERE (c.conrelid, c.conname) = (r.table_oid, r.unique_constraint)
@@ -270,16 +319,10 @@ BEGIN
                 RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
                     r.unique_constraint, r.table_oid, r.unique_key_name;
             END IF;
-        ELSE
-            -- Predicated keys use a unique index, not a constraint.
-            IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
-                 RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
-                    r.unique_constraint, r.table_oid, r.unique_key_name;
-            END IF;
         END IF;
 
-        -- Check exclude constraint
-        IF NOT EXISTS (
+        -- Check exclude constraint for non-XOR keys
+        IF r.exclude_constraint IS NOT NULL AND NOT EXISTS (
             SELECT FROM pg_catalog.pg_constraint AS c
             WHERE (c.conrelid, c.conname) = (r.table_oid, r.exclude_constraint)
         ) THEN

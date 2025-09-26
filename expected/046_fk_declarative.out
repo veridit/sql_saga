@@ -36,6 +36,7 @@ SELECT sql_saga.add_era('parent_natural'::regclass, 'valid_from', 'valid_until',
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent_natural'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
+NOTICE:  sql_saga: altering table public.parent_natural to add constraints: ADD CONSTRAINT parent_natural_id_p_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_natural_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
    add_unique_key    
 ---------------------
  parent_natural_id_p
@@ -131,6 +132,7 @@ SELECT sql_saga.add_era('parent_pk'::regclass, 'valid_from', 'valid_until', 'p')
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent_pk'::regclass, ARRAY['id']::name[], 'p', key_type => 'primary');
+NOTICE:  sql_saga: altering table public.parent_pk to add constraints: ALTER COLUMN id SET NOT NULL, ADD CONSTRAINT parent_pk_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  parent_pk_id_p

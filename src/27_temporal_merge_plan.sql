@@ -2,13 +2,13 @@
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     target_table regclass,
     source_table regclass,
-    identity_columns TEXT[],
     mode sql_saga.temporal_merge_mode,
     era_name name,
+    identity_columns TEXT[] DEFAULT NULL,
     row_id_column name DEFAULT 'row_id',
     founding_id_column name DEFAULT NULL,
     delete_mode sql_saga.temporal_merge_delete_mode DEFAULT 'NONE',
-    natural_identity_columns TEXT[] DEFAULT NULL,
+    natural_identity_keys JSONB DEFAULT NULL,
     ephemeral_columns TEXT[] DEFAULT NULL,
     p_log_trace BOOLEAN DEFAULT false,
     p_log_sql BOOLEAN DEFAULT false
@@ -17,11 +17,58 @@ LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
     v_log_vars BOOLEAN;
     v_log_id TEXT;
+    --
+    -- Phase 1: Introspection & Canonical Lists
+    -- These variables are populated in the first block of the procedure. They form
+    -- the single source of truth for all column lists used in dynamic SQL.
+    --
+    -- Discovered or user-provided stable identity columns (e.g., a surrogate PK).
     v_stable_identity_columns TEXT[];
+    -- Purpose: Stores the columns of the *first* natural key found in the `natural_identity_keys` JSONB array.
+    -- This is primarily used for generating simple, user-friendly performance hints about indexing.
+    -- Semantics: A `text[]` containing the column names of the first key (e.g., `{'email'}`).
+    v_natural_identity_columns TEXT[];
+    -- Purpose: Stores a flattened, distinct list of all columns from *all* natural keys. This is the primary
+    -- variable for building the robust, multi-key lookup logic used to filter `target_rows` and to project
+    -- a consistent set of identity columns throughout the planner's CTEs.
+    -- Semantics: A de-duplicated, ordered `text[]` of all column names from all keys (e.g., `{'email', 'employee_nr'}`).
+    v_all_natural_key_cols TEXT[];
+    -- Introspected primary key columns.
+    v_pk_cols name[];
+    -- Introspected temporal boundary columns (e.g., {'valid_from', 'valid_until'}).
+    v_temporal_cols TEXT[];
+
+    --
+    -- Canonical Entity Key Lists
+    --
+    -- The complete unique identifier for a timeline segment of a specific entity.
+    -- Contains the original, user-defined column names, which is critical for
+    -- the dynamic SQL generation. This list **includes** temporal columns if they
+    -- are part of a composite key.
+    -- Purpose: Used to build fragments for joins, partitioning, and uniquely
+    -- identifying a specific version of a record.
+    v_original_entity_segment_key_cols TEXT[];
+    -- The identifier for a *conceptual entity*, derived from the segment key but
+    -- explicitly excluding all temporal boundary columns. Contains original,
+    -- user-defined column names.
+    -- Purpose: Building the `entity_ids` feedback payload.
+    v_original_entity_key_cols TEXT[];
+    -- The set of columns to use for looking up entities in the target table.
+    -- Derived from natural_identity_keys or identity_columns.
     v_lookup_columns TEXT[];
-    v_all_id_cols TEXT[];
+
+    --
+    -- Other planner variables
+    --
     v_plan_key_text TEXT;
+    v_correlation_col name;
+    v_ident_corr_column_type regtype;
+    v_plan_with_op_entity_id_json_build_expr_part_A TEXT;
     v_plan_ps_name TEXT;
+    v_tr_qualified_all_id_cols_list TEXT;
+    v_discovered_id_cols_list_prefixed TEXT;
+    v_coalesced_id_cols_list TEXT;
+    v_target_entity_exists_expr TEXT;
     v_target_schema_name name;
     v_target_table_name_only name;
     v_range_constructor name;
@@ -30,99 +77,87 @@ DECLARE
     v_valid_to_col name;
     v_range_col name;
     v_sql TEXT;
-    v_ephemeral_columns TEXT[] := COALESCE(temporal_merge_plan.ephemeral_columns, '{}'::text[]);
+    v_ephemeral_columns TEXT[] := COALESCE(ephemeral_columns, '{}'::text[]);
+    v_is_founding_mode BOOLEAN := (founding_id_column IS NOT NULL);
+    v_is_identifiable_expr TEXT;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
-    -- An entity must be identifiable. At least one set of identity columns must be provided.
-    IF (temporal_merge_plan.identity_columns IS NULL OR cardinality(temporal_merge_plan.identity_columns) = 0) AND
-       (temporal_merge_plan.natural_identity_columns IS NULL OR cardinality(temporal_merge_plan.natural_identity_columns) = 0)
-    THEN
-        RAISE EXCEPTION 'At least one of identity_columns or natural_identity_columns must be a non-empty array.';
-    END IF;
-    
-    -- Use natural_identity_columns for lookups if provided, otherwise fall back to the stable identity_columns.
-    v_lookup_columns := COALESCE(temporal_merge_plan.natural_identity_columns, temporal_merge_plan.identity_columns);
-    -- The stable identity is always identity_columns if provided; otherwise, it's the natural key.
-    v_stable_identity_columns := COALESCE(temporal_merge_plan.identity_columns, temporal_merge_plan.natural_identity_columns);
 
-    -- Get the distinct, ordered union of all identity-related columns. This is critical for ensuring that
-    -- all necessary columns are projected through the CTEs for partitioning and grouping.
-    SELECT array_agg(DISTINCT c ORDER BY c) INTO v_all_id_cols FROM (
-        SELECT unnest(v_lookup_columns)
-        UNION
-        SELECT unnest(v_stable_identity_columns)
-    ) AS t(c);
+    v_correlation_col := COALESCE(founding_id_column, row_id_column);
 
-    -- Validate that provided column names exist.
-    PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = temporal_merge_plan.row_id_column AND NOT attisdropped AND attnum > 0;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', temporal_merge_plan.row_id_column, temporal_merge_plan.source_table::text;
-    END IF;
-
-    IF temporal_merge_plan.founding_id_column IS NOT NULL THEN
-        PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = temporal_merge_plan.founding_id_column AND NOT attisdropped AND attnum > 0;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', temporal_merge_plan.founding_id_column, temporal_merge_plan.source_table::text;
-        END IF;
-    END IF;
-
-    -- Validate that identity columns exist in both source and target tables.
-    DECLARE
-        v_col TEXT;
-    BEGIN
-        IF temporal_merge_plan.identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.identity_columns) > 0 THEN
-            FOREACH v_col IN ARRAY temporal_merge_plan.identity_columns LOOP
-                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in source table %', quote_ident(v_col), temporal_merge_plan.source_table; END IF;
-                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_col), temporal_merge_plan.target_table; END IF;
-            END LOOP;
-        END IF;
-
-        IF temporal_merge_plan.natural_identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.natural_identity_columns) > 0 THEN
-            FOREACH v_col IN ARRAY temporal_merge_plan.natural_identity_columns LOOP
-                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in source table %', quote_ident(v_col), temporal_merge_plan.source_table; END IF;
-                PERFORM 1 FROM pg_attribute WHERE attrelid = temporal_merge_plan.target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in target table %', quote_ident(v_col), temporal_merge_plan.target_table; END IF;
-            END LOOP;
-        END IF;
-    END;
-
-    -- Introspect just enough to get the range constructor, which is part of the cache key.
+    --
+    -- Phase 1: Introspection and Column List Generation
+    -- This block is the single source of truth for all column lists. All subsequent
+    -- logic builds upon these foundational variables.
+    --
+    -- 1.1: Introspect temporal boundary columns. This must happen first.
     SELECT n.nspname, c.relname
     INTO v_target_schema_name, v_target_table_name_only
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = temporal_merge_plan.target_table;
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = target_table;
 
     SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
     INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
     FROM sql_saga.era e
-    WHERE e.table_schema = v_target_schema_name
-      AND e.table_name = v_target_table_name_only
-      AND e.era_name = temporal_merge_plan.era_name;
+    WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
-    IF v_valid_from_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_plan.era_name, temporal_merge_plan.target_table;
-    END IF;
+    IF v_valid_from_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
 
-    IF v_range_constructor IS NULL THEN
-        RAISE EXCEPTION 'Could not determine the range type for era "%" on table "%". Please ensure the era was created correctly, possibly by specifying the range_type parameter in add_era().', temporal_merge_plan.era_name, temporal_merge_plan.target_table;
-    END IF;
+    v_temporal_cols := ARRAY[v_valid_from_col, v_valid_until_col];
+    IF v_valid_to_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_to_col; END IF;
+    IF v_range_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_range_col; END IF;
 
-    -- Validate that user has not passed in temporal columns as ephemeral.
-    IF v_valid_from_col = ANY(v_ephemeral_columns) OR v_valid_until_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Temporal boundary columns ("%", "%") cannot be specified in ephemeral_columns.', v_valid_from_col, v_valid_until_col;
-    END IF;
-    IF v_valid_to_col IS NOT NULL AND v_valid_to_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_valid_to_col;
-    END IF;
-    IF v_range_col IS NOT NULL AND v_range_col = ANY(v_ephemeral_columns) THEN
-        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_range_col;
+    -- 1.2: Introspect and sanitize all key types.
+    IF jsonb_typeof(natural_identity_keys) = 'array' THEN
+        SELECT jsonb_agg(k) INTO natural_identity_keys FROM jsonb_array_elements(natural_identity_keys) k WHERE jsonb_typeof(k) = 'array';
     END IF;
 
+    IF jsonb_typeof(natural_identity_keys) = 'array' AND jsonb_array_length(natural_identity_keys) > 0 AND jsonb_typeof(natural_identity_keys->0) = 'array' THEN
+         SELECT array_agg(value) INTO v_natural_identity_columns FROM jsonb_array_elements_text(natural_identity_keys->0);
+    END IF;
+
+    IF jsonb_typeof(natural_identity_keys) = 'array' THEN
+        SELECT array_agg(DISTINCT c ORDER BY c) INTO v_all_natural_key_cols FROM (SELECT jsonb_array_elements_text(k) FROM jsonb_array_elements(natural_identity_keys) k) AS t(c);
+    END IF;
+
+    v_stable_identity_columns := identity_columns;
+    IF (v_stable_identity_columns IS NULL OR cardinality(v_stable_identity_columns) = 0) AND (v_natural_identity_columns IS NOT NULL AND cardinality(v_natural_identity_columns) > 0) THEN
+        v_stable_identity_columns := v_natural_identity_columns;
+    END IF;
+
+    -- 1.3: Introspect the primary key.
+    SELECT COALESCE(array_agg(a.attname), '{}'::name[]) INTO v_pk_cols
+    FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = target_table AND c.contype = 'p';
+
+    -- 1.4: Introspect correlation column type.
+    SELECT atttypid INTO v_ident_corr_column_type
+    FROM pg_attribute
+    WHERE attrelid = source_table
+      AND attname = v_correlation_col
+      AND NOT attisdropped AND attnum > 0;
+
+    -- 1.5: Build the final, canonical lists of identity columns.
+    v_lookup_columns := COALESCE(v_all_natural_key_cols, v_stable_identity_columns);
+
+    -- `v_original_entity_segment_key_cols`: The complete unique identifier for a timeline segment of a specific entity.
+    -- This list contains the original, user-defined column names. It **includes** temporal columns if they are part of a
+    -- composite key. Its primary purpose is to serve as the single source of truth for all other key lists.
+    SELECT array_agg(DISTINCT c ORDER BY c) INTO v_original_entity_segment_key_cols
+    FROM (
+        SELECT unnest(v_all_natural_key_cols) UNION SELECT unnest(v_stable_identity_columns)
+        UNION SELECT unnest(v_lookup_columns) UNION SELECT unnest(v_pk_cols)
+    ) AS t(c)
+    WHERE c IS NOT NULL;
+
+    -- `v_original_entity_key_cols`: The identifier for a *conceptual entity*. This list
+    -- is derived from `v_original_entity_segment_key_cols` but explicitly excludes temporal boundary columns.
+    -- Purpose: Building joins on the conceptual entity and for the `entity_ids` feedback payload.
+    SELECT array_agg(c) INTO v_original_entity_key_cols
+    FROM unnest(v_original_entity_segment_key_cols) AS c
+    WHERE c <> ALL(v_temporal_cols);
+
+    -- 1.6: Sanitize and normalize ephemeral columns list.
     -- Automatically treat synchronized columns as ephemeral for change detection.
     IF v_valid_to_col IS NOT NULL THEN
         v_ephemeral_columns := v_ephemeral_columns || v_valid_to_col;
@@ -134,19 +169,121 @@ BEGIN
     SELECT ARRAY(SELECT DISTINCT e FROM unnest(v_ephemeral_columns) AS e ORDER BY e)
     INTO v_ephemeral_columns;
 
+    --
+    IF v_log_vars THEN
+        RAISE NOTICE '(%) --- temporal_merge_plan variables ---', v_log_id;
+        RAISE NOTICE '(%) --- Foundational (Parameters & Introspection) ---', v_log_id;
+        RAISE NOTICE '(%) p_identity_columns: %', v_log_id, temporal_merge_plan.identity_columns;
+        RAISE NOTICE '(%) p_natural_identity_keys: %', v_log_id, temporal_merge_plan.natural_identity_keys;
+        RAISE NOTICE '(%) p_ephemeral_columns (original): %', v_log_id, temporal_merge_plan.ephemeral_columns;
+        RAISE NOTICE '(%) v_pk_cols (introspected): %', v_log_id, v_pk_cols;
+        RAISE NOTICE '(%) v_temporal_cols (introspected): %', v_log_id, v_temporal_cols;
+        RAISE NOTICE '(%) v_ephemeral_columns (normalized): %', v_log_id, v_ephemeral_columns;
+        RAISE NOTICE '(%) --- Derived Canonical Lists ---', v_log_id;
+        RAISE NOTICE '(%) v_stable_identity_columns: %', v_log_id, v_stable_identity_columns;
+        RAISE NOTICE '(%) v_natural_identity_columns (first key): %', v_log_id, v_natural_identity_columns;
+        RAISE NOTICE '(%) v_all_natural_key_cols (all keys): %', v_log_id, v_all_natural_key_cols;
+        RAISE NOTICE '(%) v_lookup_columns (for entity filtering): %', v_log_id, v_lookup_columns;
+        RAISE NOTICE '(%) v_original_entity_segment_key_cols (for joins/partitions): %', v_log_id, v_original_entity_segment_key_cols;
+        RAISE NOTICE '(%) v_original_entity_key_cols (for feedback payload): %', v_log_id, v_original_entity_key_cols;
+    END IF;
+
+    -- Phase 2: Validation
+    --
+    PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = row_id_column AND NOT attisdropped AND attnum > 0;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', row_id_column, source_table::text;
+    END IF;
+
+    IF founding_id_column IS NOT NULL THEN
+        PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = founding_id_column AND NOT attisdropped AND attnum > 0;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', founding_id_column, source_table::text;
+        END IF;
+    END IF;
+
+    -- Validate that identity columns exist in both source and target tables.
+    DECLARE
+        v_col TEXT;
+    BEGIN
+        IF v_stable_identity_columns IS NOT NULL AND cardinality(v_stable_identity_columns) > 0 THEN
+            FOREACH v_col IN ARRAY v_stable_identity_columns LOOP
+                -- The stable key MUST exist in the target.
+                PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
+
+                -- It only needs to exist in the source IF we are not using a separate natural key for lookups.
+                IF v_natural_identity_columns IS NULL OR cardinality(v_natural_identity_columns) = 0 THEN
+                    PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                    IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in source table % (and no natural_identity_columns were provided for lookup)', quote_ident(v_col), source_table; END IF;
+                END IF;
+            END LOOP;
+        END IF;
+
+        IF v_all_natural_key_cols IS NOT NULL AND cardinality(v_all_natural_key_cols) > 0 THEN
+            FOREACH v_col IN ARRAY v_all_natural_key_cols LOOP
+                -- Natural keys are for lookup, so they must exist in the target table.
+                PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
+
+                -- Natural keys must also exist in the source table to be used for lookup.
+                PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
+                IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in source table %', quote_ident(v_col), source_table; END IF;
+            END LOOP;
+        END IF;
+    END;
+
+    IF v_correlation_col IS NULL THEN
+        RAISE EXCEPTION 'The correlation identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
+    END IF;
+    IF v_ident_corr_column_type IS NULL THEN
+        RAISE EXCEPTION 'Correlation column "%" does not exist in source table %s', v_correlation_col, source_table::text;
+    END IF;
+    IF v_correlation_col = ANY(v_lookup_columns) THEN
+         RAISE EXCEPTION 'The correlation column (%) cannot be one of the natural identity columns (%)', v_correlation_col, v_lookup_columns;
+    END IF;
+
+    IF v_range_constructor IS NULL THEN
+        RAISE EXCEPTION 'Could not determine the range type for era "%" on table "%". Please ensure the era was created correctly, possibly by specifying the range_type parameter in add_era().', era_name, target_table;
+    END IF;
+
+    -- Validate that user has not passed in temporal columns as ephemeral.
+    IF v_valid_from_col = ANY(COALESCE(temporal_merge_plan.ephemeral_columns, '{}')) OR v_valid_until_col = ANY(COALESCE(temporal_merge_plan.ephemeral_columns, '{}')) THEN
+        RAISE EXCEPTION 'Temporal boundary columns ("%", "%") cannot be specified in ephemeral_columns.', v_valid_from_col, v_valid_until_col;
+    END IF;
+    IF v_valid_to_col IS NOT NULL AND v_valid_to_col = ANY(COALESCE(temporal_merge_plan.ephemeral_columns, '{}')) THEN
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_valid_to_col;
+    END IF;
+    IF v_range_col IS NOT NULL AND v_range_col = ANY(COALESCE(temporal_merge_plan.ephemeral_columns, '{}')) THEN
+        RAISE EXCEPTION 'Synchronized column "%" is automatically handled and should not be specified in ephemeral_columns.', v_range_col;
+    END IF;
+
+    --
+    -- Phase 3: Dynamic SQL Fragment Generation
+    --
+    v_coalesced_id_cols_list := (
+        SELECT string_agg(format('COALESCE(p.%1$I, p.discovered_id_%2$s) AS %1$I', col, ord), ', ')
+        FROM unnest(v_original_entity_segment_key_cols) WITH ORDINALITY AS c(col, ord)
+        WHERE col <> ALL(v_temporal_cols)
+    );
+    v_target_entity_exists_expr := '(p.discovered_stable_pk_payload IS NOT NULL)';
+
+    --
+    -- Phase 4: Prepared Statement Cache Management
+    --
     -- Generate the cache key first from all relevant arguments. This is fast.
     v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
-        temporal_merge_plan.target_table::oid,
-        temporal_merge_plan.source_table::oid,
-        temporal_merge_plan.identity_columns,
+        target_table::oid,
+        source_table::oid,
+        identity_columns,
         v_ephemeral_columns,
-        temporal_merge_plan.mode,
-        temporal_merge_plan.era_name,
-        temporal_merge_plan.row_id_column,
-        COALESCE(temporal_merge_plan.founding_id_column, ''),
+        mode,
+        era_name,
+        row_id_column,
+        COALESCE(founding_id_column, ''),
         v_range_constructor,
-        temporal_merge_plan.delete_mode,
-        COALESCE(temporal_merge_plan.natural_identity_columns, '{}'::text[]),
+        delete_mode,
+        COALESCE(natural_identity_keys, '[]'::jsonb),
         p_log_trace
     );
     v_plan_ps_name := 'tm_plan_' || md5(v_plan_key_text);
@@ -196,7 +333,6 @@ BEGIN
         v_lookup_cols_sans_valid_from TEXT;
         v_lookup_cols_select_list_no_alias_sans_vf TEXT;
         v_entity_partition_key_cols TEXT;
-        v_correlation_col name;
         v_trace_select_list TEXT;
         v_target_rows_lookup_cols_expr TEXT;
         v_source_rows_exists_join_expr TEXT;
@@ -208,7 +344,6 @@ BEGIN
         v_partition_key_for_with_base_payload_expr TEXT;
         v_s_founding_join_condition TEXT;
         v_tr_qualified_lookup_cols TEXT;
-        v_ident_corr_column_type regtype;
         v_stable_id_aggregates_expr TEXT;
         v_stable_id_projection_expr TEXT;
         v_stable_pk_cols_jsonb_build_bare TEXT;
@@ -218,6 +353,7 @@ BEGIN
         v_entity_id_check_is_null_expr_no_alias TEXT;
         v_coalesced_payload_expr TEXT;
         v_stable_id_aggregates_expr_prefixed_with_comma TEXT;
+        v_plan_select_key_cols TEXT;
         v_entity_partition_key_cols_prefix TEXT;
         v_non_temporal_lookup_cols_select_list_no_alias_prefix TEXT;
         v_stable_id_projection_expr_prefix TEXT;
@@ -225,79 +361,83 @@ BEGIN
         v_non_temporal_tr_qualified_lookup_cols_prefix TEXT;
         v_lookup_cols_sans_valid_from_prefix TEXT;
         v_lateral_join_entity_id_clause TEXT;
+        v_stable_pk_cols_jsonb_build_source TEXT;
+        v_propagation_partition_key TEXT;
+        v_propagated_id_cols_list TEXT;
+        v_keys_for_filtering JSONB;
     BEGIN
         -- On cache miss, proceed with the expensive introspection and query building.
-        v_identity_cols_trace_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, seg.%I', col, col), ', '), '')) FROM unnest(COALESCE(temporal_merge_plan.identity_columns, '{}')) as col);
-        v_natural_identity_cols_trace_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, seg.%I', col, col), ', '), '')) FROM unnest(COALESCE(temporal_merge_plan.natural_identity_columns, '{}')) as col);
+        v_propagation_partition_key := (SELECT string_agg(format('%I', c.col), ', ') FROM unnest(v_lookup_columns) AS c(col));
+        v_propagated_id_cols_list := (
+            SELECT string_agg(format('target_row.%I AS discovered_id_%s',
+                CASE
+                    WHEN c.col = v_valid_from_col THEN 'valid_from'::name
+                    WHEN c.col = v_valid_until_col THEN 'valid_until'::name
+                    ELSE c.col
+                END,
+                c.ord), ', ')
+            FROM unnest(v_original_entity_segment_key_cols) WITH ORDINALITY AS c(col, ord)
+        );
+
+        v_identity_cols_trace_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, seg.%I', col, col), ', '), '')) FROM unnest(COALESCE(v_stable_identity_columns, '{}')) as col);
+        v_natural_identity_cols_trace_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, seg.%I', col, col), ', '), '')) FROM unnest(COALESCE(v_natural_identity_columns, '{}')) as col);
         v_natural_identity_cols_are_null_expr :=
             CASE
-                WHEN temporal_merge_plan.natural_identity_columns IS NULL OR cardinality(temporal_merge_plan.natural_identity_columns) = 0
+                WHEN v_all_natural_key_cols IS NULL OR cardinality(v_all_natural_key_cols) = 0
                 THEN 'false'
-                ELSE (SELECT format('(%s) IS TRUE', string_agg(format('t.%I IS NULL', col), ' AND ')) FROM unnest(temporal_merge_plan.natural_identity_columns) AS col)
+                ELSE (SELECT format('(%s) IS TRUE', string_agg(format('source_table.%I IS NULL', col), ' AND ')) FROM unnest(v_all_natural_key_cols) AS col)
             END;
 
-        v_correlation_col := COALESCE(temporal_merge_plan.founding_id_column, temporal_merge_plan.row_id_column);
-
-        IF v_correlation_col IS NULL THEN
-            RAISE EXCEPTION 'The correlation identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
-        END IF;
-
-        SELECT atttypid INTO v_ident_corr_column_type
-        FROM pg_attribute
-        WHERE attrelid = temporal_merge_plan.source_table
-          AND attname = v_correlation_col
-          AND NOT attisdropped AND attnum > 0;
-
-        IF v_ident_corr_column_type IS NULL THEN
-            RAISE EXCEPTION 'Correlation column "%" does not exist in source table %s', v_correlation_col, temporal_merge_plan.source_table::text;
-        END IF;
-
-        IF v_correlation_col = ANY(v_lookup_columns) THEN
-             RAISE EXCEPTION 'The correlation column (%) cannot be one of the natural identity columns (%)', v_correlation_col, v_lookup_columns;
-        END IF;
-
-        IF temporal_merge_plan.founding_id_column IS NOT NULL THEN
+        IF founding_id_column IS NOT NULL THEN
             -- If an explicit correlation column is provided, it might contain NULLs.
             -- We must coalesce to the row_id_column to ensure every new entity
             -- has a unique correlation identifier. To handle different data types,
             -- we cast the row_id_column to the type of the primary correlation column.
-            v_ident_corr_select_expr := format('COALESCE(t.%I, t.%I::%s)',
-                temporal_merge_plan.founding_id_column,
-                temporal_merge_plan.row_id_column,
+            v_ident_corr_select_expr := format('COALESCE(source_table.%I, source_table.%I::%s)',
+                founding_id_column,
+                row_id_column,
                 v_ident_corr_column_type::text
             );
         ELSE
             -- If no explicit correlation column is given, the row_id_column is the correlation identifier.
-            v_ident_corr_select_expr := format('t.%I', temporal_merge_plan.row_id_column);
+            v_ident_corr_select_expr := format('source_table.%I', row_id_column);
         END IF;
 
         -- Resolve table identifiers to be correctly quoted and schema-qualified.
-        v_target_table_ident := temporal_merge_plan.target_table::TEXT;
+        v_target_table_ident := target_table::TEXT;
 
         SELECT n.nspname INTO v_source_schema_name
         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.oid = temporal_merge_plan.source_table;
+        WHERE c.oid = source_table;
 
         IF v_source_schema_name = 'pg_temp' THEN
-            v_source_table_ident := temporal_merge_plan.source_table::regclass::TEXT;
+            v_source_table_ident := source_table::regclass::TEXT;
         ELSE
-            v_source_table_ident := temporal_merge_plan.source_table::regclass::TEXT;
+            v_source_table_ident := source_table::regclass::TEXT;
         END IF;
 
 
         -- Construct reusable SQL fragments for entity key column lists and join conditions,
         -- since these are more index friendly than a jsonb object, that we previously had.
+        -- The lateral joins from atomic segments to source/target rows must use ALL identity columns
+        -- to ensure the join is on a unique entity. This logic correctly maps original column names
+        -- to their internal, aliased names, which are used in all relevant CTEs (sr, tr, seg).
+        v_lateral_join_sr_to_seg := (
+            SELECT string_agg(format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND ') || ' AND (NOT seg.stable_identity_columns_are_null OR source_row.corr_ent = seg.corr_ent)'
+            FROM unnest(v_original_entity_key_cols) AS col
+        );
+        v_lateral_join_tr_to_seg := (
+            SELECT string_agg(format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND ')
+            FROM unnest(v_original_entity_key_cols) AS col
+        );
+
+        -- These variables are still built from the lookup columns, as they are used for the initial
+        -- entity discovery and propagation steps, which are driven by the lookup keys.
         SELECT
             string_agg(format('t.%I', col), ', '),
-            string_agg(format('(f.%1$I = t.%1$I OR (f.%1$I IS NULL AND t.%1$I IS NULL))', col), ' AND '),
-            string_agg(format('(sr.%1$I = seg.%1$I OR (sr.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND ') || ' AND (NOT seg.stable_identity_columns_are_null OR sr.corr_ent = seg.corr_ent)',
-            string_agg(format('(tr.%1$I = seg.%1$I OR (tr.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND '),
             string_agg(format('si.%I', col), ', ')
         INTO
             v_lookup_cols_select_list,
-            v_join_on_lookup_cols,
-            v_lateral_join_sr_to_seg,
-            v_lateral_join_tr_to_seg,
             v_lookup_cols_si_alias_select_list
         FROM unnest(v_lookup_columns) col;
 
@@ -305,16 +445,27 @@ BEGIN
         INTO v_lateral_join_entity_id_clause
         FROM unnest(v_lookup_columns) col;
 
-        -- This variable MUST be built from v_all_id_cols to ensure stable IDs are projected.
-        v_lookup_cols_select_list_no_alias := (SELECT string_agg(format('%I', col), ', ') FROM unnest(v_all_id_cols) col);
+        -- This variable MUST be built from v_original_entity_segment_key_cols to ensure stable IDs are projected. It excludes
+        -- temporal columns, which are handled explicitly in the CTEs that use this list.
+        v_non_temporal_lookup_cols_select_list_no_alias := (
+            SELECT COALESCE(string_agg(format('%I', col), ', '), '')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            WHERE c.col <> ALL(v_temporal_cols)
+        );
+        -- This variable is used in the SELECT list for time-point and segment CTEs.
+        -- It MUST exclude temporal columns, as those are handled explicitly (e.g., `point as valid_from`).
+        -- Including them here would cause a "column specified more than once" error.
+        v_lookup_cols_select_list_no_alias := (
+            SELECT COALESCE(string_agg(format('%I', c.col), ', '), '')
+            FROM unnest(v_original_entity_segment_key_cols) as c(col)
+            WHERE c.col <> ALL(v_temporal_cols)
+        );
 
-        -- This must be built from columns that are stable for an entity's timeline.
-        -- When a natural key is provided for lookups, it serves as the basis for partitioning.
-        -- The stable surrogate key (e.g., `id`) cannot be used because it may be NULL in the
-        -- source for existing entities, which would cause incorrect timeline fragmentation.
+        -- The partition key must contain ALL identity columns to uniquely identify an entity's timeline.
         SELECT string_agg(format('%I', col), ', ')
         INTO v_entity_partition_key_cols
-        FROM unnest(v_lookup_columns) col;
+        FROM unnest(v_original_entity_segment_key_cols) col
+        WHERE col <> ALL(v_temporal_cols);
 
         v_entity_partition_key_cols := COALESCE(v_entity_partition_key_cols, '');
         v_entity_partition_key_cols_prefix := COALESCE(NULLIF(v_entity_partition_key_cols, '') || ', ', '');
@@ -324,60 +475,67 @@ BEGIN
         -- value from the corresponding target row into the single correct stable ID.
         -- A simple `max()` correctly coalesces the NULL from a source row and the non-NULL
         -- value from the corresponding target row into the single correct stable ID.
+        -- This expression aggregates *all* identity columns. In the coalescing step, we group by
+        -- the island and use max() to get the single, canonical set of identifiers for that island.
         SELECT COALESCE(string_agg(format('max(%I) as %I', col, col), ', '), '')
         INTO v_stable_id_aggregates_expr
-        FROM unnest(v_all_id_cols) c(col)
-        WHERE col <> ALL(v_lookup_columns);
+        FROM unnest(v_original_entity_segment_key_cols) c(col);
 
-        v_stable_id_aggregates_expr_prefixed_with_comma := COALESCE(', ' || NULLIF(v_stable_id_aggregates_expr, ''), '');
+        v_stable_id_aggregates_expr_prefixed_with_comma := COALESCE(v_stable_id_aggregates_expr, '');
 
         SELECT COALESCE(string_agg(format('%I', col), ', '), '')
         INTO v_stable_id_projection_expr
-        FROM unnest(v_all_id_cols) c(col)
+        FROM unnest(v_original_entity_segment_key_cols) c(col)
         WHERE col <> ALL(v_lookup_columns);
         v_stable_id_projection_expr_prefix := COALESCE(NULLIF(v_stable_id_projection_expr, '') || ', ', '');
         
         -- Create versions of the lookup column list for SELECT clauses that exclude
         -- temporal columns, to avoid selecting them twice in various CTEs.
+        -- This version is for the `source_initial` CTE. It must project NULL for any
+        -- identity columns that exist in the target but not the source, to ensure
+        -- a UNION-compatible structure with the `target_rows` CTE.
         v_non_temporal_lookup_cols_select_list := (
-            SELECT COALESCE(string_agg(format('t.%I', col), ', '), '')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col NOT IN (v_valid_from_col, v_valid_until_col)
+            SELECT COALESCE(string_agg(
+                CASE
+                    WHEN sa.attname IS NOT NULL THEN format('source_table.%I', c.col) -- Column exists in source
+                    ELSE format('NULL::%s AS %I', format_type(ta.atttypid, ta.atttypmod), c.col) -- Column exists only in target
+                END,
+            ', '), '')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            JOIN pg_attribute ta ON ta.attrelid = target_table AND ta.attname = c.col AND ta.attnum > 0 AND NOT ta.attisdropped
+            LEFT JOIN pg_attribute sa ON sa.attrelid = source_table AND sa.attname = c.col AND sa.attnum > 0 AND NOT sa.attisdropped
+            WHERE c.col <> ALL(v_temporal_cols)
         );
         v_non_temporal_lookup_cols_select_list_prefix := COALESCE(NULLIF(v_non_temporal_lookup_cols_select_list, '') || ', ', '');
-        v_non_temporal_lookup_cols_select_list_no_alias := (
-            SELECT COALESCE(string_agg(format('%I', col), ', '), '')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col NOT IN (v_valid_from_col, v_valid_until_col)
-        );
+        -- This version is for `target_rows` and subsequent CTEs where all columns are present.
         v_non_temporal_lookup_cols_select_list_no_alias_prefix := COALESCE(NULLIF(v_non_temporal_lookup_cols_select_list_no_alias, '') || ', ', '');
         v_non_temporal_tr_qualified_lookup_cols := (
-            SELECT COALESCE(string_agg(format('tr.%I', col), ', '), '')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col NOT IN (v_valid_from_col, v_valid_until_col)
+            SELECT COALESCE(string_agg(format('target_row.%I', c.col), ', '), '')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            WHERE c.col <> ALL(v_temporal_cols)
         );
         v_non_temporal_tr_qualified_lookup_cols_prefix := COALESCE(NULLIF(v_non_temporal_tr_qualified_lookup_cols, '') || ', ', '');
 
         v_lookup_cols_sans_valid_from := (
-            SELECT string_agg(format('%I', col), ', ')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col <> v_valid_from_col
+            SELECT string_agg(format('%I', c.col), ', ')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            WHERE c.col <> ALL(v_temporal_cols)
         );
         v_lookup_cols_sans_valid_from_prefix := COALESCE(NULLIF(v_lookup_cols_sans_valid_from, '') || ', ', '');
         v_lookup_cols_sans_valid_from := COALESCE(v_lookup_cols_sans_valid_from, '');
 
         -- Unqualified list of ID columns (e.g., "id, ident_corr") for GROUP BY and some SELECTs.
         v_unqualified_id_cols_sans_vf := (
-            SELECT string_agg(format('%I', col), ', ')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col <> v_valid_from_col
+            SELECT string_agg(format('%I', c.col), ', ')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            WHERE c.col <> ALL(v_temporal_cols) AND c.col IS NOT NULL
         );
 
         -- Qualified list of ID columns (e.g., "r.id, r.corr_ent") for the recursive part of the CTE.
         v_qualified_r_id_cols_sans_vf := (
-            SELECT string_agg(format('r.%I', col), ', ')
-            FROM unnest(v_all_id_cols) col
-            WHERE col.col <> v_valid_from_col
+            SELECT string_agg(format('r.%I', c.col), ', ')
+            FROM unnest(v_original_entity_segment_key_cols) AS c(col)
+            WHERE c.col <> ALL(v_temporal_cols)
         );
 
         -- 1. Dynamically build jsonb payload expressions for SOURCE and TARGET tables.
@@ -386,18 +544,18 @@ BEGIN
         WITH source_cols AS (
             SELECT pa.attname
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = temporal_merge_plan.source_table AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = source_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         target_cols AS (
             SELECT pa.attname, pa.attgenerated
             FROM pg_catalog.pg_attribute pa
-            WHERE pa.attrelid = temporal_merge_plan.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
+            WHERE pa.attrelid = target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         source_data_cols AS (
             SELECT s.attname
             FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-            WHERE s.attname NOT IN (temporal_merge_plan.row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND s.attname <> ALL(v_all_id_cols)
+            WHERE s.attname NOT IN (row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+              AND s.attname <> ALL(v_original_entity_segment_key_cols)
               AND s.attname <> ALL(v_ephemeral_columns)
         ),
         source_ephemeral_cols AS (
@@ -409,7 +567,7 @@ BEGIN
             SELECT t.attname
             FROM target_cols t
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
-              AND t.attname <> ALL(v_all_id_cols)
+              AND t.attname <> ALL(v_original_entity_segment_key_cols)
               AND t.attname <> ALL(v_ephemeral_columns)
               AND t.attgenerated = '' -- Exclude generated columns
         ),
@@ -420,8 +578,8 @@ BEGIN
               AND t.attgenerated = '' -- Exclude generated columns
         )
         SELECT
-            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM source_data_cols),
-            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM source_ephemeral_cols),
+            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_table.%I', attname, attname), ', '), '')) FROM source_data_cols),
+            (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_table.%I', attname, attname), ', '), '')) FROM source_ephemeral_cols),
             (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM target_data_cols),
             (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, %I', attname, attname), ', '), '')) FROM target_data_cols),
             (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM target_ephemeral_cols),
@@ -443,24 +601,39 @@ BEGIN
 
         -- Build a jsonb object of the stable identity columns. These are the keys
         -- that must be preserved across an entity's timeline.
-        SELECT
-            format('jsonb_build_object(%s)', string_agg(format('%L, t.%I', col, col), ', ')),
-            format('jsonb_build_object(%s)', string_agg(format('%L, %I', col, col), ', '))
-        INTO
-            v_stable_pk_cols_jsonb_build,
-            v_stable_pk_cols_jsonb_build_bare
+        SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
+        INTO v_stable_pk_cols_jsonb_build
         FROM unnest(v_stable_identity_columns) col;
 
-        v_stable_pk_cols_jsonb_build := COALESCE(v_stable_pk_cols_jsonb_build, '''{}''::jsonb');
-        v_stable_pk_cols_jsonb_build_bare := COALESCE(v_stable_pk_cols_jsonb_build_bare, '''{}''::jsonb');
+        SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, %I', col, col), ', '), ''))
+        INTO v_stable_pk_cols_jsonb_build_bare
+        FROM unnest(v_stable_identity_columns) col;
 
-        -- Construct an expression to reliably check if all stable identity columns for a source row are NULL.
-        -- If so, this is a "founding" event for a new entity.
+        -- Build source-side stable PK payload. It must project NULL for columns not present in the source.
+        SELECT COALESCE(format('jsonb_build_object(%s)', string_agg(
+            CASE
+                WHEN sa.attname IS NOT NULL THEN format('%L, source_table.%I', c.col, c.col)
+                ELSE format('%L, NULL::%s', c.col, format_type(ta.atttypid, ta.atttypmod))
+            END,
+        ', ')), '{}'::jsonb::text)
+        INTO v_stable_pk_cols_jsonb_build_source
+        FROM unnest(COALESCE(v_stable_identity_columns, '{}')) c(col)
+        LEFT JOIN pg_attribute ta ON ta.attrelid = target_table AND ta.attname = c.col AND ta.attnum > 0 AND NOT ta.attisdropped
+        LEFT JOIN pg_attribute sa ON sa.attrelid = source_table AND sa.attname = c.col AND sa.attnum > 0 AND NOT sa.attisdropped;
+
+        -- Construct an expression for the source table to check if all stable identity columns are NULL.
+        -- If a column doesn't exist in the source, it's treated as NULL.
         SELECT
-            COALESCE(string_agg(format('t.%I IS NULL', col), ' AND '), 'true')
+            COALESCE(string_agg(
+                CASE
+                    WHEN a.attname IS NULL THEN 'true' -- Column doesn't exist, so it's conceptually NULL.
+                    ELSE format('source_table.%I IS NULL', c.col)
+                END,
+            ' AND '), 'true')
         INTO
             v_entity_id_check_is_null_expr
-        FROM unnest(v_stable_identity_columns) AS col;
+        FROM unnest(v_stable_identity_columns) AS c(col)
+        LEFT JOIN pg_attribute a ON a.attrelid = temporal_merge_plan.source_table AND a.attname = c.col AND a.attnum > 0 AND NOT a.attisdropped;
 
         v_entity_id_check_is_null_expr_no_alias := (
             SELECT COALESCE(string_agg(format('%I IS NULL', col), ' AND '), 'true')
@@ -468,202 +641,124 @@ BEGIN
         );
 
         -- Determine the scope of target entities to process based on the mode.
-        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND temporal_merge_plan.delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        -- Determine the set of keys to use for filtering the target table.
+        -- Prioritize natural keys if provided; otherwise, fall back to the stable primary key.
+        v_keys_for_filtering := natural_identity_keys;
+        IF v_keys_for_filtering IS NULL OR jsonb_array_length(v_keys_for_filtering) = 0 THEN
+            v_keys_for_filtering := jsonb_build_array(to_jsonb(identity_columns));
+        END IF;
+
+        IF mode IN ('MERGE_ENTITY_PATCH', 'MERGE_ENTITY_REPLACE') AND delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- For modes that might delete entities not in the source, we must scan the entire target table.
             v_target_rows_filter := v_target_table_ident || ' t';
         ELSE
             -- By default, we optimize by only scanning target entities that are present in the source.
-            -- This is a critical performance optimization. We dynamically generate the most efficient
-            -- query to filter the target table based on the nullability of the lookup columns.
+            -- This is a critical performance optimization. For each natural key provided, we generate
+            -- the most efficient query to filter the target table based on its nullability, and then
+            -- UNION the results.
             DECLARE
-                v_any_nullable_lookup_cols BOOLEAN;
+                v_union_parts TEXT[];
+                v_key_cols TEXT[];
+                v_key JSONB;
+                v_distinct_on_cols name[];
+                v_distinct_on_cols_list TEXT;
             BEGIN
-                -- Check if any of the lookup columns are nullable in either the source or target table.
-                SELECT bool_or(c.is_nullable)
-                INTO v_any_nullable_lookup_cols
-                FROM (
-                    SELECT NOT a.attnotnull as is_nullable
-                    FROM unnest(v_lookup_columns) as c(attname)
-                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.target_table
-                    UNION ALL
-                    SELECT NOT a.attnotnull as is_nullable
-                    FROM unnest(v_lookup_columns) as c(attname)
-                    JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.source_table
-                ) c;
+                v_union_parts := ARRAY[]::TEXT[];
+                -- When a table contains columns without a default b-tree equality operator (e.g., `point`),
+                -- `SELECT DISTINCT *` can fail. We must fall back to `SELECT DISTINCT ON (...) *`.
+                -- The key for DISTINCT ON must uniquely identify rows in the target table. For a temporal table,
+                -- this is the combination of its stable entity identifier and the temporal start column.
+                v_distinct_on_cols := v_stable_identity_columns || v_valid_from_col;
+                v_distinct_on_cols_list := (SELECT string_agg(format('u.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col);
 
-                v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
-
-                IF NOT v_any_nullable_lookup_cols THEN
-                    -- OPTIMIZED PATH 1: SARGable IN clause.
-                    -- If all lookup columns are defined as NOT NULL in both tables, we can use a simple,
-                    -- fast, SARGable query. A "SARGable" (Search ARGument-able) query is one that
-                    -- allows the database to efficiently use an index. The `IN (SELECT DISTINCT ...)`
-                    -- pattern is highly optimizable by PostgreSQL.
-                    v_target_rows_filter := format($$(
-                        SELECT * FROM %1$s inner_t
-                        WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si)
-                    )$$, v_target_table_ident, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_lookup_columns) col), v_lookup_cols_si_alias_select_list);
-                ELSE
-                    -- OPTIMIZED PATH 2: NULL-safe UNION-based filtering.
-                    -- If any lookup column is nullable, we separate the logic for non-NULL and NULL
-                    -- keys into two queries combined by a UNION. This allows the planner to use
-                    -- indexes for the non-NULL part and a specialized strategy for the NULL part.
+                FOR v_key IN SELECT * FROM jsonb_array_elements(v_keys_for_filtering)
+                LOOP
+                    SELECT array_agg(value) INTO v_key_cols FROM jsonb_array_elements_text(v_key);
+                    -- This logic is a simplified version of the single-key optimization path.
+                    -- It's applied once for each natural key.
                     DECLARE
-                        v_sargable_part TEXT;
-                        v_null_part TEXT;
-                        v_lookup_cols_not_null_condition TEXT;
-                        v_lookup_cols_is_null_condition TEXT;
-                        v_join_clause TEXT;
-                        v_distinct_on_cols name[];
-                        v_distinct_on_cols_list TEXT;
+                        v_any_nullable_lookup_cols BOOLEAN;
+                        v_lookup_cols_si_alias_select_list TEXT;
                     BEGIN
-                        -- When a table contains columns without a default b-tree equality operator (e.g., `point`),
-                        -- `SELECT DISTINCT *` can fail. We must fall back to `SELECT DISTINCT ON (...) *`.
-                        -- The key for DISTINCT ON must uniquely identify rows in the target table. For a temporal table,
-                        -- this is the combination of its stable entity identifier and the temporal start column.
-                        v_distinct_on_cols := v_stable_identity_columns || v_valid_from_col;
-                        v_distinct_on_cols_list := (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col);
+                        SELECT bool_or(is_nullable)
+                        INTO v_any_nullable_lookup_cols
+                        FROM (
+                            SELECT NOT a.attnotnull as is_nullable
+                            FROM unnest(v_key_cols) as c(attname)
+                            JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = target_table
+                        ) c;
+                        v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
 
-                        -- Condition to identify source rows with NO NULLs in the lookup key.
-                        v_lookup_cols_not_null_condition := COALESCE(
-                            (SELECT string_agg(format('si.%I IS NOT NULL', col), ' AND ') FROM unnest(v_lookup_columns) AS col),
-                            'true'
+                        -- This is the crucial fix. The subquery must project the columns for the
+                        -- current key, and NULL for all columns belonging to OTHER natural keys
+                        -- to ensure the UNION branches have the same structure.
+                        v_lookup_cols_si_alias_select_list := (
+                            SELECT string_agg(
+                                CASE
+                                    WHEN c.col = ANY(v_key_cols) THEN format('si.%I', c.col)
+                                    ELSE format('NULL::%s', format_type(a.atttypid, a.atttypmod))
+                                END,
+                            ', ')
+                            FROM unnest(v_lookup_columns) AS c(col)
+                            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c.col
                         );
 
-                        -- SARGable part for non-NULL keys using an IN clause. This is identical to the
-                        -- fully non-nullable path, but it filters the source rows to exclude any
-                        -- keys that contain a NULL.
-                        v_sargable_part := format($$(
-                            SELECT * FROM %1$s inner_t
-                            WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si WHERE %4$s)
-                        )$$, v_target_table_ident, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_lookup_columns) col), v_lookup_cols_si_alias_select_list, v_lookup_cols_not_null_condition);
-
-                        -- Condition to identify source rows with AT LEAST ONE NULL in the lookup key.
-                        v_lookup_cols_is_null_condition := COALESCE(
-                            (SELECT string_agg(format('si.%I IS NULL', col), ' OR ') FROM unnest(v_lookup_columns) AS col),
-                            'false'
-                        );
-
-                        -- NULL-aware part for keys with NULLs. This logic distinguishes between
-                        -- the common case of a single nullable key column and the more complex
-                        -- case of multiple nullable key columns (like an XOR key with partial indexes).
-                        DECLARE
-                            v_nullable_cols NAME[];
-                            v_join_clause TEXT;
-                        BEGIN
-                            v_nullable_cols := ARRAY(
-                                SELECT c.attname FROM unnest(v_lookup_columns) as c(attname)
-                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = temporal_merge_plan.target_table
-                                WHERE NOT a.attnotnull
+                        IF NOT v_any_nullable_lookup_cols THEN
+                             v_union_parts := v_union_parts || format($$(
+                                SELECT * FROM %1$s inner_t
+                                WHERE (%2$s) IN (SELECT DISTINCT %3$s FROM source_initial si WHERE (%4$s) IS NOT NULL)
+                            )$$, v_target_table_ident,
+                                (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_key_cols) col),
+                                (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col),
+                                (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col)
                             );
+                        ELSE
+                            DECLARE
+                                v_join_clause TEXT;
+                            BEGIN
+                                v_join_clause := COALESCE(
+                                    (SELECT string_agg(format('(si.%1$I = inner_t.%1$I OR (si.%1$I IS NULL AND inner_t.%1$I IS NULL))', c), ' AND ') FROM unnest(v_key_cols) c),
+                                    'true'
+                                );
 
-                            -- OPTIMIZED PATH 2a: Handling multiple nullable keys (e.g., XOR keys).
-                            -- Heuristic: If there are multiple nullable columns, we assume it's a
-                            -- complex XOR-style key that likely relies on partial indexes for performance.
-                            -- In this case, we generate a `UNION ALL` of simple `=` joins, a pattern that is
-                            -- highly effective at enabling the PostgreSQL planner to use those partial indexes.
-                            IF array_length(v_nullable_cols, 1) > 1 THEN
-                                DECLARE
-                                    v_union_parts TEXT[];
-                                    v_not_nullable_cols_join_clause TEXT;
-                                    v_nullable_col NAME;
-                                BEGIN
-                                    v_not_nullable_cols_join_clause := COALESCE(
-                                        (SELECT string_agg(format('si.%1$I = inner_t.%1$I', c.attname), ' AND ')
-                                         FROM unnest(v_lookup_columns) c(attname)
-                                         JOIN pg_attribute a ON a.attname = c.attname and a.attrelid = temporal_merge_plan.target_table
-                                         WHERE a.attnotnull),
-                                        'true'
-                                    );
-
-                                    v_union_parts := ARRAY[]::TEXT[];
-
-                                    -- For each nullable column, create a query part tailored for a partial index.
-                                    FOREACH v_nullable_col IN ARRAY v_nullable_cols
-                                    LOOP
-                                        DECLARE
-                                            v_other_nullable_cols_filter TEXT;
-                                        BEGIN
-                                            -- Build a filter for both `t` and `si` to match the partial index condition,
-                                            -- e.g., "t.es_id IS NULL AND si.es_id IS NULL"
-                                            v_other_nullable_cols_filter := COALESCE(
-                                                (SELECT string_agg(format('inner_t.%1$I IS NULL AND si.%1$I IS NULL', other.c), ' AND ')
-                                                 FROM (SELECT unnest(v_nullable_cols) c) AS other
-                                                 WHERE other.c <> v_nullable_col),
-                                                'true'
-                                            );
-
-                                            v_union_parts := v_union_parts || format($$(
-                                                SELECT DISTINCT ON (%5$s) inner_t.*
-                                                FROM %1$s inner_t
-                                                JOIN source_initial si ON (%2$s AND si.%4$I = inner_t.%4$I)
-                                                WHERE %3$s
-                                            )$$,
-                                                v_target_table_ident,               /* %1$s */
-                                                v_not_nullable_cols_join_clause,    /* %2$s */
-                                                v_other_nullable_cols_filter,       /* %3$s */
-                                                v_nullable_col,                     /* %4$I */
-                                                v_distinct_on_cols_list                      /* %5$s */
-                                            );
-                                        END;
-                                    END LOOP;
-                                    v_null_part := array_to_string(v_union_parts, ' UNION ALL ');
-                                END;
-                            ELSE
-                                -- OPTIMIZED PATH 2b: Handling a single nullable key.
-                                -- We join the target against a pre-filtered, distinct set of source keys.
-                                -- This mirrors the performant `IN (SELECT DISTINCT ...)` pattern from the
-                                -- SARGable part, but uses a JOIN with a null-safe condition. By pre-filtering
-                                -- the source keys, we avoid a very expensive join against the entire source CTE.
-                                DECLARE
-                                    v_distinct_source_with_nulls TEXT;
-                                BEGIN
-                                    v_distinct_source_with_nulls := format(
-                                        '(SELECT DISTINCT %s FROM source_initial si WHERE %s)',
-                                        v_lookup_cols_si_alias_select_list,
-                                        v_lookup_cols_is_null_condition
-                                    );
-
-                                    v_join_clause := COALESCE(
-                                        (SELECT string_agg(format('(si.%1$I = inner_t.%1$I OR (si.%1$I IS NULL AND inner_t.%1$I IS NULL))', c), ' AND ') FROM unnest(v_lookup_columns) c),
-                                        'true'
-                                    );
-
-                                    v_null_part := format($$(
-                                        SELECT DISTINCT ON (%3$s) inner_t.*
-                                        FROM %1$s inner_t
-                                        JOIN %4$s AS si ON (%2$s)
-                                    )$$, v_target_table_ident, v_join_clause, v_distinct_on_cols_list, v_distinct_source_with_nulls);
-                                END;
-                            END IF;
-                        END;
-
-                        -- The final "filter" is a full subquery that replaces the original FROM clause for target_rows.
-                        -- A UNION ALL is used for performance, and a final DISTINCT ON (primary key) is applied to
-                        -- remove duplicates that may arise if a target row is matched by both the SARGable and NULL-aware parts.
-                        v_target_rows_filter := format($$(
-                            SELECT * FROM (
-                                SELECT DISTINCT ON (%3$s) * FROM (
-                                    (%1$s)
-                                    UNION ALL
-                                    (%2$s)
-                                ) u
-                            )
-                        )$$, v_sargable_part, v_null_part, (SELECT string_agg(format('u.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col));
+                                v_union_parts := v_union_parts || format($$(
+                                    SELECT DISTINCT ON (%3$s) inner_t.*
+                                    FROM %1$s inner_t
+                                    JOIN (SELECT DISTINCT %4$s FROM source_initial si) AS si ON (%2$s)
+                                )$$, v_target_table_ident, v_join_clause, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col), (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col));
+                            END;
+                        END IF;
                     END;
-                END IF;
+                END LOOP;
+
+                -- The final "filter" is a full subquery that replaces the original FROM clause for target_rows.
+                v_target_rows_filter := format($$(
+                    SELECT * FROM (
+                        SELECT DISTINCT ON (%2$s) * FROM (
+                            %1$s
+                        ) u
+                    )
+                )$$, array_to_string(v_union_parts, ' UNION ALL '), v_distinct_on_cols_list);
             END;
         END IF;
 
         -- 2. Construct expressions and resolver CTEs based on the mode.
+        -- The logic for determining if a row is identifiable depends on whether founding_id_column is used.
+        v_is_identifiable_expr := format('NOT ((%s) AND (%s))', v_entity_id_check_is_null_expr, v_natural_identity_cols_are_null_expr);
+        IF v_is_founding_mode THEN
+            -- In founding mode, a row is always considered identifiable because it can start a new entity lineage.
+            -- The founding_id provides the correlation, so NULL stable/natural keys are acceptable for new entities.
+            v_is_identifiable_expr := 'true';
+        END IF;
+
         -- This logic is structured to be orthogonal:
         -- 1. Payload Handling (_PATCH vs. _REPLACE) is determined first.
         -- 2. Timeline Handling (destructive vs. non-destructive) is determined by delete_mode.
 
         -- First, determine payload semantics based on the mode name.
-        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
+        IF mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
             v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
-        ELSIF temporal_merge_plan.mode = 'DELETE_FOR_PORTION_OF' THEN
+        ELSIF mode = 'DELETE_FOR_PORTION_OF' THEN
             v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
         ELSE -- MERGE_ENTITY_REPLACE, MERGE_ENTITY_UPSERT, REPLACE_FOR_PORTION_OF, UPDATE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
@@ -671,11 +766,31 @@ BEGIN
 
         -- Second, determine timeline semantics. The default is a non-destructive merge where we
         -- The join condition for the diff links the final state back to the original target row
-        -- it was derived from. Because t_from is never NULL, a simple '=' is sufficient and planner-friendly.
-        v_diff_join_condition := format('%s AND f.ancestor_valid_from = t.t_from', v_join_on_lookup_cols);
+        -- it was derived from. The join is on the stable identity columns and the original `valid_from`
+        -- of the target row, which is preserved as `ancestor_valid_from`.
+        -- The join must be on ALL identity columns to correctly match final state rows to their target ancestors,
+        -- especially when dealing with composite natural keys.
+        IF v_original_entity_segment_key_cols IS NULL OR cardinality(v_original_entity_segment_key_cols) = 0 THEN
+            -- This should be prevented by the check in temporal_merge, but as a safeguard:
+            RAISE EXCEPTION 'temporal_merge_plan requires at least one identity column. None found or provided for table %.', target_table;
+        END IF;
+        -- The `diff` CTE's join condition links a final, coalesced segment back to the original target row it was
+        -- derived from. The join condition must use the full unique key of the historical row,
+        -- which includes temporal columns if they are part of a composite primary key.
+        -- The `diff` CTE's join condition links a final, coalesced segment back to the original target row it was
+        -- derived from. The join must be on the non-temporal entity identifier and the start of the original
+        -- target row's validity period, which is preserved as `ancestor_valid_from`.
+        v_diff_join_condition := format('(%s) AND final_seg.ancestor_valid_from = target_seg.valid_from',
+            (
+                SELECT string_agg(
+                    format('(final_seg.%1$I = target_seg.%1$I OR (final_seg.%1$I IS NULL AND target_seg.%1$I IS NULL))', col),
+                ' AND ')
+                FROM unnest(v_original_entity_key_cols) AS col
+            )
+        );
 
         -- Third, determine payload resolution logic based on the mode. All modes are now stateless.
-        IF temporal_merge_plan.mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF', 'MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF') THEN
+        IF mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF', 'MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF') THEN
             -- In PATCH and UPSERT modes, we do a stateless partial update.
             -- The difference is handled by v_source_data_payload_expr, which strips NULLs for PATCH.
             v_resolver_ctes := '';
@@ -689,14 +804,14 @@ BEGIN
         END IF;
 
         -- For destructive timeline mode, the final payload is always the source payload. This overrides any complex logic from above.
-        IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        IF delete_mode IN ('DELETE_MISSING_TIMELINE', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
              v_resolver_ctes := '';
              v_resolver_from := 'resolved_atomic_segments_with_payloads';
              v_final_data_payload_expr := 's_data_payload';
         END IF;
 
         -- Layer on optional destructive delete modes for missing entities.
-        IF temporal_merge_plan.delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
+        IF delete_mode IN ('DELETE_MISSING_ENTITIES', 'DELETE_MISSING_TIMELINE_AND_ENTITIES') THEN
             -- We need to add a flag to identify entities that are present in the source.
             -- This CTE is chained onto any previous resolver CTEs by using v_resolver_from.
             v_resolver_ctes := v_resolver_ctes || format($$
@@ -715,19 +830,55 @@ $$, v_entity_partition_key_cols, v_resolver_from);
 
         -- Pre-calculate all expressions to be passed to format() for easier debugging.
         v_target_rows_lookup_cols_expr := (SELECT string_agg(format('t.%I', col), ', ') FROM unnest(v_lookup_columns) as col);
-        v_source_rows_exists_join_expr := (SELECT string_agg(format('(si.%1$I = tr.%1$I OR (si.%1$I IS NULL AND tr.%1$I IS NULL))', col), ' AND ') FROM unnest(v_lookup_columns) as col);
+        v_source_rows_exists_join_expr := (
+            SELECT string_agg(
+                format('((%s))', (
+                    SELECT string_agg(format('source_row.%1$I IS NOT DISTINCT FROM target_row.%2$I', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END), ' AND ')
+                    FROM jsonb_array_elements_text(v_key) AS c
+                )),
+            ' OR ')
+            FROM jsonb_array_elements(natural_identity_keys) AS v_key
+        );
+
+        IF v_source_rows_exists_join_expr IS NULL THEN
+             v_source_rows_exists_join_expr := (SELECT string_agg(format('source_row.%1$I IS NOT DISTINCT FROM target_row.%2$I', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END), ' AND ') FROM unnest(v_stable_identity_columns) as col);
+        END IF;
+
+        v_source_rows_exists_join_expr := COALESCE(v_source_rows_exists_join_expr, 'false');
         v_atomic_segments_select_list_expr := (SELECT COALESCE(string_agg(format('seg.%I', col), ', ') || ',', '') || ' seg.corr_ent' FROM unnest(v_lookup_columns) as col);
-        v_diff_select_expr := (SELECT string_agg(format('COALESCE(f.%1$I, t.%1$I) as %1$I', col), ', ') || ', COALESCE(f.corr_ent, t.corr_ent) as corr_ent' FROM unnest(v_all_id_cols) as col);
-        v_plan_with_op_entity_id_json_build_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, d.%I', col, col), ', '), '')) || ' || COALESCE(d.stable_pk_payload, ''{}''::jsonb)' FROM unnest(v_all_id_cols) as col);
-        v_skip_no_target_entity_id_json_build_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, sr.%I', col, col), ', '), '')) FROM unnest(v_all_id_cols) as col);
-        v_final_order_by_expr := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_all_id_cols) as col);
+        -- The `diff` CTE's SELECT list must project all identifying columns to be used in later CTEs.
+        -- This requires mapping from the internal, standardized temporal column names (`valid_from`) back
+        -- to their original, user-defined names (`"from"`). The `CASE` statement handles the lookup from
+        -- the internal CTEs, while the second `format()` parameter ensures the projected column is
+        -- correctly aliased back to its original name for downstream CTEs.
+        v_diff_select_expr := (
+            SELECT string_agg(
+                format('COALESCE(final_seg.%1$I, target_seg.%1$I) as %2$I',
+                    -- Use the internal, standardized name for the COALESCE source.
+                    CASE
+                        WHEN col = v_valid_from_col THEN 'valid_from'::name
+                        WHEN col = v_valid_until_col THEN 'valid_until'::name
+                        ELSE col
+                    END,
+                    -- Use the original, user-defined name for the output alias.
+                    col
+                ),
+            ', ')
+            FROM unnest(v_original_entity_segment_key_cols) as col
+        ) || ', COALESCE(final_seg.corr_ent, target_seg.corr_ent) as corr_ent';
+        -- The `entity_ids` payload must be built *only* from the stable, non-temporal identifier columns.
+        v_plan_with_op_entity_id_json_build_expr_part_A := (SELECT COALESCE(string_agg(format('%L, d.%I', col, col), ', '), '') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
+        v_plan_with_op_entity_id_json_build_expr := format('jsonb_build_object(%s) || COALESCE(d.stable_pk_payload, ''{}''::jsonb)', v_plan_with_op_entity_id_json_build_expr_part_A);
+        v_skip_no_target_entity_id_json_build_expr := (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_row.%I', col, col), ', '), '')) FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
+        -- The final sort order should be on the stable entity identifier.
+        v_final_order_by_expr := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_original_entity_key_cols) as col WHERE col IS NOT NULL);
         v_partition_key_for_with_base_payload_expr := (
             SELECT COALESCE(string_agg(format('seg.%I', col), ', ') || ',', '') || ' seg.corr_ent'
-            FROM unnest(v_all_id_cols) as col
-            WHERE col.col NOT IN (v_valid_from_col, v_valid_until_col)
+            FROM unnest(v_original_entity_segment_key_cols) as col
+            WHERE col.col <> ALL(v_temporal_cols)
         );
-        v_s_founding_join_condition := (SELECT string_agg(format('(tr.%1$I = sr.%1$I OR (tr.%1$I IS NULL AND sr.%1$I IS NULL))', col), ' AND ') FROM unnest(v_lookup_columns) as col);
-        v_tr_qualified_lookup_cols := (SELECT string_agg(format('tr.%I', col), ', ') FROM unnest(v_lookup_columns) as col);
+        v_s_founding_join_condition := (SELECT string_agg(format('(target_row.%1$I = source_row.%1$I OR (target_row.%1$I IS NULL AND source_row.%1$I IS NULL))', col), ' AND ') FROM unnest(v_lookup_columns) as col);
+        v_tr_qualified_lookup_cols := (SELECT string_agg(format('target_row.%I', col), ', ') FROM unnest(v_lookup_columns) as col);
 
         -- Build the null-safe join condition for the recursive CTE.
         v_rcte_join_condition := (
@@ -737,6 +888,8 @@ $$, v_entity_partition_key_cols, v_resolver_from);
         v_rcte_join_condition := COALESCE(v_rcte_join_condition, 'true');
         -- The corr_ent must also match. This is critical for new entities that share a NULL lookup key.
         v_rcte_join_condition := format('(%s) AND (c.corr_ent = r.corr_ent OR (c.corr_ent IS NULL and r.corr_ent IS NULL))', v_rcte_join_condition);
+
+        v_plan_select_key_cols := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_original_entity_key_cols) AS col WHERE col IS NOT NULL);
 
         -- The partition key for new entities is handled by the `corr_ent` column itself
         -- in the joins and groupings. Appending a complex CASE here was found to cause
@@ -780,7 +933,7 @@ $$, v_entity_partition_key_cols, v_resolver_from);
          * `trace` column incurs no runtime overhead when tracing is not active.
         */
         IF p_log_trace THEN
-            v_trace_seed_expr := format($$jsonb_build_object('cte', 'raswp', 'partition_key', jsonb_build_object(%1$s), 's_row_id', s.source_row_id, 's_data', s.data_payload, 't_data', t.data_payload, 's_ephemeral', s.ephemeral_payload, 't_ephemeral', t.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(s.valid_from, s.valid_until, t.t_valid_from, t.t_valid_until), 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'identity_columns', %2$s, 'natural_identity_columns', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', s.corr_ent) as trace$$,
+            v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'partition_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', source_payloads.corr_ent) as trace$$,
                 (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                 v_identity_cols_trace_expr,
                 v_natural_identity_cols_trace_expr
@@ -803,7 +956,8 @@ $$, v_entity_partition_key_cols, v_resolver_from);
                     ELSE 1
                 END,
                 'current_payload_sans_ephemeral', data_payload - %1$L::text[],
-                'lag_payload_sans_ephemeral', LAG(data_payload - %1$L::text[]) OVER w
+                'lag_payload_sans_ephemeral', LAG(data_payload - %1$L::text[]) OVER w,
+                'propagated_stable_pk_payload', propagated_stable_pk_payload
             ) AS coalesced_trace
         $$, v_ephemeral_columns);
 
@@ -820,68 +974,6 @@ $$, v_entity_partition_key_cols, v_resolver_from);
                 v_coalesced_payload_expr,
                 v_valid_to_col
             );
-        END IF;
-
-        IF v_log_vars THEN
-            RAISE NOTICE '(%) --- temporal_merge_plan variables ---', v_log_id;
-            RAISE NOTICE '(%) v_source_data_payload_expr (%%2$s): %', v_log_id, v_source_data_payload_expr;
-            RAISE NOTICE '(%) v_source_table_ident (%%3$s): %', v_log_id, v_source_table_ident;
-            RAISE NOTICE '(%) v_target_table_ident (%%4$s): %', v_log_id, v_target_table_ident;
-            RAISE NOTICE '(%) v_ephemeral_columns (%%5$L): %', v_log_id, v_ephemeral_columns;
-            RAISE NOTICE '(%) v_target_data_cols_jsonb_build (%%6$s): %', v_log_id, v_target_data_cols_jsonb_build;
-            RAISE NOTICE '(%) temporal_merge_plan.mode (%%7$L): %', v_log_id, temporal_merge_plan.mode;
-            RAISE NOTICE '(%) v_final_data_payload_expr (%%8$s): %', v_log_id, v_final_data_payload_expr;
-            RAISE NOTICE '(%) v_resolver_ctes (%%9$s): %', v_log_id, v_resolver_ctes;
-            RAISE NOTICE '(%) v_resolver_from (%%10$s): %', v_log_id, v_resolver_from;
-            RAISE NOTICE '(%) v_diff_join_condition (%%11$s): %', v_log_id, v_diff_join_condition;
-            RAISE NOTICE '(%) v_entity_id_check_is_null_expr (%%13$s): %', v_log_id, v_entity_id_check_is_null_expr;
-            RAISE NOTICE '(%) v_valid_from_col (%%14$I): %', v_log_id, v_valid_from_col;
-            RAISE NOTICE '(%) v_valid_until_col (%%15$I): %', v_log_id, v_valid_until_col;
-            RAISE NOTICE '(%) v_ident_corr_select_expr (%%16$s): %', v_log_id, v_ident_corr_select_expr;
-            RAISE NOTICE '(%) temporal_merge_plan.row_id_column (%%18$I): %', v_log_id, temporal_merge_plan.row_id_column;
-            RAISE NOTICE '(%) v_range_constructor (%%19$I): %', v_log_id, v_range_constructor;
-            RAISE NOTICE '(%) v_target_rows_filter (%%20$s): %', v_log_id, v_target_rows_filter;
-            RAISE NOTICE '(%) v_stable_pk_cols_jsonb_build (%%21$s): %', v_log_id, v_stable_pk_cols_jsonb_build;
-            RAISE NOTICE '(%) v_all_id_cols (%%22$L): %', v_log_id, v_all_id_cols;
-            RAISE NOTICE '(%) v_lookup_cols_select_list (%%23$s): %', v_log_id, v_lookup_cols_select_list;
-            RAISE NOTICE '(%) v_target_rows_lookup_cols_expr (%%24$s): %', v_log_id, v_target_rows_lookup_cols_expr;
-            RAISE NOTICE '(%) v_source_rows_exists_join_expr (%%25$s): %', v_log_id, v_source_rows_exists_join_expr;
-            RAISE NOTICE '(%) v_lookup_cols_select_list_no_alias (%%26$s): %', v_log_id, v_lookup_cols_select_list_no_alias;
-            RAISE NOTICE '(%) v_atomic_segments_select_list_expr (%%27$s): %', v_log_id, v_atomic_segments_select_list_expr;
-            RAISE NOTICE '(%) v_lateral_join_sr_to_seg (%%28$s): %', v_log_id, v_lateral_join_sr_to_seg;
-            RAISE NOTICE '(%) v_lateral_join_tr_to_seg (%%29$s): %', v_log_id, v_lateral_join_tr_to_seg;
-            RAISE NOTICE '(%) v_diff_select_expr (%%30$s): %', v_log_id, v_diff_select_expr;
-            RAISE NOTICE '(%) v_plan_with_op_entity_id_json_build_expr (%%31$s): %', v_log_id, v_plan_with_op_entity_id_json_build_expr;
-            RAISE NOTICE '(%) v_skip_no_target_entity_id_json_build_expr (%%32$s): %', v_log_id, v_skip_no_target_entity_id_json_build_expr;
-            RAISE NOTICE '(%) v_correlation_col (%%33$L): %', v_log_id, v_correlation_col;
-            RAISE NOTICE '(%) v_final_order_by_expr (%%34$s): %', v_log_id, v_final_order_by_expr;
-            RAISE NOTICE '(%) v_partition_key_for_with_base_payload_expr (%%36$s): %', v_log_id, v_partition_key_for_with_base_payload_expr;
-            RAISE NOTICE '(%) v_entity_partition_key_cols (%%37$s): %', v_log_id, v_entity_partition_key_cols;
-            RAISE NOTICE '(%) v_s_founding_join_condition (%%38$s): %', v_log_id, v_s_founding_join_condition;
-            RAISE NOTICE '(%) v_tr_qualified_lookup_cols (%%39$s): %', v_log_id, v_tr_qualified_lookup_cols;
-            RAISE NOTICE '(%) v_ident_corr_column_type (%%40$s): %', v_log_id, v_ident_corr_column_type;
-            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list (%%41$s): %', v_log_id, v_non_temporal_lookup_cols_select_list;
-            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list_no_alias (%%42$s): %', v_log_id, v_non_temporal_lookup_cols_select_list_no_alias;
-            RAISE NOTICE '(%) v_non_temporal_tr_qualified_lookup_cols (%%43$s): %', v_log_id, v_non_temporal_tr_qualified_lookup_cols;
-            RAISE NOTICE '(%) v_lookup_cols_sans_valid_from (%%44$s): %', v_log_id, v_lookup_cols_sans_valid_from;
-            RAISE NOTICE '(%) v_unqualified_id_cols_sans_vf (%%45$s): %', v_log_id, v_unqualified_id_cols_sans_vf;
-            RAISE NOTICE '(%) v_trace_select_list (%%46$s): %', v_log_id, v_trace_select_list;
-            RAISE NOTICE '(%) v_trace_seed_expr (%%47$s): %', v_log_id, v_trace_seed_expr;
-            RAISE NOTICE '(%) v_stable_id_aggregates_expr (%%48$s): %', v_log_id, v_stable_id_aggregates_expr;
-            RAISE NOTICE '(%) v_stable_id_projection_expr (%%49$s): %', v_log_id, v_stable_id_projection_expr;
-            RAISE NOTICE '(%) v_target_data_cols_jsonb_build_bare (%%50$s): %', v_log_id, v_target_data_cols_jsonb_build_bare;
-            RAISE NOTICE '(%) v_stable_pk_cols_jsonb_build_bare (%%51$s): %', v_log_id, v_stable_pk_cols_jsonb_build_bare;
-            RAISE NOTICE '(%) v_rcte_join_condition (%%52$s): %', v_log_id, v_rcte_join_condition;
-            RAISE NOTICE '(%) v_qualified_r_id_cols_sans_vf (%%53$s): %', v_log_id, v_qualified_r_id_cols_sans_vf;
-            RAISE NOTICE '(%) p_log_trace (%%54$L): %', v_log_id, p_log_trace;
-            RAISE NOTICE '(%) v_entity_id_check_is_null_expr_no_alias (%%55$s): %', v_log_id, v_entity_id_check_is_null_expr_no_alias;
-            RAISE NOTICE '(%) v_source_ephemeral_cols_jsonb_build (%%56$s): %', v_log_id, v_source_ephemeral_cols_jsonb_build;
-            RAISE NOTICE '(%) v_target_ephemeral_cols_jsonb_build (%%58$s): %', v_log_id, v_target_ephemeral_cols_jsonb_build;
-            RAISE NOTICE '(%) v_target_ephemeral_cols_jsonb_build_bare (%%57$s): %', v_log_id, v_target_ephemeral_cols_jsonb_build_bare;
-            RAISE NOTICE '(%) v_coalesced_payload_expr (%%59$s): %', v_log_id, v_coalesced_payload_expr;
-            RAISE NOTICE '(%) v_non_temporal_lookup_cols_select_list_prefix (%%64$s): %', v_log_id, v_non_temporal_lookup_cols_select_list_prefix;
-            RAISE NOTICE '(%) v_non_temporal_tr_qualified_lookup_cols_prefix (%%65$s): %', v_log_id, v_non_temporal_tr_qualified_lookup_cols_prefix;
-            RAISE NOTICE '(%) v_lookup_cols_sans_valid_from_prefix (%%66$s): %', v_log_id, v_lookup_cols_sans_valid_from_prefix;
         END IF;
         -- 4. Construct and execute the main query to generate the execution plan.
         v_sql := format($SQL$
@@ -911,16 +1003,18 @@ WITH
 --   may need to be generated.
 source_initial AS (
     SELECT
-        t.%18$I as source_row_id,
+        source_table.%18$I as source_row_id,
         %16$s as corr_ent,
         %64$s /* v_non_temporal_lookup_cols_select_list_prefix */
-        t.%14$I as valid_from,
-        t.%15$I as valid_until,
+        source_table.%14$I as valid_from,
+        source_table.%15$I as valid_until,
         %2$s AS data_payload,
         %56$s AS ephemeral_payload,
+        %73$s as stable_pk_payload,
         %13$s as stable_identity_columns_are_null,
-        %72$s as natural_identity_column_values_are_null
-    FROM %3$s t
+        %72$s as natural_identity_column_values_are_null,
+        %83$s as is_identifiable
+    FROM %3$s source_table
 ),
 -- CTE 2: target_rows
 -- Purpose: Selects the relevant historical data from the target table.
@@ -944,18 +1038,57 @@ target_rows AS (
         %57$s AS ephemeral_payload
     FROM %20$s -- v_target_rows_filter is now a subquery with alias t
 ),
--- CTE 3: source_rows
--- Purpose: Augments the source data with a critical flag: `target_entity_exists`.
--- Formulation: An `EXISTS` subquery checks if a corresponding entity already exists in the target table.
--- This is a key declarative optimization that allows modes like `INSERT_NEW_ENTITIES` to filter out irrelevant
--- source rows very early in the process, avoiding unnecessary work.
-source_rows AS (
+-- CTE 3: source_rows_with_matches
+-- Purpose: Performs the LEFT JOIN to find all potential target entities for each source row.
+source_rows_with_matches AS (
     SELECT
-        si.*,
-        EXISTS (SELECT 1 FROM target_rows tr WHERE %25$s) as target_entity_exists -- v_source_rows_exists_join_expr
-    FROM source_initial si
+        source_row.*,
+        target_row.stable_pk_payload as discovered_stable_pk_payload,
+        %82$s -- v_propagated_id_cols_list
+    FROM source_initial source_row
+    LEFT JOIN target_rows target_row ON (
+        %25$s -- v_source_rows_exists_join_expr
+    )
 ),
--- CTE 4: source_rows_with_new_flag
+-- CTE 4: source_rows_with_aggregates
+-- Purpose: Calculates ambiguity information by counting distinct target matches per source row.
+-- This CTE is necessary to work around the limitation that COUNT(DISTINCT ...) cannot be used
+-- as a window function.
+source_rows_with_aggregates AS (
+    SELECT
+        source_row_id,
+        count(DISTINCT discovered_stable_pk_payload) as match_count,
+        jsonb_agg(DISTINCT discovered_stable_pk_payload) as conflicting_ids
+    FROM source_rows_with_matches
+    GROUP BY source_row_id
+),
+-- CTE 5: source_rows_with_discovery
+-- Purpose: Combines the raw match details with the ambiguity aggregates to produce the final
+-- augmented set of source rows for the planner.
+source_rows_with_discovery AS (
+    SELECT
+        m.*,
+        a.match_count,
+        a.conflicting_ids,
+        (a.match_count > 1) as is_ambiguous
+    FROM source_rows_with_matches m
+    JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
+),
+-- CTE 6: source_rows
+-- Purpose: Establishes the final, canonical set of identity columns for each source row by coalescing
+-- the original values from the source with the discovered values from the target. It also sets the
+-- critical `target_entity_exists` flag and carries forward ambiguity information.
+source_rows AS (
+    SELECT DISTINCT ON (p.source_row_id) -- A source row may be duplicated by the join if it matches on multiple keys to the *same* target.
+        p.source_row_id, p.corr_ent, p.valid_from, p.valid_until, p.data_payload, p.ephemeral_payload,
+        p.stable_identity_columns_are_null, p.natural_identity_column_values_are_null, p.is_identifiable,
+        p.is_ambiguous, p.conflicting_ids,
+        COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+        %77$s as target_entity_exists, -- v_target_entity_exists_expr
+        %76$s -- v_coalesced_id_cols_list
+    FROM source_rows_with_discovery p
+),
+-- CTE 7: source_rows_with_new_flag
 -- Purpose: Correctly determines if a source row represents a truly "new" entity.
 -- Formulation: An entity is "new" if, and only if, it does not already exist in the target table.
 -- The `target_entity_exists` flag is the single source of truth for this, determined by looking
@@ -967,7 +1100,7 @@ source_rows_with_new_flag AS (
         NOT target_entity_exists as new_ent
     FROM source_rows
 ),
--- CTE 5: source_rows_with_unified_flags
+-- CTE 8: source_rows_with_unified_flags
 -- Purpose: Establishes the canonical flag that controls partitioning logic.
 -- An entity's timeline should only be partitioned by its correlation ID if it's a
 -- truly new entity AND its stable identifier is NULL in the source (meaning it
@@ -978,31 +1111,31 @@ source_rows_with_unified_flags AS (
         stable_identity_columns_are_null AND new_ent as partition_by_corr_ent
     FROM source_rows_with_new_flag
 ),
--- CTE 6: active_source_rows
+-- CTE 9: active_source_rows
 -- Purpose: Filters the source rows based on the requested `mode`.
 -- Formulation: A simple `CASE` statement in the `WHERE` clause declaratively enforces the semantics of each mode.
 -- For example, `INSERT_NEW_ENTITIES` will only consider rows where `target_entity_exists` is false. This is another
 -- critical performance optimization.
 active_source_rows AS (
     SELECT
-        sr.*
-    FROM source_rows_with_unified_flags sr
+        source_row.*
+    FROM source_rows_with_unified_flags source_row
     WHERE CASE %7$L::sql_saga.temporal_merge_mode
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
         WHEN 'MERGE_ENTITY_UPSERT' THEN true
         -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
-        WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
+        WHEN 'INSERT_NEW_ENTITIES' THEN NOT source_row.target_entity_exists
         -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
-        WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
-        WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
-        WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
-        WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
+        WHEN 'PATCH_FOR_PORTION_OF' THEN source_row.target_entity_exists
+        WHEN 'REPLACE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+        WHEN 'DELETE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+        WHEN 'UPDATE_FOR_PORTION_OF' THEN source_row.target_entity_exists
         ELSE false
     END
 ),
--- CTE 7: all_rows
+-- CTE 10: all_rows
 -- Purpose: Creates the unified set of all relevant time periods (both source and target) for the entities being processed.
 -- This is the foundational data set upon which the atomic timeline will be built.
 --
@@ -1013,27 +1146,31 @@ active_source_rows AS (
 -- Formulation: A `UNION ALL` combines the active source rows with the relevant target rows. All rows for a
 -- conceptual entity are processed together in downstream CTEs.
 all_rows AS (
-    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent FROM active_source_rows
+    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM active_source_rows
     UNION ALL
     SELECT
         %65$s
-        tr.corr_ent,
-        tr.valid_from,
-        tr.valid_until,
+        target_row.corr_ent,
+        target_row.valid_from,
+        target_row.valid_until,
         false as new_ent,
+        target_row.stable_pk_payload,
         false as stable_identity_columns_are_null,
         false as natural_identity_column_values_are_null,
-        false as partition_by_corr_ent
-    FROM target_rows tr
+        false as partition_by_corr_ent,
+        true as is_identifiable,
+        false as is_ambiguous,
+        NULL::jsonb as conflicting_ids
+    FROM target_rows target_row
 ),
--- CTE 8: time_points_raw
+-- CTE 11: time_points_raw
 -- Purpose: Deconstructs all time periods from `all_rows` into a non-unique, ordered set of chronological points.
 time_points_raw AS (
-    SELECT %26$s, corr_ent, valid_from AS point, new_ent, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent FROM all_rows
+    SELECT %26$s, corr_ent, valid_from AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
     UNION ALL
-    SELECT %26$s, corr_ent, valid_until AS point, new_ent, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent FROM all_rows
+    SELECT %26$s, corr_ent, valid_until AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
 ),
--- CTE 9: time_points_unified
+-- CTE 12: time_points_unified
 -- Purpose: Establishes a single, authoritative correlation ID (`corr_ent`) for all time points that belong
 -- to the same conceptual entity. This is critical for correctly partitioning the timeline in subsequent CTEs.
 time_points_unified AS (
@@ -1042,7 +1179,7 @@ time_points_unified AS (
         FIRST_VALUE(corr_ent) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY corr_ent ASC NULLS LAST) as unified_corr_ent
     FROM time_points_raw
 ),
--- CTE 10: time_points
+-- CTE 13: time_points
 -- Purpose: De-duplicates the unified time points to get a distinct, ordered set for each entity.
 time_points AS (
     SELECT DISTINCT ON (%61$s CASE WHEN partition_by_corr_ent THEN unified_corr_ent ELSE NULL END, point)
@@ -1050,9 +1187,13 @@ time_points AS (
         unified_corr_ent as corr_ent,
         point,
         new_ent,
+        stable_pk_payload,
         stable_identity_columns_are_null,
         natural_identity_column_values_are_null,
-        partition_by_corr_ent
+        partition_by_corr_ent,
+        is_identifiable,
+        is_ambiguous,
+        conflicting_ids
     FROM time_points_unified
     -- The ORDER BY here must match the DISTINCT ON to be valid and deterministic.
     -- We add `corr_ent` to the end to act as a deterministic tie-breaker.
@@ -1060,7 +1201,7 @@ time_points AS (
     -- `ASC NULLS LAST` ensures we prioritize flags from the source row when a time point is shared.
     ORDER BY %61$s CASE WHEN partition_by_corr_ent THEN unified_corr_ent ELSE NULL END, point, corr_ent ASC NULLS LAST
 ),
--- CTE 11: atomic_segments
+-- CTE 14: atomic_segments
 -- Purpose: Reconstructs the timeline from the points into a set of atomic, non-overlapping, contiguous segments.
 --
 -- Example: The four points from the `time_points` example would be reconstructed into three atomic segments.
@@ -1072,7 +1213,7 @@ time_points AS (
 -- segments from the ordered list of time points. The partitioning is critical here to ensure timelines for
 -- different entities are handled independently.
 atomic_segments AS (
-    SELECT %26$s, corr_ent, point as valid_from, next_point as valid_until, new_ent, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent
+    SELECT %26$s, corr_ent, point as valid_from, next_point as valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids
     FROM (
         SELECT
             *,
@@ -1081,7 +1222,7 @@ atomic_segments AS (
     ) with_lead
     WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
 ),
--- CTE 12: resolved_atomic_segments_with_payloads
+-- CTE 15: resolved_atomic_segments_with_payloads
 -- Purpose: This is the main workhorse CTE. It enriches each atomic segment with the data payloads from the
 -- original source and target rows that cover its time range.
 -- Formulation: It uses `LEFT JOIN LATERAL` to declaratively find the correct data for each segment.
@@ -1098,26 +1239,29 @@ resolved_atomic_segments_with_payloads AS (
         SELECT
             %36$s, -- v_partition_key_for_with_base_payload_expr
             seg.new_ent,
+            seg.is_identifiable,
+            seg.is_ambiguous,
+            seg.conflicting_ids,
             seg.stable_identity_columns_are_null,
             seg.partition_by_corr_ent,
             seg.natural_identity_column_values_are_null,
             seg.valid_from,
             seg.valid_until,
-            t.t_valid_from,
-            t.t_valid_until,
-            s.source_row_id,
-            s.data_payload as s_data_payload,
-            s.ephemeral_payload as s_ephemeral_payload,
-            t.data_payload as t_data_payload,
-            t.ephemeral_payload as t_ephemeral_payload,
-            t.stable_pk_payload,
-            -- Note: s.corr_ent and causal.corr_ent are selected here for tracing/debugging purposes only.
+            target_payloads.t_valid_from,
+            target_payloads.t_valid_until,
+            source_payloads.source_row_id,
+            source_payloads.data_payload as s_data_payload,
+            source_payloads.ephemeral_payload as s_ephemeral_payload,
+            target_payloads.data_payload as t_data_payload,
+            target_payloads.ephemeral_payload as t_ephemeral_payload,
+            seg.stable_pk_payload,
+            -- Note: source_payloads.corr_ent and causal.corr_ent are selected here for tracing/debugging purposes only.
             -- The canonical entity correlation ID is seg.corr_ent, which is passed through via the
             -- partition key (`v_partition_key_for_with_base_payload_expr`).
-            s.corr_ent as s_corr_ent,
-            s.corr_ent as causal_corr_ent, -- This is now just for placeholder stability, the value is from the direct source.
-            s.valid_from AS s_valid_from,
-            s.valid_until AS s_valid_until,
+            source_payloads.corr_ent as s_corr_ent,
+            source_payloads.corr_ent as causal_corr_ent, -- This is now just for placeholder stability, the value is from the direct source.
+            source_payloads.valid_from AS s_valid_from,
+            source_payloads.valid_until AS s_valid_until,
             %47$s
         FROM atomic_segments seg
         -- Join to find the original target data for this time slice.
@@ -1125,37 +1269,46 @@ resolved_atomic_segments_with_payloads AS (
         -- original target row `(id:1, from:'2022-01-01', until:'2024-01-01', data:{...})` because the segment
         -- is contained by (`<@`) the target row's period.
         LEFT JOIN LATERAL (
-            SELECT tr.data_payload, tr.ephemeral_payload, tr.valid_from as t_valid_from, tr.valid_until as t_valid_until, tr.stable_pk_payload
-            FROM target_rows tr
+            SELECT target_row.data_payload, target_row.ephemeral_payload, target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until, target_row.stable_pk_payload
+            FROM target_rows target_row
             WHERE %29$s
-              AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(tr.valid_from, tr.valid_until)
-        ) t ON true
+              AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(target_row.valid_from, target_row.valid_until)
+        ) target_payloads ON true
         -- Join to find the source data for this time slice.
         -- Example: For the same atomic segment, this will find the source row
         -- `(id:1, from:'2023-01-01', until:'2023-06-01', data:{...})` that directly covers it.
         -- If multiple source rows overlap (e.g., corrections), `ORDER BY ... LIMIT 1` ensures we deterministically pick the latest one.
         LEFT JOIN LATERAL (
-            SELECT sr.source_row_id, sr.data_payload, sr.ephemeral_payload, sr.valid_from, sr.valid_until, sr.corr_ent
-            FROM active_source_rows sr
+            SELECT source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload, source_row.valid_from, source_row.valid_until, source_row.corr_ent
+            FROM active_source_rows source_row
             WHERE %28$s
-              AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(sr.valid_from, sr.valid_until)
+              AND %19$I(seg.valid_from, seg.valid_until) <@ %19$I(source_row.valid_from, source_row.valid_until)
             -- In case of overlapping source rows, the one with the highest row_id (latest) wins.
-            ORDER BY sr.source_row_id DESC
+            ORDER BY source_row.source_row_id DESC
             LIMIT 1
-        ) s ON true
+        ) source_payloads ON true
         -- Filter out empty time segments where no source or target data exists.
-        WHERE (s.data_payload IS NOT NULL OR t.data_payload IS NOT NULL) -- Filter out gaps
+        WHERE (source_payloads.data_payload IS NOT NULL OR target_payloads.data_payload IS NOT NULL) -- Filter out gaps
           -- For surgical ..._FOR_PORTION_OF modes, we must clip the source to the target's timeline.
           -- We do this declaratively by only processing atomic segments that have data in the target.
           AND CASE %7$L::sql_saga.temporal_merge_mode
-              WHEN 'PATCH_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
-              WHEN 'REPLACE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
-              WHEN 'DELETE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
-              WHEN 'UPDATE_FOR_PORTION_OF' THEN t.data_payload IS NOT NULL
+              WHEN 'PATCH_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+              WHEN 'REPLACE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+              WHEN 'DELETE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+              WHEN 'UPDATE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
               ELSE true
           END
     ) with_base_payload
 ),
+-- CTE 15.5: resolved_atomic_segments_with_propagated_ids
+-- Purpose: Propagates causal information (the source row that caused a change) from segments that
+-- have a direct source overlap to adjacent segments that are part of the same original target record.
+-- This is critical for correctly assigning `row_ids` to DELETE operations when a timeline is split.
+--
+-- Formulation: This is a robust, performant "gaps-and-islands" implementation for finding the nearest
+-- non-NULL causal source row. It uses two running sums (`look_behind_grp` and `look_ahead_grp`) to create
+-- groups of contiguous segments. Within each group, `max()` is used to propagate the source row's information.
+-- The final `COALESCE` prefers the "look-behind" group, ensuring causality flows forward in time.
 %9$sresolved_atomic_segments_with_propagated_ids AS (
     SELECT
         *,
@@ -1183,7 +1336,7 @@ resolved_atomic_segments_with_payloads AS (
         FROM %10$s
     ) with_grp
 ),
--- CTE 11: resolved_atomic_segments
+-- CTE 16: resolved_atomic_segments
 -- Purpose: Applies the high-level semantic logic for each mode (PATCH, REPLACE, etc.) to calculate
 -- the final data payload for each atomic segment.
 -- Formulation: The `v_final_data_payload_expr` is a dynamically generated SQL expression. For example,
@@ -1194,6 +1347,9 @@ resolved_atomic_segments AS (
         %66$sstable_identity_columns_are_null,
         natural_identity_column_values_are_null,
         new_ent,
+        is_identifiable,
+        is_ambiguous,
+        conflicting_ids,
         partition_by_corr_ent,
         valid_from,
         valid_until,
@@ -1204,7 +1360,11 @@ resolved_atomic_segments AS (
         propagated_source_row_id as source_row_id,
         corr_ent,
         propagated_stable_pk_payload AS stable_pk_payload,
-        s_data_payload IS NULL AS unaffected_target_only_segment,
+        -- This flag is critical. A segment is only truly unaffected if it has no
+        -- causal link to a source row AFTER propagation. Basing this on the
+        -- initial s_data_payload was incorrect and caused segments created by
+        -- a split to be dropped.
+        propagated_source_row_id IS NULL AS unaffected_target_only_segment,
         s_data_payload,
         t_data_payload,
         sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
@@ -1222,7 +1382,7 @@ resolved_atomic_segments AS (
         CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
     FROM resolved_atomic_segments_with_propagated_ids
 ),
--- CTE 12: coalesced_final_segments
+-- CTE 17: coalesced_final_segments
 -- Purpose: Merges adjacent atomic segments that have identical data payloads (ignoring ephemeral columns).
 -- This is a critical optimization to generate the minimal number of DML operations.
 --
@@ -1267,11 +1427,14 @@ coalesced_final_segments AS (
         ) s2
     )
     SELECT
-        %37$s%60$s,
+        %37$s,
         sql_saga.first(corr_ent ORDER BY valid_from) as corr_ent,
         sql_saga.first(stable_identity_columns_are_null ORDER BY valid_from) as stable_identity_columns_are_null,
         sql_saga.first(natural_identity_column_values_are_null ORDER BY valid_from) as natural_identity_column_values_are_null,
         sql_saga.first(new_ent ORDER BY valid_from) as new_ent,
+        sql_saga.first(is_identifiable ORDER BY valid_from) as is_identifiable,
+        sql_saga.first(is_ambiguous ORDER BY valid_from) as is_ambiguous,
+        sql_saga.first(conflicting_ids ORDER BY valid_from) as conflicting_ids,
         sql_saga.first(partition_by_corr_ent ORDER BY valid_from) as partition_by_corr_ent,
         sql_saga.first(s_t_relation ORDER BY valid_from) as s_t_relation,
         sql_saga.first(t_valid_from ORDER BY valid_from) as ancestor_valid_from,
@@ -1293,65 +1456,42 @@ coalesced_final_segments AS (
         END as trace
     FROM island_group
     GROUP BY
-        %61$s -- v_entity_partition_key_cols_prefix handles the optional comma
+        %37$s,
         island_group_id,
         -- The group key must match the partition key used to create the islands.
         CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END
 ),
--- CTE 14: diff
+-- CTE 18: diff
 -- Purpose: Compares the final, coalesced state of the timeline with the original state from `target_rows`.
 -- Formulation: A `FULL OUTER JOIN` is the standard, declarative way to compare two sets of data.
 -- The result of this join provides all the necessary information to determine if a segment represents
 -- an INSERT, UPDATE, DELETE, or an unchanged state.
 diff AS (
     SELECT
-        %30$s, -- v_diff_select_expr
-        COALESCE(f.new_ent, false) as new_ent,
-        COALESCE(f.stable_identity_columns_are_null, false) as stable_identity_columns_are_null,
-        COALESCE(f.natural_identity_column_values_are_null, false) as natural_identity_column_values_are_null,
-        COALESCE(f.partition_by_corr_ent, false) as partition_by_corr_ent,
-        f.f_from, f.f_until, f.f_data, f.f_row_ids, f.stable_pk_payload, f.s_t_relation,
+        %30$s, -- v_diff_select_expr, now using final_seg and target_seg aliases
+        COALESCE(final_seg.new_ent, false) as new_ent,
+        COALESCE(final_seg.is_identifiable, true) as is_identifiable,
+        COALESCE(final_seg.is_ambiguous, false) as is_ambiguous,
+        final_seg.conflicting_ids,
+        COALESCE(final_seg.stable_identity_columns_are_null, false) as stable_identity_columns_are_null,
+        COALESCE(final_seg.natural_identity_column_values_are_null, false) as natural_identity_column_values_are_null,
+        COALESCE(final_seg.partition_by_corr_ent, false) as partition_by_corr_ent,
+        final_seg.valid_from AS f_from, final_seg.valid_until AS f_until, final_seg.data_payload AS f_data, final_seg.row_ids AS f_row_ids, final_seg.stable_pk_payload, final_seg.s_t_relation,
         CASE WHEN %54$L::boolean
-             THEN f.trace || jsonb_build_object('cte', 'diff', 'f_corr_ent', f.corr_ent, 'final_payload_vs_target_payload', jsonb_build_object('f', f.f_data, 't', t.t_data))
+             THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'final_seg_corr_ent', final_seg.corr_ent, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.data_payload, 't', target_seg.data_payload))
              ELSE NULL
         END as trace,
-        f.unaffected_target_only_segment,
-        t.t_from, t.t_until, t.t_data,
+        final_seg.unaffected_target_only_segment,
+        target_seg.valid_from as t_from, target_seg.valid_until as t_until, (target_seg.data_payload || target_seg.ephemeral_payload) as t_data,
         -- It calculates the original-to-final (before-and-after) relation.
-        sql_saga.get_allen_relation(t.t_from, t.t_until, f.f_from, f.f_until) as b_a_relation
+        sql_saga.get_allen_relation(target_seg.valid_from, target_seg.valid_until, final_seg.valid_from, final_seg.valid_until) as b_a_relation
     FROM
-    (
-        SELECT
-            %26$s,
-            new_ent,
-            stable_identity_columns_are_null,
-            natural_identity_column_values_are_null,
-            partition_by_corr_ent,
-            s_t_relation,
-            ancestor_valid_from,
-            corr_ent,
-            valid_from AS f_from,
-            valid_until AS f_until,
-            data_payload AS f_data,
-            stable_pk_payload,
-            row_ids AS f_row_ids,
-            unaffected_target_only_segment,
-            trace
-        FROM coalesced_final_segments
-    ) f
+        coalesced_final_segments AS final_seg
     FULL OUTER JOIN
-    (
-        SELECT
-            %26$s,
-            corr_ent,
-            valid_from as t_from,
-            valid_until as t_until,
-            data_payload || ephemeral_payload as t_data
-        FROM target_rows
-    ) t
-    ON %11$s -- Join on raw lookup columns and diff condition
+        target_rows AS target_seg
+    ON %11$s -- v_diff_join_condition, now using final_seg and target_seg aliases
 ),
--- CTE 14: diff_ranked
+-- CTE 19: diff_ranked
 -- Purpose: When a single original target row is split into multiple new segments, only one of them can be
 -- an `UPDATE` in the final plan. This CTE ranks the candidates to deterministically choose one.
 -- Formulation: A `row_number()` window function applies a declarative set of rules: the segment that
@@ -1382,7 +1522,7 @@ diff_ranked AS (
         END as update_rank
     FROM diff d
 ),
--- CTE 17: plan_with_op
+-- CTE 20: plan_with_op
 -- Purpose: Assigns the final DML operation (`INSERT`, `UPDATE`, `DELETE`, `SKIP_IDENTICAL`) to each segment
 -- based on the results of the `diff` and `diff_ranked` CTEs.
 -- Formulation: A `CASE` statement declaratively translates the state of each segment into its corresponding DML action.
@@ -1397,6 +1537,8 @@ plan_with_op AS (
                 d.new_ent,
                 -- Determine the final DML operation based on the diff and rank.
                 CASE
+                    WHEN d.is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action
+                    WHEN d.new_ent AND NOT d.is_identifiable THEN 'ERROR'::sql_saga.temporal_merge_plan_action
                     WHEN d.t_from IS NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
                     -- This case is reached for segments present in the target but absent from the final calculated
                     -- timeline (e.g., in a destructive delete_mode). The `diff` CTE's FULL OUTER JOIN
@@ -1418,9 +1560,30 @@ plan_with_op AS (
                 d.t_until as old_valid_until,
                 d.f_from as new_valid_from,
                 d.f_until as new_valid_until,
-                d.f_data as data,
+                CASE
+                    WHEN d.is_ambiguous THEN NULL
+                    WHEN d.new_ent AND NOT d.is_identifiable THEN NULL
+                    ELSE d.f_data
+                END as data,
+                CASE
+                    WHEN d.is_ambiguous
+                    THEN jsonb_build_object('error', format('Source row is ambiguous. It matches multiple distinct target entities: %%s', d.conflicting_ids))
+                    WHEN d.new_ent AND NOT d.is_identifiable
+                    THEN jsonb_build_object('error', 'Source row is unidentifiable. It has NULL for all stable and natural key columns.')
+                    ELSE NULL
+                END as feedback,
                 d.b_a_relation,
-                CASE WHEN %54$L::boolean THEN d.trace || jsonb_build_object('cte', 'plan_with_op', 'd_new_ent', d.new_ent, 'd_corr_ent', d.corr_ent) ELSE NULL END as trace
+                CASE WHEN %54$L::boolean
+                     THEN d.trace || jsonb_build_object(
+                         'cte', 'plan_with_op',
+                         'diff_new_ent', d.new_ent,
+                         'diff_corr_ent', d.corr_ent,
+                         'entity_ids_from_key_cols', jsonb_build_object(%84$s),
+                         'entity_ids_from_stable_pk', d.stable_pk_payload,
+                         'final_entity_id_json', %31$s
+                     )
+                     ELSE NULL
+                END as trace
             FROM diff_ranked d
             WHERE d.f_row_ids IS NOT NULL OR d.t_data IS NOT NULL -- Exclude pure deletions of non-existent target data
         ) with_op
@@ -1431,20 +1594,23 @@ plan_with_op AS (
         -- This part of the plan handles source rows that were filtered out by the main logic,
         -- allowing the executor to provide accurate feedback.
         SELECT
-            ARRAY[sr.source_row_id::BIGINT],
+            ARRAY[source_row.source_row_id::BIGINT],
             NULL::sql_saga.allen_interval_relation,
-            sr.new_ent,
+            source_row.new_ent,
             CASE
-                WHEN %7$L::sql_saga.temporal_merge_mode = 'INSERT_NEW_ENTITIES' AND sr.target_entity_exists THEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action
-                WHEN %7$L::sql_saga.temporal_merge_mode IN ('PATCH_FOR_PORTION_OF', 'REPLACE_FOR_PORTION_OF', 'DELETE_FOR_PORTION_OF', 'UPDATE_FOR_PORTION_OF') AND NOT sr.target_entity_exists THEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action
+                WHEN %7$L::sql_saga.temporal_merge_mode = 'INSERT_NEW_ENTITIES' AND source_row.target_entity_exists THEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action
+                WHEN %7$L::sql_saga.temporal_merge_mode IN ('PATCH_FOR_PORTION_OF', 'REPLACE_FOR_PORTION_OF', 'DELETE_FOR_PORTION_OF', 'UPDATE_FOR_PORTION_OF') AND NOT source_row.target_entity_exists THEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action
                 ELSE 'ERROR'::sql_saga.temporal_merge_plan_action -- Should be unreachable, but acts as a fail-fast safeguard.
             END,
             %26$s,
-            %32$s, -- v_skip_no_target_entity_id_json_build_expr
-            sr.corr_ent,
-            NULL, NULL, NULL, NULL, NULL, NULL,
+            %32$s as entity_id_json, -- v_skip_no_target_entity_id_json_build_expr
+            source_row.corr_ent,
+            NULL, NULL, NULL, NULL,
+            NULL,
+            jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.'),
+            NULL,
             NULL::jsonb -- trace
-        FROM source_rows_with_new_flag sr
+        FROM source_rows_with_new_flag source_row
         WHERE NOT (
             CASE %7$L::sql_saga.temporal_merge_mode
                 -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
@@ -1452,24 +1618,27 @@ plan_with_op AS (
                 WHEN 'MERGE_ENTITY_REPLACE' THEN true
                 WHEN 'MERGE_ENTITY_UPSERT' THEN true
                 -- INSERT_NEW_ENTITIES is optimized to only consider rows for entities that are new to the target.
-                WHEN 'INSERT_NEW_ENTITIES' THEN NOT sr.target_entity_exists
+                WHEN 'INSERT_NEW_ENTITIES' THEN NOT source_row.target_entity_exists
                 -- ..._FOR_PORTION_OF modes are optimized to only consider rows for entities that already exist in the target.
-                WHEN 'PATCH_FOR_PORTION_OF' THEN sr.target_entity_exists
-                WHEN 'REPLACE_FOR_PORTION_OF' THEN sr.target_entity_exists
-                WHEN 'DELETE_FOR_PORTION_OF' THEN sr.target_entity_exists
-                WHEN 'UPDATE_FOR_PORTION_OF' THEN sr.target_entity_exists
+                WHEN 'PATCH_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                WHEN 'REPLACE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                WHEN 'DELETE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                WHEN 'UPDATE_FOR_PORTION_OF' THEN source_row.target_entity_exists
                 ELSE false
             END
         )
     )
 ),
--- CTE 18: plan
+-- CTE 21: plan
 -- Purpose: Performs final calculations for the plan, such as determining the `update_effect` and constructing
 -- the final `entity_ids` JSONB object for feedback and ID back-filling.
 plan AS (
     SELECT
-        p.*,
+        p.row_ids, p.operation, p.corr_ent, p.new_ent,
+        %85$s,
         p.entity_id_json as entity_ids,
+        p.s_t_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
+        p.new_valid_from, p.new_valid_until, p.data, p.feedback, p.trace,
         CASE
             WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
             WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
@@ -1480,7 +1649,7 @@ plan AS (
     FROM plan_with_op p
     -- We must join back to source_rows to get the new_ent flag for the final entity_ids construction.
     -- This is safe because row_ids will contain at most one ID for new-entity INSERTs.
-    LEFT JOIN source_rows_with_new_flag sr ON sr.source_row_id = p.row_ids[1]
+    LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
 )
 -- Final SELECT
 -- Purpose: Formats the final output and, most importantly, applies the final, stable sort order.
@@ -1515,94 +1684,97 @@ SELECT
     p.old_valid_until::TEXT,
     p.new_valid_from::TEXT,
     p.new_valid_until::TEXT,
-    CASE
-        WHEN jsonb_typeof(p.data) = 'object' THEN p.data - %22$L::text[]
-        ELSE p.data
-    END as data,
+    p.data,
+    p.feedback,
     p.trace
 FROM plan p
 ORDER BY plan_op_seq;
 $SQL$,
-            NULL,                           /* %1$s - v_entity_id_as_jsonb (OBSOLETE) */
-            v_source_data_payload_expr,     /* %2$s - v_source_data_payload_expr */
-            v_source_table_ident,           /* %3$s - v_source_table_ident */
-            v_target_table_ident,           /* %4$s - v_target_table_ident */
-            v_ephemeral_columns,            /* %5$L - v_ephemeral_columns */
-            v_target_data_cols_jsonb_build, /* %6$s - v_target_data_cols_jsonb_build */
-            temporal_merge_plan.mode,       /* %7$L - temporal_merge_plan.mode */
-            v_final_data_payload_expr,      /* %8$s - v_final_data_payload_expr */
-            v_resolver_ctes,                /* %9$s - v_resolver_ctes */
-            v_resolver_from,                /* %10$s - v_resolver_from */
-            v_diff_join_condition,          /* %11$s - v_diff_join_condition */
-            '',                             /* %12$s - (OBSOLETE) */
-            v_entity_id_check_is_null_expr, /* %13$s - v_entity_id_check_is_null_expr */
-            v_valid_from_col,               /* %14$I - v_valid_from_col */
-            v_valid_until_col,              /* %15$I - v_valid_until_col */
-            v_ident_corr_select_expr,       /* %16$s - v_ident_corr_select_expr */
-            NULL,                           /* %17$s - v_planner_entity_id_expr (OBSOLETE) */
-            temporal_merge_plan.row_id_column, /* %18$I - temporal_merge_plan.row_id_column */
-            v_range_constructor,            /* %19$I - v_range_constructor */
-            v_target_rows_filter,           /* %20$s - v_target_rows_filter */
-            v_stable_pk_cols_jsonb_build,   /* %21$s - v_stable_pk_cols_jsonb_build */
-            v_all_id_cols,                  /* %22$L - v_all_id_cols */
-            v_lookup_cols_select_list,      /* %23$s - v_lookup_cols_select_list */
-            v_target_rows_lookup_cols_expr, /* %24$s - v_target_rows_lookup_cols_expr */
-            v_source_rows_exists_join_expr, /* %25$s - v_source_rows_exists_join_expr */
-            v_lookup_cols_select_list_no_alias, /* %26$s - v_lookup_cols_select_list_no_alias */
-            v_atomic_segments_select_list_expr, /* %27$s - v_atomic_segments_select_list_expr */
-            v_lateral_join_sr_to_seg,       /* %28$s - v_lateral_join_sr_to_seg */
-            v_lateral_join_tr_to_seg,       /* %29$s - v_lateral_join_tr_to_seg */
-            v_diff_select_expr,             /* %30$s - v_diff_select_expr */
-            v_plan_with_op_entity_id_json_build_expr, /* %31$s - v_plan_with_op_entity_id_json_build_expr */
-            v_skip_no_target_entity_id_json_build_expr, /* %32$s - v_skip_no_target_entity_id_json_build_expr */
-            v_correlation_col,              /* %33$L - v_correlation_col */
-            v_final_order_by_expr,          /* %34$s - v_final_order_by_expr */
-            NULL,                           /* %35$s - v_partition_key_cols (OBSOLETE) */
-            v_partition_key_for_with_base_payload_expr, /* %36$s - v_partition_key_for_with_base_payload_expr */
-            v_entity_partition_key_cols,    /* %37$s - v_entity_partition_key_cols */
-            v_s_founding_join_condition,    /* %38$s - v_s_founding_join_condition */
-            v_tr_qualified_lookup_cols,     /* %39$s - v_tr_qualified_lookup_cols */
-            v_ident_corr_column_type,       /* %40$s - v_ident_corr_column_type */
-            v_non_temporal_lookup_cols_select_list, /* %41$s - v_non_temporal_lookup_cols_select_list */
-            v_non_temporal_lookup_cols_select_list_no_alias, /* %42$s - v_non_temporal_lookup_cols_select_list_no_alias */
-            v_non_temporal_tr_qualified_lookup_cols, /* %43$s - v_non_temporal_tr_qualified_lookup_cols */
-            v_lookup_cols_sans_valid_from,  /* %44$s - v_lookup_cols_sans_valid_from */
-            v_unqualified_id_cols_sans_vf,  /* %45$s - v_unqualified_id_cols_sans_vf */
-            v_trace_select_list,            /* %46$s - v_trace_select_list */
-            v_trace_seed_expr,              /* %47$s - v_trace_seed_expr */
-            v_stable_id_aggregates_expr,    /* %48$s - v_stable_id_aggregates_expr */
-            v_stable_id_projection_expr,    /* %49$s - v_stable_id_projection_expr */
-            v_target_data_cols_jsonb_build_bare, /* %50$s - v_target_data_cols_jsonb_build_bare */
-            v_stable_pk_cols_jsonb_build_bare, /* %51$s - v_stable_pk_cols_jsonb_build_bare */
-            v_rcte_join_condition,          /* %52$s - v_rcte_join_condition */
-            v_qualified_r_id_cols_sans_vf,  /* %53$s - v_qualified_r_id_cols_sans_vf */
-            p_log_trace,                    /* %54$L - p_log_trace */
-            v_entity_id_check_is_null_expr_no_alias, /* %55$s - v_entity_id_check_is_null_expr_no_alias */
-            v_source_ephemeral_cols_jsonb_build, /* %56$s - v_source_ephemeral_cols_jsonb_build */
-            v_target_ephemeral_cols_jsonb_build_bare, /* %57$s - v_target_ephemeral_cols_jsonb_build_bare */
-            v_target_ephemeral_cols_jsonb_build, /* %58$s - v_target_ephemeral_cols_jsonb_build */
-            v_coalesced_payload_expr,       /* %59$s - v_coalesced_payload_expr */
-            v_stable_id_aggregates_expr_prefixed_with_comma, /* %60$s - v_stable_id_aggregates_expr_prefixed_with_comma */
-            v_entity_partition_key_cols_prefix, /* %61$s - v_entity_partition_key_cols_prefix */
+            NULL,                                                   /* %1$s - (OBSOLETE) v_entity_id_as_jsonb */
+            v_source_data_payload_expr,                             /* %2$s - v_source_data_payload_expr */
+            v_source_table_ident,                                   /* %3$s - v_source_table_ident */
+            v_target_table_ident,                                   /* %4$s - v_target_table_ident */
+            v_ephemeral_columns,                                    /* %5$L - v_ephemeral_columns */
+            v_target_data_cols_jsonb_build,                         /* %6$s - v_target_data_cols_jsonb_build */
+            mode,                                                   /* %7$L - mode */
+            v_final_data_payload_expr,                              /* %8$s - v_final_data_payload_expr */
+            v_resolver_ctes,                                        /* %9$s - v_resolver_ctes */
+            v_resolver_from,                                        /* %10$s - v_resolver_from */
+            v_diff_join_condition,                                  /* %11$s - v_diff_join_condition */
+            '',                                                     /* %12$s - (OBSOLETE) */
+            v_entity_id_check_is_null_expr,                         /* %13$s - v_entity_id_check_is_null_expr */
+            v_valid_from_col,                                       /* %14$I - v_valid_from_col */
+            v_valid_until_col,                                      /* %15$I - v_valid_until_col */
+            v_ident_corr_select_expr,                               /* %16$s - v_ident_corr_select_expr */
+            NULL,                                                   /* %17$s - (OBSOLETE) v_planner_entity_id_expr */
+            row_id_column,                                          /* %18$I - row_id_column */
+            v_range_constructor,                                    /* %19$I - v_range_constructor */
+            v_target_rows_filter,                                   /* %20$s - v_target_rows_filter */
+            v_stable_pk_cols_jsonb_build,                           /* %21$s - v_stable_pk_cols_jsonb_build */
+            v_original_entity_segment_key_cols,                     /* %22$L - v_original_entity_segment_key_cols */
+            v_lookup_cols_select_list,                              /* %23$s - v_lookup_cols_select_list */
+            v_target_rows_lookup_cols_expr,                         /* %24$s - v_target_rows_lookup_cols_expr */
+            v_source_rows_exists_join_expr,                         /* %25$s - v_source_rows_exists_join_expr */
+            v_lookup_cols_select_list_no_alias,                     /* %26$s - v_lookup_cols_select_list_no_alias */
+            v_atomic_segments_select_list_expr,                     /* %27$s - v_atomic_segments_select_list_expr */
+            v_lateral_join_sr_to_seg,                               /* %28$s - v_lateral_join_sr_to_seg */
+            v_lateral_join_tr_to_seg,                               /* %29$s - v_lateral_join_tr_to_seg */
+            v_diff_select_expr,                                     /* %30$s - v_diff_select_expr */
+            v_plan_with_op_entity_id_json_build_expr,               /* %31$s - v_plan_with_op_entity_id_json_build_expr */
+            v_skip_no_target_entity_id_json_build_expr,             /* %32$s - v_skip_no_target_entity_id_json_build_expr */
+            v_correlation_col,                                      /* %33$L - v_correlation_col */
+            v_final_order_by_expr,                                  /* %34$s - v_final_order_by_expr */
+            NULL,                                                   /* %35$s - (OBSOLETE) v_partition_key_cols */
+            v_partition_key_for_with_base_payload_expr,             /* %36$s - v_partition_key_for_with_base_payload_expr */
+            v_entity_partition_key_cols,                            /* %37$s - v_entity_partition_key_cols */
+            v_s_founding_join_condition,                            /* %38$s - v_s_founding_join_condition */
+            v_tr_qualified_lookup_cols,                             /* %39$s - v_tr_qualified_lookup_cols */
+            v_ident_corr_column_type,                               /* %40$s - v_ident_corr_column_type */
+            v_non_temporal_lookup_cols_select_list,                 /* %41$s - v_non_temporal_lookup_cols_select_list */
+            v_lookup_cols_select_list_no_alias,                     /* %42$s - v_lookup_cols_select_list_no_alias */
+            v_non_temporal_tr_qualified_lookup_cols,                /* %43$s - v_non_temporal_tr_qualified_lookup_cols */
+            v_lookup_cols_sans_valid_from,                          /* %44$s - v_lookup_cols_sans_valid_from */
+            v_unqualified_id_cols_sans_vf,                          /* %45$s - v_unqualified_id_cols_sans_vf */
+            v_trace_select_list,                                    /* %46$s - v_trace_select_list */
+            v_trace_seed_expr,                                      /* %47$s - v_trace_seed_expr */
+            v_stable_id_aggregates_expr,                            /* %48$s - v_stable_id_aggregates_expr */
+            v_stable_id_projection_expr,                            /* %49$s - v_stable_id_projection_expr */
+            v_target_data_cols_jsonb_build_bare,                    /* %50$s - v_target_data_cols_jsonb_build_bare */
+            v_stable_pk_cols_jsonb_build_bare,                      /* %51$s - v_stable_pk_cols_jsonb_build_bare */
+            v_rcte_join_condition,                                  /* %52$s - v_rcte_join_condition */
+            v_qualified_r_id_cols_sans_vf,                          /* %53$s - v_qualified_r_id_cols_sans_vf */
+            p_log_trace,                                            /* %54$L - p_log_trace */
+            v_entity_id_check_is_null_expr_no_alias,                /* %55$s - v_entity_id_check_is_null_expr_no_alias */
+            v_source_ephemeral_cols_jsonb_build,                    /* %56$s - v_source_ephemeral_cols_jsonb_build */
+            v_target_ephemeral_cols_jsonb_build_bare,               /* %57$s - v_target_ephemeral_cols_jsonb_build_bare */
+            v_target_ephemeral_cols_jsonb_build,                    /* %58$s - v_target_ephemeral_cols_jsonb_build */
+            v_coalesced_payload_expr,                               /* %59$s - v_coalesced_payload_expr */
+            v_stable_id_aggregates_expr_prefixed_with_comma,        /* %60$s - v_stable_id_aggregates_expr_prefixed_with_comma */
+            v_entity_partition_key_cols_prefix,                     /* %61$s - v_entity_partition_key_cols_prefix */
             v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %62$s - v_non_temporal_lookup_cols_select_list_no_alias_prefix */
-            v_stable_id_projection_expr_prefix, /* %63$s - v_stable_id_projection_expr_prefix */
-            v_non_temporal_lookup_cols_select_list_prefix, /* %64$s - v_non_temporal_lookup_cols_select_list_prefix */
-            v_non_temporal_tr_qualified_lookup_cols_prefix, /* %65$s - v_non_temporal_tr_qualified_lookup_cols_prefix */
-            v_lookup_cols_sans_valid_from_prefix, /* %66$s - v_lookup_cols_sans_valid_from_prefix */
-            NULL,                                 /* %67$s - (not used) */
-            v_lateral_join_entity_id_clause, /* %68$s - v_lateral_join_entity_id_clause */
-            NULL,                                 /* %69$s - (placeholder) */
-            v_identity_cols_trace_expr,     /* %70$s - v_identity_cols_trace_expr */
-            v_natural_identity_cols_trace_expr, /* %71$s - v_natural_identity_cols_trace_expr */
-            v_natural_identity_cols_are_null_expr, /* %72$s - v_natural_identity_cols_are_null_expr */
-            NULL,                                 /* %73$s - (placeholder) */
-            NULL,                                 /* %74$s - (placeholder) */
-            NULL,                                 /* %75$s - (placeholder) */
-            NULL,                                 /* %76$s - (placeholder) */
-            NULL,                                 /* %77$s - (placeholder) */
-            NULL,                                 /* %78$s - (placeholder) */
-            NULL,                                 /* %79$s - (placeholder) */
-            NULL                                  /* %80$s - (placeholder) */
+            v_stable_id_projection_expr_prefix,                     /* %63$s - v_stable_id_projection_expr_prefix */
+            v_non_temporal_lookup_cols_select_list_prefix,          /* %64$s - v_non_temporal_lookup_cols_select_list_prefix */
+            v_non_temporal_tr_qualified_lookup_cols_prefix,         /* %65$s - v_non_temporal_tr_qualified_lookup_cols_prefix */
+            v_lookup_cols_sans_valid_from_prefix,                   /* %66$s - v_lookup_cols_sans_valid_from_prefix */
+            NULL,                                                   /* %67$s - (not used) */
+            v_lateral_join_entity_id_clause,                        /* %68$s - v_lateral_join_entity_id_clause */
+            NULL,                                                   /* %69$s - (placeholder) */
+            v_identity_cols_trace_expr,                             /* %70$s - v_identity_cols_trace_expr */
+            v_natural_identity_cols_trace_expr,                     /* %71$s - v_natural_identity_cols_trace_expr */
+            v_natural_identity_cols_are_null_expr,                  /* %72$s - v_natural_identity_cols_are_null_expr */
+            v_stable_pk_cols_jsonb_build_source,                    /* %73$s - v_stable_pk_cols_jsonb_build_source */
+            NULL,                                                   /* %74$s - (placeholder) v_tr_qualified_all_id_cols_list */
+            NULL,                                                   /* %75$s - (placeholder) v_discovered_id_cols_list_prefixed */
+            v_coalesced_id_cols_list,                               /* %76$s - v_coalesced_id_cols_list */
+            v_target_entity_exists_expr,                            /* %77$s - v_target_entity_exists_expr */
+            NULL,                                                   /* %78$s - (placeholder) */
+            NULL,                                                   /* %79$s - (placeholder) */
+            NULL,                                                   /* %80$s - (placeholder) */
+            v_propagation_partition_key,                            /* %81$s - v_propagation_partition_key */
+            v_propagated_id_cols_list,                              /* %82$s - v_propagated_id_cols_list */
+            v_is_identifiable_expr,                                 /* %83$s - v_is_identifiable_expr */
+            v_plan_with_op_entity_id_json_build_expr_part_A,        /* %84$s - v_plan_with_op_entity_id_json_build_expr_part_A */
+            v_plan_select_key_cols                                  /* %85$s - v_plan_select_key_cols */
         );
 
         -- Conditionally log the generated SQL for debugging.
@@ -1622,5 +1794,5 @@ $SQL$,
 END;
 $temporal_merge_plan$;
 
-COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, sql_saga.temporal_merge_delete_mode, text[], text[], boolean, boolean) IS
+COMMENT ON FUNCTION sql_saga.temporal_merge_plan(regclass, regclass, sql_saga.temporal_merge_mode, name, text[], name, name, sql_saga.temporal_merge_delete_mode, jsonb, text[], boolean, boolean) IS
 'Generates a set-based execution plan for a temporal merge. This function is marked VOLATILE because it uses PREPARE to cache its expensive planning query for the duration of the session, which is a side-effect not permitted in STABLE or IMMUTABLE functions.';

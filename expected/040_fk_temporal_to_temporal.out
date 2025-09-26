@@ -65,6 +65,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -77,6 +78,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -89,6 +91,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -122,6 +125,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -134,6 +138,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -146,6 +151,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -179,6 +185,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -191,6 +198,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -203,6 +211,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -236,6 +245,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -248,6 +258,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -260,6 +271,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -293,6 +305,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -305,6 +318,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -317,6 +331,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -347,6 +362,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -359,6 +375,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -371,6 +388,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -401,6 +419,7 @@ SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -413,6 +432,7 @@ SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  houses_id_valid
@@ -425,6 +445,7 @@ SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_f
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  rooms_id_valid

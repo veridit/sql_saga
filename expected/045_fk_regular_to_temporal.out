@@ -63,6 +63,7 @@ SELECT sql_saga.add_unique_key(
     column_names => ARRAY['id'],
     unique_key_name => 'temporal_pk_id_key'
 );
+NOTICE:  sql_saga: altering table public.temporal_pk to add constraints: ADD CONSTRAINT temporal_pk_id_key_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT temporal_pk_id_key_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
    add_unique_key   
 --------------------
  temporal_pk_id_key

@@ -43,6 +43,7 @@ SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
+NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ADD CONSTRAINT schema_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT schema_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     add_unique_key    
 ----------------------
  schema_test_id_valid
@@ -79,9 +80,9 @@ TABLE test_schema.schema_test;
 (1 row)
 
 TABLE pg_temp.temporal_merge_plan;
- plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |      data      | trace 
--------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------+-------
-           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2024-02-29     | infinity        | {"value": "A"} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |      data      | feedback | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------+----------+-------
+           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2024-02-29     | infinity        | {"value": "A"} |          | 
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback;
@@ -109,6 +110,7 @@ SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT acl_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  acl_test_id_valid

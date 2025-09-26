@@ -31,6 +31,7 @@ BEGIN
         RAISE EXCEPTION 'unique key on table % for columns % with era % does not exist', table_oid, column_names, era_name;
     END IF;
 
+    RAISE DEBUG 'drop_unique_key: Found key name "%" to drop. Forwarding to drop_unique_key_by_name.', key_name_found;
     PERFORM sql_saga.drop_unique_key_by_name(table_oid, key_name_found, drop_behavior, cleanup);
 END;
 $function$;

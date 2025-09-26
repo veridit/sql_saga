@@ -37,15 +37,16 @@ SELECT sql_saga.add_era('uk', 'valid_from', 'valid_until', 'p');
 
 -- Adopt an existing primary key
 SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
+NOTICE:  sql_saga: altering table public.uk to add constraints: ALTER COLUMN id SET NOT NULL, ADD CONSTRAINT uk_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  uk_id_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | predicate 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+-----------
- uk_id_p         | public       | uk         | primary  | {id}         | p        | uk_pkey           | uk_id_p_excl       | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ uk_id_p         | public       | uk         | primary  | {id}         | p        | uk_pkey           | uk_id_p_excl       |                  |           |                            |                     | 
 (1 row)
 
 INSERT INTO uk (id, valid_from, valid_until) VALUES (100, 2, 4), (100, 4, 5), (100, 5, 11); -- success
@@ -166,6 +167,7 @@ SELECT sql_saga.add_era('pk_test', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_test', '{id}', key_type => 'primary');
+NOTICE:  sql_saga: altering table public.pk_test to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT pk_test_id_valid_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key  
 ------------------
  pk_test_id_valid
@@ -186,9 +188,9 @@ Check constraints:
     "pk_test_valid_check" CHECK (valid_from < valid_until)
 
 TABLE sql_saga.unique_keys;
- unique_key_name  | table_schema | table_name | key_type | column_names | era_name | unique_constraint |  exclude_constraint   | predicate 
-------------------+--------------+------------+----------+--------------+----------+-------------------+-----------------------+-----------
- pk_test_id_valid | public       | pk_test    | primary  | {id}         | valid    | pk_test_pkey      | pk_test_id_valid_excl | 
+ unique_key_name  | table_schema | table_name | key_type | column_names | era_name | unique_constraint |  exclude_constraint   | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+------------------+--------------+------------+----------+--------------+----------+-------------------+-----------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ pk_test_id_valid | public       | pk_test    | primary  | {id}         | valid    | pk_test_pkey      | pk_test_id_valid_excl |                  |           |                            |                     | 
 (1 row)
 
 SELECT sql_saga.drop_unique_key('pk_test', '{id}');
@@ -222,7 +224,7 @@ SAVEPOINT expect_error;
 Attempting to add a temporal primary key to a table with a simple primary key (should fail)
 SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', key_type => 'primary');
 ERROR:  table "simple_pk" has a simple PRIMARY KEY that does not include the temporal columns; this is incompatible with SCD Type 2 history
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 128 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text,name[]) line 140 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 DROP TABLE public.simple_pk;
 \echo '--- Test: add_unique_key validation for GENERATED ALWAYS identity column ---'
@@ -243,7 +245,7 @@ SAVEPOINT expect_error_2;
 Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)
 SELECT sql_saga.add_unique_key('public.generated_always', '{id}', key_type => 'primary');
 ERROR:  table "generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 109 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text,name[]) line 121 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 DROP TABLE public.generated_always;
 ROLLBACK;

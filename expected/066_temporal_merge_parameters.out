@@ -57,6 +57,7 @@ SELECT sql_saga.add_era('tm_gen_col_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_gen_col_target', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.tm_gen_col_target to add constraints: ADD CONSTRAINT tm_gen_col_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_gen_col_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  tm_gen_col_target_id_valid
@@ -106,6 +107,7 @@ SELECT sql_saga.add_era('tm_mix_bug_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_mix_bug_target', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.tm_mix_bug_target to add constraints: ADD CONSTRAINT tm_mix_bug_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_mix_bug_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  tm_mix_bug_target_id_valid
@@ -188,7 +190,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for NULL identity_columns: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for NULL identity_columns: At least one of identity_columns or natural_identity_columns must be a non-empty array.
+NOTICE:  Caught expected error for NULL identity_columns: Could not discover a stable key (primary or natural) for table "tm_bad_params_target". Please register a key using sql_saga.add_unique_key() or explicitly provide identity_columns.
 -- Test with empty identity_columns
 DO $$
 BEGIN
@@ -203,7 +205,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for empty identity_columns: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for empty identity_columns: At least one of identity_columns or natural_identity_columns must be a non-empty array.
+NOTICE:  Caught expected error for empty identity_columns: Could not determine identity columns for table "tm_bad_params_target". No primary or natural keys are registered, or they were explicitly disabled with an empty array.
 ROLLBACK TO SAVEPOINT scenario_9;
 SAVEPOINT scenario_10;
 -- Scenario 10: Test that `temporal_merge` fails if non-existent column names are provided.
@@ -257,6 +259,7 @@ SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_custom_rowid_target', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.tm_custom_rowid_target to add constraints: ADD CONSTRAINT tm_custom_rowid_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_custom_rowid_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
          add_unique_key          
 ---------------------------------
  tm_custom_rowid_target_id_valid
@@ -351,6 +354,7 @@ SELECT sql_saga.add_era('tm_weird_names', 'period_begins', 'period_ends', 'timel
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_weird_names', ARRAY['unit_pk'], 'timeline');
+NOTICE:  sql_saga: altering table public.tm_weird_names to add constraints: ADD CONSTRAINT tm_weird_names_unit_pk_timeline_uniq UNIQUE (unit_pk, period_begins, period_ends) DEFERRABLE, ADD CONSTRAINT tm_weird_names_unit_pk_timeline_excl EXCLUDE USING gist (unit_pk WITH =, daterange(period_begins, period_ends) WITH &&) DEFERRABLE
          add_unique_key          
 ---------------------------------
  tm_weird_names_unit_pk_timeline
@@ -420,6 +424,7 @@ SELECT sql_saga.add_era('tm_no_data_cols_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_no_data_cols_target', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.tm_no_data_cols_target to add constraints: ADD CONSTRAINT tm_no_data_cols_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_no_data_cols_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
          add_unique_key          
 ---------------------------------
  tm_no_data_cols_target_id_valid
@@ -484,6 +489,7 @@ SELECT sql_saga.add_era('tm_extra_cols_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_extra_cols_target', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.tm_extra_cols_target to add constraints: ADD CONSTRAINT tm_extra_cols_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_extra_cols_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  tm_extra_cols_target_id_valid
@@ -526,11 +532,12 @@ ROLLBACK TO SAVEPOINT scenario_15;
 SAVEPOINT scenario_16;
 -- Scenario 16: Test `founding_id_column` for creating a new entity from multiple source rows.
 CREATE TABLE tm_founding_target (
-    id serial primary key,
+    id int generated by default as identity,
     entity_ident text,
     value text,
     valid_from date,
-    valid_until date
+    valid_until date,
+    PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('tm_founding_target', 'valid_from', 'valid_until');
  add_era 
@@ -539,6 +546,7 @@ SELECT sql_saga.add_era('tm_founding_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_founding_target', ARRAY['entity_ident']);
+NOTICE:  sql_saga: altering table public.tm_founding_target to add constraints: ADD CONSTRAINT tm_founding_target_entity_ident_valid_uniq UNIQUE (entity_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_founding_target_entity_ident_valid_excl EXCLUDE USING gist (entity_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
             add_unique_key             
 ---------------------------------------
  tm_founding_target_entity_ident_valid
@@ -583,7 +591,7 @@ ORDER BY valid_from;
  id | entity_ident | value | valid_from | valid_until 
 ----+--------------+-------+------------+-------------
   1 | NEW_ENTITY_1 | A     | 2024-01-01 | 2024-06-01
-  2 | NEW_ENTITY_1 | B     | 2024-06-01 | infinity
+  1 | NEW_ENTITY_1 | B     | 2024-06-01 | infinity
 (2 rows)
 
 -- Verify that both source rows were associated with the same new entity.

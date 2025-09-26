@@ -35,6 +35,7 @@ SELECT sql_saga.add_era('uk', 'f', 'u', 'p');
 (1 row)
 
 SELECT sql_saga.add_unique_key('uk', ARRAY['id'], 'p');
+NOTICE:  sql_saga: altering table public.uk to add constraints: ADD CONSTRAINT uk_id_p_uniq UNIQUE (id, f, u) DEFERRABLE, ADD CONSTRAINT uk_id_p_excl EXCLUDE USING gist (id WITH =, int4range(f, u) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  uk_id_p
@@ -48,6 +49,7 @@ SELECT sql_saga.add_era('fk', 'f', 'u', 'q');
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk', ARRAY['id'], 'q');
+NOTICE:  sql_saga: altering table public.fk to add constraints: ADD CONSTRAINT fk_id_q_uniq UNIQUE (id, f, u) DEFERRABLE, ADD CONSTRAINT fk_id_q_excl EXCLUDE USING gist (id WITH =, int4range(f, u) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  fk_id_q
@@ -216,6 +218,7 @@ SELECT sql_saga.add_era('t_uk', 'valid_after', 'valid_to');
 (1 row)
 
 SELECT sql_saga.add_unique_key('t_uk', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.t_uk to add constraints: ADD CONSTRAINT t_uk_id_valid_uniq UNIQUE (id, valid_after, valid_to) DEFERRABLE, ADD CONSTRAINT t_uk_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_after, valid_to) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  t_uk_id_valid
@@ -284,6 +287,7 @@ NOTICE:  sql_saga: Created trigger "t_uk_gen_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key('t_uk_gen', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.t_uk_gen to add constraints: ADD CONSTRAINT t_uk_gen_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT t_uk_gen_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  t_uk_gen_id_valid
@@ -354,6 +358,7 @@ SELECT sql_saga.add_era('legal_unit_bug', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('legal_unit_bug', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.legal_unit_bug to add constraints: ADD CONSTRAINT legal_unit_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
      add_unique_key      
 -------------------------
  legal_unit_bug_id_valid
@@ -375,6 +380,7 @@ SELECT sql_saga.add_era('establishment_bug', 'valid_from', 'valid_until');
 
 -- Note: A unique key on 'id' is not strictly necessary for this test but good practice.
 SELECT sql_saga.add_unique_key('establishment_bug', ARRAY['id']); 
+NOTICE:  sql_saga: altering table public.establishment_bug to add constraints: ADD CONSTRAINT establishment_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  establishment_bug_id_valid

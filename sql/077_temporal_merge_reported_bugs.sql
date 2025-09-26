@@ -4,10 +4,10 @@ BEGIN;
 
 
 \echo '--------------------------------------------------------------------------------'
-\echo 'Scenario 1: Demonstrate correct timeline extension with natural keys'
-\echo 'A new record is created instead of extending an existing one if the source'
-\echo 'provides a NULL stable key and no natural key is specified for lookup.'
-\echo 'This test demonstrates both the incorrect and correct usage patterns.'
+\echo 'Scenario 1: Demonstrate automatic discovery of natural keys for lookups'
+\echo 'temporal_merge can automatically discover registered natural keys if they are'
+\echo 'not explicitly provided. This test demonstrates that both automatic discovery'
+\echo 'and explicit provision of natural keys result in the correct behavior.'
 \echo '--------------------------------------------------------------------------------'
 
 -- 1. Setup
@@ -55,12 +55,13 @@ CREATE TEMP TABLE source_data_2 (
 INSERT INTO source_data_2 VALUES
 (2, 1, NULL, 100, 4, '2023-04-01', '2023-07-01');
 
-\echo '--- Case 1a: Incorrect Usage (no natural key) ---'
+\echo '--- Case 1a: Correct Usage (automatic discovery of natural key) ---'
 \echo '--- Source Data for Second Import ---'
 TABLE source_data_2;
 
--- This call incorrectly creates a new entity because the source `id` is NULL
--- and no natural key is provided to find the existing entity.
+-- This call correctly finds the existing entity by automatically discovering and
+-- using the natural key on `legal_unit_id`. Because the data is the same,
+-- it extends the timeline of the existing record.
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',
@@ -70,7 +71,7 @@ CALL sql_saga.temporal_merge(
     founding_id_column => 'founding_row_id'
 );
 
-\echo '--- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---'
+\echo '--- Target Table after Second Import (CORRECT: 1 extended row due to auto-discovery) ---'
 SELECT id, legal_unit_id, value_int, valid_from, valid_until FROM tmrb.my_stat_for_unit ORDER BY id, valid_from;
 
 -- 4. Reset and demonstrate correct usage.
@@ -86,9 +87,9 @@ CALL sql_saga.temporal_merge(
     founding_id_column => 'founding_row_id'
 );
 
-\echo '--- Case 1b: Correct Usage (with natural key) ---'
--- This call correctly finds the existing entity via the natural key `legal_unit_id`
--- and extends its timeline because the data has not changed.
+\echo '--- Case 1b: Correct Usage (explicitly providing natural key) ---'
+-- This call also correctly finds the existing entity, this time because the natural
+-- key is provided explicitly. The result is the same.
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',

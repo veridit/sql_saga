@@ -56,6 +56,7 @@ CREATE TABLE tmpc.source1 (row_id int, id int NOT NULL, valid_from date, valid_u
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
 --- Setting up tables with indexes and data for a realistic plan ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target'::regclass, column_names => ARRAY['id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table tmpc.target to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key  
 -----------------
  target_id_valid
@@ -114,124 +115,10 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%' \gset
+no rows returned for \gset
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 :explain_command
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (row_number() OVER (?))
-   CTE source_initial
-     ->  Seq Scan on source1 t
-   CTE target_rows
-     ->  Nested Loop
-           ->  HashAggregate
-                 Group Key: si.id
-                 ->  CTE Scan on source_initial si
-           ->  Index Scan using target_id_valid_excl on target inner_t
-                 Index Cond: (id = si.id)
-   CTE source_rows_with_new_flag
-     ->  CTE Scan on source_initial si_1
-           SubPlan 3
-             ->  CTE Scan on target_rows tr_1
-                   Filter: ((si_1.id = id) OR ((si_1.id IS NULL) AND (id IS NULL)))
-           SubPlan 4
-             ->  CTE Scan on target_rows tr_2
-                   Filter: ((si_1.id = id) OR ((si_1.id IS NULL) AND (id IS NULL)))
-   CTE active_source_rows
-     ->  CTE Scan on source_rows_with_new_flag
-   CTE all_rows
-     ->  Append
-           ->  CTE Scan on active_source_rows
-           ->  CTE Scan on target_rows tr_3
-   ->  WindowAgg
-         ->  Sort
-               Sort Key: "*SELECT* 1".id, (CASE "*SELECT* 1".operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END) NULLS FIRST, (COALESCE("*SELECT* 1".old_valid_from, "*SELECT* 1".new_valid_from)), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".row_ids[1])
-               ->  Hash Left Join
-                     Hash Cond: ("*SELECT* 1".row_ids[1] = sr.source_row_id)
-                     ->  Subquery Scan on "*SELECT* 1"
-                           ->  Subquery Scan on d
-                                 Filter: (((d.f_row_ids IS NOT NULL) OR (d.t_data IS NOT NULL)) AND (CASE WHEN (d.t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (d.f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (NOT d.unaffected_target_only_segment) THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action ELSE NULL::sql_saga.temporal_merge_plan_action END IS NOT NULL))
-                                 ->  WindowAgg
-                                       ->  Sort
-                                             Sort Key: (COALESCE(island_group.id, target_rows.id)), target_rows.valid_from, (CASE WHEN ((min(island_group.valid_from)) = target_rows.valid_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((((sql_saga.first(island_group.data_payload ORDER BY island_group.valid_from DESC) || sql_saga.first(island_group.ephemeral_payload ORDER BY island_group.valid_from DESC))) - '{}'::text[]) IS DISTINCT FROM ((target_rows.data_payload || target_rows.ephemeral_payload) - '{}'::text[]))) THEN 1 ELSE 2 END), (min(island_group.valid_from)), (max(island_group.valid_until))
-                                             ->  Hash Full Join
-                                                   Hash Cond: ((sql_saga.first(island_group.t_valid_from ORDER BY island_group.valid_from)) = target_rows.valid_from)
-                                                   Join Filter: ((island_group.id = target_rows.id) OR ((island_group.id IS NULL) AND (target_rows.id IS NULL)))
-                                                   ->  GroupAggregate
-                                                         Group Key: island_group.id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END)
-                                                         ->  Incremental Sort
-                                                               Sort Key: island_group.id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END), island_group.valid_from
-                                                               Presorted Key: island_group.id
-                                                               ->  Subquery Scan on island_group
-                                                                     ->  WindowAgg
-                                                                           ->  Incremental Sort
-                                                                                 Sort Key: s1.id, (CASE WHEN s1.partition_by_corr_ent THEN s1.corr_ent ELSE NULL::integer END), s1.valid_from
-                                                                                 Presorted Key: s1.id
-                                                                                 ->  Subquery Scan on s1
-                                                                                       ->  WindowAgg
-                                                                                             ->  Incremental Sort
-                                                                                                   Sort Key: resolved_atomic_segments_with_propagated_ids.id, (CASE WHEN resolved_atomic_segments_with_propagated_ids.partition_by_corr_ent THEN resolved_atomic_segments_with_propagated_ids.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_propagated_ids.valid_from
-                                                                                                   Presorted Key: resolved_atomic_segments_with_propagated_ids.id
-                                                                                                   ->  Subquery Scan on resolved_atomic_segments_with_propagated_ids
-                                                                                                         Filter: ((COALESCE(resolved_atomic_segments_with_propagated_ids.t_data_payload, '{}'::jsonb) || COALESCE(resolved_atomic_segments_with_propagated_ids.s_data_payload, '{}'::jsonb)) IS NOT NULL)
-                                                                                                         ->  WindowAgg
-                                                                                                               ->  Incremental Sort
-                                                                                                                     Sort Key: with_grp.id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_behind_grp
-                                                                                                                     Presorted Key: with_grp.id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END)
-                                                                                                                     ->  WindowAgg
-                                                                                                                           ->  Incremental Sort
-                                                                                                                                 Sort Key: with_grp.id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_ahead_grp
-                                                                                                                                 Presorted Key: with_grp.id, with_grp.t_valid_from
-                                                                                                                                 ->  Subquery Scan on with_grp
-                                                                                                                                       ->  WindowAgg
-                                                                                                                                             ->  Incremental Sort
-                                                                                                                                                   Sort Key: resolved_atomic_segments_with_payloads.id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from
-                                                                                                                                                   Presorted Key: resolved_atomic_segments_with_payloads.id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END)
-                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                               Sort Key: resolved_atomic_segments_with_payloads.id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from DESC
-                                                                                                                                                               Presorted Key: resolved_atomic_segments_with_payloads.id
-                                                                                                                                                               ->  Subquery Scan on resolved_atomic_segments_with_payloads
-                                                                                                                                                                     ->  WindowAgg
-                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                 Sort Key: with_lead.id, (CASE WHEN with_lead.partition_by_corr_ent THEN with_lead.corr_ent ELSE NULL::integer END), ((tr.stable_pk_payload IS NULL)), with_lead.point
-                                                                                                                                                                                 Presorted Key: with_lead.id
-                                                                                                                                                                                 ->  Nested Loop Left Join
-                                                                                                                                                                                       Filter: ((sr_1.data_payload IS NOT NULL) OR (tr.data_payload IS NOT NULL))
-                                                                                                                                                                                       ->  Nested Loop Left Join
-                                                                                                                                                                                             Join Filter: (((tr.id = with_lead.id) OR ((tr.id IS NULL) AND (with_lead.id IS NULL))) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(tr.valid_from, tr.valid_until)))
-                                                                                                                                                                                             ->  Subquery Scan on with_lead
-                                                                                                                                                                                                   Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
-                                                                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                                                                               Sort Key: time_points.id, (CASE WHEN time_points.partition_by_corr_ent THEN time_points.corr_ent ELSE NULL::integer END), time_points.point
-                                                                                                                                                                                                               Presorted Key: time_points.id
-                                                                                                                                                                                                               ->  Subquery Scan on time_points
-                                                                                                                                                                                                                     ->  Unique
-                                                                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                                                                 Sort Key: time_points_unified.id, (CASE WHEN time_points_unified.partition_by_corr_ent THEN time_points_unified.unified_corr_ent ELSE NULL::integer END), time_points_unified.point, time_points_unified.unified_corr_ent
-                                                                                                                                                                                                                                 Presorted Key: time_points_unified.id
-                                                                                                                                                                                                                                 ->  Subquery Scan on time_points_unified
-                                                                                                                                                                                                                                       ->  WindowAgg
-                                                                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                                                                   Sort Key: all_rows.id, (CASE WHEN all_rows.partition_by_corr_ent THEN all_rows.corr_ent ELSE NULL::integer END), all_rows.corr_ent
-                                                                                                                                                                                                                                                   ->  Result
-                                                                                                                                                                                                                                                         ->  Append
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows all_rows_1
-                                                                                                                                                                                             ->  CTE Scan on target_rows tr
-                                                                                                                                                                                       ->  Limit
-                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                   Sort Key: sr_1.source_row_id DESC
-                                                                                                                                                                                                   ->  CTE Scan on active_source_rows sr_1
-                                                                                                                                                                                                         Filter: (((id = with_lead.id) OR ((id IS NULL) AND (with_lead.id IS NULL))) AND ((NOT with_lead.stable_identity_columns_are_null) OR (corr_ent = with_lead.corr_ent)) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(valid_from, valid_until)))
-                                                   ->  Hash
-                                                         ->  CTE Scan on target_rows
-                     ->  Hash
-                           ->  CTE Scan on source_rows_with_new_flag sr
-(111 rows)
-
 \echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 
 --- Verifying that the plan is optimal (no Seq Scan on target) ---
@@ -246,6 +133,9 @@ BEGIN
     IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target". Check for non-SARGable query conditions.'; END IF;
 END;
 $$;
+ERROR:  syntax error at or near ":"
+LINE 1: :explain_command
+        ^
 \echo '--- OK: Verified that EXPLAIN plan is optimal. ---'
 --- OK: Verified that EXPLAIN plan is optimal. ---
 ROLLBACK TO SAVEPOINT s1;
@@ -267,6 +157,7 @@ CREATE TABLE tmpc.source_nk_not_null (row_id int, type text NOT NULL, lu_id int 
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
 --- Setting up tables with indexes and data for a realistic plan ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk_not_null'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table tmpc.target_nk_not_null to add constraints: ALTER COLUMN type SET NOT NULL, ALTER COLUMN lu_id SET NOT NULL, ADD PRIMARY KEY (type, lu_id, valid_from) DEFERRABLE, ADD CONSTRAINT target_nk_not_null_type_lu_id_valid_excl EXCLUDE USING gist (type WITH =, lu_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
            add_unique_key            
 -------------------------------------
  target_nk_not_null_type_lu_id_valid
@@ -320,124 +211,10 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk_nn FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%' \gset
+no rows returned for \gset
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 :explain_command_nk_nn
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (row_number() OVER (?))
-   CTE source_initial
-     ->  Seq Scan on source_nk_not_null t
-   CTE target_rows
-     ->  Nested Loop
-           ->  HashAggregate
-                 Group Key: si.type, si.lu_id
-                 ->  CTE Scan on source_initial si
-           ->  Index Scan using target_nk_not_null_type_lu_id_valid_excl on target_nk_not_null inner_t
-                 Index Cond: ((type = si.type) AND (lu_id = si.lu_id))
-   CTE source_rows_with_new_flag
-     ->  CTE Scan on source_initial si_1
-           SubPlan 3
-             ->  CTE Scan on target_rows tr_1
-                   Filter: (((si_1.type = type) OR ((si_1.type IS NULL) AND (type IS NULL))) AND ((si_1.lu_id = lu_id) OR ((si_1.lu_id IS NULL) AND (lu_id IS NULL))))
-           SubPlan 4
-             ->  CTE Scan on target_rows tr_2
-                   Filter: (((si_1.type = type) OR ((si_1.type IS NULL) AND (type IS NULL))) AND ((si_1.lu_id = lu_id) OR ((si_1.lu_id IS NULL) AND (lu_id IS NULL))))
-   CTE active_source_rows
-     ->  CTE Scan on source_rows_with_new_flag
-   CTE all_rows
-     ->  Append
-           ->  CTE Scan on active_source_rows
-           ->  CTE Scan on target_rows tr_3
-   ->  WindowAgg
-         ->  Sort
-               Sort Key: "*SELECT* 1".lu_id, "*SELECT* 1".type, (CASE "*SELECT* 1".operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END) NULLS FIRST, (COALESCE("*SELECT* 1".old_valid_from, "*SELECT* 1".new_valid_from)), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".row_ids[1])
-               ->  Hash Left Join
-                     Hash Cond: ("*SELECT* 1".row_ids[1] = sr.source_row_id)
-                     ->  Subquery Scan on "*SELECT* 1"
-                           ->  Subquery Scan on d
-                                 Filter: (((d.f_row_ids IS NOT NULL) OR (d.t_data IS NOT NULL)) AND (CASE WHEN (d.t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (d.f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (NOT d.unaffected_target_only_segment) THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action ELSE NULL::sql_saga.temporal_merge_plan_action END IS NOT NULL))
-                                 ->  WindowAgg
-                                       ->  Sort
-                                             Sort Key: (COALESCE(island_group.type, target_rows.type)), (COALESCE(island_group.lu_id, target_rows.lu_id)), target_rows.valid_from, (CASE WHEN ((min(island_group.valid_from)) = target_rows.valid_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((((sql_saga.first(island_group.data_payload ORDER BY island_group.valid_from DESC) || sql_saga.first(island_group.ephemeral_payload ORDER BY island_group.valid_from DESC))) - '{}'::text[]) IS DISTINCT FROM ((target_rows.data_payload || target_rows.ephemeral_payload) - '{}'::text[]))) THEN 1 ELSE 2 END), (min(island_group.valid_from)), (max(island_group.valid_until))
-                                             ->  Hash Full Join
-                                                   Hash Cond: ((sql_saga.first(island_group.t_valid_from ORDER BY island_group.valid_from)) = target_rows.valid_from)
-                                                   Join Filter: (((island_group.type = target_rows.type) OR ((island_group.type IS NULL) AND (target_rows.type IS NULL))) AND ((island_group.lu_id = target_rows.lu_id) OR ((island_group.lu_id IS NULL) AND (target_rows.lu_id IS NULL))))
-                                                   ->  GroupAggregate
-                                                         Group Key: island_group.type, island_group.lu_id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END)
-                                                         ->  Incremental Sort
-                                                               Sort Key: island_group.type, island_group.lu_id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END), island_group.valid_from
-                                                               Presorted Key: island_group.type, island_group.lu_id
-                                                               ->  Subquery Scan on island_group
-                                                                     ->  WindowAgg
-                                                                           ->  Incremental Sort
-                                                                                 Sort Key: s1.type, s1.lu_id, (CASE WHEN s1.partition_by_corr_ent THEN s1.corr_ent ELSE NULL::integer END), s1.valid_from
-                                                                                 Presorted Key: s1.type, s1.lu_id
-                                                                                 ->  Subquery Scan on s1
-                                                                                       ->  WindowAgg
-                                                                                             ->  Incremental Sort
-                                                                                                   Sort Key: resolved_atomic_segments_with_propagated_ids.type, resolved_atomic_segments_with_propagated_ids.lu_id, (CASE WHEN resolved_atomic_segments_with_propagated_ids.partition_by_corr_ent THEN resolved_atomic_segments_with_propagated_ids.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_propagated_ids.valid_from
-                                                                                                   Presorted Key: resolved_atomic_segments_with_propagated_ids.type, resolved_atomic_segments_with_propagated_ids.lu_id
-                                                                                                   ->  Subquery Scan on resolved_atomic_segments_with_propagated_ids
-                                                                                                         Filter: ((COALESCE(resolved_atomic_segments_with_propagated_ids.t_data_payload, '{}'::jsonb) || COALESCE(resolved_atomic_segments_with_propagated_ids.s_data_payload, '{}'::jsonb)) IS NOT NULL)
-                                                                                                         ->  WindowAgg
-                                                                                                               ->  Incremental Sort
-                                                                                                                     Sort Key: with_grp.type, with_grp.lu_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_behind_grp
-                                                                                                                     Presorted Key: with_grp.type, with_grp.lu_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END)
-                                                                                                                     ->  WindowAgg
-                                                                                                                           ->  Incremental Sort
-                                                                                                                                 Sort Key: with_grp.type, with_grp.lu_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_ahead_grp
-                                                                                                                                 Presorted Key: with_grp.type, with_grp.lu_id, with_grp.t_valid_from
-                                                                                                                                 ->  Subquery Scan on with_grp
-                                                                                                                                       ->  WindowAgg
-                                                                                                                                             ->  Incremental Sort
-                                                                                                                                                   Sort Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from
-                                                                                                                                                   Presorted Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END)
-                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                               Sort Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from DESC
-                                                                                                                                                               Presorted Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id
-                                                                                                                                                               ->  Subquery Scan on resolved_atomic_segments_with_payloads
-                                                                                                                                                                     ->  WindowAgg
-                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                 Sort Key: with_lead.type, with_lead.lu_id, (CASE WHEN with_lead.partition_by_corr_ent THEN with_lead.corr_ent ELSE NULL::integer END), ((tr.stable_pk_payload IS NULL)), with_lead.point
-                                                                                                                                                                                 Presorted Key: with_lead.type, with_lead.lu_id
-                                                                                                                                                                                 ->  Nested Loop Left Join
-                                                                                                                                                                                       Filter: ((sr_1.data_payload IS NOT NULL) OR (tr.data_payload IS NOT NULL))
-                                                                                                                                                                                       ->  Nested Loop Left Join
-                                                                                                                                                                                             Join Filter: (((tr.type = with_lead.type) OR ((tr.type IS NULL) AND (with_lead.type IS NULL))) AND ((tr.lu_id = with_lead.lu_id) OR ((tr.lu_id IS NULL) AND (with_lead.lu_id IS NULL))) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(tr.valid_from, tr.valid_until)))
-                                                                                                                                                                                             ->  Subquery Scan on with_lead
-                                                                                                                                                                                                   Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
-                                                                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                                                                               Sort Key: time_points.type, time_points.lu_id, (CASE WHEN time_points.partition_by_corr_ent THEN time_points.corr_ent ELSE NULL::integer END), time_points.point
-                                                                                                                                                                                                               Presorted Key: time_points.type, time_points.lu_id
-                                                                                                                                                                                                               ->  Subquery Scan on time_points
-                                                                                                                                                                                                                     ->  Unique
-                                                                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                                                                 Sort Key: time_points_unified.type, time_points_unified.lu_id, (CASE WHEN time_points_unified.partition_by_corr_ent THEN time_points_unified.unified_corr_ent ELSE NULL::integer END), time_points_unified.point, time_points_unified.unified_corr_ent
-                                                                                                                                                                                                                                 Presorted Key: time_points_unified.type, time_points_unified.lu_id
-                                                                                                                                                                                                                                 ->  Subquery Scan on time_points_unified
-                                                                                                                                                                                                                                       ->  WindowAgg
-                                                                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                                                                   Sort Key: all_rows.type, all_rows.lu_id, (CASE WHEN all_rows.partition_by_corr_ent THEN all_rows.corr_ent ELSE NULL::integer END), all_rows.corr_ent
-                                                                                                                                                                                                                                                   ->  Result
-                                                                                                                                                                                                                                                         ->  Append
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows all_rows_1
-                                                                                                                                                                                             ->  CTE Scan on target_rows tr
-                                                                                                                                                                                       ->  Limit
-                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                   Sort Key: sr_1.source_row_id DESC
-                                                                                                                                                                                                   ->  CTE Scan on active_source_rows sr_1
-                                                                                                                                                                                                         Filter: (((type = with_lead.type) OR ((type IS NULL) AND (with_lead.type IS NULL))) AND ((lu_id = with_lead.lu_id) OR ((lu_id IS NULL) AND (with_lead.lu_id IS NULL))) AND ((NOT with_lead.stable_identity_columns_are_null) OR (corr_ent = with_lead.corr_ent)) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(valid_from, valid_until)))
-                                                   ->  Hash
-                                                         ->  CTE Scan on target_rows
-                     ->  Hash
-                           ->  CTE Scan on source_rows_with_new_flag sr
-(111 rows)
-
 \echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 
 --- Verifying that the plan is optimal (no Seq Scan on target) ---
@@ -452,6 +229,9 @@ BEGIN
     IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for non-null natural key contains a "Seq Scan on target_nk_not_null".'; END IF;
 END;
 $$;
+ERROR:  syntax error at or near ":"
+LINE 1: :explain_command_nk_nn
+        ^
 \echo '--- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---'
 --- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---
 ROLLBACK TO SAVEPOINT s2;
@@ -477,12 +257,14 @@ CREATE TABLE tmpc.source_nk (row_id int, type text NOT NULL, lu_id int, es_id in
 \echo '--- Setting up natural key tables with partial indexes and data ---'
 --- Setting up natural key tables with partial indexes and data ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'predicated', predicate => 'es_id IS NULL');
+NOTICE:  sql_saga: altering table tmpc.target_nk to add constraints: ADD CONSTRAINT target_nk_type_lu_id_valid_excl EXCLUDE USING gist (type WITH =, lu_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (es_id IS NULL) DEFERRABLE
        add_unique_key       
 ----------------------------
  target_nk_type_lu_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'es_id'], key_type => 'predicated', predicate => 'lu_id IS NULL');
+NOTICE:  sql_saga: altering table tmpc.target_nk to add constraints: ADD CONSTRAINT target_nk_type_es_id_valid_excl EXCLUDE USING gist (type WITH =, es_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (lu_id IS NULL) DEFERRABLE
        add_unique_key       
 ----------------------------
  target_nk_type_es_id_valid
@@ -546,147 +328,10 @@ SELECT * FROM sql_saga.temporal_merge_plan(
 );
 \o
 SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%' \gset
+no rows returned for \gset
 \echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
 :explain_command_nk
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                QUERY PLAN                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (row_number() OVER (?))
-   CTE source_initial
-     ->  Seq Scan on source_nk t
-   CTE target_rows
-     ->  Subquery Scan on unnamed_subquery
-           ->  Unique
-                 ->  Sort
-                       Sort Key: inner_t.type, inner_t.lu_id, inner_t.es_id, inner_t.valid_from
-                       ->  Append
-                             ->  Nested Loop
-                                   ->  HashAggregate
-                                         Group Key: si.type, si.lu_id, si.es_id
-                                         ->  CTE Scan on source_initial si
-                                               Filter: ((type IS NOT NULL) AND (lu_id IS NOT NULL) AND (es_id IS NOT NULL))
-                                   ->  Index Scan using target_nk_type_es_id_idx on target_nk inner_t
-                                         Index Cond: ((type = si.type) AND (es_id = si.es_id))
-                                         Filter: (lu_id = si.lu_id)
-                             ->  Unique
-                                   ->  Sort
-                                         Sort Key: inner_t_1.type, inner_t_1.lu_id, inner_t_1.es_id, inner_t_1.valid_from
-                                         ->  Nested Loop
-                                               ->  CTE Scan on source_initial si_1
-                                                     Filter: (es_id IS NULL)
-                                               ->  Index Scan using target_nk_type_lu_id_valid_excl on target_nk inner_t_1
-                                                     Index Cond: ((type = si_1.type) AND (lu_id = si_1.lu_id))
-                             ->  Unique
-                                   ->  Sort
-                                         Sort Key: inner_t_2.type, inner_t_2.lu_id, inner_t_2.es_id, inner_t_2.valid_from
-                                         ->  Nested Loop
-                                               ->  CTE Scan on source_initial si_2
-                                                     Filter: (lu_id IS NULL)
-                                               ->  Index Scan using target_nk_type_es_id_valid_excl on target_nk inner_t_2
-                                                     Index Cond: ((type = si_2.type) AND (es_id = si_2.es_id))
-   CTE source_rows_with_new_flag
-     ->  CTE Scan on source_initial si_3
-           SubPlan 3
-             ->  CTE Scan on target_rows tr_1
-                   Filter: (((si_3.type = type) OR ((si_3.type IS NULL) AND (type IS NULL))) AND ((si_3.lu_id = lu_id) OR ((si_3.lu_id IS NULL) AND (lu_id IS NULL))) AND ((si_3.es_id = es_id) OR ((si_3.es_id IS NULL) AND (es_id IS NULL))))
-           SubPlan 4
-             ->  CTE Scan on target_rows tr_2
-                   Filter: (((si_3.type = type) OR ((si_3.type IS NULL) AND (type IS NULL))) AND ((si_3.lu_id = lu_id) OR ((si_3.lu_id IS NULL) AND (lu_id IS NULL))) AND ((si_3.es_id = es_id) OR ((si_3.es_id IS NULL) AND (es_id IS NULL))))
-   CTE active_source_rows
-     ->  CTE Scan on source_rows_with_new_flag
-   CTE all_rows
-     ->  Append
-           ->  CTE Scan on active_source_rows
-           ->  CTE Scan on target_rows tr_3
-   ->  WindowAgg
-         ->  Sort
-               Sort Key: "*SELECT* 1".es_id, "*SELECT* 1".lu_id, "*SELECT* 1".type, (CASE "*SELECT* 1".operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), (CASE WHEN ("*SELECT* 1".operation <> 'UPDATE'::sql_saga.temporal_merge_plan_action) THEN NULL::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from = "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until = "*SELECT* 1".old_valid_until)) THEN 'NONE'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from <= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until >= "*SELECT* 1".old_valid_until)) THEN 'GROW'::sql_saga.temporal_merge_update_effect WHEN (("*SELECT* 1".new_valid_from >= "*SELECT* 1".old_valid_from) AND ("*SELECT* 1".new_valid_until <= "*SELECT* 1".old_valid_until)) THEN 'SHRINK'::sql_saga.temporal_merge_update_effect ELSE 'MOVE'::sql_saga.temporal_merge_update_effect END) NULLS FIRST, (COALESCE("*SELECT* 1".old_valid_from, "*SELECT* 1".new_valid_from)), (COALESCE("*SELECT* 1".new_valid_from, "*SELECT* 1".old_valid_from)), ("*SELECT* 1".row_ids[1])
-               ->  Hash Left Join
-                     Hash Cond: ("*SELECT* 1".row_ids[1] = sr.source_row_id)
-                     ->  Subquery Scan on "*SELECT* 1"
-                           ->  Subquery Scan on d
-                                 Filter: (((d.f_row_ids IS NOT NULL) OR (d.t_data IS NOT NULL)) AND (CASE WHEN (d.t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (d.f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (d.update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (NOT d.unaffected_target_only_segment) THEN 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action ELSE NULL::sql_saga.temporal_merge_plan_action END IS NOT NULL))
-                                 ->  WindowAgg
-                                       ->  Sort
-                                             Sort Key: (COALESCE(island_group.type, target_rows.type)), (COALESCE(island_group.lu_id, target_rows.lu_id)), (COALESCE(island_group.es_id, target_rows.es_id)), target_rows.valid_from, (CASE WHEN ((min(island_group.valid_from)) = target_rows.valid_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((((sql_saga.first(island_group.data_payload ORDER BY island_group.valid_from DESC) || sql_saga.first(island_group.ephemeral_payload ORDER BY island_group.valid_from DESC))) - '{}'::text[]) IS DISTINCT FROM ((target_rows.data_payload || target_rows.ephemeral_payload) - '{}'::text[]))) THEN 1 ELSE 2 END), (min(island_group.valid_from)), (max(island_group.valid_until))
-                                             ->  Hash Full Join
-                                                   Hash Cond: ((sql_saga.first(island_group.t_valid_from ORDER BY island_group.valid_from)) = target_rows.valid_from)
-                                                   Join Filter: (((island_group.type = target_rows.type) OR ((island_group.type IS NULL) AND (target_rows.type IS NULL))) AND ((island_group.lu_id = target_rows.lu_id) OR ((island_group.lu_id IS NULL) AND (target_rows.lu_id IS NULL))) AND ((island_group.es_id = target_rows.es_id) OR ((island_group.es_id IS NULL) AND (target_rows.es_id IS NULL))))
-                                                   ->  GroupAggregate
-                                                         Group Key: island_group.type, island_group.lu_id, island_group.es_id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END)
-                                                         ->  Incremental Sort
-                                                               Sort Key: island_group.type, island_group.lu_id, island_group.es_id, island_group.island_group_id, (CASE WHEN island_group.partition_by_corr_ent THEN island_group.corr_ent ELSE NULL::integer END), island_group.valid_from
-                                                               Presorted Key: island_group.type, island_group.lu_id, island_group.es_id
-                                                               ->  Subquery Scan on island_group
-                                                                     ->  WindowAgg
-                                                                           ->  Incremental Sort
-                                                                                 Sort Key: s1.type, s1.lu_id, s1.es_id, (CASE WHEN s1.partition_by_corr_ent THEN s1.corr_ent ELSE NULL::integer END), s1.valid_from
-                                                                                 Presorted Key: s1.type, s1.lu_id, s1.es_id
-                                                                                 ->  Subquery Scan on s1
-                                                                                       ->  WindowAgg
-                                                                                             ->  Incremental Sort
-                                                                                                   Sort Key: resolved_atomic_segments_with_propagated_ids.type, resolved_atomic_segments_with_propagated_ids.lu_id, resolved_atomic_segments_with_propagated_ids.es_id, (CASE WHEN resolved_atomic_segments_with_propagated_ids.partition_by_corr_ent THEN resolved_atomic_segments_with_propagated_ids.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_propagated_ids.valid_from
-                                                                                                   Presorted Key: resolved_atomic_segments_with_propagated_ids.type, resolved_atomic_segments_with_propagated_ids.lu_id, resolved_atomic_segments_with_propagated_ids.es_id
-                                                                                                   ->  Subquery Scan on resolved_atomic_segments_with_propagated_ids
-                                                                                                         Filter: ((COALESCE(resolved_atomic_segments_with_propagated_ids.t_data_payload, '{}'::jsonb) || COALESCE(resolved_atomic_segments_with_propagated_ids.s_data_payload, '{}'::jsonb)) IS NOT NULL)
-                                                                                                         ->  WindowAgg
-                                                                                                               ->  Incremental Sort
-                                                                                                                     Sort Key: with_grp.type, with_grp.lu_id, with_grp.es_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_behind_grp
-                                                                                                                     Presorted Key: with_grp.type, with_grp.lu_id, with_grp.es_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END)
-                                                                                                                     ->  WindowAgg
-                                                                                                                           ->  Incremental Sort
-                                                                                                                                 Sort Key: with_grp.type, with_grp.lu_id, with_grp.es_id, with_grp.t_valid_from, (CASE WHEN with_grp.partition_by_corr_ent THEN with_grp.corr_ent ELSE NULL::integer END), with_grp.look_ahead_grp
-                                                                                                                                 Presorted Key: with_grp.type, with_grp.lu_id, with_grp.es_id, with_grp.t_valid_from
-                                                                                                                                 ->  Subquery Scan on with_grp
-                                                                                                                                       ->  WindowAgg
-                                                                                                                                             ->  Incremental Sort
-                                                                                                                                                   Sort Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.es_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from
-                                                                                                                                                   Presorted Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.es_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END)
-                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                               Sort Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.es_id, resolved_atomic_segments_with_payloads.t_valid_from, (CASE WHEN resolved_atomic_segments_with_payloads.partition_by_corr_ent THEN resolved_atomic_segments_with_payloads.corr_ent ELSE NULL::integer END), resolved_atomic_segments_with_payloads.valid_from DESC
-                                                                                                                                                               Presorted Key: resolved_atomic_segments_with_payloads.type, resolved_atomic_segments_with_payloads.lu_id, resolved_atomic_segments_with_payloads.es_id
-                                                                                                                                                               ->  Subquery Scan on resolved_atomic_segments_with_payloads
-                                                                                                                                                                     ->  WindowAgg
-                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                 Sort Key: with_lead.type, with_lead.lu_id, with_lead.es_id, (CASE WHEN with_lead.partition_by_corr_ent THEN with_lead.corr_ent ELSE NULL::integer END), ((tr.stable_pk_payload IS NULL)), with_lead.point
-                                                                                                                                                                                 Presorted Key: with_lead.type, with_lead.lu_id, with_lead.es_id
-                                                                                                                                                                                 ->  Nested Loop Left Join
-                                                                                                                                                                                       Filter: ((sr_1.data_payload IS NOT NULL) OR (tr.data_payload IS NOT NULL))
-                                                                                                                                                                                       ->  Nested Loop Left Join
-                                                                                                                                                                                             Join Filter: (((tr.type = with_lead.type) OR ((tr.type IS NULL) AND (with_lead.type IS NULL))) AND ((tr.lu_id = with_lead.lu_id) OR ((tr.lu_id IS NULL) AND (with_lead.lu_id IS NULL))) AND ((tr.es_id = with_lead.es_id) OR ((tr.es_id IS NULL) AND (with_lead.es_id IS NULL))) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(tr.valid_from, tr.valid_until)))
-                                                                                                                                                                                             ->  Subquery Scan on with_lead
-                                                                                                                                                                                                   Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
-                                                                                                                                                                                                   ->  WindowAgg
-                                                                                                                                                                                                         ->  Incremental Sort
-                                                                                                                                                                                                               Sort Key: time_points.type, time_points.lu_id, time_points.es_id, (CASE WHEN time_points.partition_by_corr_ent THEN time_points.corr_ent ELSE NULL::integer END), time_points.point
-                                                                                                                                                                                                               Presorted Key: time_points.type, time_points.lu_id, time_points.es_id
-                                                                                                                                                                                                               ->  Subquery Scan on time_points
-                                                                                                                                                                                                                     ->  Unique
-                                                                                                                                                                                                                           ->  Incremental Sort
-                                                                                                                                                                                                                                 Sort Key: time_points_unified.type, time_points_unified.lu_id, time_points_unified.es_id, (CASE WHEN time_points_unified.partition_by_corr_ent THEN time_points_unified.unified_corr_ent ELSE NULL::integer END), time_points_unified.point, time_points_unified.unified_corr_ent
-                                                                                                                                                                                                                                 Presorted Key: time_points_unified.type, time_points_unified.lu_id, time_points_unified.es_id
-                                                                                                                                                                                                                                 ->  Subquery Scan on time_points_unified
-                                                                                                                                                                                                                                       ->  WindowAgg
-                                                                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                                                                   Sort Key: all_rows.type, all_rows.lu_id, all_rows.es_id, (CASE WHEN all_rows.partition_by_corr_ent THEN all_rows.corr_ent ELSE NULL::integer END), all_rows.corr_ent
-                                                                                                                                                                                                                                                   ->  Result
-                                                                                                                                                                                                                                                         ->  Append
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows
-                                                                                                                                                                                                                                                               ->  CTE Scan on all_rows all_rows_1
-                                                                                                                                                                                             ->  CTE Scan on target_rows tr
-                                                                                                                                                                                       ->  Limit
-                                                                                                                                                                                             ->  Sort
-                                                                                                                                                                                                   Sort Key: sr_1.source_row_id DESC
-                                                                                                                                                                                                   ->  CTE Scan on active_source_rows sr_1
-                                                                                                                                                                                                         Filter: (((type = with_lead.type) OR ((type IS NULL) AND (with_lead.type IS NULL))) AND ((lu_id = with_lead.lu_id) OR ((lu_id IS NULL) AND (with_lead.lu_id IS NULL))) AND ((es_id = with_lead.es_id) OR ((es_id IS NULL) AND (with_lead.es_id IS NULL))) AND ((NOT with_lead.stable_identity_columns_are_null) OR (corr_ent = with_lead.corr_ent)) AND (daterange(with_lead.point, with_lead.next_point) <@ daterange(valid_from, valid_until)))
-                                                   ->  Hash
-                                                         ->  CTE Scan on target_rows
-                     ->  Hash
-                           ->  CTE Scan on source_rows_with_new_flag sr
-(134 rows)
-
 \echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 
 --- Verifying that the plan is optimal (no Seq Scan on target) ---
@@ -701,6 +346,9 @@ BEGIN
     IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for nullable natural key contains a "Seq Scan on target_nk".'; END IF;
 END;
 $$;
+ERROR:  syntax error at or near ":"
+LINE 1: :explain_command_nk
+        ^
 \echo '--- OK: Verified that EXPLAIN plan for natural key is optimal. ---'
 --- OK: Verified that EXPLAIN plan for natural key is optimal. ---
 ROLLBACK TO SAVEPOINT s3;

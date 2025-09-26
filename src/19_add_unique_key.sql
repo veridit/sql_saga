@@ -6,7 +6,8 @@ CREATE FUNCTION sql_saga.add_unique_key(
         unique_key_name name DEFAULT NULL,
         unique_constraint name DEFAULT NULL,
         exclude_constraint name DEFAULT NULL,
-        predicate text DEFAULT NULL)
+        predicate text DEFAULT NULL,
+        mutually_exclusive_columns name[] DEFAULT NULL)
  RETURNS name
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -26,9 +27,12 @@ DECLARE
     alter_cmds text[];
     v_unique_constraint_found boolean := false;
     v_exclude_constraint_found boolean := false;
+    v_check_constraint name;
     unique_sql text;
     exclude_sql text;
     where_clause text;
+    partial_index_names name[];
+    partial_exclude_constraint_names name[];
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -101,6 +105,15 @@ BEGIN
 
     IF key_type IN ('primary', 'natural') AND predicate IS NOT NULL THEN
         RAISE EXCEPTION 'a predicate can only be provided when key_type is ''predicated''';
+    END IF;
+
+    IF mutually_exclusive_columns IS NOT NULL THEN
+        IF NOT column_names @> mutually_exclusive_columns THEN
+            RAISE EXCEPTION 'all mutually_exclusive_columns must be present in column_names';
+        END IF;
+        IF key_type <> 'natural' THEN
+            RAISE EXCEPTION 'mutually_exclusive_columns can only be used with key_type = ''natural''';
+        END IF;
     END IF;
 
     where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
@@ -327,20 +340,31 @@ BEGIN
     unique_key_name := unique_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
     /* Time to make the underlying constraints */
-    alter_cmds := '{}';
+    IF key_type = 'primary' THEN
+        SELECT array_agg(format('ALTER COLUMN %I SET NOT NULL', u.column_name))
+        INTO alter_cmds
+        FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
+    ELSE
+        alter_cmds := '{}';
+    END IF;
+
     IF key_type IN ('primary', 'natural') THEN
-        IF NOT v_unique_constraint_found THEN
-            IF unique_constraint IS NULL THEN
-                -- If this is a primary key, Postgres will name it automatically.
-                -- For natural keys, we'll generate a name for consistency.
-                IF key_type = 'natural' THEN
-                    unique_constraint := unique_key_name || '_uniq';
-                    alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+        -- For XOR keys, we don't create a single overarching UNIQUE constraint.
+        -- Uniqueness is handled by the partial indexes.
+        IF mutually_exclusive_columns IS NULL THEN
+            IF NOT v_unique_constraint_found THEN
+                IF unique_constraint IS NULL THEN
+                    -- If this is a primary key, Postgres will name it automatically.
+                    -- For natural keys, we'll generate a name for consistency.
+                    IF key_type = 'natural' THEN
+                        unique_constraint := unique_key_name || '_uniq';
+                        alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+                    ELSE
+                        alter_cmds := alter_cmds || ('ADD ' || unique_sql);
+                    END IF;
                 ELSE
-                    alter_cmds := alter_cmds || ('ADD ' || unique_sql);
+                     alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
                 END IF;
-            ELSE
-                 alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
             END IF;
         END IF;
     ELSIF key_type = 'predicated' THEN
@@ -359,14 +383,103 @@ BEGIN
         EXECUTE unique_sql;
     END IF;
 
-    IF NOT v_exclude_constraint_found THEN
-        IF exclude_constraint IS NULL THEN
-            exclude_constraint := unique_key_name || '_excl';
+    -- For XOR keys, we create partial exclusion constraints instead of one broad one.
+    IF mutually_exclusive_columns IS NULL THEN
+        IF NOT v_exclude_constraint_found THEN
+            IF exclude_constraint IS NULL THEN
+                exclude_constraint := unique_key_name || '_excl';
+            END IF;
+            alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(exclude_constraint) || ' ' || exclude_sql);
         END IF;
-        alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(exclude_constraint) || ' ' || exclude_sql);
+    ELSE -- mutually_exclusive_columns IS NOT NULL
+        DECLARE
+            check_constraint_name name;
+            check_sql text;
+        BEGIN
+            -- Generate and add the CHECK constraint for XOR logic
+            check_constraint_name := unique_key_name || '_xor_check';
+            -- For XOR keys, we store the check constraint's name in the `check_constraint` column for metadata purposes.
+            v_check_constraint := check_constraint_name;
+            unique_constraint := NULL; -- No single unique constraint for XOR keys.
+            check_sql := format(
+                'ADD CONSTRAINT %I CHECK ((%s) = 1)',
+                check_constraint_name,
+                (SELECT string_agg(format('(CASE WHEN %I IS NOT NULL THEN 1 ELSE 0 END)', col), ' + ') FROM unnest(mutually_exclusive_columns) as col)
+            );
+            alter_cmds := alter_cmds || check_sql;
+
+            -- For each mutually exclusive case, create two things:
+            -- 1. A partial B-Tree index for fast lookups (performance).
+            -- 2. A partial EXCLUDE constraint for temporal uniqueness (correctness).
+            DECLARE
+                non_xor_cols name[];
+                xor_col name;
+            BEGIN
+                non_xor_cols := ARRAY(SELECT c FROM unnest(column_names) AS c WHERE c <> ALL(mutually_exclusive_columns));
+                FOREACH xor_col IN ARRAY mutually_exclusive_columns
+                LOOP
+                    DECLARE
+                        partial_constraint_name name;
+                        partial_index_name name;
+                        withs text[];
+                        where_clause_partial text;
+                        partial_exclude_sql text;
+                        partial_index_sql text;
+                        where_clause_for_index text;
+                    BEGIN
+                        -- 1. Create the performance B-Tree index. This is NOT unique; uniqueness is handled by the EXCLUDE constraint.
+                        partial_index_name := unique_key_name || '_' || xor_col || '_idx';
+                        where_clause_for_index := format('WHERE %I IS NOT NULL AND (%s)',
+                            xor_col,
+                            (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col)
+                        );
+                        partial_index_sql := format(
+                            'CREATE INDEX %I ON %I.%I (%s) %s',
+                            partial_index_name,
+                            table_schema,
+                            table_name,
+                            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(non_xor_cols || xor_col) AS u(c)),
+                            where_clause_for_index
+                        );
+                        RAISE NOTICE 'sql_saga: creating partial performance index: %', partial_index_sql;
+                        EXECUTE partial_index_sql;
+                        partial_index_names := partial_index_names || partial_index_name;
+
+                        -- 2. Create the correctness EXCLUDE constraint.
+                        partial_constraint_name := unique_key_name || '_' || xor_col || '_excl';
+                        SELECT array_agg(format('%I WITH =', column_name))
+                        INTO withs
+                        FROM unnest(non_xor_cols || xor_col) AS column_name;
+
+                        withs := withs || format('%I(%I, %I) WITH &&',
+                            era_row.range_type,
+                            era_row.valid_from_column_name,
+                            era_row.valid_until_column_name
+                        );
+
+                        -- The WHERE clause for a partial constraint must be enclosed in parentheses.
+                        where_clause_partial := format('WHERE (%I IS NOT NULL AND (%s))',
+                            xor_col,
+                            (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col)
+                        );
+
+                        partial_exclude_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s) %s DEFERRABLE',
+                            partial_constraint_name,
+                            array_to_string(withs, ', '),
+                            where_clause_partial
+                        );
+                        alter_cmds := alter_cmds || partial_exclude_sql;
+                        partial_exclude_constraint_names := partial_exclude_constraint_names || partial_constraint_name;
+                    END;
+                END LOOP;
+            END;
+            -- The single, broad exclude_constraint is not used for XOR keys.
+            exclude_constraint := NULL;
+        END;
     END IF;
 
     IF alter_cmds <> '{}' THEN
+        RAISE NOTICE 'sql_saga: altering table %.% to add constraints: %', table_schema, table_name, array_to_string(alter_cmds, ', ');
         SELECT format('ALTER TABLE %I.%I %s', n.nspname /* %I */, c.relname /* %I */, array_to_string(alter_cmds, ', ') /* %s */)
         INTO sql
         FROM pg_catalog.pg_class AS c
@@ -389,8 +502,10 @@ BEGIN
     /* If we created an exclude_constraint, we already know its name. */
 
 
-    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, predicate)
-    VALUES (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, predicate);
+    RAISE DEBUG 'add_unique_key: Inserting into sql_saga.unique_keys: name=%, table=%.%, key_type=%, cols=%, era=%, u_constraint=%, ex_constraint=%, check_constraint=%, predicate=%, mut_ex_cols=%, partial_indices=%, partial_constraints=%',
+        unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names;
+    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names)
+    VALUES (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names);
 
     -- Create a standard B-Tree index on the unique key columns to support
     -- fast lookups for foreign key checks (both temporal and regular).
@@ -430,5 +545,5 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text) IS
+COMMENT ON FUNCTION sql_saga.add_unique_key(regclass, name[], name, sql_saga.unique_key_type, name, name, name, text, name[]) IS
 'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys.';

@@ -238,7 +238,8 @@ FUNCTION add_unique_key(
     unique_key_name name DEFAULT NULL::name,
     unique_constraint name DEFAULT NULL::name,
     exclude_constraint name DEFAULT NULL::name,
-    predicate text DEFAULT NULL::text
+    predicate text DEFAULT NULL::text,
+    mutually_exclusive_columns name[] DEFAULT NULL::name[]
 ) RETURNS name
 SECURITY DEFINER
 ```
@@ -460,7 +461,7 @@ SECURITY INVOKER
 PROCEDURE temporal_merge(
     IN target_table regclass,
     IN source_table regclass,
-    IN identity_columns text[],
+    IN identity_columns text[] DEFAULT NULL::text[],
     IN mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     IN era_name name DEFAULT 'valid'::name,
     IN row_id_column name DEFAULT 'row_id'::name,
@@ -473,7 +474,8 @@ PROCEDURE temporal_merge(
     IN feedback_status_key name DEFAULT NULL::name,
     IN feedback_error_column name DEFAULT NULL::name,
     IN feedback_error_key name DEFAULT NULL::name,
-    IN ephemeral_columns text[] DEFAULT NULL::text[]
+    IN ephemeral_columns text[] DEFAULT NULL::text[],
+    IN delay_constraints boolean DEFAULT true
 )
 SECURITY INVOKER
 ```

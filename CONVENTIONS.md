@@ -23,6 +23,11 @@ For file system operations and large-scale edits, prefer suggesting shell comman
 - For simple content replacement (e.g., replacing an entire file's contents), `echo "new content" > filename` can be used instead of a large `SEARCH/REPLACE` block.
 - For large-scale, repetitive search-and-replace operations across multiple files, powerful tools like `ruplacer` and `renamer` are available and should be used.
 
+## Shell Command Rules
+
+- All shell commands must be single-line. The execution environment splits commands by newline.
+- Do not suggest multi-line `echo` commands. To write multi-line content to a file, `echo` a single-line string with `\n` characters to a temporary file first.
+
 ## Coding Standards
 
 ### C Code (PostgreSQL Extensions)
@@ -207,10 +212,10 @@ The `temporal_merge` planner includes a permanent `trace` column in its output (
     - **`CASE` statements:** In other areas, an explicit `CASE WHEN ...` statement is used, which also guarantees the expensive trace-building logic is skipped.
     Both approaches ensure that the architectural decision to have a permanent `trace` column incurs no runtime overhead when tracing is not active.
 
-2.  **Trace is Toggled via GUC:** Tracing is activated for a specific operation by setting the session-level GUC: `SET sql_saga.temporal_merge.log_trace = true;`. When `false` (the default), the planner populates the `trace` column with `NULL`.
+2.  **Trace is Toggled via GUC:** Tracing is activated for a specific operation by setting the session-level GUC: `SET sql_saga.temporal_merge.enable_trace = true;`. When `false` (the default), the planner populates the `trace` column with `NULL`.
 
 3.  **Debugging Protocol:** When a `temporal_merge` test fails and the root cause is not immediately obvious from the plan output, the following steps are mandatory:
-    a.  **Enable Trace:** In the test file, wrap the failing `CALL sql_saga.temporal_merge(...)` with `SET sql_saga.temporal_merge.log_trace = true;` and `SET sql_saga.temporal_merge.log_trace = false;`.
+    a.  **Enable Trace:** In the test file, wrap the failing `CALL sql_saga.temporal_merge(...)` with `SET sql_saga.temporal_merge.enable_trace = true;` and `SET sql_saga.temporal_merge.enable_trace = false;`.
     b.  **Isolate Trace in Diffs:** Run the test and inspect the diff in trace to gain understanding. The expected has NULL in trace, and the actual has the trace due to the GUC variable setting. The `SELECT`s must remain unchanged, such that when the the issue is fixed and the trace is disabled again it will mach. This technique ensures that if the plan's data is wrong, the test will fail, and the `diff` output will contain the full trace from the actual plan for analysis.
 
 4.  **Trace Aggregation:** When multiple atomic time segments are coalesced into a single final plan operation, their individual traces must be aggregated into a `jsonb` array using `jsonb_agg`. This provides a complete diagnostic record of all atomic segments that were merged into the final operation. The trace for each atomic segment includes the Allen Interval Relation (`s_t_relation`) between the covering source and target rows, providing detailed insight into the initial temporal interaction that created the segment.

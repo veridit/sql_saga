@@ -26,14 +26,14 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
-\echo 'Scenario 1: Demonstrate correct timeline extension with natural keys'
-Scenario 1: Demonstrate correct timeline extension with natural keys
-\echo 'A new record is created instead of extending an existing one if the source'
-A new record is created instead of extending an existing one if the source
-\echo 'provides a NULL stable key and no natural key is specified for lookup.'
-provides a NULL stable key and no natural key is specified for lookup.
-\echo 'This test demonstrates both the incorrect and correct usage patterns.'
-This test demonstrates both the incorrect and correct usage patterns.
+\echo 'Scenario 1: Demonstrate automatic discovery of natural keys for lookups'
+Scenario 1: Demonstrate automatic discovery of natural keys for lookups
+\echo 'temporal_merge can automatically discover registered natural keys if they are'
+temporal_merge can automatically discover registered natural keys if they are
+\echo 'not explicitly provided. This test demonstrates that both automatic discovery'
+not explicitly provided. This test demonstrates that both automatic discovery
+\echo 'and explicit provision of natural keys result in the correct behavior.'
+and explicit provision of natural keys result in the correct behavior.
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 -- 1. Setup
@@ -55,12 +55,14 @@ SELECT sql_saga.add_era('tmrb.my_stat_for_unit'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{id}');
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
       add_unique_key       
 ---------------------------
  my_stat_for_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{legal_unit_id}');
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
             add_unique_key            
 --------------------------------------
  my_stat_for_unit_legal_unit_id_valid
@@ -102,8 +104,8 @@ CREATE TEMP TABLE source_data_2 (
 ) ON COMMIT DROP;
 INSERT INTO source_data_2 VALUES
 (2, 1, NULL, 100, 4, '2023-04-01', '2023-07-01');
-\echo '--- Case 1a: Incorrect Usage (no natural key) ---'
---- Case 1a: Incorrect Usage (no natural key) ---
+\echo '--- Case 1a: Correct Usage (automatic discovery of natural key) ---'
+--- Case 1a: Correct Usage (automatic discovery of natural key) ---
 \echo '--- Source Data for Second Import ---'
 --- Source Data for Second Import ---
 TABLE source_data_2;
@@ -112,8 +114,9 @@ TABLE source_data_2;
       2 |               1 |    |           100 |         4 | 2023-04-01 | 2023-07-01
 (1 row)
 
--- This call incorrectly creates a new entity because the source `id` is NULL
--- and no natural key is provided to find the existing entity.
+-- This call correctly finds the existing entity by automatically discovering and
+-- using the natural key on `legal_unit_id`. Because the data is the same,
+-- it extends the timeline of the existing record.
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',
@@ -122,14 +125,13 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
 );
-\echo '--- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---'
---- Target Table after Second Import (INCORRECT: 2 rows instead of 1 extended row) ---
+\echo '--- Target Table after Second Import (CORRECT: 1 extended row due to auto-discovery) ---'
+--- Target Table after Second Import (CORRECT: 1 extended row due to auto-discovery) ---
 SELECT id, legal_unit_id, value_int, valid_from, valid_until FROM tmrb.my_stat_for_unit ORDER BY id, valid_from;
  id | legal_unit_id | value_int | valid_from | valid_until 
 ----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
-  2 |           100 |         4 | 2023-04-01 | 2023-07-01
-(2 rows)
+  1 |           100 |         4 | 2023-01-01 | 2023-07-01
+(1 row)
 
 -- 4. Reset and demonstrate correct usage.
 TRUNCATE tmrb.my_stat_for_unit;
@@ -143,10 +145,10 @@ CALL sql_saga.temporal_merge(
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
 );
-\echo '--- Case 1b: Correct Usage (with natural key) ---'
---- Case 1b: Correct Usage (with natural key) ---
--- This call correctly finds the existing entity via the natural key `legal_unit_id`
--- and extends its timeline because the data has not changed.
+\echo '--- Case 1b: Correct Usage (explicitly providing natural key) ---'
+--- Case 1b: Correct Usage (explicitly providing natural key) ---
+-- This call also correctly finds the existing entity, this time because the natural
+-- key is provided explicitly. The result is the same.
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',
@@ -160,7 +162,7 @@ CALL sql_saga.temporal_merge(
 SELECT id, legal_unit_id, value_int, valid_from, valid_until FROM tmrb.my_stat_for_unit;
  id | legal_unit_id | value_int | valid_from | valid_until 
 ----+---------------+-----------+------------+-------------
-  3 |           100 |         4 | 2023-01-01 | 2023-07-01
+  2 |           100 |         4 | 2023-01-01 | 2023-07-01
 (1 row)
 
 \echo '--------------------------------------------------------------------------------'
@@ -308,9 +310,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner output for Case 2b ---'
 --- Planner output for Case 2b ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | trace 
--------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+-------
-           1 | {2}     | INSERT    |               | 2        | f       | {"id": 1}  |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} | 
+ plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace 
+-------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------
+           1 | {2}     | INSERT    |               | 2        | f       | {"id": 1}  |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} |          | 
 (1 row)
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
@@ -467,6 +469,7 @@ SELECT sql_saga.add_era('tmrb.bug_repro_1'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
+NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
          add_unique_key          
 ---------------------------------
  bug_repro_1_legal_unit_id_valid
@@ -586,6 +589,7 @@ NOTICE:  sql_saga: Created trigger "legal_unit_kranloft_synchronize_temporal_col
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_kranloft'::regclass, '{id}');
+NOTICE:  sql_saga: altering table tmrb.legal_unit_kranloft to add constraints: ADD CONSTRAINT legal_unit_kranloft_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_kranloft_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key        
 ------------------------------
  legal_unit_kranloft_id_valid
@@ -644,6 +648,7 @@ NOTICE:  sql_saga: Created trigger "ephemeral_validation_synchronize_temporal_co
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.ephemeral_validation'::regclass, '{id}');
+NOTICE:  sql_saga: altering table tmrb.ephemeral_validation to add constraints: ADD CONSTRAINT ephemeral_validation_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT ephemeral_validation_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key         
 -------------------------------
  ephemeral_validation_id_valid
@@ -707,6 +712,7 @@ SELECT sql_saga.add_era('tmrb.legal_unit_fk_bug'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_fk_bug'::regclass, '{id}', unique_key_name => 'legal_unit_fk_bug_id_valid');
+NOTICE:  sql_saga: altering table tmrb.legal_unit_fk_bug to add constraints: ADD CONSTRAINT legal_unit_fk_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_fk_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  legal_unit_fk_bug_id_valid
@@ -722,6 +728,7 @@ SELECT sql_saga.add_era('tmrb.activity_fk_bug'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.activity_fk_bug'::regclass, '{id}', unique_key_name => 'activity_fk_bug_id_valid');
+NOTICE:  sql_saga: altering table tmrb.activity_fk_bug to add constraints: ADD CONSTRAINT activity_fk_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT activity_fk_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
       add_unique_key      
 --------------------------
  activity_fk_bug_id_valid
@@ -791,6 +798,7 @@ SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.unit_default_bug'::regclass, '{id}');
+NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
       add_unique_key       
 ---------------------------
  unit_default_bug_id_valid
@@ -853,6 +861,7 @@ SELECT sql_saga.add_era('tmrb.coalesce_bug'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.coalesce_bug'::regclass, '{id}');
+NOTICE:  sql_saga: altering table tmrb.coalesce_bug to add constraints: ADD CONSTRAINT coalesce_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT coalesce_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
     add_unique_key     
 -----------------------
  coalesce_bug_id_valid

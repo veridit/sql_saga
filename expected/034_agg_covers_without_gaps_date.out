@@ -39,6 +39,7 @@ SELECT sql_saga.add_era('date_shifts', 'valid_from', 'valid_until', add_bounds_c
 (1 row)
 
 SELECT sql_saga.add_unique_key('date_shifts', ARRAY['job_id', 'worker_id']);
+NOTICE:  sql_saga: altering table public.date_shifts to add constraints: ADD CONSTRAINT date_shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT date_shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
            add_unique_key           
 ------------------------------------
  date_shifts_job_id_worker_id_valid
@@ -51,9 +52,9 @@ TABLE sql_saga.era;
 (1 row)
 
 TABLE sql_saga.unique_keys;
-          unique_key_name           | table_schema | table_name  | key_type |    column_names    | era_name |            unique_constraint            |           exclude_constraint            | predicate 
-------------------------------------+--------------+-------------+----------+--------------------+----------+-----------------------------------------+-----------------------------------------+-----------
- date_shifts_job_id_worker_id_valid | public       | date_shifts | natural  | {job_id,worker_id} | valid    | date_shifts_job_id_worker_id_valid_uniq | date_shifts_job_id_worker_id_valid_excl | 
+          unique_key_name           | table_schema | table_name  | key_type |    column_names    | era_name |            unique_constraint            |           exclude_constraint            | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+------------------------------------+--------------+-------------+----------+--------------------+----------+-----------------------------------------+-----------------------------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ date_shifts_job_id_worker_id_valid | public       | date_shifts | natural  | {job_id,worker_id} | valid    | date_shifts_job_id_worker_id_valid_uniq | date_shifts_job_id_worker_id_valid_excl |                  |           |                            |                     | 
 (1 row)
 
 -- Insert test data into the integer date_shifts table

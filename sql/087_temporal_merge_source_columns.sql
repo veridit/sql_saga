@@ -28,33 +28,44 @@ INSERT INTO source_units (org_nr, name, valid_from, valid_until) VALUES
     ('111', 'Unit A', '2023-01-01', '2024-01-01');
 
 
-\echo '--- Scenario 1: identity_column missing from source ---'
+\echo '--- Scenario 1: FAIL - identity_column missing from source, when it is the only lookup key ---'
 SAVEPOINT expect_error;
--- This call is expected to fail because 'id' is not in 'source_units'
+-- This call is expected to fail because 'id' is not in 'source_units' and no natural key is provided for lookup.
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
     identity_columns => ARRAY['id'],
-    natural_identity_columns => ARRAY['org_nr']
+    natural_identity_columns => NULL
 );
 ROLLBACK TO SAVEPOINT expect_error;
 
-\echo '--- Scenario 2: natural_identity_column missing from source ---'
+\echo '--- Scenario 2: FAIL - natural_identity_column missing from source ---'
 SAVEPOINT expect_error;
 -- This call is expected to fail because 'org_nr_typo' is not in 'source_units'
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY[]::text[],
+    identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr_typo']
 );
 ROLLBACK TO SAVEPOINT expect_error;
 
-\echo '--- Scenario 3: identity_column missing from target ---'
+\echo '--- Scenario 3: FAIL - natural_identity_column missing from target ---'
+SAVEPOINT expect_error;
+-- This call is expected to fail because 'org_nr_typo' is not in 'repro.units'
+CREATE TEMP TABLE source_with_typo (row_id int, org_nr_typo text) ON COMMIT DROP;
+CALL sql_saga.temporal_merge(
+    target_table => 'repro.units',
+    source_table => 'source_with_typo',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => ARRAY['org_nr_typo']
+);
+ROLLBACK TO SAVEPOINT expect_error;
+
+\echo '--- Scenario 4: FAIL - identity_column missing from target ---'
 SAVEPOINT expect_error;
 -- This call is expected to fail because 'id_typo' is not in 'repro.units'
--- We need a source table with the column for this test.
-CREATE TEMP TABLE source_with_id (row_id int, org_nr text, name text, valid_from date, valid_until date, id_typo int) ON COMMIT DROP;
+CREATE TEMP TABLE source_with_id (row_id int, org_nr text, id_typo int) ON COMMIT DROP;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_with_id',
@@ -63,17 +74,73 @@ CALL sql_saga.temporal_merge(
 );
 ROLLBACK TO SAVEPOINT expect_error;
 
-\echo '--- Scenario 4: Happy path (identity_columns not specified, so not validated) ---'
--- This should succeed. The previous test run showed it does when identity_columns is empty.
+
+\echo '--- Scenario 5: Happy path (ID back-filling) ---'
+\echo '--- State before merge ---'
+SELECT id, org_nr, name, valid_from, valid_until FROM repro.units ORDER BY id, valid_from;
+\echo '--- Source before merge ---'
+TABLE source_units;
+
+-- This should succeed. 'id' is not in the source, but 'org_nr' is, so the
+-- planner can look up the entity, see it is new, and the executor will
+-- insert it and allow the database to generate the new 'id'.
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY[]::text[],
+    identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr'],
     mode => 'MERGE_ENTITY_UPSERT'
 );
 \echo '--- State after merge ---'
 SELECT id, org_nr, name, valid_from, valid_until FROM repro.units ORDER BY id, valid_from;
+
+DELETE FROM source_units;
+INSERT INTO source_units (org_nr, name, valid_from, valid_until) VALUES
+    ('222', 'Unit B', '2023-01-01', '2024-01-01');
+
+\echo '--- Scenario 6: Happy path (Auto-discovery) ---'
+\echo '--- State before merge ---'
+SELECT id, org_nr, name, valid_from, valid_until FROM repro.units ORDER BY id, valid_from;
+\echo '--- Source before merge ---'
+TABLE source_units;
+
+-- This should succeed. Both identity_columns and natural_identity_columns are
+-- NULL, so they are discovered from sql_saga.unique_keys.
+CALL sql_saga.temporal_merge(
+    target_table => 'repro.units',
+    source_table => 'source_units',
+    identity_columns => NULL,
+    natural_identity_columns => NULL,
+    mode => 'MERGE_ENTITY_UPSERT'
+);
+\echo '--- State after merge ---'
+SELECT id, org_nr, name, valid_from, valid_until FROM repro.units ORDER BY id, valid_from;
+
+
+\echo '--- Scenario 7: FAIL - update_source_with_identity is true, but identity column is missing from source ---'
+SAVEPOINT expect_error;
+-- This call is expected to fail because 'id' is not in 'source_units'
+CALL sql_saga.temporal_merge(
+    target_table => 'repro.units',
+    source_table => 'source_units',
+    identity_columns => ARRAY['id'],
+    natural_identity_columns => ARRAY['org_nr'],
+    update_source_with_identity => true
+);
+ROLLBACK TO SAVEPOINT expect_error;
+
+
+\echo '--- Scenario 8: FAIL - update_source_with_identity is true, but auto-discovered identity column is missing from source ---'
+SAVEPOINT expect_error;
+-- This call is expected to fail because 'id' is not in 'source_units', and identity_columns is auto-discovered.
+CALL sql_saga.temporal_merge(
+    target_table => 'repro.units',
+    source_table => 'source_units',
+    identity_columns => NULL,
+    natural_identity_columns => NULL,
+    update_source_with_identity => true
+);
+ROLLBACK TO SAVEPOINT expect_error;
 
 
 ROLLBACK;

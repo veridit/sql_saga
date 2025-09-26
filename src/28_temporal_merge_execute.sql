@@ -2,7 +2,7 @@
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_execute(
     target_table regclass,
     source_table regclass,
-    identity_columns TEXT[],
+    identity_columns TEXT[] DEFAULT NULL,
     mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
     era_name name DEFAULT 'valid',
     row_id_column name DEFAULT 'row_id',
@@ -15,7 +15,8 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_execute(
     feedback_status_key name DEFAULT NULL,
     feedback_error_column name DEFAULT NULL,
     feedback_error_key name DEFAULT NULL,
-    ephemeral_columns TEXT[] DEFAULT NULL
+    ephemeral_columns TEXT[] DEFAULT NULL,
+    delay_constraints BOOLEAN DEFAULT true
 )
 LANGUAGE plpgsql AS $temporal_merge_execute$
 DECLARE
@@ -40,6 +41,7 @@ DECLARE
     v_log_sql boolean;
     v_log_feedback boolean;
     v_log_vars boolean;
+    v_log_execute boolean;
     v_expected_idx_expr_with_bounds text;
     v_expected_idx_expr_default text;
     v_idx_rec record;
@@ -58,14 +60,15 @@ DECLARE
     v_log_id TEXT;
     v_summary_line TEXT;
 BEGIN
-    v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_trace', true), ''), 'false')::boolean;
+    v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
     v_log_index_checks := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_index_checks', true), ''), 'false')::boolean;
     v_log_feedback := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_feedback', true), ''), 'false')::boolean;
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
+    v_log_execute := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_execute', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
 
-    -- An entity must be identifiable. At least one set of identity columns must be provided.
+    -- Identity columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.natural_identity_columns, temporal_merge_execute.identity_columns);
     v_correlation_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
     
@@ -418,13 +421,17 @@ BEGIN
             SELECT u.attname, t.atttypid
             FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) u(attname)
             JOIN target_cols t ON u.attname = t.attname
+            UNION
+            SELECT pk.attname, t.atttypid
+            FROM unnest(v_pk_cols) pk(attname)
+            JOIN target_cols t ON pk.attname = t.attname
         ),
         cols_for_insert AS (
             -- All available columns that DON'T have a default...
             SELECT attname, atttypid FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
             UNION
-            -- ...plus all identity columns (stable and natural), which must be provided for SCD-2 inserts.
-            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(temporal_merge_execute.identity_columns) OR attname = ANY(v_lookup_columns)
+            -- ...plus all identity columns (stable and natural) and primary key columns, which must be provided for SCD-2 inserts.
+            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(COALESCE(temporal_merge_execute.identity_columns, '{}')) OR attname = ANY(v_lookup_columns) OR attname = ANY(v_pk_cols)
         ),
         cols_for_founding_insert AS (
             -- For "founding" INSERTs of new entities, we only include columns that do NOT have a default.
@@ -452,308 +459,372 @@ BEGIN
             v_founding_all_cols_ident,
             v_founding_all_cols_from_jsonb;
 
-        SET CONSTRAINTS ALL DEFERRED;
-
         -- INSERT -> UPDATE -> DELETE order is critical for sql_saga compatibility.
-        -- 1. Execute INSERT operations and capture generated IDs
-        IF v_all_cols_ident IS NOT NULL THEN
-             DECLARE
-                v_entity_id_update_jsonb_build TEXT;
-                v_needs_founding_insert BOOLEAN;
-             BEGIN
-                EXECUTE 'SELECT EXISTS(SELECT 1 FROM temporal_merge_plan WHERE operation = ''INSERT'' AND new_ent)'
-                INTO v_needs_founding_insert;
+        DECLARE
+            v_deferrable_constraints name[];
+            v_set_constraints_sql text;
+            v_old_search_path TEXT;
+        BEGIN
+            IF delay_constraints THEN
+                -- For timeline-splitting operations, the INSERT->UPDATE DML order creates
+                -- a temporary timeline overlap. To allow this, we must temporarily defer
+                -- any deferrable unique or exclusion constraints on the target table.
+                -- This requires managing the search_path to ensure constraints can be found.
+                v_old_search_path := current_setting('search_path');
+                EXECUTE format('SET search_path = %I, public', v_target_schema_name);
 
-                -- Build the expression to construct the entity_ids feedback JSONB.
-                -- This should include the conceptual entity ID columns AND any surrogate key.
-                -- A simple and effective heuristic is to always include a column named 'id' if it exists on the target table.
-                WITH target_cols AS (
-                    SELECT pa.attname
-                    FROM pg_catalog.pg_attribute pa
-                    WHERE pa.attrelid = v_target_table_ident::regclass
-                      AND pa.attnum > 0 AND NOT pa.attisdropped
-                ),
-                feedback_id_cols AS (
-                    SELECT col FROM unnest(v_lookup_columns) as col
-                    UNION
-                    SELECT 'id'
-                    WHERE 'id' IN (SELECT attname FROM target_cols) AND 'id' <> ALL(v_lookup_columns)
-                )
-                SELECT
-                    format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
-                INTO
-                    v_entity_id_update_jsonb_build
-                FROM feedback_id_cols;
+                SELECT array_agg(conname)
+                INTO v_deferrable_constraints
+                FROM pg_constraint
+                WHERE conrelid = target_table
+                  AND contype IN ('u', 'x') -- u = unique, x = exclusion
+                  AND condeferrable;
 
-                -- Stage 1: Handle "founding" inserts for new entities that need generated keys.
-                -- This unified "Smart Merge" logic is a critical part of the executor. It handles
-                -- the complex case where new entities need to be created and have their database-generated
-                -- identifiers (e.g., from a SERIAL column) captured and back-filled into all
-                -- other plan operations for that same new entity, all within a single, set-based operation.
-                IF v_needs_founding_insert THEN
-                    -- This temporary table acts as a map to store the generated ID for each new
-                    -- conceptual entity, keyed by its correlation ID (`corr_ent`).
-                    CREATE TEMP TABLE temporal_merge_entity_id_map (corr_ent TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
+                IF v_deferrable_constraints IS NOT NULL THEN
+                    v_set_constraints_sql := format('SET CONSTRAINTS %s DEFERRED',
+                        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                    );
+                    IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
+                    EXECUTE v_set_constraints_sql;
+                END IF;
+            END IF;
 
-                    -- Step 1.1: Insert just ONE "founding" row for each new conceptual entity to generate its ID.
-                    -- The `MERGE ... ON false` pattern is a robust way to perform a bulk INSERT that needs
-                    -- to return columns from both the source data (`s`) and the newly inserted target
-                    -- rows (`t`), which a standard `INSERT ... SELECT ... RETURNING` cannot do as easily.
-                    EXECUTE format($$
-                        WITH founding_plan_ops AS (
-                            SELECT DISTINCT ON (p.corr_ent)
-                                p.plan_op_seq,
-                                p.corr_ent,
-                                p.new_valid_from,
-                                p.new_valid_until,
-                                p.entity_ids || p.data as full_data
-                            FROM temporal_merge_plan p
-                            WHERE p.operation = 'INSERT' AND p.new_ent
-                            ORDER BY p.corr_ent, p.plan_op_seq
+            -- This block contains the DML. We wrap it to ensure constraints and search_path are reset.
+            BEGIN
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING INSERTS ---', v_log_id;
+                END IF;
+                -- 1. Execute INSERT operations and capture generated IDs
+                IF v_all_cols_ident IS NOT NULL THEN
+                     DECLARE
+                        v_entity_id_update_jsonb_build TEXT;
+                        v_needs_founding_insert BOOLEAN;
+                     BEGIN
+                        EXECUTE 'SELECT EXISTS(SELECT 1 FROM temporal_merge_plan WHERE operation = ''INSERT'' AND new_ent)'
+                        INTO v_needs_founding_insert;
+
+                        -- Build the expression to construct the entity_ids feedback JSONB.
+                        -- This should include the conceptual entity ID columns AND any surrogate key.
+                        -- A simple and effective heuristic is to always include a column named 'id' if it exists on the target table.
+                        WITH target_cols AS (
+                            SELECT pa.attname
+                            FROM pg_catalog.pg_attribute pa
+                            WHERE pa.attrelid = v_target_table_ident::regclass
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
                         ),
-                        id_map_cte AS (
-                            MERGE INTO %1$s t
-                            USING founding_plan_ops s ON false
-                            WHEN NOT MATCHED THEN
-                                INSERT (%2$s, %5$I, %6$I)
-                                VALUES (%3$s, s.new_valid_from::%8$s, s.new_valid_until::%9$s)
-                            RETURNING t.*, s.corr_ent
+                        feedback_id_cols AS (
+                            -- For back-filling, we care about the STABLE identity columns AND any surrogate key.
+                            SELECT col FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) as col
+                            UNION
+                            SELECT pk_col FROM unnest(v_pk_cols) as pk_col WHERE pk_col IN (SELECT attname FROM target_cols) AND pk_col NOT IN (v_valid_from_col, v_valid_until_col)
                         )
-                        INSERT INTO temporal_merge_entity_id_map (corr_ent, new_entity_ids)
                         SELECT
-                            ir.corr_ent,
-                            %4$s -- v_entity_id_update_jsonb_build expression
-                        FROM id_map_cte ir;
-                    $$,
-                        v_target_table_ident,           /* %1$s */
-                        v_founding_all_cols_ident,      /* %2$s */
-                        v_founding_all_cols_from_jsonb, /* %3$s */
-                        v_entity_id_update_jsonb_build, /* %4$s */
-                        v_valid_from_col,               /* %5$I */
-                        v_valid_until_col,              /* %6$I */
-                        NULL,                           /* %7$L (placeholder) */
-                        v_valid_from_col_type,          /* %8$s */
-                        v_valid_until_col_type          /* %9$s */
-                    );
+                            format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
+                        INTO
+                            v_entity_id_update_jsonb_build
+                        FROM feedback_id_cols;
 
-                    -- Step 1.2: Back-fill the captured, generated IDs into the plan for all other
-                    -- operations that belong to the same new entity.
-                    EXECUTE format($$
-                        UPDATE temporal_merge_plan p
-                        SET entity_ids = m.new_entity_ids
-                        FROM temporal_merge_entity_id_map m
-                        WHERE p.corr_ent = m.corr_ent;
-                    $$);
+                        -- Stage 1: Handle "founding" inserts for new entities that need generated keys.
+                        -- This unified "Smart Merge" logic is a critical part of the executor. It handles
+                        -- the complex case where new entities need to be created and have their database-generated
+                        -- identifiers (e.g., from a SERIAL column) captured and back-filled into all
+                        -- other plan operations for that same new entity, all within a single, set-based operation.
+                        IF v_needs_founding_insert THEN
+                            -- This temporary table acts as a map to store the generated ID for each new
+                            -- conceptual entity, keyed by its correlation ID (`corr_ent`).
+                            CREATE TEMP TABLE temporal_merge_entity_id_map (corr_ent TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
 
-                    -- Step 1.3: Insert the remaining historical slices for the new entities. These
-                    -- slices now have the correct, generated entity ID (e.g., foreign key),
-                    -- which was back-filled into their `entity_ids` payload in the previous step.
-                    EXECUTE format($$
-                        INSERT INTO %1$s (%2$s, %4$I, %5$I)
-                        SELECT %3$s, p.new_valid_from::%7$s, p.new_valid_until::%8$s
-                        FROM temporal_merge_plan p,
-                             LATERAL jsonb_populate_record(null::%1$s, p.entity_ids || p.data) as jpr_all
-                        WHERE p.operation = 'INSERT'
-                          AND p.new_ent -- Only founding inserts
-                          AND p.corr_ent IS NOT NULL
-                          AND NOT EXISTS ( -- Exclude the "founding" rows we already inserted in Step 1.1
-                            SELECT 1 FROM (
-                                SELECT DISTINCT ON (p_inner.corr_ent) plan_op_seq
-                                FROM temporal_merge_plan p_inner
-                                WHERE p_inner.operation = 'INSERT' AND p_inner.new_ent
-                                ORDER BY p_inner.corr_ent, p_inner.plan_op_seq
-                            ) AS founding_ops
-                            WHERE founding_ops.plan_op_seq = p.plan_op_seq
-                          )
-                        ORDER BY p.plan_op_seq;
-                    $$,
-                        v_target_table_ident,       /* %1$s */
-                        v_all_cols_ident,           /* %2$s */
-                        v_all_cols_select,          /* %3$s */
-                        v_valid_from_col,           /* %4$I */
-                        v_valid_until_col,          /* %5$I */
-                        NULL,                       /* %6$L (placeholder) */
-                        v_valid_from_col_type,      /* %7$s */
-                        v_valid_until_col_type      /* %8$s */
-                    );
+                            -- Step 1.1: Insert just ONE "founding" row for each new conceptual entity to generate its ID.
+                            -- The `MERGE ... ON false` pattern is a robust way to perform a bulk INSERT that needs
+                            -- to return columns from both the source data (`s`) and the newly inserted target
+                            -- rows (`t`), which a standard `INSERT ... SELECT ... RETURNING` cannot do as easily.
+                            EXECUTE format($$
+                                WITH founding_plan_ops AS (
+                                    SELECT DISTINCT ON (p.corr_ent)
+                                        p.plan_op_seq,
+                                        p.corr_ent,
+                                        p.new_valid_from,
+                                        p.new_valid_until,
+                                        p.entity_ids || p.data as full_data
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND p.new_ent
+                                    ORDER BY p.corr_ent, p.plan_op_seq
+                                ),
+                                id_map_cte AS (
+                                    MERGE INTO %1$s t
+                                    USING founding_plan_ops s ON false
+                                    WHEN NOT MATCHED THEN
+                                        INSERT (%2$s, %5$I, %6$I)
+                                        VALUES (%3$s, s.new_valid_from::%8$s, s.new_valid_until::%9$s)
+                                    RETURNING t.*, s.corr_ent
+                                )
+                                INSERT INTO temporal_merge_entity_id_map (corr_ent, new_entity_ids)
+                                SELECT
+                                    ir.corr_ent,
+                                    %4$s -- v_entity_id_update_jsonb_build expression
+                                FROM id_map_cte ir;
+                            $$,
+                                v_target_table_ident,           /* %1$s */
+                                v_founding_all_cols_ident,      /* %2$s */
+                                v_founding_all_cols_from_jsonb, /* %3$s */
+                                v_entity_id_update_jsonb_build, /* %4$s */
+                                v_valid_from_col,               /* %5$I */
+                                v_valid_until_col,              /* %6$I */
+                                NULL,                           /* %7$L (placeholder) */
+                                v_valid_from_col_type,          /* %8$s */
+                                v_valid_until_col_type          /* %9$s */
+                            );
 
-                    DROP TABLE temporal_merge_entity_id_map;
+                            -- Step 1.2: Back-fill the captured, generated IDs into the plan for all other
+                            -- operations that belong to the same new entity.
+                            EXECUTE format($$
+                                UPDATE temporal_merge_plan p
+                                SET entity_ids = p.entity_ids || m.new_entity_ids
+                                FROM temporal_merge_entity_id_map m
+                                WHERE p.corr_ent = m.corr_ent;
+                            $$);
+
+                            -- Step 1.3: Insert the remaining historical slices for the new entities. These
+                            -- slices now have the correct, generated entity ID (e.g., foreign key),
+                            -- which was back-filled into their `entity_ids` payload in the previous step.
+                            EXECUTE format($$
+                                INSERT INTO %1$s (%2$s, %4$I, %5$I)
+                                SELECT %3$s, p.new_valid_from::%7$s, p.new_valid_until::%8$s
+                                FROM temporal_merge_plan p,
+                                     LATERAL jsonb_populate_record(null::%1$s, p.entity_ids || p.data) as jpr_all
+                                WHERE p.operation = 'INSERT'
+                                  AND p.new_ent -- Only founding inserts
+                                  AND p.corr_ent IS NOT NULL
+                                  AND NOT EXISTS ( -- Exclude the "founding" rows we already inserted in Step 1.1
+                                    SELECT 1 FROM (
+                                        SELECT DISTINCT ON (p_inner.corr_ent) plan_op_seq
+                                        FROM temporal_merge_plan p_inner
+                                        WHERE p_inner.operation = 'INSERT' AND p_inner.new_ent
+                                        ORDER BY p_inner.corr_ent, p_inner.plan_op_seq
+                                    ) AS founding_ops
+                                    WHERE founding_ops.plan_op_seq = p.plan_op_seq
+                                  )
+                                ORDER BY p.plan_op_seq;
+                            $$,
+                                v_target_table_ident,       /* %1$s */
+                                v_all_cols_ident,           /* %2$s */
+                                v_all_cols_select,          /* %3$s */
+                                v_valid_from_col,           /* %4$I */
+                                v_valid_until_col,          /* %5$I */
+                                NULL,                       /* %6$L (placeholder) */
+                                v_valid_from_col_type,      /* %7$s */
+                                v_valid_until_col_type      /* %8$s */
+                            );
+
+                            DROP TABLE temporal_merge_entity_id_map;
+                        END IF;
+
+                        -- Stage 2: Handle "non-founding" inserts. These are typically for SCD-2 style
+                        -- history, where a new historical record is inserted for an entity that already
+                        -- exists in the target table. These operations already have the correct stable
+                        -- identifier and do not need any keys to be generated.
+                        BEGIN
+                            EXECUTE format($$
+                                WITH
+                                source_for_insert AS (
+                                    SELECT
+                                        p.plan_op_seq, p.new_valid_from, p.new_valid_until,
+                                        p.entity_ids || p.data as full_data
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND NOT p.new_ent
+                                ),
+                                inserted_rows AS (
+                                    MERGE INTO %1$s t
+                                    USING source_for_insert s ON false
+                                    WHEN NOT MATCHED THEN
+                                        INSERT (%2$s, %3$I, %4$I)
+                                        VALUES (%5$s, s.new_valid_from::%6$s, s.new_valid_until::%7$s)
+                                    RETURNING t.*, s.plan_op_seq
+                                )
+                                UPDATE temporal_merge_plan p
+                                SET entity_ids = p.entity_ids || %8$s
+                                FROM inserted_rows ir
+                                WHERE p.plan_op_seq = ir.plan_op_seq;
+                            $$,
+                                v_target_table_ident,               /* %1$s */
+                                v_all_cols_ident,                   /* %2$s */
+                                v_valid_from_col,                   /* %3$I */
+                                v_valid_until_col,                  /* %4$I */
+                                v_all_cols_from_jsonb,              /* %5$s */
+                                v_valid_from_col_type,              /* %6$s */
+                                v_valid_until_col_type,             /* %7$s */
+                                v_entity_id_update_jsonb_build      /* %8$s */
+                            );
+                        END;
+                     END;
+                ELSE
+                    -- This case handles tables with only temporal and defaulted ID columns.
+                     DECLARE
+                        v_entity_id_update_jsonb_build TEXT;
+                     BEGIN
+                        -- Build the expression to construct the entity_ids feedback JSONB.
+                        -- This should include the conceptual entity ID columns AND any surrogate key.
+                        -- A simple and effective heuristic is to always include a column named 'id' if it exists on the target table.
+                        WITH target_cols AS (
+                            SELECT pa.attname
+                            FROM pg_catalog.pg_attribute pa
+                            WHERE pa.attrelid = v_target_table_ident::regclass
+                              AND pa.attnum > 0 AND NOT pa.attisdropped
+                        ),
+                        feedback_id_cols AS (
+                            -- For back-filling, we care about the STABLE identity columns AND any surrogate key.
+                            SELECT col FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) as col
+                            UNION
+                            SELECT pk_col FROM unnest(v_pk_cols) as pk_col WHERE pk_col IN (SELECT attname FROM target_cols) AND pk_col NOT IN (v_valid_from_col, v_valid_until_col)
+                        )
+                        SELECT
+                            format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
+                        INTO
+                            v_entity_id_update_jsonb_build
+                        FROM feedback_id_cols;
+
+                        -- This case should not be reachable with the "Smart Merge" logic,
+                        -- but we use the robust MERGE pattern for safety.
+                        v_sql := format($$
+                            WITH
+                            source_for_insert AS (
+                                SELECT
+                                    p.plan_op_seq,
+                                    p.new_valid_from,
+                                    p.new_valid_until
+                                FROM temporal_merge_plan p
+                                WHERE p.operation = 'INSERT'
+                            ),
+                            inserted_rows AS (
+                                MERGE INTO %1$s t
+                                USING source_for_insert s ON false
+                                WHEN NOT MATCHED THEN
+                                    INSERT (%3$I, %4$I)
+                                    VALUES (s.new_valid_from::%5$s, s.new_valid_until::%6$s)
+                                RETURNING t.*, s.plan_op_seq
+                            )
+                            UPDATE temporal_merge_plan p
+                            SET entity_ids = p.entity_ids || %2$s
+                            FROM inserted_rows ir
+                            WHERE p.plan_op_seq = ir.plan_op_seq;
+                        $$,
+                            v_target_table_ident,           /* %1$s */
+                            v_entity_id_update_jsonb_build, /* %2$s */
+                            v_valid_from_col,               /* %3$I */
+                            v_valid_until_col,              /* %4$I */
+                            v_valid_from_col_type,          /* %5$s */
+                            v_valid_until_col_type          /* %6$s */
+                        );
+                        EXECUTE v_sql;
+                     END;
                 END IF;
 
-                -- Stage 2: Handle "non-founding" inserts. These are typically for SCD-2 style
-                -- history, where a new historical record is inserted for an entity that already
-                -- exists in the target table. These operations already have the correct stable
-                -- identifier and do not need any keys to be generated.
-                BEGIN
-                    EXECUTE format($$
-                        WITH
-                        source_for_insert AS (
-                            SELECT
-                                p.plan_op_seq, p.new_valid_from, p.new_valid_until,
-                                p.entity_ids || p.data as full_data
-                            FROM temporal_merge_plan p
-                            WHERE p.operation = 'INSERT' AND NOT p.new_ent
-                        ),
-                        inserted_rows AS (
-                            MERGE INTO %1$s t
-                            USING source_for_insert s ON false
-                            WHEN NOT MATCHED THEN
-                                INSERT (%2$s, %3$I, %4$I)
-                                VALUES (%5$s, s.new_valid_from::%6$s, s.new_valid_until::%7$s)
-                            RETURNING t.*, s.plan_op_seq
+                -- Back-fill source table with generated IDs if requested.
+                IF temporal_merge_execute.update_source_with_identity THEN
+                    DECLARE
+                        v_source_update_set_clause TEXT;
+                    BEGIN
+                        -- Build a SET clause for the stable identity columns. This writes back
+                        -- any generated surrogate keys to the source table, but correctly
+                        -- excludes any natural key columns that were used for lookup only.
+                        SELECT string_agg(
+                            format('%I = (p.entity_ids->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
+                            ', '
                         )
-                        UPDATE temporal_merge_plan p
-                        SET entity_ids = %8$s
-                        FROM inserted_rows ir
-                        WHERE p.plan_op_seq = ir.plan_op_seq;
-                    $$,
-                        v_target_table_ident,               /* %1$s */
-                        v_all_cols_ident,                   /* %2$s */
-                        v_valid_from_col,                   /* %3$I */
-                        v_valid_until_col,                  /* %4$I */
-                        v_all_cols_from_jsonb,              /* %5$s */
-                        v_valid_from_col_type,              /* %6$s */
-                        v_valid_until_col_type,             /* %7$s */
-                        v_entity_id_update_jsonb_build      /* %8$s */
-                    );
-                END;
-             END;
-        ELSE
-            -- This case handles tables with only temporal and defaulted ID columns.
-             DECLARE
-                v_entity_id_update_jsonb_build TEXT;
-             BEGIN
-                -- Build the expression to construct the entity_ids feedback JSONB.
-                -- This should include the conceptual entity ID columns AND any surrogate key.
-                -- A simple and effective heuristic is to always include a column named 'id' if it exists on the target table.
-                WITH target_cols AS (
-                    SELECT pa.attname
-                    FROM pg_catalog.pg_attribute pa
-                    WHERE pa.attrelid = v_target_table_ident::regclass
-                      AND pa.attnum > 0 AND NOT pa.attisdropped
-                ),
-                feedback_id_cols AS (
-                    SELECT unnest(temporal_merge_execute.identity_columns) as col
-                    UNION
-                    SELECT 'id'
-                    WHERE 'id' IN (SELECT attname FROM target_cols)
-                )
-                SELECT
-                    format('jsonb_build_object(%s)', string_agg(format('%L, ir.%I', col, col), ', '))
-                INTO
-                    v_entity_id_update_jsonb_build
-                FROM feedback_id_cols;
+                        INTO v_source_update_set_clause
+                        FROM (
+                            SELECT key FROM jsonb_object_keys(
+                                (SELECT entity_ids FROM temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
+                            ) as key
+                            WHERE key = ANY(temporal_merge_execute.identity_columns)
+                        ) j
+                        JOIN pg_attribute a ON a.attname = j.key
+                        WHERE a.attrelid = temporal_merge_execute.source_table AND NOT a.attisdropped AND a.attnum > 0;
 
-                -- This case should not be reachable with the "Smart Merge" logic,
-                -- but we use the robust MERGE pattern for safety.
-                v_sql := format($$
-                    WITH
-                    source_for_insert AS (
-                        SELECT
-                            p.plan_op_seq,
-                            p.new_valid_from,
-                            p.new_valid_until
-                        FROM temporal_merge_plan p
-                        WHERE p.operation = 'INSERT'
-                    ),
-                    inserted_rows AS (
-                        MERGE INTO %1$s t
-                        USING source_for_insert s ON false
-                        WHEN NOT MATCHED THEN
-                            INSERT (%3$I, %4$I)
-                            VALUES (s.new_valid_from::%5$s, s.new_valid_until::%6$s)
-                        RETURNING t.*, s.plan_op_seq
-                    )
-                    UPDATE temporal_merge_plan p
-                    SET entity_ids = %2$s
-                    FROM inserted_rows ir
-                    WHERE p.plan_op_seq = ir.plan_op_seq;
-                $$,
-                    v_target_table_ident,           /* %1$s */
-                    v_entity_id_update_jsonb_build, /* %2$s */
-                    v_valid_from_col,               /* %3$I */
-                    v_valid_until_col,              /* %4$I */
-                    v_valid_from_col_type,          /* %5$s */
-                    v_valid_until_col_type          /* %6$s */
-                );
-                EXECUTE v_sql;
-             END;
-        END IF;
+                        IF v_source_update_set_clause IS NOT NULL THEN
+                            v_sql := format($$
+                                WITH map_row_to_entity AS (
+                                    SELECT DISTINCT ON (s.source_row_id)
+                                        s.source_row_id,
+                                        p.entity_ids
+                                    FROM (SELECT DISTINCT unnest(row_ids) AS source_row_id FROM temporal_merge_plan WHERE operation = 'INSERT') s
+                                    JOIN temporal_merge_plan p ON s.source_row_id = ANY(p.row_ids)
+                                    WHERE p.entity_ids IS NOT NULL
+                                    ORDER BY s.source_row_id, p.plan_op_seq
+                                )
+                                UPDATE %1$s s
+                                SET %2$s
+                                FROM map_row_to_entity p
+                                WHERE s.%3$I = p.source_row_id;
+                            $$, temporal_merge_execute.source_table::text, v_source_update_set_clause, temporal_merge_execute.row_id_column);
+                            EXECUTE v_sql;
+                        END IF;
+                    END;
+                END IF;
 
-        -- Back-fill source table with generated IDs if requested.
-        IF temporal_merge_execute.update_source_with_identity THEN
-            DECLARE
-                v_source_update_set_clause TEXT;
-            BEGIN
-                -- Build a SET clause for the stable identity columns. This writes back
-                -- any generated surrogate keys to the source table, but correctly
-                -- excludes any natural key columns that were used for lookup only.
-                SELECT string_agg(
-                    format('%I = (p.entity_ids->>%L)::%s', j.key, j.key, format_type(a.atttypid, a.atttypmod)),
-                    ', '
-                )
-                INTO v_source_update_set_clause
-                FROM (
-                    SELECT key FROM jsonb_object_keys(
-                        (SELECT entity_ids FROM temporal_merge_plan WHERE entity_ids IS NOT NULL and operation = 'INSERT' LIMIT 1)
-                    ) as key
-                    WHERE key = ANY(temporal_merge_execute.identity_columns)
-                ) j
-                JOIN pg_attribute a ON a.attname = j.key
-                WHERE a.attrelid = temporal_merge_execute.source_table AND NOT a.attisdropped AND a.attnum > 0;
-
-                IF v_source_update_set_clause IS NOT NULL THEN
-                    v_sql := format($$
-                        WITH map_row_to_entity AS (
-                            SELECT DISTINCT ON (s.source_row_id)
-                                s.source_row_id,
-                                p.entity_ids
-                            FROM (SELECT DISTINCT unnest(row_ids) AS source_row_id FROM temporal_merge_plan WHERE operation = 'INSERT') s
-                            JOIN temporal_merge_plan p ON s.source_row_id = ANY(p.row_ids)
-                            WHERE p.entity_ids IS NOT NULL
-                            ORDER BY s.source_row_id, p.plan_op_seq
-                        )
-                        UPDATE %1$s s
-                        SET %2$s
-                        FROM map_row_to_entity p
-                        WHERE s.%3$I = p.source_row_id;
-                    $$, temporal_merge_execute.source_table::text, v_source_update_set_clause, temporal_merge_execute.row_id_column);
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING UPDATES ---', v_log_id;
+                END IF;
+                -- 2. Execute UPDATE operations.
+                -- As proven by test 58, we can use a single, ordered UPDATE statement.
+                -- The ORDER BY on the plan's sequence number ensures that "grow"
+                -- operations are processed before "shrink" or "move" operations,
+                -- preventing transient gaps that would violate foreign key constraints.
+                IF v_update_set_clause IS NOT NULL THEN
+                    v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
+                        FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
+                             LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+                        WHERE %3$s AND t.%4$I = p.old_valid_from::%6$s;
+                    $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
+                    EXECUTE v_sql;
+                ELSIF v_all_cols_ident IS NOT NULL THEN
+                    v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_from::%5$s, %4$I = p.new_valid_until::%6$s
+                        FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
+                             LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+                        WHERE %2$s AND t.%3$I = p.old_valid_from::%5$s;
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
                     EXECUTE v_sql;
                 END IF;
+
+                IF v_log_execute THEN
+                    RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING DELETES ---', v_log_id;
+                END IF;
+                -- 3. Execute DELETE operations
+                IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
+                    v_sql := format($$ DELETE FROM %1$s t
+                        USING temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
+                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_from::%4$s;
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_from_col_type);
+                    EXECUTE v_sql;
+                END IF;
+            EXCEPTION
+                WHEN OTHERS THEN
+                    -- If an error occurs, ensure constraints and search_path are reset before re-raising.
+                    IF delay_constraints THEN
+                        IF v_deferrable_constraints IS NOT NULL THEN
+                            v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
+                                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                            );
+                            IF v_log_execute THEN RAISE NOTICE '(%) Executing on error: %', v_log_id, v_set_constraints_sql; END IF;
+                            EXECUTE v_set_constraints_sql;
+                        END IF;
+                        EXECUTE format('SET search_path = %s', v_old_search_path);
+                    END IF;
+                    RAISE;
             END;
-        END IF;
 
-        -- 2. Execute UPDATE operations.
-        -- As proven by test 58, we can use a single, ordered UPDATE statement.
-        -- The ORDER BY on the plan's sequence number ensures that "grow"
-        -- operations are processed before "shrink" or "move" operations,
-        -- preventing transient gaps that would violate foreign key constraints.
-        IF v_update_set_clause IS NOT NULL THEN
-            v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
-                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
-                     LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE %3$s AND t.%4$I = p.old_valid_from::%6$s;
-            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
-            EXECUTE v_sql;
-        ELSIF v_all_cols_ident IS NOT NULL THEN
-            v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_from::%5$s, %4$I = p.new_valid_until::%6$s
-                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
-                     LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE %2$s AND t.%3$I = p.old_valid_from::%5$s;
-            $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
-            EXECUTE v_sql;
-        END IF;
-
-        -- 3. Execute DELETE operations
-        IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
-            v_sql := format($$ DELETE FROM %1$s t
-                USING temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_ids) AS jpr_entity
-                WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_from::%4$s;
-            $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_from_col_type);
-            EXECUTE v_sql;
-        END IF;
-
-        SET CONSTRAINTS ALL IMMEDIATE;
+            -- Restore constraints and search_path on successful completion.
+            IF delay_constraints THEN
+                IF v_deferrable_constraints IS NOT NULL THEN
+                    v_set_constraints_sql := format('SET CONSTRAINTS %s IMMEDIATE',
+                        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_deferrable_constraints) AS c)
+                    );
+                    IF v_log_execute THEN RAISE NOTICE '(%) Executing: %', v_log_id, v_set_constraints_sql; END IF;
+                    EXECUTE v_set_constraints_sql;
+                END IF;
+                EXECUTE format('SET search_path = %s', v_old_search_path);
+            END IF;
+        END;
 
         -- 4. Generate and store feedback
         v_sql := format($$
@@ -762,7 +833,7 @@ BEGIN
                 SELECT t.%2$I AS source_row_id FROM %1$s t
             ),
             plan_unnested AS (
-                SELECT unnest(p.row_ids) as source_row_id, p.plan_op_seq, p.entity_ids, p.operation
+                SELECT unnest(p.row_ids) as source_row_id, p.plan_op_seq, p.entity_ids, p.operation, p.data, p.feedback
                 FROM temporal_merge_plan p
             ),
             feedback_groups AS (
@@ -771,7 +842,9 @@ BEGIN
                     -- Aggregate all distinct operations for this source row.
                     array_agg(DISTINCT pu.operation) FILTER (WHERE pu.operation IS NOT NULL) as operations,
                     -- Aggregate all distinct entity IDs this source row touched.
-                    COALESCE(jsonb_agg(DISTINCT pu.entity_ids) FILTER (WHERE pu.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids
+                    COALESCE(jsonb_agg(DISTINCT pu.entity_ids) FILTER (WHERE pu.entity_ids IS NOT NULL), '[]'::jsonb) AS target_entity_ids,
+                    -- Extract the specific error message from the plan's feedback payload if present.
+                    (array_agg(pu.feedback->>'error') FILTER (WHERE pu.operation = 'ERROR' AND pu.feedback ? 'error'))[1] as error_message_from_plan
                 FROM all_source_rows asr
                 LEFT JOIN plan_unnested pu ON asr.source_row_id = pu.source_row_id
                 GROUP BY asr.source_row_id
@@ -798,7 +871,7 @@ BEGIN
                         ELSE 'ERROR'
                     END::sql_saga.temporal_merge_feedback_status AS status,
                     CASE
-                        WHEN 'ERROR'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'Planner generated an ERROR action, indicating an internal logic error.'
+                        WHEN 'ERROR'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN COALESCE(fg.error_message_from_plan, 'Planner generated an ERROR action, indicating an internal logic error.')
                         WHEN fg.operations IS NULL THEN 'Planner failed to generate a plan for this source row.'
                         WHEN NOT (
                              'INSERT'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
@@ -893,6 +966,6 @@ BEGIN
 END;
 $temporal_merge_execute$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge_execute(regclass, regclass, TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[]) IS
+COMMENT ON PROCEDURE sql_saga.temporal_merge_execute(regclass, regclass, TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean) IS
 'Executes a temporal merge plan that is assumed to exist in a temporary table `temporal_merge_plan`.';
 

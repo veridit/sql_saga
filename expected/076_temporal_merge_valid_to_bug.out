@@ -43,6 +43,7 @@ NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_colum
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id'], unique_key_name => 'my_temporal_table_id_valid');
+NOTICE:  sql_saga: altering table public.my_temporal_table to add constraints: ADD CONSTRAINT my_temporal_table_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_temporal_table_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  my_temporal_table_id_valid
@@ -124,6 +125,7 @@ NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_colum
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id']);
+NOTICE:  sql_saga: altering table public.my_temporal_table to add constraints: ADD CONSTRAINT my_temporal_table_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_temporal_table_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
        add_unique_key       
 ----------------------------
  my_temporal_table_id_valid

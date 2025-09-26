@@ -183,3 +183,16 @@ While the above user-side architectural patterns are the primary method for achi
 -   **Algorithmic Refinements:** Further optimization of the most expensive CTEs in the planner to reduce their computational complexity.
 
 By combining these strategies, `temporal_merge` can be used to build highly performant, scalable, and robust temporal data warehouses.
+
+### Executor DML Ordering and Constraint Management
+
+The `temporal_merge` executor **intentionally does not manage transaction-level constraint timing**. It will never issue `SET CONSTRAINTS ALL IMMEDIATE` or `SET CONSTRAINTS ALL DEFERRED`. This is a critical design decision to ensure the procedure is composable and does not interfere with the state of a larger ETL transaction.
+
+The planner and executor are designed around a strict DML execution order:
+1.  All `INSERT` operations are performed.
+2.  All `UPDATE` operations are performed.
+3.  All `DELETE` operations are performed.
+
+This order is guaranteed to succeed within a transaction that has set `DEFERRED` constraints, as it correctly handles complex SCD Type 2 changes and foreign key relationships without causing transient violations. The correctness of this approach is verified by the `072_temporal_merge_trigger_visibility.sql` and `073_temporal_merge_manage_triggers.sql` regression tests.
+
+It is the responsibility of the **caller** to set the appropriate constraint timing for the transaction. For complex ETL batches, this typically means starting the transaction with `SET CONSTRAINTS ALL DEFERRED`. Any attempt to modify this behavior within `temporal_merge` itself is a violation of this semantic contract and will be reverted.

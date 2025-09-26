@@ -107,24 +107,25 @@ SELECT sql_saga.drop_for_portion_of_view('rename_test', 'p');
 ALTER TABLE rename_test DROP COLUMN id;
 /* unique_keys */
 SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p');
+NOTICE:  sql_saga: altering table public.rename_test to add constraints: ADD CONSTRAINT rename_test_col2_col1_col3_p_uniq UNIQUE (col2, col1, col3, "s < e", "embedded "" symbols") DEFERRABLE, ADD CONSTRAINT rename_test_col2_col1_col3_p_excl EXCLUDE USING gist (col2 WITH =, col1 WITH =, col3 WITH =, int4range("s < e", "embedded "" symbols") WITH &&) DEFERRABLE
         add_unique_key        
 ------------------------------
  rename_test_col2_col1_col3_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
-       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |         unique_constraint         |        exclude_constraint         | predicate 
-------------------------------+--------------+-------------+----------+------------------+----------+-----------------------------------+-----------------------------------+-----------
- rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_p_uniq | rename_test_col2_col1_col3_p_excl | 
+       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |         unique_constraint         |        exclude_constraint         | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+------------------------------+--------------+-------------+----------+------------------+----------+-----------------------------------+-----------------------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_p_uniq | rename_test_col2_col1_col3_p_excl |                  |           |                            |                     | 
 (1 row)
 
 ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_uniq TO unconst;
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_excl TO exconst;
 TABLE sql_saga.unique_keys;
-       unique_key_name        | table_schema | table_name  | key_type |    column_names     | era_name | unique_constraint | exclude_constraint | predicate 
-------------------------------+--------------+-------------+----------+---------------------+----------+-------------------+--------------------+-----------
- rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,COLUMN1,col3} | p        | unconst           | exconst            | 
+       unique_key_name        | table_schema | table_name  | key_type |    column_names     | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+------------------------------+--------------+-------------+----------+---------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,COLUMN1,col3} | p        | unconst           | exconst            |                  |           |                            |                     | 
 (1 row)
 
 /* foreign_keys */

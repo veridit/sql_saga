@@ -34,6 +34,7 @@ BEGIN
         WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
           AND (uk.unique_key_name = key_name OR key_name IS NULL)
     LOOP
+        RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
         /* Cascade to foreign keys, if desired */
         FOR foreign_key_row IN
             SELECT fk.*
@@ -57,7 +58,44 @@ BEGIN
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
         THEN
-            IF unique_key_row.key_type = 'predicated' THEN
+            IF unique_key_row.mutually_exclusive_columns IS NOT NULL THEN
+                DECLARE
+                    alter_parts text[];
+                    object_name name;
+                    check_constraint_name name;
+                BEGIN
+                    -- Build a list of constraints to drop in a single ALTER TABLE command.
+                    alter_parts := ARRAY[]::text[];
+
+                    -- 1. Add the CHECK constraint to the drop list.
+                    check_constraint_name := unique_key_row.check_constraint;
+                    alter_parts := alter_parts || format('DROP CONSTRAINT %I', check_constraint_name);
+
+                    -- 2. Drop all partial indexes and constraints.
+                    IF unique_key_row.partial_exclude_constraint_names IS NOT NULL THEN
+                        FOREACH object_name IN ARRAY unique_key_row.partial_exclude_constraint_names
+                        LOOP
+                            alter_parts := alter_parts || format('DROP CONSTRAINT %I', object_name);
+                        END LOOP;
+                    END IF;
+
+                    IF unique_key_row.partial_index_names IS NOT NULL THEN
+                        FOREACH object_name IN ARRAY unique_key_row.partial_index_names
+                        LOOP
+                            EXECUTE format('DROP INDEX %I.%I', unique_key_row.table_schema, object_name);
+                        END LOOP;
+                    END IF;
+
+                    -- 3. Execute the ALTER TABLE command for all constraints.
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
+            ELSIF unique_key_row.key_type = 'predicated' THEN
                 -- This is a unique index, drop it and the exclusion constraint
                 EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
                     unique_key_row.table_schema, /* %I */
@@ -67,13 +105,25 @@ BEGIN
                     unique_key_row.exclude_constraint /* %I */
                 );
             ELSE -- 'primary' or 'natural'
-                -- This is a unique/primary key constraint, drop both constraints
-                EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I, DROP CONSTRAINT %I',
-                    unique_key_row.table_schema, /* %I */
-                    unique_key_row.table_name, /* %I */
-                    unique_key_row.unique_constraint, /* %I */
-                    unique_key_row.exclude_constraint /* %I */
-                );
+                DECLARE
+                    alter_parts text[] := '{}';
+                BEGIN
+                    -- This is a unique/primary key constraint, drop both constraints if they exist.
+                    IF unique_key_row.unique_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.unique_constraint);
+                    END IF;
+                    IF unique_key_row.exclude_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.exclude_constraint);
+                    END IF;
+
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
             END IF;
         END IF;
     END LOOP;

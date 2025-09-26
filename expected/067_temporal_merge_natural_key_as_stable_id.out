@@ -45,6 +45,7 @@ SELECT sql_saga.add_era('nk_legal_unit'::regclass, 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('nk_legal_unit'::regclass, ARRAY['legal_unit_id']);
+NOTICE:  sql_saga: altering table public.nk_legal_unit to add constraints: ADD CONSTRAINT nk_legal_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT nk_legal_unit_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
           add_unique_key           
 -----------------------------------
  nk_legal_unit_legal_unit_id_valid
@@ -66,6 +67,7 @@ SELECT sql_saga.add_era('nk_establishment'::regclass, 'valid_from', 'valid_until
 (1 row)
 
 SELECT sql_saga.add_unique_key('nk_establishment'::regclass, ARRAY['establishment_id']);
+NOTICE:  sql_saga: altering table public.nk_establishment to add constraints: ADD CONSTRAINT nk_establishment_establishment_id_valid_uniq UNIQUE (establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT nk_establishment_establishment_id_valid_excl EXCLUDE USING gist (establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
              add_unique_key              
 -----------------------------------------
  nk_establishment_establishment_id_valid
@@ -93,6 +95,7 @@ SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_from', 'valid_unt
 -- The unique key on the natural key is what allows `temporal_merge` to
 -- identify a unique entity over time using these columns.
 SELECT sql_saga.add_unique_key('nk_unit_employment'::regclass, ARRAY['legal_unit_id', 'establishment_id']);
+NOTICE:  sql_saga: altering table public.nk_unit_employment to add constraints: ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_uniq UNIQUE (legal_unit_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT nk_unit_employment_legal_unit_id_establishment_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
                      add_unique_key                      
 ---------------------------------------------------------
  nk_unit_employment_legal_unit_id_establishment_id_valid
@@ -201,7 +204,7 @@ TABLE nk_unit_employment ORDER BY valid_from;
  employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
 ---------------+---------------+------------------+---------------+------------+-------------
              1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             2 |             1 |              101 |            75 | 2023-01-01 | infinity
+             1 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
 
 \echo '--- UPDATE: Feedback ---'
@@ -247,15 +250,15 @@ TABLE nk_unit_employment ORDER BY valid_from;
  employment_id | legal_unit_id | establishment_id | num_employees | valid_from | valid_until 
 ---------------+---------------+------------------+---------------+------------+-------------
              1 |             1 |              101 |            50 | 2021-01-01 | 2023-01-01
-             2 |             1 |              101 |            75 | 2023-01-01 | infinity
+             1 |             1 |              101 |            75 | 2023-01-01 | infinity
 (2 rows)
 
 \echo '--- IDEMPOTENCY: Feedback ---'
 --- IDEMPOTENCY: Feedback ---
 SELECT row_id, feedback->>'tm_status' as status FROM nk_source ORDER BY row_id;
- row_id | status  
---------+---------
-      3 | APPLIED
+ row_id |      status       
+--------+-------------------
+      3 | SKIPPED_IDENTICAL
 (1 row)
 
 ROLLBACK;

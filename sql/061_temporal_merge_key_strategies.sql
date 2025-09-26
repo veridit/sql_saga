@@ -57,7 +57,7 @@ CREATE TABLE tmtc.stat_for_unit (
     edit_comment TEXT
 );
 SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_uk');
+SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', key_type => 'primary', unique_key_name => 'tm_sfu_uk');
 
 -- Target table with SERIAL surrogate ID
 CREATE TABLE tmtc.stat_for_unit_id_pk (
@@ -130,15 +130,17 @@ CREATE TABLE tmtc.location_multi_key_no_id (
     address TEXT,
     edit_comment TEXT,
     valid_from DATE NOT NULL,
-    valid_until DATE NOT NULL,
-    CONSTRAINT location_multi_key_no_id_xor CHECK (
-        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
-        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
-    )
+    valid_until DATE NOT NULL
 );
 SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-SELECT sql_saga.add_unique_key('tmtc.location_multi_key_no_id', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_noid_est_uk', predicate => 'establishment_id IS NOT NULL');
+SELECT sql_saga.add_unique_key(
+    table_oid => 'tmtc.location_multi_key_no_id',
+    column_names => ARRAY['type', 'legal_unit_id', 'establishment_id'],
+    era_name => 'valid',
+    key_type => 'natural',
+    unique_key_name => 'loc_mk_noid_pk',
+    mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id']
+);
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
 
@@ -209,6 +211,7 @@ SELECT * FROM (VALUES
 ) AS t (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
 \echo '--- Orchestrator: Actual Final State ---'
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
+
 DROP TABLE temp_source_1;
 
 --------------------------------------------------------------------------------
@@ -619,6 +622,7 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_9;
+
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -628,6 +632,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: After back-fill ---'
@@ -638,6 +643,7 @@ TRUNCATE temp_source_9;
 INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
 \echo '--- Source (Establishment location) ---'
 TABLE temp_source_9;
+
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -647,6 +653,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+
 \echo '--- Target: Final state ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: Final after back-fill ---'
@@ -677,6 +684,7 @@ SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until F
 INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_10;
+
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -686,6 +694,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
+
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
 
@@ -733,6 +742,7 @@ SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_mul
 INSERT INTO temp_source_11 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
 \echo '--- Source (Legal Unit location) ---'
 TABLE temp_source_11;
+
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -742,6 +752,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+
 \echo '--- Target: After merge for Legal Unit location ---'
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
 \echo '--- Source: After back-fill ---'
@@ -772,12 +783,25 @@ RELEASE SAVEPOINT scenario_11;
 SAVEPOINT scenario_12;
 SET client_min_messages TO NOTICE;
 \echo '--------------------------------------------------------------------------------'
-\echo 'Scenario 12: Natural key with NULLs on a simple surrogate key table (known anti-pattern)'
+\echo 'Scenario 12: Test failure on SCD Type 2 update with incompatible simple PRIMARY KEY'
 \echo '--------------------------------------------------------------------------------'
--- on a standard table with a simple SERIAL PRIMARY KEY. This is an anti-pattern for
--- SCD Type 2 history. The test demonstrates that attempting to update an entity
--- on a table with an incompatible schema via natural key lookup correctly
--- results in an error, preventing silent data corruption.
+-- Purpose: This test verifies that `temporal_merge` correctly fails when asked to
+-- perform a history-preserving update (SCD Type 2) on a table with an
+-- incompatible schema.
+--
+-- The target table `stat_for_unit_id_pk` has a simple `PRIMARY KEY (id)`,
+-- which is an anti-pattern for temporal tables because it prevents storing
+-- multiple historical versions of the same entity.
+--
+-- The `MERGE_ENTITY_REPLACE` operation attempts an SCD Type 2 update:
+-- 1. It finds the existing entity via the natural key.
+-- 2. It plans to "close out" the current record by updating its `valid_until`.
+-- 3. It plans to INSERT a new record with the updated data. This new record
+--    will have the same stable identifier (`id`) as the old one.
+--
+-- This INSERT correctly fails with a unique constraint violation because a row
+-- with that `id` already exists. The test confirms that `sql_saga` raises this
+-- error instead of silently corrupting data.
 CALL tmtc.reset_target();
 CREATE TEMP TABLE temp_source_12 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, value BIGINT, valid_from DATE, valid_until DATE, edit_comment TEXT

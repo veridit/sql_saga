@@ -46,6 +46,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'department_id IS NOT NULL',
     unique_key_name => 'employees_name_if_department_valid'
 );
+NOTICE:  sql_saga: altering table public.employees to add constraints: ADD CONSTRAINT employees_name_if_department_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
            add_unique_key           
 ------------------------------------
  employees_name_if_department_valid
@@ -148,10 +149,11 @@ SELECT sql_saga.add_unique_key(
     key_type => 'predicated',
     predicate => 'agency_id IS NOT NULL'
 );
+NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
 ERROR:  could not create exclusion constraint "contractors_name_valid_excl"
 DETAIL:  Key (name, daterange(valid_from, valid_until))=(David, [2020-01-01,2022-01-01)) conflicts with key (name, daterange(valid_from, valid_until))=(David, [2021-01-01,2023-01-01)).
 CONTEXT:  SQL statement "ALTER TABLE public.contractors ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE"
-PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text) line 363 at EXECUTE
+PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,name,name,name,text,name[]) line 475 at EXECUTE
 -- Correct the data by deleting one of the conflicting records.
 DELETE FROM contractors WHERE id = 102;
 -- Try adding the unique key again. This should now succeed.
@@ -162,6 +164,7 @@ SELECT sql_saga.add_unique_key(
     predicate => 'agency_id IS NOT NULL',
     unique_key_name => 'contractors_name_if_agency_valid'
 );
+NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_if_agency_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
           add_unique_key          
 ----------------------------------
  contractors_name_if_agency_valid

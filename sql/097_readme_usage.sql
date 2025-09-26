@@ -64,7 +64,6 @@ SELECT sql_saga.add_unique_key(
 
 SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], key_type => 'natural', unique_key_name => 'establishment_name_valid');
 -- Add a temporal foreign key.
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.establishment'::regclass,
@@ -258,7 +257,6 @@ SELECT sql_saga.drop_foreign_key(
 );
 
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], era_name => 'valid');
-SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['name'], era_name => 'valid');
 SELECT sql_saga.drop_era('readme.establishment'::regclass);
 
 

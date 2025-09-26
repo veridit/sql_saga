@@ -44,12 +44,14 @@ SELECT sql_saga.add_era('repro.units');
 -- A composite primary key is required for SCD Type 2 history. The temporal columns
 -- are added automatically by the function.
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table repro.units to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT units_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  units_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['org_nr'], key_type => 'natural');
+NOTICE:  sql_saga: altering table repro.units to add constraints: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT units_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
    add_unique_key   
 --------------------
  units_org_nr_valid

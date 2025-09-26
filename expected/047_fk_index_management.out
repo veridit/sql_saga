@@ -40,6 +40,7 @@ SELECT add_era('parent_t'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -116,6 +117,7 @@ SELECT add_era('parent_t'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -177,6 +179,7 @@ SELECT add_era('parent_t'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -238,6 +241,7 @@ SELECT add_era('parent_t'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -314,6 +318,7 @@ SELECT add_era('parent_r'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -375,6 +380,7 @@ SELECT add_era('parent_r'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -425,6 +431,7 @@ SELECT add_era('parent_r'::regclass);
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
   add_unique_key   
 -------------------
  parent_r_id_valid

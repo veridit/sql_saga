@@ -156,12 +156,12 @@ SELECT sql_saga.add_unique_key(
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 265 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 314 at RAISE
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s8;
 ALTER TABLE dp DROP CONSTRAINT x; -- fails
 ERROR:  cannot drop constraint "x" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 281 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 324 at RAISE
 ROLLBACK TO SAVEPOINT s8;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
@@ -184,22 +184,22 @@ NOTICE:  No compatible index found for foreign key on table dp_ref. Creating new
 SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 299 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 342 at RAISE
 ROLLBACK TO SAVEPOINT s10;
 SAVEPOINT s11;
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 311 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 354 at RAISE
 ROLLBACK TO SAVEPOINT s11;
 SAVEPOINT s12;
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 323 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 366 at RAISE
 ROLLBACK TO SAVEPOINT s12;
 SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 335 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 378 at RAISE
 ROLLBACK TO SAVEPOINT s13;
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
 NOTICE:  Dropping automatically created index "dp_ref_id_p_gist_idx" for foreign key "f"

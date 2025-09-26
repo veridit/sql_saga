@@ -122,9 +122,13 @@ CREATE TABLE sql_saga.unique_keys (
     key_type sql_saga.unique_key_type NOT NULL,
     column_names name[] NOT NULL,
     era_name name NOT NULL,
-    unique_constraint name NOT NULL,
-    exclude_constraint name NOT NULL,
+    unique_constraint name,
+    exclude_constraint name,
+    check_constraint name,
     predicate text,
+    mutually_exclusive_columns name[],
+    partial_index_names name[],
+    partial_exclude_constraint_names name[],
 
     PRIMARY KEY (unique_key_name),
 
@@ -134,6 +138,10 @@ GRANT SELECT ON TABLE sql_saga.unique_keys TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.unique_keys', '');
 
 COMMENT ON TABLE sql_saga.unique_keys IS 'A registry of UNIQUE/PRIMARY keys using era WITHOUT OVERLAPS';
+COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns IS 'For complex keys, stores the subset of columns that are mutually exclusive (i.e., exactly one must be NOT NULL).';
+COMMENT ON COLUMN sql_saga.unique_keys.partial_index_names IS 'For mutually exclusive keys, stores the names of the partial unique indexes created for performance.';
+COMMENT ON COLUMN sql_saga.unique_keys.partial_exclude_constraint_names IS 'For mutually exclusive keys, stores the names of the partial exclusion constraints created for correctness.';
+COMMENT ON COLUMN sql_saga.unique_keys.check_constraint IS 'For mutually exclusive keys, stores the name of the CHECK constraint that enforces the XOR logic (exactly one column is NOT NULL).';
 
 CREATE TABLE sql_saga.foreign_keys (
     foreign_key_name name NOT NULL,
@@ -337,6 +345,7 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     new_valid_from TEXT,
     new_valid_until TEXT,
     data JSONB,
+    feedback JSONB,
     trace JSONB
 );
 

@@ -89,15 +89,16 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
+NOTICE:  sql_saga: altering table public."quoted" table to add constraints: ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid from""", """valid until""") DEFERRABLE, ADD CONSTRAINT """my "" uk""_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, int4range("""valid from""", """valid until""") WITH &&) DEFERRABLE
  add_unique_key 
 ----------------
  "my " uk"
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | predicate 
------------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+-----------
- "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    | "my " uk"_excl     | 
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
+-----------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    | "my " uk"_excl     |                  |           |                            |                     | 
 (1 row)
 
 -- 4. Create referencing table with quoted names
