@@ -1751,11 +1751,11 @@ CREATE SCHEMA temporal_merge_test_serial;
 
 -- Target table with SERIAL surrogate key
 CREATE TABLE temporal_merge_test_serial.test_target (
-    id SERIAL PRIMARY KEY,
+    id SERIAL NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    UNIQUE (id, valid_from)
+    PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_from', 'valid_until');
 CREATE INDEX ON temporal_merge_test_serial.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
@@ -1822,10 +1822,11 @@ BEGIN;
 -- Use the same schema as Scenario 44 for simplicity
 CREATE SCHEMA temporal_merge_test_multi_insert;
 CREATE TABLE temporal_merge_test_multi_insert.test_target (
-    id SERIAL PRIMARY KEY,
+    id SERIAL NOT NULL,
     name TEXT,
     valid_from DATE NOT NULL,
-    valid_until DATE NOT NULL
+    valid_until DATE NOT NULL,
+    PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_from', 'valid_until');
 CREATE INDEX ON temporal_merge_test_multi_insert.test_target USING GIST (daterange(valid_from, valid_until, '[)'));

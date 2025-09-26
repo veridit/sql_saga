@@ -60,6 +60,29 @@ $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
 .PHONY: test setup_test_files
 test: setup_test_files installcheck
 
+# expected updates the .out files for the last run test suite.
+# It parses regression.out to find which tests were run.
+# Usage: `make test [fast|benchmark|TESTS=...]; make expected`
+.PHONY: expected
+expected:
+	@if [ ! -f regression.out ]; then \
+		echo "All tests passed. Nothing to update."; \
+		exit 0; \
+	fi
+	@TESTS_TO_UPDATE=$$(awk '/^(not )?ok/ {print $$4}' regression.out); \
+	if [ -z "$$TESTS_TO_UPDATE" ]; then \
+		echo "No tests found in regression.out. Nothing to update."; \
+		exit 0; \
+	fi; \
+	for test in $$TESTS_TO_UPDATE; do \
+		if [ -f "results/$$test.out" ]; then \
+			echo "Updating expected output for: $$test"; \
+			cp "results/$$test.out" "expected/$$test.out"; \
+		else \
+			echo "Warning: result file for '$$test' not found. Skipping."; \
+		fi; \
+	done
+
 # Create empty expected files for new tests if they don't exist.
 setup_test_files:
 	@mkdir -p expected

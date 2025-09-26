@@ -86,7 +86,7 @@ ROLLBACK TO SAVEPOINT scenario_2;
 
 -- Scenario 3: Drop behavior
 SAVEPOINT scenario_3;
-CREATE TABLE drop_test (id int PRIMARY KEY, value text, valid_from date, valid_until date);
+CREATE TABLE drop_test (id int, value text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
 SELECT sql_saga.add_for_portion_of_view('drop_test'::regclass);
 
@@ -103,7 +103,7 @@ TABLE sql_saga.updatable_view;
 DROP TABLE drop_test;
 
 -- Recreate for next test
-CREATE TABLE drop_test (id int PRIMARY KEY, value text, valid_from date, valid_until date);
+CREATE TABLE drop_test (id int, value text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
 SELECT sql_saga.add_for_portion_of_view('drop_test'::regclass);
 
@@ -236,11 +236,12 @@ SELECT sql_saga.add_unique_key('fk_parent', ARRAY['id']);
 SELECT sql_saga.add_for_portion_of_view('fk_parent');
 
 CREATE TABLE fk_child (
-    id integer PRIMARY KEY,
+    id integer,
     parent_id integer,
     value text,
     valid_from date,
-    valid_until date
+    valid_until date,
+    PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('fk_child', 'valid_from', 'valid_until');
 SELECT sql_saga.add_unique_key('fk_child', ARRAY['id']);

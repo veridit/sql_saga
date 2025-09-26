@@ -32,7 +32,7 @@ INSERT INTO repro.stat_definition VALUES (1, 'employees', 'int', 'Employees');
 -- 1. Create the target table, mimicking the real one.
 -- Note the `created_at` column with a DEFAULT.
 CREATE TABLE repro.stat_for_unit (
-    id                 SERIAL PRIMARY KEY,
+    id                 SERIAL NOT NULL,
     stat_definition_id INT NOT NULL REFERENCES repro.stat_definition(id),
     legal_unit_id      INT REFERENCES repro.legal_unit(id),
     establishment_id   INT,
@@ -47,7 +47,8 @@ CREATE TABLE repro.stat_for_unit (
     created_at         TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
     edit_by_user_id    INT NOT NULL REFERENCES repro.auth_user(id),
     edit_at            TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
-    edit_comment       VARCHAR(512)
+    edit_comment       VARCHAR(512),
+    PRIMARY KEY (id, valid_from)
 );
 
 -- Enable sql_saga on the target table

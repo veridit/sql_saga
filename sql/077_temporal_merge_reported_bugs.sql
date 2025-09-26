@@ -536,7 +536,7 @@ SAVEPOINT not_null_default_bug;
 
 -- Setup
 CREATE TABLE tmrb.unit_default_bug (
-    id int PRIMARY KEY, name text, is_active boolean NOT NULL DEFAULT true, valid_from date, valid_until date
+    id int, name text, is_active boolean NOT NULL DEFAULT true, valid_from date, valid_until date, PRIMARY KEY (id, valid_from)
 );
 
 SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass);

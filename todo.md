@@ -8,6 +8,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
+- [x] **Add early warnings for incompatible schemas:** The `add_era` function now issues a `WARNING` if it detects a simple `PRIMARY KEY` or `GENERATED ALWAYS AS IDENTITY` column, guiding users away from schemas that are incompatible with SCD Type 2 history. Added a dedicated test to verify this behavior.
 
 ## Low Priority - Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**

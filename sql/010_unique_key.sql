@@ -19,7 +19,7 @@ SAVEPOINT pristine;
 INSERT INTO uk (id, valid_from, valid_until) VALUES (300, 2, 4), (300, 4, 6), (300, 5, 11); -- fail
 ROLLBACK TO SAVEPOINT pristine;
 
-CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id));
+CREATE TABLE fk (id integer, uk_id integer, valid_from integer, valid_until integer, PRIMARY KEY (id, valid_from));
 SELECT sql_saga.add_era('fk', 'valid_from', 'valid_until', 'q');
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
