@@ -62,12 +62,14 @@ SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name 
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid', unique_key_name => 'legal_unit_tm_id_valid');
+NOTICE:  sql_saga: altering table public.legal_unit_tm to add constraints: ADD CONSTRAINT legal_unit_tm_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_tm_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
      add_unique_key     
 ------------------------
  legal_unit_tm_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
+NOTICE:  sql_saga: altering table public.establishment_tm to add constraints: ADD CONSTRAINT establishment_tm_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_tm_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
       add_unique_key       
 ---------------------------
  establishment_tm_id_valid
@@ -178,12 +180,14 @@ SELECT sql_saga.add_era(table_oid => 'establishment_tm_dt', valid_from_column_na
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_dt', column_names => ARRAY['id'], era_name => 'valid', unique_key_name => 'legal_unit_tm_dt_id_valid');
+NOTICE:  sql_saga: altering table public.legal_unit_tm_dt to add constraints: ADD CONSTRAINT legal_unit_tm_dt_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_tm_dt_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
       add_unique_key       
 ---------------------------
  legal_unit_tm_dt_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_dt', column_names => ARRAY['id'], era_name => 'valid');
+NOTICE:  sql_saga: altering table public.establishment_tm_dt to add constraints: ADD CONSTRAINT establishment_tm_dt_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_tm_dt_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
         add_unique_key        
 ------------------------------
  establishment_tm_dt_id_valid

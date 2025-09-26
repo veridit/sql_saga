@@ -110,12 +110,14 @@ SELECT sql_saga.add_era('establishment'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
+NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('establishment'::regclass, column_names => ARRAY['id']);
+NOTICE:  sql_saga: altering table public.establishment to add constraints: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
      add_unique_key     
 ------------------------
  establishment_id_valid
