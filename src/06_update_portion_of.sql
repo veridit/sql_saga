@@ -58,48 +58,40 @@ BEGIN
             WHERE pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
-            EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s) ON COMMIT DROP',
+            EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s, merge_status jsonb) ON COMMIT DROP',
                 source_table_name, v_cols_def);
         END;
     END IF;
 
     EXECUTE format('DELETE FROM %I', source_table_name);
 
-    -- Insert the NEW record, which contains the entity identifier, the data payload, and the time portion parameters.
-    -- Since this trigger operates row-by-row, a static row_id of 1 is sufficient.
-    -- If the user specified valid_to instead of valid_until, we must derive valid_until
-    -- before inserting the record into our temporary source table.
-    IF (jnew->info.valid_until_column_name IS NULL OR jnew->info.valid_until_column_name = 'null'::jsonb) AND jnew->info.synchronize_valid_to_column IS NOT NULL AND jnew->info.synchronize_valid_to_column <> 'null'::jsonb THEN
-        DECLARE
-            v_new_until jsonb;
-            v_rec record;
-        BEGIN
-            SELECT
-                CASE info.range_subtype_category
-                    WHEN 'N' THEN -- Numeric types (integer, bigint, numeric)
-                        to_jsonb( (jnew->>info.synchronize_valid_to_column)::numeric + 1 )
-                    WHEN 'D' THEN -- Date/time types
-                        to_jsonb( (jnew->>info.synchronize_valid_to_column)::date + 1 )
-                    ELSE
-                        NULL
-                END INTO v_new_until;
-
-            IF v_new_until IS NULL THEN
-                RAISE EXCEPTION 'sql_saga: do not know how to derive "%" from "%" for range subtype category ''%''',
-                    info.valid_until_column_name, info.synchronize_valid_to_column, info.range_subtype_category;
-            END IF;
-
-            jnew := jnew || jsonb_build_object(info.valid_until_column_name, v_new_until);
-            v_rec := jsonb_populate_record(null::record, jnew);
-
-            EXECUTE format('INSERT INTO %I SELECT 1, ($1).*', source_table_name)
-            USING v_rec;
-        END;
-    ELSE
-        -- The simple path: valid_until was provided directly.
-        EXECUTE format('INSERT INTO %I SELECT 1, ($1).*', source_table_name)
-        USING NEW;
+    -- The `for_portion_of` view allows specifying a time slice using either `valid_until` (exclusive)
+    -- or `valid_to` (inclusive). To provide a clean, unambiguous source row to the underlying
+    -- temporal_merge procedure, we must ensure only one of these is passed.
+    --
+    -- The convention is to prefer `valid_until` if both happen to be present, and to clear `valid_to`.
+    -- If only `valid_to` is present, we clear `valid_until` and let the planner derive it.
+    IF jnew ? info.valid_until_column_name AND jnew->>info.valid_until_column_name IS NOT NULL THEN
+        -- valid_until is the source of truth, so clear valid_to.
+        IF info.synchronize_valid_to_column IS NOT NULL THEN
+            jnew := jnew - info.synchronize_valid_to_column;
+        END IF;
+    ELSIF info.synchronize_valid_to_column IS NOT NULL AND jnew ? info.synchronize_valid_to_column AND jnew->>info.synchronize_valid_to_column IS NOT NULL THEN
+        -- valid_to is the source of truth, so clear valid_until.
+        jnew := jnew - info.valid_until_column_name;
     END IF;
+
+    -- We no longer need the complex IF/ELSE for insertion.
+    -- Populate a record from the cleaned-up JSON and insert it.
+    BEGIN
+        EXECUTE format(
+            'INSERT INTO %I SELECT 1, (r).*, NULL FROM jsonb_populate_record(null::%I.%I, $1) AS r',
+            source_table_name,
+            info.table_schema,
+            info.table_name
+        )
+        USING jnew;
+    END;
 
     -- Use temporal_merge to apply the change.
     CALL sql_saga.temporal_merge(
@@ -107,8 +99,24 @@ BEGIN
         source_table => source_table_name::regclass,
         identity_columns => identifier_columns,
         mode => 'UPDATE_FOR_PORTION_OF',
-        era_name => info.era_name
+        era_name => info.era_name,
+        update_source_with_feedback => true,
+        feedback_status_column => 'merge_status',
+        feedback_status_key => 'temporal_merge'
     );
+
+    -- Check for errors from the merge operation and raise an exception if any occurred.
+    DECLARE
+        v_error_count integer;
+        v_error_message text;
+    BEGIN
+        EXECUTE format('SELECT count(*), max(merge_status->''temporal_merge''->>''error_message'') FROM %I WHERE (merge_status->''temporal_merge''->>''status'')::sql_saga.temporal_merge_feedback_status = ''ERROR''', source_table_name)
+        INTO v_error_count, v_error_message;
+
+        IF v_error_count > 0 THEN
+            RAISE EXCEPTION 'sql_saga: applying the change for portion of time failed. First error: %', v_error_message;
+        END IF;
+    END;
 
     RETURN NEW;
 END;

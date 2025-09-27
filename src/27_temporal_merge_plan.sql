@@ -71,7 +71,9 @@ DECLARE
     v_target_entity_exists_expr TEXT;
     v_target_schema_name name;
     v_target_table_name_only name;
-    v_range_constructor name;
+    v_range_constructor regtype;
+    v_range_subtype regtype;
+    v_range_subtype_category char(1);
     v_valid_from_col name;
     v_valid_until_col name;
     v_valid_to_col name;
@@ -80,6 +82,10 @@ DECLARE
     v_ephemeral_columns TEXT[] := COALESCE(ephemeral_columns, '{}'::text[]);
     v_is_founding_mode BOOLEAN := (founding_id_column IS NOT NULL);
     v_is_identifiable_expr TEXT;
+    v_source_temporal_cols_expr TEXT;
+    v_consistency_check_expr TEXT;
+    v_natural_key_join_condition TEXT;
+    v_interval TEXT;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -96,8 +102,8 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = target_table;
 
-    SELECT e.range_type::name, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
-    INTO v_range_constructor, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
+    SELECT e.range_type, e.range_subtype, e.range_subtype_category, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
+    INTO v_range_constructor, v_range_subtype, v_range_subtype_category, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
@@ -140,6 +146,8 @@ BEGIN
     -- 1.5: Build the final, canonical lists of identity columns.
     v_lookup_columns := COALESCE(v_all_natural_key_cols, v_stable_identity_columns);
 
+    v_natural_key_join_condition := COALESCE((SELECT string_agg(format('s1.%1$I IS NOT DISTINCT FROM s2.%1$I', col), ' AND ') FROM unnest(v_all_natural_key_cols) as col), 'false');
+
     -- `v_original_entity_segment_key_cols`: The complete unique identifier for a timeline segment of a specific entity.
     -- This list contains the original, user-defined column names. It **includes** temporal columns if they are part of a
     -- composite key. Its primary purpose is to serve as the single source of truth for all other key lists.
@@ -169,6 +177,80 @@ BEGIN
     SELECT ARRAY(SELECT DISTINCT e FROM unnest(v_ephemeral_columns) AS e ORDER BY e)
     INTO v_ephemeral_columns;
 
+    -- 1.7: Build the source table's temporal column expression.
+    -- This block determines how to project `valid_from` and `valid_until` from the source,
+    -- handling `valid_to` conversion automatically. It also performs a consistency
+    -- check if both `valid_to` and `valid_until` are present.
+    DECLARE
+        v_source_has_valid_from BOOLEAN;
+        v_source_has_valid_until BOOLEAN;
+        v_source_has_valid_to BOOLEAN;
+    BEGIN
+        SELECT
+            EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_from_col AND NOT attisdropped AND attnum > 0),
+            EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_until_col AND NOT attisdropped AND attnum > 0)
+        INTO v_source_has_valid_from, v_source_has_valid_until;
+
+        -- Check for `valid_to` column. If the era metadata specifies a name, use it.
+        -- Otherwise, fall back to the convention 'valid_to'.
+        IF v_valid_to_col IS NOT NULL THEN
+            SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_to_col AND NOT attisdropped AND attnum > 0)
+            INTO v_source_has_valid_to;
+        ELSE
+            SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = 'valid_to' AND NOT attisdropped AND attnum > 0)
+            INTO v_source_has_valid_to;
+            IF v_source_has_valid_to THEN
+                v_valid_to_col := 'valid_to';
+            END IF;
+        END IF;
+
+        IF NOT v_source_has_valid_from THEN
+            RAISE EXCEPTION 'Source table "%" must have a "%" column matching the target era''s valid_from column.', source_table::text, v_valid_from_col;
+        END IF;
+
+        -- Determine the correct interval to add to `valid_to` to get `valid_until`,
+        -- using the era's metadata as the single source of truth.
+        IF v_source_has_valid_to THEN
+            CASE v_range_subtype_category
+                WHEN 'D' THEN -- Date/time types
+                    v_interval := '''1 day''::interval';
+                WHEN 'N' THEN -- Numeric types
+                    v_interval := '1';
+                ELSE
+                    RAISE EXCEPTION 'Unsupported range subtype for valid_to -> valid_until conversion: %', v_range_constructor::text;
+            END CASE;
+        END IF;
+
+        -- The logic follows a clear order of precedence:
+        -- 1. If valid_until is present, use it. If valid_to is also present, a
+        --    per-row consistency check will be performed inside the main query.
+        -- 2. If only valid_to is present, derive valid_until.
+        -- 3. If neither is present, raise an error.
+        IF v_source_has_valid_until THEN
+            -- `valid_until` is the source of truth.
+            v_source_temporal_cols_expr := format('source_table.%1$I as valid_from, source_table.%2$I as valid_until', v_valid_from_col, v_valid_until_col);
+        ELSIF v_source_has_valid_to THEN
+            -- Only `valid_to` is present; derive `valid_until`.
+            v_source_temporal_cols_expr := format('source_table.%1$I as valid_from, (source_table.%2$I + %3$s)::%4$s as valid_until', v_valid_from_col, v_valid_to_col, v_interval, v_range_subtype);
+        ELSE
+            RAISE EXCEPTION 'Source table "%" must have either a "%" column or a "%" column matching the target era.', source_table::text, v_valid_until_col, v_valid_to_col;
+        END IF;
+
+        -- Build the per-row consistency check expression. This check is only performed
+        -- if BOTH columns are present in the source.
+        IF v_source_has_valid_until AND v_source_has_valid_to THEN
+            -- The check is only false if BOTH columns have a value and they are inconsistent.
+            -- If one is NULL, it's considered consistent for the purpose of the FOR PORTION OF trigger.
+            v_consistency_check_expr := format($$(
+                (source_table.%1$I IS NULL OR source_table.%2$I IS NULL)
+                OR
+                (((source_table.%1$I + %3$s)::%4$s) IS NOT DISTINCT FROM source_table.%2$I)
+            )$$, v_valid_to_col, v_valid_until_col, v_interval, v_range_subtype);
+        ELSE
+            v_consistency_check_expr := 'true';
+        END IF;
+    END; -- END DECLARE
+
     --
     IF v_log_vars THEN
         RAISE NOTICE '(%) --- temporal_merge_plan variables ---', v_log_id;
@@ -186,6 +268,10 @@ BEGIN
         RAISE NOTICE '(%) v_lookup_columns (for entity filtering): %', v_log_id, v_lookup_columns;
         RAISE NOTICE '(%) v_original_entity_segment_key_cols (for joins/partitions): %', v_log_id, v_original_entity_segment_key_cols;
         RAISE NOTICE '(%) v_original_entity_key_cols (for feedback payload): %', v_log_id, v_original_entity_key_cols;
+        RAISE NOTICE '(%) --- Temporal Column Handling ---', v_log_id;
+        RAISE NOTICE '(%) v_interval: %', v_log_id, v_interval;
+        RAISE NOTICE '(%) v_source_temporal_cols_expr: %', v_log_id, v_source_temporal_cols_expr;
+        RAISE NOTICE '(%) v_consistency_check_expr: %', v_log_id, v_consistency_check_expr;
     END IF;
 
     -- Phase 2: Validation
@@ -231,7 +317,7 @@ BEGIN
                 IF NOT FOUND THEN RAISE EXCEPTION 'natural_identity_column % does not exist in source table %', quote_ident(v_col), source_table; END IF;
             END LOOP;
         END IF;
-    END;
+    END; -- END DECLARE
 
     IF v_correlation_col IS NULL THEN
         RAISE EXCEPTION 'The correlation identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
@@ -726,9 +812,9 @@ BEGIN
                                     FROM %1$s inner_t
                                     JOIN (SELECT DISTINCT %4$s FROM source_initial si) AS si ON (%2$s)
                                 )$$, v_target_table_ident, v_join_clause, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col), (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col));
-                            END;
+                            END; -- DECLARE
                         END IF;
-                    END;
+                    END; -- DECLARE
                 END LOOP;
 
                 -- The final "filter" is a full subquery that replaces the original FROM clause for target_rows.
@@ -1006,17 +1092,43 @@ source_initial AS (
         source_table.%18$I as source_row_id,
         %16$s as corr_ent,
         %64$s /* v_non_temporal_lookup_cols_select_list_prefix */
-        source_table.%14$I as valid_from,
-        source_table.%15$I as valid_until,
+        %86$s, -- v_source_temporal_cols_expr
         %2$s AS data_payload,
         %56$s AS ephemeral_payload,
         %73$s as stable_pk_payload,
         %13$s as stable_identity_columns_are_null,
         %72$s as natural_identity_column_values_are_null,
-        %83$s as is_identifiable
+        %83$s as is_identifiable,
+        %87$s as temporal_columns_are_consistent
     FROM %3$s source_table
 ),
--- CTE 2: target_rows
+-- CTE 2: source_with_eclipsed_flag
+-- Purpose: Pre-processes the source data to flag rows that are "eclipsed" (completely
+-- covered) by other, newer rows for the same conceptual entity within the same batch.
+-- It also captures the row_ids of the eclipsing rows for detailed feedback.
+source_with_eclipsed_flag AS (
+    SELECT
+        s1.*,
+        eclipse_info.is_eclipsed,
+        eclipse_info.eclipsed_by
+    FROM source_initial s1
+    CROSS JOIN LATERAL (
+        SELECT
+            COALESCE(sql_saga.covers_without_gaps(%19$I(s2.valid_from, s2.valid_until), %19$I(s1.valid_from, s1.valid_until) ORDER BY s2.valid_from), false) as is_eclipsed,
+            array_agg(s2.source_row_id) as eclipsed_by
+        FROM source_initial s2
+        WHERE
+            (
+                (NOT s1.natural_identity_column_values_are_null AND (%91$s))
+                OR
+                (s1.natural_identity_column_values_are_null AND s1.corr_ent = s2.corr_ent)
+            )
+            AND
+            -- Only consider newer rows (higher row_id) as potential eclipsers.
+            s2.source_row_id > s1.source_row_id
+    ) eclipse_info
+),
+-- CTE 3: target_rows
 -- Purpose: Selects the relevant historical data from the target table.
 --
 -- Example: For a source batch affecting entities with `id` 1 and 2, this CTE would select all
@@ -1038,19 +1150,19 @@ target_rows AS (
         %57$s AS ephemeral_payload
     FROM %20$s -- v_target_rows_filter is now a subquery with alias t
 ),
--- CTE 3: source_rows_with_matches
+-- CTE 4: source_rows_with_matches
 -- Purpose: Performs the LEFT JOIN to find all potential target entities for each source row.
 source_rows_with_matches AS (
     SELECT
         source_row.*,
         target_row.stable_pk_payload as discovered_stable_pk_payload,
         %82$s -- v_propagated_id_cols_list
-    FROM source_initial source_row
+    FROM source_with_eclipsed_flag source_row
     LEFT JOIN target_rows target_row ON (
         %25$s -- v_source_rows_exists_join_expr
     )
 ),
--- CTE 4: source_rows_with_aggregates
+-- CTE 5: source_rows_with_aggregates
 -- Purpose: Calculates ambiguity information by counting distinct target matches per source row.
 -- This CTE is necessary to work around the limitation that COUNT(DISTINCT ...) cannot be used
 -- as a window function.
@@ -1082,13 +1194,14 @@ source_rows AS (
     SELECT DISTINCT ON (p.source_row_id) -- A source row may be duplicated by the join if it matches on multiple keys to the *same* target.
         p.source_row_id, p.corr_ent, p.valid_from, p.valid_until, p.data_payload, p.ephemeral_payload,
         p.stable_identity_columns_are_null, p.natural_identity_column_values_are_null, p.is_identifiable,
-        p.is_ambiguous, p.conflicting_ids,
+        p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
+        p.temporal_columns_are_consistent,
         COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
         %77$s as target_entity_exists, -- v_target_entity_exists_expr
         %76$s -- v_coalesced_id_cols_list
     FROM source_rows_with_discovery p
 ),
--- CTE 7: source_rows_with_new_flag
+-- CTE 8: source_rows_with_new_flag
 -- Purpose: Correctly determines if a source row represents a truly "new" entity.
 -- Formulation: An entity is "new" if, and only if, it does not already exist in the target table.
 -- The `target_entity_exists` flag is the single source of truth for this, determined by looking
@@ -1100,7 +1213,7 @@ source_rows_with_new_flag AS (
         NOT target_entity_exists as new_ent
     FROM source_rows
 ),
--- CTE 8: source_rows_with_unified_flags
+-- CTE 9: source_rows_with_unified_flags
 -- Purpose: Establishes the canonical flag that controls partitioning logic.
 -- An entity's timeline should only be partitioned by its correlation ID if it's a
 -- truly new entity AND its stable identifier is NULL in the source (meaning it
@@ -1111,8 +1224,8 @@ source_rows_with_unified_flags AS (
         stable_identity_columns_are_null AND new_ent as partition_by_corr_ent
     FROM source_rows_with_new_flag
 ),
--- CTE 9: active_source_rows
--- Purpose: Filters the source rows based on the requested `mode`.
+-- CTE 10: active_source_rows
+-- Purpose: Filters the source rows based on the requested `mode` and removes eclipsed rows.
 -- Formulation: A simple `CASE` statement in the `WHERE` clause declaratively enforces the semantics of each mode.
 -- For example, `INSERT_NEW_ENTITIES` will only consider rows where `target_entity_exists` is false. This is another
 -- critical performance optimization.
@@ -1120,7 +1233,9 @@ active_source_rows AS (
     SELECT
         source_row.*
     FROM source_rows_with_unified_flags source_row
-    WHERE CASE %7$L::sql_saga.temporal_merge_mode
+    WHERE NOT source_row.is_eclipsed
+      AND source_row.temporal_columns_are_consistent
+      AND CASE %7$L::sql_saga.temporal_merge_mode
         -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
         WHEN 'MERGE_ENTITY_PATCH' THEN true
         WHEN 'MERGE_ENTITY_REPLACE' THEN true
@@ -1146,7 +1261,7 @@ active_source_rows AS (
 -- Formulation: A `UNION ALL` combines the active source rows with the relevant target rows. All rows for a
 -- conceptual entity are processed together in downstream CTEs.
 all_rows AS (
-    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM active_source_rows
+    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent FROM active_source_rows
     UNION ALL
     SELECT
         %65$s
@@ -1160,7 +1275,8 @@ all_rows AS (
         false as partition_by_corr_ent,
         true as is_identifiable,
         false as is_ambiguous,
-        NULL::jsonb as conflicting_ids
+        NULL::jsonb as conflicting_ids,
+        true as temporal_columns_are_consistent
     FROM target_rows target_row
 ),
 -- CTE 11: time_points_raw
@@ -1591,13 +1707,31 @@ plan_with_op AS (
     )
     UNION ALL
     (
+        -- Re-introduce eclipsed rows to be reported as SKIPPED_ECLIPSED
+        SELECT
+            ARRAY[source_row.source_row_id::BIGINT],
+            NULL, source_row.new_ent,
+            'SKIP_ECLIPSED'::sql_saga.temporal_merge_plan_action,
+            %26$s,
+            %32$s as entity_id_json, -- v_skip_no_target_entity_id_json_build_expr
+            source_row.corr_ent,
+            NULL, NULL, NULL, NULL,
+            NULL,
+            jsonb_build_object('info', format('Source row was eclipsed by row_ids=%s in the same batch.', source_row.eclipsed_by)),
+            NULL, NULL
+        FROM source_rows_with_unified_flags source_row
+        WHERE source_row.is_eclipsed
+    )
+    UNION ALL
+    (
         -- This part of the plan handles source rows that were filtered out by the main logic,
-        -- allowing the executor to provide accurate feedback.
+        -- allowing the executor to provide accurate feedback. This now includes rows with inconsistent temporal columns.
         SELECT
             ARRAY[source_row.source_row_id::BIGINT],
             NULL::sql_saga.allen_interval_relation,
             source_row.new_ent,
             CASE
+                WHEN NOT source_row.temporal_columns_are_consistent THEN 'ERROR'::sql_saga.temporal_merge_plan_action
                 WHEN %7$L::sql_saga.temporal_merge_mode = 'INSERT_NEW_ENTITIES' AND source_row.target_entity_exists THEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action
                 WHEN %7$L::sql_saga.temporal_merge_mode IN ('PATCH_FOR_PORTION_OF', 'REPLACE_FOR_PORTION_OF', 'DELETE_FOR_PORTION_OF', 'UPDATE_FOR_PORTION_OF') AND NOT source_row.target_entity_exists THEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action
                 ELSE 'ERROR'::sql_saga.temporal_merge_plan_action -- Should be unreachable, but acts as a fail-fast safeguard.
@@ -1607,12 +1741,19 @@ plan_with_op AS (
             source_row.corr_ent,
             NULL, NULL, NULL, NULL,
             NULL,
-            jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.'),
+            CASE
+                WHEN NOT source_row.temporal_columns_are_consistent
+                THEN jsonb_build_object('error', format('Source row has inconsistent temporal columns. Column "%%s" must be equal to column "%%s" + %%s.', %89$L, %90$L, %88$L))
+                ELSE jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.')
+            END,
             NULL,
             NULL::jsonb -- trace
-        FROM source_rows_with_new_flag source_row
-        WHERE NOT (
-            CASE %7$L::sql_saga.temporal_merge_mode
+        FROM source_rows_with_unified_flags source_row
+        WHERE
+            NOT source_row.is_eclipsed
+            AND NOT (
+                source_row.temporal_columns_are_consistent AND
+                CASE %7$L::sql_saga.temporal_merge_mode
                 -- MERGE_ENTITY modes process all source rows initially; they handle existing vs. new entities in the planner.
                 WHEN 'MERGE_ENTITY_PATCH' THEN true
                 WHEN 'MERGE_ENTITY_REPLACE' THEN true
@@ -1774,7 +1915,13 @@ $SQL$,
             v_propagated_id_cols_list,                              /* %82$s - v_propagated_id_cols_list */
             v_is_identifiable_expr,                                 /* %83$s - v_is_identifiable_expr */
             v_plan_with_op_entity_id_json_build_expr_part_A,        /* %84$s - v_plan_with_op_entity_id_json_build_expr_part_A */
-            v_plan_select_key_cols                                  /* %85$s - v_plan_select_key_cols */
+            v_plan_select_key_cols,                                 /* %85$s - v_plan_select_key_cols */
+            v_source_temporal_cols_expr,                            /* %86$s - v_source_temporal_cols_expr */
+            v_consistency_check_expr,                               /* %87$s - v_consistency_check_expr */
+            v_interval,                                             /* %88$L - v_interval */
+            v_valid_until_col,                                      /* %89$L - v_valid_until_col */
+            v_valid_to_col,                                         /* %90$L - v_valid_to_col */
+            v_natural_key_join_condition                            /* %91$s - v_natural_key_join_condition */
         );
 
         -- Conditionally log the generated SQL for debugging.

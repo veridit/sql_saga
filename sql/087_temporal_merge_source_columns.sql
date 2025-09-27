@@ -53,7 +53,7 @@ ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Scenario 3: FAIL - natural_identity_column missing from target ---'
 SAVEPOINT expect_error;
 -- This call is expected to fail because 'org_nr_typo' is not in 'repro.units'
-CREATE TEMP TABLE source_with_typo (row_id int, org_nr_typo text) ON COMMIT DROP;
+CREATE TEMP TABLE source_with_typo (row_id int, org_nr_typo text, valid_from date, valid_to date) ON COMMIT DROP;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_with_typo',
@@ -65,7 +65,7 @@ ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Scenario 4: FAIL - identity_column missing from target ---'
 SAVEPOINT expect_error;
 -- This call is expected to fail because 'id_typo' is not in 'repro.units'
-CREATE TEMP TABLE source_with_id (row_id int, org_nr text, id_typo int) ON COMMIT DROP;
+CREATE TEMP TABLE source_with_id (row_id int, org_nr text, id_typo int, valid_from date, valid_to date) ON COMMIT DROP;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_with_id',

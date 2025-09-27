@@ -864,6 +864,7 @@ BEGIN
                         THEN 'APPLIED'
                         WHEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_NO_TARGET'
                         WHEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_FILTERED'
+                        WHEN 'SKIP_ECLIPSED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) THEN 'SKIPPED_ECLIPSED'
                         WHEN fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action] THEN 'SKIPPED_IDENTICAL'
                         -- If a source row resulted in no plan operations, it is an internal error.
                         WHEN fg.operations IS NULL THEN 'ERROR'
@@ -879,6 +880,7 @@ BEGIN
                              'DELETE'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
                              'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
                              'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
+                             'SKIP_ECLIPSED'::sql_saga.temporal_merge_plan_action = ANY(fg.operations) OR
                              fg.operations = ARRAY['SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action]
                         )
                         THEN 'Planner produced an unhandled combination of actions: ' || fg.operations::text

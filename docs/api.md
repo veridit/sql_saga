@@ -79,6 +79,7 @@ This document is automatically generated from the database schema by the `80_gen
 > - SKIPPED_IDENTICAL: A benign no-op where the source data was identical to the target data.
 > - SKIPPED_FILTERED: A benign no-op where the source row was correctly filtered by the mode's logic (e.g., an `INSERT_NEW_ENTITIES` for an entity that already exists).
 > - SKIPPED_NO_TARGET: An actionable no-op where the operation failed because the target entity was not found. This signals a potential data quality issue.
+> - SKIPPED_ECLIPSED: A benign no-op where the source row was completely covered (eclipsed) by one or more other rows within the same source batch, making it redundant.
 > - ERROR: A catastrophic planner failure occurred, indicating a bug in the merge logic. The `error_message` column will be populated.
 
 ```sql
@@ -86,6 +87,7 @@ This document is automatically generated from the database schema by the `80_gen
 - SKIPPED_IDENTICAL
 - SKIPPED_FILTERED
 - SKIPPED_NO_TARGET
+- SKIPPED_ECLIPSED
 - ERROR
 ```
 
@@ -129,6 +131,7 @@ This document is automatically generated from the database schema by the `80_gen
 > - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
 > - SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.
 > - SKIP_FILTERED: A source row should be skipped because it was correctly filtered by the mode's logic (e.g. INSERT_NEW_ENTITIES for an entity that already exists).
+> - SKIP_ECLIPSED: A source row is completely covered by other rows in the same batch and is therefore redundant. This is used by the executor to generate a SKIPPED_ECLIPSED feedback status.
 > - ERROR: A safeguard action indicating the planner could not generate a valid plan for a row, signaling a bug.
 
 ```sql
@@ -138,6 +141,7 @@ This document is automatically generated from the database schema by the `80_gen
 - SKIP_IDENTICAL
 - SKIP_NO_TARGET
 - SKIP_FILTERED
+- SKIP_ECLIPSED
 - ERROR
 ```
 

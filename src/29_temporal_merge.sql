@@ -37,6 +37,7 @@ BEGIN
     -- 3. Calling the planner to generate the execution plan.
     -- 4. Calling the executor to apply the plan to the database.
 
+
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
     v_log_plan := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_plan', true), ''), 'false')::boolean;

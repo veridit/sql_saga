@@ -7,6 +7,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 ## High Priority - Bugs & Core Features
 - [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
 ## Medium Priority - Refactoring & API Improvements
+- [x] **Enhance `temporal_merge` to accept `valid_to` from source tables:** Modify the procedure to automatically detect a `valid_to` column (inclusive end) in the source and calculate the required `valid_until` (exclusive end) internally. This will improve usability and fix the `079_...` regression test failure.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 - [x] **Add early warnings for incompatible schemas:** The `add_era` function now issues a `WARNING` if it detects a simple `PRIMARY KEY` or `GENERATED ALWAYS AS IDENTITY` column, guiding users away from schemas that are incompatible with SCD Type 2 history. Added a dedicated test to verify this behavior.
