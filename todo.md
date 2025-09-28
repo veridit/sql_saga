@@ -5,6 +5,7 @@ Tasks are checked ✅ when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [x] **Fix `temporal_merge` to handle SERIAL/IDENTITY columns correctly on INSERT:** The executor's `INSERT` logic correctly omits `SERIAL` columns to allow the database to generate values. A regression test was failing due to a flawed setup that did not advance the sequence after a manual `INSERT`, causing a key collision. The test has been fixed to correctly manage its sequence, and the executor was verified to be correct.
 - [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
 ## Medium Priority - Refactoring & API Improvements
 - [x] **Enhance `temporal_merge` to accept `valid_to` from source tables:** Modify the procedure to automatically detect a `valid_to` column (inclusive end) in the source and calculate the required `valid_until` (exclusive end) internally. This will improve usability and fix the `079_...` regression test failure.

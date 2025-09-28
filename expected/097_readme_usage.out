@@ -321,8 +321,8 @@ CALL sql_saga.temporal_merge(
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | feedback | trace 
 -------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------+-------
-           1 | {202}   | INSERT    |               | 2        | t       | {"id": 2}  |              |              |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} |          | 
-           2 | {201}   | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  |          | 
+           1 | {201}   | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  |          | 
+           2 | {202}   | INSERT    |               | 2        | t       | {"id": 2}  |              |              |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} |          | 
 (2 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;

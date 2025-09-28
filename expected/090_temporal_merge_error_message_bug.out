@@ -1,0 +1,202 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+SAVEPOINT scenario_1;
+-- This test verifies that the planner correctly raises an error when a source table
+-- is missing a valid_until/valid_to column.
+CREATE TABLE target_units (
+    id SERIAL NOT NULL,
+    name TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE,
+    valid_to DATE
+);
+-- Note: we add a synchronized 'valid_to' column to make the expected error clear.
+SELECT sql_saga.add_era('target_units', synchronize_valid_to_column => 'valid_to');
+NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_units_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    add_unique_key     
+-----------------------
+ target_units_id_valid
+(1 row)
+
+-- Source table is intentionally missing a temporal end column ('valid_until' or 'valid_to')
+CREATE TABLE source_units (
+    row_id INT,
+    id INT,
+    name TEXT,
+    valid_from DATE
+);
+INSERT INTO target_units (id, name, valid_from, valid_to) VALUES (1, 'Existing Unit', '2023-01-01', 'infinity');
+INSERT INTO source_units (row_id, id, name, valid_from) VALUES (1, 1, 'Updated Unit', '2024-01-01');
+\echo '## Calling temporal_merge without valid_until in source should fail'
+## Calling temporal_merge without valid_until in source should fail
+-- This call should fail because the source table lacks valid_until or valid_to.
+CALL sql_saga.temporal_merge(
+    target_table => 'target_units',
+    source_table => 'source_units',
+    row_id_column => 'row_id'
+);
+ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 250 at RAISE
+SQL statement "INSERT INTO temporal_merge_plan
+    SELECT * FROM sql_saga.temporal_merge_plan(
+        target_table => temporal_merge.target_table,
+        source_table => temporal_merge.source_table,
+        mode => temporal_merge.mode,
+        era_name => temporal_merge.era_name,
+        identity_columns => v_identity_cols_discovered,
+        row_id_column => temporal_merge.row_id_column,
+        founding_id_column => temporal_merge.founding_id_column,
+        delete_mode => temporal_merge.delete_mode,
+        natural_identity_keys => v_natural_identity_keys_discovered,
+        ephemeral_columns => temporal_merge.ephemeral_columns,
+        p_log_trace => v_log_trace,
+        p_log_sql => v_log_sql
+    )"
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 149 at SQL statement
+\echo '## State of target table after merge (should be unchanged)'
+## State of target table after merge (should be unchanged)
+-- This will also error because the transaction is aborted.
+TABLE target_units ORDER BY id, valid_from;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK TO SAVEPOINT scenario_1;
+SAVEPOINT scenario_2;
+-- Replicate the scenario from statbus: a target table with a SERIAL PK
+CREATE TABLE target_units (
+    id SERIAL NOT NULL,
+    unit_ident TEXT NOT NULL,
+    name TEXT,
+    valid_from DATE NOT NULL,
+    valid_until DATE
+);
+SELECT sql_saga.add_era('target_units');
+ add_era 
+---------
+ t
+(1 row)
+
+-- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_from) and an exclusion constraint.
+SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_units_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+    add_unique_key     
+-----------------------
+ target_units_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], key_type => 'natural');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+        add_unique_key         
+-------------------------------
+ target_units_unit_ident_valid
+(1 row)
+
+INSERT INTO target_units (id, unit_ident, name, valid_from, valid_until) VALUES
+(1, 'U1', 'Existing Unit', '2023-01-01', 'infinity');
+-- Source table with a new unit (id is NULL)
+CREATE TABLE source_units (
+    row_id INT,
+    founding_row_id INT,
+    id INT, -- This is the stable PK. Must match target.
+    unit_ident TEXT,
+    name TEXT,
+    valid_from DATE
+);
+INSERT INTO source_units (row_id, founding_row_id, id, unit_ident, name, valid_from) VALUES
+(1, 1, NULL, 'U2', 'New Unit', '2024-01-01');
+\echo '## Initial state of target table'
+## Initial state of target table
+TABLE target_units;
+ id | unit_ident |     name      | valid_from | valid_until 
+----+------------+---------------+------------+-------------
+  1 | U1         | Existing Unit | 2023-01-01 | infinity
+(1 row)
+
+SET client_min_messages TO NOTICE;
+SET sql_saga.temporal_merge.log_plan = true;
+SET sql_saga.temporal_merge.enable_trace = true;
+CALL sql_saga.temporal_merge(
+    target_table => 'target_units',
+    source_table => 'source_units',
+    identity_columns => NULL, -- Discover based on sql_saga setup.
+    natural_identity_columns => NULL, -- Discover based on sql_saga setup.
+    row_id_column => 'row_id',
+    founding_id_column => 'founding_row_id',
+    update_source_with_identity => true,
+    mode => 'MERGE_ENTITY_UPSERT'
+);
+ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 250 at RAISE
+SQL statement "INSERT INTO temporal_merge_plan
+    SELECT * FROM sql_saga.temporal_merge_plan(
+        target_table => temporal_merge.target_table,
+        source_table => temporal_merge.source_table,
+        mode => temporal_merge.mode,
+        era_name => temporal_merge.era_name,
+        identity_columns => v_identity_cols_discovered,
+        row_id_column => temporal_merge.row_id_column,
+        founding_id_column => temporal_merge.founding_id_column,
+        delete_mode => temporal_merge.delete_mode,
+        natural_identity_keys => v_natural_identity_keys_discovered,
+        ephemeral_columns => temporal_merge.ephemeral_columns,
+        p_log_trace => v_log_trace,
+        p_log_sql => v_log_sql
+    )"
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 149 at SQL statement
+\echo '## State of target table after merge'
+## State of target table after merge
+TABLE target_units ORDER BY id, valid_from;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+\echo '## State of source table after identity back-fill'
+## State of source table after identity back-fill
+TABLE source_units ORDER BY row_id;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK TO SAVEPOINT scenario_2;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

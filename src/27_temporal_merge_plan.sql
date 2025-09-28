@@ -86,6 +86,9 @@ DECLARE
     v_consistency_check_expr TEXT;
     v_natural_key_join_condition TEXT;
     v_interval TEXT;
+    v_constellation TEXT;
+    v_partition_key_expr TEXT;
+    v_entity_id_check_is_null_expr_no_alias TEXT;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -165,6 +168,32 @@ BEGIN
     FROM unnest(v_original_entity_segment_key_cols) AS c
     WHERE c <> ALL(v_temporal_cols);
 
+    IF temporal_merge_plan.identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.identity_columns) > 0 AND v_all_natural_key_cols IS NOT NULL AND cardinality(v_all_natural_key_cols) > 0 THEN
+        v_constellation := 'STRATEGY_HYBRID';
+    ELSIF temporal_merge_plan.identity_columns IS NOT NULL AND cardinality(temporal_merge_plan.identity_columns) > 0 THEN
+        v_constellation := 'STRATEGY_STABLE_KEY_ONLY';
+    ELSIF v_all_natural_key_cols IS NOT NULL AND cardinality(v_all_natural_key_cols) > 0 THEN
+        v_constellation := 'STRATEGY_NATURAL_KEY_ONLY';
+    ELSE
+        v_constellation := 'STRATEGY_UNDEFINED';
+    END IF;
+
+    v_entity_id_check_is_null_expr_no_alias := (
+        SELECT COALESCE(string_agg(format('%I IS NULL', col), ' AND '), 'true')
+        FROM unnest(v_stable_identity_columns) AS col
+    );
+
+    -- Build the robust, namespaced partitioning key expression that will be used in all window functions.
+    v_partition_key_expr := format(
+        $$CASE
+            WHEN %1$s -- stable_identity_columns_are_null
+            THEN 'new_entity__' || corr_ent::text
+            ELSE 'existing_entity__' || %2$s
+        END$$,
+        v_entity_id_check_is_null_expr_no_alias,
+        (SELECT string_agg(format('%I::text', col), ' || ''__'' || ') FROM unnest(v_stable_identity_columns) AS t(col))
+    );
+
     -- 1.6: Sanitize and normalize ephemeral columns list.
     -- Automatically treat synchronized columns as ephemeral for change detection.
     IF v_valid_to_col IS NOT NULL THEN
@@ -233,7 +262,7 @@ BEGIN
             -- Only `valid_to` is present; derive `valid_until`.
             v_source_temporal_cols_expr := format('source_table.%1$I as valid_from, (source_table.%2$I + %3$s)::%4$s as valid_until', v_valid_from_col, v_valid_to_col, v_interval, v_range_subtype);
         ELSE
-            RAISE EXCEPTION 'Source table "%" must have either a "%" column or a "%" column matching the target era.', source_table::text, v_valid_until_col, v_valid_to_col;
+            RAISE EXCEPTION 'Source table "%" must have either a "%" column or a "%" column matching the target era.', source_table::text, v_valid_until_col, COALESCE(v_valid_to_col, 'valid_to');
         END IF;
 
         -- Build the per-row consistency check expression. This check is only performed
@@ -436,7 +465,7 @@ BEGIN
         v_rcte_join_condition TEXT;
         v_unqualified_id_cols_sans_vf TEXT;
         v_qualified_r_id_cols_sans_vf TEXT;
-        v_entity_id_check_is_null_expr_no_alias TEXT;
+        v_partition_key_expr_for_union TEXT;
         v_coalesced_payload_expr TEXT;
         v_stable_id_aggregates_expr_prefixed_with_comma TEXT;
         v_plan_select_key_cols TEXT;
@@ -721,11 +750,6 @@ BEGIN
         FROM unnest(v_stable_identity_columns) AS c(col)
         LEFT JOIN pg_attribute a ON a.attrelid = temporal_merge_plan.source_table AND a.attname = c.col AND a.attnum > 0 AND NOT a.attisdropped;
 
-        v_entity_id_check_is_null_expr_no_alias := (
-            SELECT COALESCE(string_agg(format('%I IS NULL', col), ' AND '), 'true')
-            FROM unnest(v_stable_identity_columns) AS col
-        );
-
         -- Determine the scope of target entities to process based on the mode.
         -- Determine the set of keys to use for filtering the target table.
         -- Prioritize natural keys if provided; otherwise, fall back to the stable primary key.
@@ -975,6 +999,15 @@ $$, v_entity_partition_key_cols, v_resolver_from);
         -- The corr_ent must also match. This is critical for new entities that share a NULL lookup key.
         v_rcte_join_condition := format('(%s) AND (c.corr_ent = r.corr_ent OR (c.corr_ent IS NULL and r.corr_ent IS NULL))', v_rcte_join_condition);
 
+        v_partition_key_expr_for_union := format(
+            $$CASE
+                WHEN source_row.stable_identity_columns_are_null
+                THEN 'new_entity__' || source_row.corr_ent::text
+                ELSE 'existing_entity__' || %s
+            END$$,
+            (SELECT string_agg(format('source_row.%I::text', col), ' || ''__'' || ') FROM unnest(v_stable_identity_columns) AS t(col))
+        );
+
         v_plan_select_key_cols := (SELECT string_agg(format('p.%I', col), ', ') FROM unnest(v_original_entity_key_cols) AS col WHERE col IS NOT NULL);
 
         -- The partition key for new entities is handled by the `corr_ent` column itself
@@ -1019,10 +1052,11 @@ $$, v_entity_partition_key_cols, v_resolver_from);
          * `trace` column incurs no runtime overhead when tracing is not active.
         */
         IF p_log_trace THEN
-            v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'partition_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', source_payloads.corr_ent) as trace$$,
+            v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'constellation', %4$L, 'partition_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'seg_new_ent', seg.new_ent, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_corr_ent', seg.corr_ent, 'direct_source_corr_ent', source_payloads.corr_ent) as trace$$,
                 (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                 v_identity_cols_trace_expr,
-                v_natural_identity_cols_trace_expr
+                v_natural_identity_cols_trace_expr,
+                v_constellation
             );
         ELSE
             v_trace_seed_expr := 'NULL::jsonb as trace';
@@ -1218,12 +1252,6 @@ source_rows_with_new_flag AS (
 -- An entity's timeline should only be partitioned by its correlation ID if it's a
 -- truly new entity AND its stable identifier is NULL in the source (meaning it
 -- needs to be generated or looked up later).
-source_rows_with_unified_flags AS (
-    SELECT
-        *,
-        stable_identity_columns_are_null AND new_ent as partition_by_corr_ent
-    FROM source_rows_with_new_flag
-),
 -- CTE 10: active_source_rows
 -- Purpose: Filters the source rows based on the requested `mode` and removes eclipsed rows.
 -- Formulation: A simple `CASE` statement in the `WHERE` clause declaratively enforces the semantics of each mode.
@@ -1232,7 +1260,7 @@ source_rows_with_unified_flags AS (
 active_source_rows AS (
     SELECT
         source_row.*
-    FROM source_rows_with_unified_flags source_row
+    FROM source_rows_with_new_flag source_row
     WHERE NOT source_row.is_eclipsed
       AND source_row.temporal_columns_are_consistent
       AND CASE %7$L::sql_saga.temporal_merge_mode
@@ -1261,7 +1289,7 @@ active_source_rows AS (
 -- Formulation: A `UNION ALL` combines the active source rows with the relevant target rows. All rows for a
 -- conceptual entity are processed together in downstream CTEs.
 all_rows AS (
-    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent FROM active_source_rows
+    SELECT %62$s corr_ent, valid_from, valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent FROM active_source_rows
     UNION ALL
     SELECT
         %65$s
@@ -1272,7 +1300,6 @@ all_rows AS (
         target_row.stable_pk_payload,
         false as stable_identity_columns_are_null,
         false as natural_identity_column_values_are_null,
-        false as partition_by_corr_ent,
         true as is_identifiable,
         false as is_ambiguous,
         NULL::jsonb as conflicting_ids,
@@ -1282,9 +1309,9 @@ all_rows AS (
 -- CTE 11: time_points_raw
 -- Purpose: Deconstructs all time periods from `all_rows` into a non-unique, ordered set of chronological points.
 time_points_raw AS (
-    SELECT %26$s, corr_ent, valid_from AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
+    SELECT %26$s, corr_ent, valid_from AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
     UNION ALL
-    SELECT %26$s, corr_ent, valid_until AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
+    SELECT %26$s, corr_ent, valid_until AS point, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids FROM all_rows
 ),
 -- CTE 12: time_points_unified
 -- Purpose: Establishes a single, authoritative correlation ID (`corr_ent`) for all time points that belong
@@ -1292,13 +1319,15 @@ time_points_raw AS (
 time_points_unified AS (
     SELECT
         *,
-        FIRST_VALUE(corr_ent) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY corr_ent ASC NULLS LAST) as unified_corr_ent
+        %92$s AS partition_key,
+        FIRST_VALUE(corr_ent) OVER (PARTITION BY %92$s ORDER BY corr_ent ASC NULLS LAST) as unified_corr_ent
     FROM time_points_raw
 ),
 -- CTE 13: time_points
 -- Purpose: De-duplicates the unified time points to get a distinct, ordered set for each entity.
 time_points AS (
-    SELECT DISTINCT ON (%61$s CASE WHEN partition_by_corr_ent THEN unified_corr_ent ELSE NULL END, point)
+    SELECT DISTINCT ON (partition_key, point)
+        partition_key,
         %26$s,
         unified_corr_ent as corr_ent,
         point,
@@ -1306,7 +1335,6 @@ time_points AS (
         stable_pk_payload,
         stable_identity_columns_are_null,
         natural_identity_column_values_are_null,
-        partition_by_corr_ent,
         is_identifiable,
         is_ambiguous,
         conflicting_ids
@@ -1315,7 +1343,7 @@ time_points AS (
     -- We add `corr_ent` to the end to act as a deterministic tie-breaker.
     -- Source rows have a non-NULL `corr_ent`, target rows have NULL.
     -- `ASC NULLS LAST` ensures we prioritize flags from the source row when a time point is shared.
-    ORDER BY %61$s CASE WHEN partition_by_corr_ent THEN unified_corr_ent ELSE NULL END, point, corr_ent ASC NULLS LAST
+    ORDER BY partition_key, point, corr_ent ASC NULLS LAST
 ),
 -- CTE 14: atomic_segments
 -- Purpose: Reconstructs the timeline from the points into a set of atomic, non-overlapping, contiguous segments.
@@ -1329,11 +1357,11 @@ time_points AS (
 -- segments from the ordered list of time points. The partitioning is critical here to ensure timelines for
 -- different entities are handled independently.
 atomic_segments AS (
-    SELECT %26$s, corr_ent, point as valid_from, next_point as valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, partition_by_corr_ent, is_identifiable, is_ambiguous, conflicting_ids
+    SELECT partition_key, %26$s, corr_ent, point as valid_from, next_point as valid_until, new_ent, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids
     FROM (
         SELECT
             *,
-            LEAD(point) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY point) as next_point
+            LEAD(point) OVER (PARTITION BY partition_key ORDER BY point) as next_point
         FROM time_points
     ) with_lead
     WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
@@ -1350,16 +1378,16 @@ resolved_atomic_segments_with_payloads AS (
         -- This window function propagates the stable primary key payload from the original target row
         -- to all new segments created for that entity. This is a declarative, stateless operation
         -- that ensures new historical records retain their correct stable identifier.
-        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY %61$s CASE WHEN with_base_payload.partition_by_corr_ent THEN with_base_payload.corr_ent ELSE NULL END ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
+        FIRST_VALUE(with_base_payload.stable_pk_payload) OVER (PARTITION BY with_base_payload.partition_key ORDER BY with_base_payload.stable_pk_payload IS NULL, with_base_payload.valid_from) AS propagated_stable_pk_payload
     FROM (
         SELECT
+            seg.partition_key,
             %36$s, -- v_partition_key_for_with_base_payload_expr
             seg.new_ent,
             seg.is_identifiable,
             seg.is_ambiguous,
             seg.conflicting_ids,
             seg.stable_identity_columns_are_null,
-            seg.partition_by_corr_ent,
             seg.natural_identity_column_values_are_null,
             seg.valid_from,
             seg.valid_until,
@@ -1431,24 +1459,24 @@ resolved_atomic_segments_with_payloads AS (
         -- This COALESCE implements the causal priority: look-behind is preferred over look-ahead.
         COALESCE(
             source_row_id,
-            (max(source_row_id) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
-            (max(source_row_id) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+            (max(source_row_id) OVER (PARTITION BY partition_key, t_valid_from, look_behind_grp)),
+            (max(source_row_id) OVER (PARTITION BY partition_key, t_valid_from, look_ahead_grp))
         ) as propagated_source_row_id,
         COALESCE(
             s_valid_from,
-            (max(s_valid_from) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
-            (max(s_valid_from) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+            (max(s_valid_from) OVER (PARTITION BY partition_key, t_valid_from, look_behind_grp)),
+            (max(s_valid_from) OVER (PARTITION BY partition_key, t_valid_from, look_ahead_grp))
         ) as propagated_s_valid_from,
         COALESCE(
             s_valid_until,
-            (max(s_valid_until) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_behind_grp)),
-            (max(s_valid_until) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END, look_ahead_grp))
+            (max(s_valid_until) OVER (PARTITION BY partition_key, t_valid_from, look_behind_grp)),
+            (max(s_valid_until) OVER (PARTITION BY partition_key, t_valid_from, look_ahead_grp))
         ) as propagated_s_valid_until
     FROM (
         SELECT
             *,
-            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from) AS look_behind_grp,
-            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY %61$s t_valid_from, CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from DESC) AS look_ahead_grp
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY partition_key, t_valid_from ORDER BY valid_from) AS look_behind_grp,
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY partition_key, t_valid_from ORDER BY valid_from DESC) AS look_ahead_grp
         FROM %10$s
     ) with_grp
 ),
@@ -1460,13 +1488,13 @@ resolved_atomic_segments_with_payloads AS (
 -- This is a stateless, declarative way to compute the final state for each segment independently.
 resolved_atomic_segments AS (
     SELECT
+        partition_key,
         %66$sstable_identity_columns_are_null,
         natural_identity_column_values_are_null,
         new_ent,
         is_identifiable,
         is_ambiguous,
         conflicting_ids,
-        partition_by_corr_ent,
         valid_from,
         valid_until,
         t_valid_from,
@@ -1490,6 +1518,7 @@ resolved_atomic_segments AS (
         CASE WHEN %54$L::boolean
              THEN trace || jsonb_build_object(
                  'cte', 'ras',
+                 'propagated_stable_pk_payload', propagated_stable_pk_payload,
                  'final_data_payload', %8$s,
                  'final_ephemeral_payload', COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
              )
@@ -1520,7 +1549,7 @@ coalesced_final_segments AS (
     WITH island_group AS (
         SELECT
             *,
-            SUM(is_island_start) OVER (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from) as island_group_id
+            SUM(is_island_start) OVER (PARTITION BY partition_key ORDER BY valid_from) as island_group_id
         FROM (
             SELECT
                 *,
@@ -1538,11 +1567,12 @@ coalesced_final_segments AS (
                     LAG(data_hash) OVER w as prev_data_hash
                 FROM resolved_atomic_segments ras
                 WHERE ras.data_payload IS NOT NULL
-                WINDOW w AS (PARTITION BY %61$s CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END ORDER BY valid_from)
+                WINDOW w AS (PARTITION BY partition_key ORDER BY valid_from)
             ) s1
         ) s2
     )
     SELECT
+        partition_key,
         %37$s,
         sql_saga.first(corr_ent ORDER BY valid_from) as corr_ent,
         sql_saga.first(stable_identity_columns_are_null ORDER BY valid_from) as stable_identity_columns_are_null,
@@ -1551,7 +1581,6 @@ coalesced_final_segments AS (
         sql_saga.first(is_identifiable ORDER BY valid_from) as is_identifiable,
         sql_saga.first(is_ambiguous ORDER BY valid_from) as is_ambiguous,
         sql_saga.first(conflicting_ids ORDER BY valid_from) as conflicting_ids,
-        sql_saga.first(partition_by_corr_ent ORDER BY valid_from) as partition_by_corr_ent,
         sql_saga.first(s_t_relation ORDER BY valid_from) as s_t_relation,
         sql_saga.first(t_valid_from ORDER BY valid_from) as ancestor_valid_from,
         MIN(valid_from) as valid_from,
@@ -1564,6 +1593,7 @@ coalesced_final_segments AS (
              THEN jsonb_build_object(
                  'cte', 'coalesced',
                  'island_group_id', island_group_id,
+                 'coalesced_stable_pk_payload', sql_saga.first(stable_pk_payload ORDER BY valid_from DESC),
                  'final_payload', sql_saga.first(data_payload ORDER BY valid_from DESC),
                  'final_payload_sans_ephemeral', sql_saga.first(data_payload - %5$L::text[] ORDER BY valid_from DESC),
                  'atomic_traces', jsonb_agg((trace || jsonb_build_object('data_hash', data_hash, 'prev_data_hash', prev_data_hash)) ORDER BY valid_from)
@@ -1572,10 +1602,9 @@ coalesced_final_segments AS (
         END as trace
     FROM island_group
     GROUP BY
+        partition_key,
         %37$s,
-        island_group_id,
-        -- The group key must match the partition key used to create the islands.
-        CASE WHEN partition_by_corr_ent THEN corr_ent ELSE NULL END
+        island_group_id
 ),
 -- CTE 18: diff
 -- Purpose: Compares the final, coalesced state of the timeline with the original state from `target_rows`.
@@ -1584,6 +1613,7 @@ coalesced_final_segments AS (
 -- an INSERT, UPDATE, DELETE, or an unchanged state.
 diff AS (
     SELECT
+        final_seg.partition_key,
         %30$s, -- v_diff_select_expr, now using final_seg and target_seg aliases
         COALESCE(final_seg.new_ent, false) as new_ent,
         COALESCE(final_seg.is_identifiable, true) as is_identifiable,
@@ -1591,10 +1621,9 @@ diff AS (
         final_seg.conflicting_ids,
         COALESCE(final_seg.stable_identity_columns_are_null, false) as stable_identity_columns_are_null,
         COALESCE(final_seg.natural_identity_column_values_are_null, false) as natural_identity_column_values_are_null,
-        COALESCE(final_seg.partition_by_corr_ent, false) as partition_by_corr_ent,
         final_seg.valid_from AS f_from, final_seg.valid_until AS f_until, final_seg.data_payload AS f_data, final_seg.row_ids AS f_row_ids, final_seg.stable_pk_payload, final_seg.s_t_relation,
         CASE WHEN %54$L::boolean
-             THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'final_seg_corr_ent', final_seg.corr_ent, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.data_payload, 't', target_seg.data_payload))
+             THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'diff_stable_pk_payload', final_seg.stable_pk_payload, 'final_seg_corr_ent', final_seg.corr_ent, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.data_payload, 't', target_seg.data_payload))
              ELSE NULL
         END as trace,
         final_seg.unaffected_target_only_segment,
@@ -1626,7 +1655,7 @@ diff_ranked AS (
             -- Otherwise, it's a candidate. Rank them.
             ELSE
                 row_number() OVER (
-                    PARTITION BY %61$sd.t_from -- Partition by entity and the original row's start time
+                    PARTITION BY d.partition_key, d.t_from -- Partition by entity and the original row's start time
                     ORDER BY
                         -- The segment that preserves the start time is the best candidate for an UPDATE.
                         CASE WHEN d.f_from = d.t_from THEN 1 ELSE 2 END,
@@ -1689,6 +1718,7 @@ plan_with_op AS (
                     ELSE NULL
                 END as feedback,
                 d.b_a_relation,
+                d.partition_key,
                 CASE WHEN %54$L::boolean
                      THEN d.trace || jsonb_build_object(
                          'cte', 'plan_with_op',
@@ -1718,8 +1748,10 @@ plan_with_op AS (
             NULL, NULL, NULL, NULL,
             NULL,
             jsonb_build_object('info', format('Source row was eclipsed by row_ids=%s in the same batch.', source_row.eclipsed_by)),
-            NULL, NULL
-        FROM source_rows_with_unified_flags source_row
+            NULL,
+            %93$s AS partition_key,
+            NULL
+        FROM source_rows_with_new_flag source_row
         WHERE source_row.is_eclipsed
     )
     UNION ALL
@@ -1747,8 +1779,9 @@ plan_with_op AS (
                 ELSE jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.')
             END,
             NULL,
+            %93$s AS partition_key,
             NULL::jsonb -- trace
-        FROM source_rows_with_unified_flags source_row
+        FROM source_rows_with_new_flag source_row
         WHERE
             NOT source_row.is_eclipsed
             AND NOT (
@@ -1780,6 +1813,7 @@ plan AS (
         p.entity_id_json as entity_ids,
         p.s_t_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
         p.new_valid_from, p.new_valid_until, p.data, p.feedback, p.trace,
+        p.partition_key,
         CASE
             WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
             WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
@@ -1801,6 +1835,7 @@ plan AS (
 SELECT
     row_number() OVER (
         ORDER BY
+            p.partition_key,
             %34$s, -- v_final_order_by_expr
             CASE p.operation
                 WHEN 'INSERT' THEN 1
@@ -1827,7 +1862,7 @@ SELECT
     p.new_valid_until::TEXT,
     p.data,
     p.feedback,
-    p.trace
+    CASE WHEN p.trace IS NOT NULL THEN p.trace || jsonb_build_object('final_partition_key', p.partition_key) ELSE NULL END
 FROM plan p
 ORDER BY plan_op_seq;
 $SQL$,
@@ -1921,7 +1956,9 @@ $SQL$,
             v_interval,                                             /* %88$L - v_interval */
             v_valid_until_col,                                      /* %89$L - v_valid_until_col */
             v_valid_to_col,                                         /* %90$L - v_valid_to_col */
-            v_natural_key_join_condition                            /* %91$s - v_natural_key_join_condition */
+            v_natural_key_join_condition,                           /* %91$s - v_natural_key_join_condition */
+            v_partition_key_expr,                                   /* %92$s - v_partition_key_expr */
+            v_partition_key_expr_for_union                          /* %93$s - v_partition_key_expr_for_union */
         );
 
         -- Conditionally log the generated SQL for debugging.

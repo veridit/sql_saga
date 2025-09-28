@@ -397,19 +397,21 @@ BEGIN
         -- must be able to handle a final payload that contains columns inherited from
         -- the target's history, which may not be present in the source.
         WITH target_cols AS (
-            SELECT pa.attname, pa.atttypid, pa.attgenerated, pa.attidentity
+            SELECT pa.attname, pa.atttypid, pa.attgenerated, pa.attidentity, pa.attnum
             FROM pg_catalog.pg_attribute pa
             WHERE pa.attrelid = temporal_merge_execute.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         common_data_cols AS (
             SELECT t.attname, t.atttypid
             FROM target_cols t
+            LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table AND ad.adnum = t.attnum
             WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
               AND t.attname <> ALL(COALESCE(temporal_merge_execute.identity_columns, '{}'))
               AND t.attname <> ALL(v_lookup_columns)
               AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
               AND t.attidentity <> 'a' -- Exclude GENERATED ALWAYS AS IDENTITY
               AND t.attgenerated = '' -- Exclude GENERATED ... STORED
+              AND COALESCE(pg_get_expr(ad.adbin, temporal_merge_execute.target_table), '') NOT ILIKE 'nextval(%'
         ),
         all_available_cols AS (
             SELECT c.attname, c.atttypid FROM common_data_cols c
