@@ -166,6 +166,54 @@ ROLLBACK TO SAVEPOINT s8;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
 ROLLBACK TO SAVEPOINT s9;
+SAVEPOINT s10;
+/* unique_keys - pk_consistency */
+CREATE TABLE dp_pk_consistency (
+    id int,
+    nk text,
+    s date,
+    e date
+);
+SELECT sql_saga.add_era('dp_pk_consistency', 's', 'e', 'p');
+ add_era 
+---------
+ t
+(1 row)
+
+ALTER TABLE dp_pk_consistency ADD PRIMARY KEY (id);
+SELECT sql_saga.add_unique_key(
+    table_oid => 'dp_pk_consistency',
+    column_names => ARRAY['nk'],
+    era_name => 'p',
+    key_type => 'natural',
+    unique_key_name => 'dp_pk_consistency_nk_valid'
+);
+NOTICE:  sql_saga: altering table public.dp_pk_consistency to add constraints: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, s, e) DEFERRABLE, ADD CONSTRAINT dp_pk_consistency_nk_valid_excl EXCLUDE USING gist (nk WITH =, daterange(s, e) WITH &&) DEFERRABLE, ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
+       add_unique_key       
+----------------------------
+ dp_pk_consistency_nk_valid
+(1 row)
+
+SAVEPOINT expect_error;
+ALTER TABLE dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl; -- fails
+ERROR:  cannot drop constraint "dp_pk_consistency_nk_valid_pk_consistency_excl" on table "dp_pk_consistency" because it is used in era unique key "dp_pk_consistency_nk_valid"
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 339 at RAISE
+ROLLBACK TO SAVEPOINT expect_error;
+SELECT sql_saga.drop_unique_key('dp_pk_consistency', ARRAY['nk'], 'p');
+NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('dp_pk_consistency', 'p');
+ drop_era 
+----------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT s10;
+SAVEPOINT s11;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
@@ -184,22 +232,22 @@ NOTICE:  No compatible index found for foreign key on table dp_ref. Creating new
 SAVEPOINT s10;
 DROP TRIGGER f_fk_insert ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_insert" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 342 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 360 at RAISE
 ROLLBACK TO SAVEPOINT s10;
 SAVEPOINT s11;
 DROP TRIGGER f_fk_update ON dp_ref; -- fails
 ERROR:  cannot drop trigger "f_fk_update" on table "dp_ref" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 354 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 372 at RAISE
 ROLLBACK TO SAVEPOINT s11;
 SAVEPOINT s12;
 DROP TRIGGER f_uk_update ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_update" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 366 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 384 at RAISE
 ROLLBACK TO SAVEPOINT s12;
 SAVEPOINT s13;
 DROP TRIGGER f_uk_delete ON dp; -- fails
 ERROR:  cannot drop trigger "f_uk_delete" on table "dp" because it is used in era foreign key "f"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 378 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 396 at RAISE
 ROLLBACK TO SAVEPOINT s13;
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
 NOTICE:  Dropping automatically created index "dp_ref_id_p_gist_idx" for foreign key "f"
@@ -221,8 +269,7 @@ SELECT sql_saga.drop_era('dp', 'p');
  t
 (1 row)
 
-DROP TABLE dp;
-DROP TYPE integerrange;
+ROLLBACK TO SAVEPOINT s11;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

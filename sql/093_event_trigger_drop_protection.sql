@@ -89,6 +89,34 @@ SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
 ROLLBACK TO SAVEPOINT s9;
 
+SAVEPOINT s10;
+/* unique_keys - pk_consistency */
+CREATE TABLE dp_pk_consistency (
+    id int,
+    nk text,
+    s date,
+    e date
+);
+SELECT sql_saga.add_era('dp_pk_consistency', 's', 'e', 'p');
+ALTER TABLE dp_pk_consistency ADD PRIMARY KEY (id);
+SELECT sql_saga.add_unique_key(
+    table_oid => 'dp_pk_consistency',
+    column_names => ARRAY['nk'],
+    era_name => 'p',
+    key_type => 'natural',
+    unique_key_name => 'dp_pk_consistency_nk_valid'
+);
+
+SAVEPOINT expect_error;
+ALTER TABLE dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl; -- fails
+ROLLBACK TO SAVEPOINT expect_error;
+
+SELECT sql_saga.drop_unique_key('dp_pk_consistency', ARRAY['nk'], 'p');
+SELECT sql_saga.drop_era('dp_pk_consistency', 'p');
+ROLLBACK TO SAVEPOINT s10;
+
+
+SAVEPOINT s11;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
@@ -110,8 +138,7 @@ DROP TABLE dp_ref;
 
 SELECT sql_saga.drop_unique_key('dp', ARRAY['id'], 'p');
 SELECT sql_saga.drop_era('dp', 'p');
-DROP TABLE dp;
-DROP TYPE integerrange;
+ROLLBACK TO SAVEPOINT s11;
 
 ROLLBACK;
 

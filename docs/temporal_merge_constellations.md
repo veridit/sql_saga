@@ -20,17 +20,16 @@ This defines the high-level strategy for entity identification based on the para
 | `STRATEGY_NATURAL_KEY_ONLY`  | `NULL`                          | Populated                               | **Natural Key Only:** The `natural_identity_columns` (e.g., `unit_ident`) are the only way to identify an entity. In this constellation, the natural key serves as both the lookup key and the stable identifier.                                                                                                                                              |
 | `STRATEGY_HYBRID`            | Populated                       | Populated                               | **Hybrid Model (Surrogate + Natural Key):** This is the most common and robust pattern. A stable, surrogate key (`identity_columns`) is the canonical entity identifier. A separate natural key (`natural_identity_columns`) is used to look up entities when the stable key is not known by the source (e.g., for new entities or updates from external systems). |
 
-## 3. Implementation: The Unified Partition Key
+## 3. Implementation: A Declarative, Partition-Based Approach
 
-To robustly handle all row cases, the planner's window functions rely on a single, unambiguous `TEXT` partition key. This key is dynamically constructed to guarantee that all timeline segments belonging to a single conceptual entity are processed together, while ensuring that distinct entities are kept separate.
+The planner was previously failing to correctly group multiple source rows that belonged to the same conceptual entity. This was due to a flawed timeline partitioning strategy that relied on an incorrect correlation ID (`corr_ent`).
 
-The logic is as follows:
-- **For new entities** (where `stable_identity_columns` are `NULL` and the entity does not exist in the target), the partition key is namespaced and based on the `corr_ent` (a unique identifier for a source row or a group of founding rows):
-  `'new_entity__<correlation_id>'`
-- **For existing entities**, the partition key is namespaced and based on a composite of their stable, canonical identifier values:
-  `'existing_entity__<stable_key_val_1>__<stable_key_val_2>'`
+- **The Flaw:** The `corr_ent` for new entities was based on the source `row_id`, causing each source row to be treated as a distinct entity.
+- **The Declarative Fix:** The planner's core timeline construction logic (the `time_points_...` CTEs) has been fixed. The window functions now use a robust `partition_key` that is generated based on the correct entity identifiers:
+    - For **existing entities**, the partition key is their stable identifier (`identity_columns`).
+    - For **new entities**, the partition key is their natural identifier (`natural_identity_columns`). If a natural key is not available, it safely falls back to the `corr_ent`.
 
-This strategy is the core of the planner's correctness. It creates a single, stable value that window functions can `PARTITION BY`, eliminating the complexity and ambiguity of partitioning by multiple, nullable columns. This ensures that information, such as a discovered stable key, is correctly propagated across all segments of an entity's timeline without "bleeding" over to unrelated entities.
+This ensures that all time points and source rows for a single conceptual entity (whether new or existing) are processed together in the same partition. This stateless, declarative approach correctly solves the multi-row update and insert bugs revealed by the `088_...` test suite without requiring complex, stateful grouping CTEs.
 
 ## 4. Row Cases and Planner Logic
 

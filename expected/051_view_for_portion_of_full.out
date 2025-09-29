@@ -474,7 +474,7 @@ SELECT sql_saga.add_era('fk_parent', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_parent', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_parent to add constraints: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_parent_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.fk_parent to add constraints: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_parent_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT fk_parent_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
    add_unique_key   
 --------------------
  fk_parent_id_valid
@@ -501,7 +501,7 @@ SELECT sql_saga.add_era('fk_child', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_child', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_child to add constraints: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_child_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.fk_child to add constraints: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_child_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT fk_child_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
   add_unique_key   
 -------------------
  fk_child_id_valid

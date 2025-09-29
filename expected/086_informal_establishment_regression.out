@@ -53,7 +53,7 @@ NOTICE:  sql_saga: altering table repro.establishment to add constraints: ALTER 
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: altering table repro.establishment to add constraints: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table repro.establishment to add constraints: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT establishment_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  establishment_org_nr_valid

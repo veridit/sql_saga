@@ -329,6 +329,24 @@ BEGIN
             RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
                 r.exclude_constraint, r.table_oid, r.unique_key_name;
         END IF;
+
+        -- Check pk_consistency constraints
+        IF r.pk_consistency_constraint_names IS NOT NULL AND r.pk_consistency_constraint_names <> '{}' THEN
+            DECLARE
+                v_constraint_name name;
+            BEGIN
+                FOREACH v_constraint_name IN ARRAY r.pk_consistency_constraint_names
+                LOOP
+                    IF NOT EXISTS (
+                        SELECT FROM pg_catalog.pg_constraint AS c
+                        WHERE (c.conrelid, c.conname) = (r.table_oid, v_constraint_name)
+                    ) THEN
+                        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
+                            v_constraint_name, r.table_oid, r.unique_key_name;
+                    END IF;
+                END LOOP;
+            END;
+        END IF;
     END LOOP;
 
     ---

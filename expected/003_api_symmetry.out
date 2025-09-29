@@ -157,9 +157,9 @@ TABLE sql_saga.foreign_keys;
 DROP TABLE regular_child;
 -- Test overloaded drop_unique_key
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
@@ -169,8 +169,8 @@ SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
 (0 rows)
 
 -- Test original drop_unique_key (with positional and named arguments)
@@ -182,9 +182,9 @@ NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAI
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
 (1 row)
 
 -- by name (positional)
@@ -195,8 +195,8 @@ SELECT sql_saga.drop_unique_key_by_name('parent'::regclass, 'parent_id_p');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
 (0 rows)
 
 -- Re-create to test named arguments
@@ -208,9 +208,9 @@ NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAI
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
 (1 row)
 
 -- by name (named)
@@ -221,8 +221,8 @@ SELECT sql_saga.drop_unique_key_by_name(table_oid => 'parent'::regclass, key_nam
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
 (0 rows)
 
 -- Test symmetrical add_era/drop_era with column management

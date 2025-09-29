@@ -546,7 +546,7 @@ SELECT sql_saga.add_era('tm_founding_target', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_founding_target', ARRAY['entity_ident']);
-NOTICE:  sql_saga: altering table public.tm_founding_target to add constraints: ADD CONSTRAINT tm_founding_target_entity_ident_valid_uniq UNIQUE (entity_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_founding_target_entity_ident_valid_excl EXCLUDE USING gist (entity_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.tm_founding_target to add constraints: ADD CONSTRAINT tm_founding_target_entity_ident_valid_uniq UNIQUE (entity_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_founding_target_entity_ident_valid_excl EXCLUDE USING gist (entity_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_founding_target_entity_ident_valid_pk_consistency_excl EXCLUDE USING gist (entity_ident WITH =, id WITH <>)
             add_unique_key             
 ---------------------------------------
  tm_founding_target_entity_ident_valid

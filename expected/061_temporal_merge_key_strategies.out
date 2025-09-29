@@ -71,7 +71,7 @@ SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', unique_key_name => 'tm_legal_unit_uk');
-NOTICE:  sql_saga: altering table tmtc.legal_unit to add constraints: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_legal_unit_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.legal_unit to add constraints: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_legal_unit_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_legal_unit_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
   add_unique_key  
 ------------------
  tm_legal_unit_uk
@@ -87,7 +87,7 @@ SELECT sql_saga.add_era('tmtc.establishment', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', unique_key_name => 'tm_establishment_uk');
-NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_establishment_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
    add_unique_key    
 ---------------------
  tm_establishment_uk
@@ -133,7 +133,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_from', 'valid_until')
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_id_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_pk to add constraints: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_id_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_pk to add constraints: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_id_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_sfu_id_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
  add_unique_key 
 ----------------
  tm_sfu_id_uk
@@ -157,7 +157,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_from', 'valid_until'
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_identity_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_identity_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
    add_unique_key   
 --------------------
  tm_sfu_identity_uk

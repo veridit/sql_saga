@@ -55,14 +55,14 @@ SELECT sql_saga.add_era('tmrb.my_stat_for_unit'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
       add_unique_key       
 ---------------------------
  my_stat_for_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
             add_unique_key            
 --------------------------------------
  my_stat_for_unit_legal_unit_id_valid
@@ -475,7 +475,7 @@ SELECT sql_saga.add_era('tmrb.bug_repro_1'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, legal_unit_id WITH <>)
          add_unique_key          
 ---------------------------------
  bug_repro_1_legal_unit_id_valid
@@ -804,7 +804,7 @@ SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass);
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.unit_default_bug'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
       add_unique_key       
 ---------------------------
  unit_default_bug_id_valid

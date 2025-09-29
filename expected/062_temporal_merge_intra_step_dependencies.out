@@ -55,7 +55,7 @@ SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
 
 -- The conceptual key for the entity
 SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', unique_key_name => 'tmisd_establishment_uk');
-NOTICE:  sql_saga: altering table tmisd.establishment to add constraints: ADD CONSTRAINT tmisd_establishment_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tmisd_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmisd.establishment to add constraints: ADD CONSTRAINT tmisd_establishment_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tmisd_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tmisd_establishment_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
      add_unique_key     
 ------------------------
  tmisd_establishment_uk

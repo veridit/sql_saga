@@ -51,7 +51,7 @@ NOTICE:  sql_saga: altering table repro.units to add constraints: ALTER COLUMN i
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: altering table repro.units to add constraints: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT units_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table repro.units to add constraints: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT units_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT units_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
    add_unique_key   
 --------------------
  units_org_nr_valid

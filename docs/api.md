@@ -231,7 +231,7 @@ SECURITY DEFINER
 
 ### add_unique_key
 
-> Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys.
+> Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. Can also enforce consistency between a natural key and the primary key.
 
 ```sql
 FUNCTION add_unique_key(
@@ -239,6 +239,7 @@ FUNCTION add_unique_key(
     column_names name[],
     era_name name DEFAULT 'valid'::name,
     key_type sql_saga.unique_key_type DEFAULT 'natural'::sql_saga.unique_key_type,
+    enforce_consistency_with_primary_key boolean DEFAULT NULL::boolean,
     unique_key_name name DEFAULT NULL::name,
     unique_constraint name DEFAULT NULL::name,
     exclude_constraint name DEFAULT NULL::name,

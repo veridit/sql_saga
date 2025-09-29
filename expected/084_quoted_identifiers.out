@@ -96,9 +96,9 @@ NOTICE:  sql_saga: altering table public."quoted" table to add constraints: ADD 
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names 
------------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------
- "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    | "my " uk"_excl     |                  |           |                            |                     | 
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    | "my " uk"_excl     |                  |           |                            |                     |                                  | {}
 (1 row)
 
 -- 4. Create referencing table with quoted names

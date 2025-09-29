@@ -358,7 +358,7 @@ SELECT sql_saga.add_era('legal_unit_bug', 'valid_from', 'valid_until');
 (1 row)
 
 SELECT sql_saga.add_unique_key('legal_unit_bug', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.legal_unit_bug to add constraints: ADD CONSTRAINT legal_unit_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.legal_unit_bug to add constraints: ADD CONSTRAINT legal_unit_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT legal_unit_bug_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
      add_unique_key      
 -------------------------
  legal_unit_bug_id_valid
@@ -380,7 +380,7 @@ SELECT sql_saga.add_era('establishment_bug', 'valid_from', 'valid_until');
 
 -- Note: A unique key on 'id' is not strictly necessary for this test but good practice.
 SELECT sql_saga.add_unique_key('establishment_bug', ARRAY['id']); 
-NOTICE:  sql_saga: altering table public.establishment_bug to add constraints: ADD CONSTRAINT establishment_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.establishment_bug to add constraints: ADD CONSTRAINT establishment_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT establishment_bug_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  establishment_bug_id_valid
@@ -414,6 +414,7 @@ NOTICE:  Dropping automatically created index "establishment_bug_legal_unit_id_v
 (1 row)
 
 SELECT sql_saga.drop_unique_key('establishment_bug', ARRAY['id'], 'valid');
+NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.establishment_bug DROP CONSTRAINT establishment_bug_id_valid_pk_consistency_excl
  drop_unique_key 
 -----------------
  
@@ -427,6 +428,7 @@ SELECT sql_saga.drop_era('establishment_bug', 'valid');
 
 DROP TABLE establishment_bug;
 SELECT sql_saga.drop_unique_key('legal_unit_bug', ARRAY['id'], 'valid');
+NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.legal_unit_bug DROP CONSTRAINT legal_unit_bug_id_valid_pk_consistency_excl
  drop_unique_key 
 -----------------
  

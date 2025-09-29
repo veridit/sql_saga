@@ -47,7 +47,7 @@ NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER 
 (1 row)
 
 SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], key_type => 'natural');
-NOTICE:  sql_saga: altering table public.target_units to add constraints: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
         add_unique_key         
 -------------------------------
  target_units_unit_ident_valid

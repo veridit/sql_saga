@@ -129,6 +129,7 @@ CREATE TABLE sql_saga.unique_keys (
     mutually_exclusive_columns name[],
     partial_index_names name[],
     partial_exclude_constraint_names name[],
+    pk_consistency_constraint_names name[],
 
     PRIMARY KEY (unique_key_name),
 
@@ -141,6 +142,7 @@ COMMENT ON TABLE sql_saga.unique_keys IS 'A registry of UNIQUE/PRIMARY keys usin
 COMMENT ON COLUMN sql_saga.unique_keys.mutually_exclusive_columns IS 'For complex keys, stores the subset of columns that are mutually exclusive (i.e., exactly one must be NOT NULL).';
 COMMENT ON COLUMN sql_saga.unique_keys.partial_index_names IS 'For mutually exclusive keys, stores the names of the partial unique indexes created for performance.';
 COMMENT ON COLUMN sql_saga.unique_keys.partial_exclude_constraint_names IS 'For mutually exclusive keys, stores the names of the partial exclusion constraints created for correctness.';
+COMMENT ON COLUMN sql_saga.unique_keys.pk_consistency_constraint_names IS 'For natural keys, stores the state of primary key consistency enforcement. A populated array contains the constraint name(s) (enforced), an empty array means enforcement is pending a primary key, and NULL means the user opted out.';
 COMMENT ON COLUMN sql_saga.unique_keys.check_constraint IS 'For mutually exclusive keys, stores the name of the CHECK constraint that enforces the XOR logic (exactly one column is NOT NULL).';
 
 CREATE TABLE sql_saga.foreign_keys (
