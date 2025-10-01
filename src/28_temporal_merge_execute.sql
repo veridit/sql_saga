@@ -56,7 +56,7 @@ DECLARE
     v_pk_cols name[];
     v_feedback_set_clause TEXT;
     v_sql TEXT;
-    v_correlation_col name;
+    v_causal_col name;
     v_log_id TEXT;
     v_summary_line TEXT;
 BEGIN
@@ -70,7 +70,7 @@ BEGIN
 
     -- Identity columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.natural_identity_columns, temporal_merge_execute.identity_columns);
-    v_correlation_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
+    v_causal_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
     
     v_summary_line := format(
         'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, natural_identity_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
@@ -502,7 +502,7 @@ BEGIN
                         v_entity_id_update_jsonb_build TEXT;
                         v_needs_founding_insert BOOLEAN;
                      BEGIN
-                        EXECUTE 'SELECT EXISTS(SELECT 1 FROM temporal_merge_plan WHERE operation = ''INSERT'' AND new_ent)'
+                        EXECUTE 'SELECT EXISTS(SELECT 1 FROM temporal_merge_plan WHERE operation = ''INSERT'' AND is_new_entity)'
                         INTO v_needs_founding_insert;
 
                         -- Build the expression to construct the entity_ids feedback JSONB.
@@ -533,8 +533,8 @@ BEGIN
                         -- other plan operations for that same new entity, all within a single, set-based operation.
                         IF v_needs_founding_insert THEN
                             -- This temporary table acts as a map to store the generated ID for each new
-                            -- conceptual entity, keyed by its correlation ID (`corr_ent`).
-                            CREATE TEMP TABLE temporal_merge_entity_id_map (corr_ent TEXT PRIMARY KEY, new_entity_ids JSONB) ON COMMIT DROP;
+                            -- conceptual entity, keyed by its entity_key.
+                            CREATE TEMP TABLE temporal_merge_entity_id_map (entity_key TEXT PRIMARY KEY, causal_id TEXT, new_entity_ids JSONB) ON COMMIT DROP;
 
                             -- Step 1.1: Insert just ONE "founding" row for each new conceptual entity to generate its ID.
                             -- The `MERGE ... ON false` pattern is a robust way to perform a bulk INSERT that needs
@@ -542,15 +542,16 @@ BEGIN
                             -- rows (`t`), which a standard `INSERT ... SELECT ... RETURNING` cannot do as easily.
                             EXECUTE format($$
                                 WITH founding_plan_ops AS (
-                                    SELECT DISTINCT ON (p.corr_ent)
+                                    SELECT DISTINCT ON (p.entity_key)
                                         p.plan_op_seq,
-                                        p.corr_ent,
+                                        p.causal_id,
+                                        p.entity_key,
                                         p.new_valid_from,
                                         p.new_valid_until,
                                         p.entity_ids || p.data as full_data
                                     FROM temporal_merge_plan p
-                                    WHERE p.operation = 'INSERT' AND p.new_ent
-                                    ORDER BY p.corr_ent, p.plan_op_seq
+                                    WHERE p.operation = 'INSERT' AND p.is_new_entity
+                                    ORDER BY p.entity_key, p.plan_op_seq
                                 ),
                                 id_map_cte AS (
                                     MERGE INTO %1$s t
@@ -558,11 +559,12 @@ BEGIN
                                     WHEN NOT MATCHED THEN
                                         INSERT (%2$s, %5$I, %6$I)
                                         VALUES (%3$s, s.new_valid_from::%8$s, s.new_valid_until::%9$s)
-                                    RETURNING t.*, s.corr_ent
+                                    RETURNING t.*, s.causal_id, s.entity_key
                                 )
-                                INSERT INTO temporal_merge_entity_id_map (corr_ent, new_entity_ids)
+                                INSERT INTO temporal_merge_entity_id_map (entity_key, causal_id, new_entity_ids)
                                 SELECT
-                                    ir.corr_ent,
+                                    ir.entity_key,
+                                    ir.causal_id,
                                     %4$s -- v_entity_id_update_jsonb_build expression
                                 FROM id_map_cte ir;
                             $$,
@@ -583,7 +585,7 @@ BEGIN
                                 UPDATE temporal_merge_plan p
                                 SET entity_ids = p.entity_ids || m.new_entity_ids
                                 FROM temporal_merge_entity_id_map m
-                                WHERE p.corr_ent = m.corr_ent;
+                                WHERE p.entity_key = m.entity_key;
                             $$);
 
                             -- Step 1.3: Insert the remaining historical slices for the new entities. These
@@ -595,14 +597,14 @@ BEGIN
                                 FROM temporal_merge_plan p,
                                      LATERAL jsonb_populate_record(null::%1$s, p.entity_ids || p.data) as jpr_all
                                 WHERE p.operation = 'INSERT'
-                                  AND p.new_ent -- Only founding inserts
-                                  AND p.corr_ent IS NOT NULL
+                                  AND p.is_new_entity -- Only founding inserts
+                                  AND p.causal_id IS NOT NULL
                                   AND NOT EXISTS ( -- Exclude the "founding" rows we already inserted in Step 1.1
                                     SELECT 1 FROM (
-                                        SELECT DISTINCT ON (p_inner.corr_ent) plan_op_seq
+                                        SELECT DISTINCT ON (p_inner.entity_key) plan_op_seq
                                         FROM temporal_merge_plan p_inner
-                                        WHERE p_inner.operation = 'INSERT' AND p_inner.new_ent
-                                        ORDER BY p_inner.corr_ent, p_inner.plan_op_seq
+                                        WHERE p_inner.operation = 'INSERT' AND p_inner.is_new_entity
+                                        ORDER BY p_inner.entity_key, p_inner.plan_op_seq
                                     ) AS founding_ops
                                     WHERE founding_ops.plan_op_seq = p.plan_op_seq
                                   )
@@ -633,7 +635,7 @@ BEGIN
                                         p.plan_op_seq, p.new_valid_from, p.new_valid_until,
                                         p.entity_ids || p.data as full_data
                                     FROM temporal_merge_plan p
-                                    WHERE p.operation = 'INSERT' AND NOT p.new_ent
+                                    WHERE p.operation = 'INSERT' AND NOT p.is_new_entity
                                 ),
                                 inserted_rows AS (
                                     MERGE INTO %1$s t

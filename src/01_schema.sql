@@ -341,8 +341,8 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     row_ids BIGINT[],
     operation sql_saga.temporal_merge_plan_action,
     update_effect sql_saga.temporal_merge_update_effect,
-    corr_ent TEXT,
-    new_ent BOOLEAN,
+    causal_id TEXT,
+    is_new_entity BOOLEAN,
     entity_ids JSONB,
     s_t_relation sql_saga.allen_interval_relation,
     b_a_relation sql_saga.allen_interval_relation,
@@ -352,7 +352,8 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     new_valid_until TEXT,
     data JSONB,
     feedback JSONB,
-    trace JSONB
+    trace JSONB,
+    entity_key TEXT
 );
 
 -- Defines the structure for a temporal executor feedback result.

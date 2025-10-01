@@ -80,9 +80,9 @@ TABLE test_schema.schema_test;
 (1 row)
 
 TABLE pg_temp.temporal_merge_plan;
- plan_op_seq | row_ids | operation | update_effect | corr_ent | new_ent | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |      data      | feedback | trace 
--------------+---------+-----------+---------------+----------+---------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------+----------+-------
-           1 | {1}     | INSERT    |               | 1        | t       | {"id": 1}  |              |              |                |                 | 2024-02-29     | infinity        | {"value": "A"} |          | 
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |      data      | feedback | trace |  entity_key   
+-------------+---------+-----------+---------------+-----------+---------------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------+----------+-------+---------------
+           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}  |              |              |                |                 | 2024-02-29     | infinity        | {"value": "A"} |          |       | new_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback;
