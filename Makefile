@@ -105,17 +105,22 @@ benchmark:
 # Target to show diff for failing tests. Use with 'vim' for vimdiff.
 # `make diff-fail-all`: shows all failures.
 # `make diff-fail-first`: shows the first failure.
-.PHONY: diff-fail-all diff-fail-first vim vimo
+.PHONY: diff-fail-all diff-fail-first vim vimo nvim nvimo
 diff-fail-all diff-fail-first:
 	@FAILED_TESTS=$$(grep 'not ok' regression.out 2>/dev/null | awk -F ' - ' '{print $$2}' | awk '{print $$1}'); \
 	if [ "$@" = "diff-fail-first" ]; then \
 		FAILED_TESTS=`echo "$$FAILED_TESTS" | head -n 1`; \
 	fi; \
-	if [ -n "$(filter vim vimo,$(MAKECMDGOALS))" ]; then \
-		VIM_CMD="vim -d"; \
-		if [ "$(filter vimo,$(MAKECMDGOALS))" = "vimo" ]; then \
-			VIM_CMD="vim -d -o"; \
+	if [ -n "$(filter vim vimo nvim nvimo,$(MAKECMDGOALS))" ]; then \
+		EDITOR_CMD="vim"; \
+		if [ -n "$(filter nvim nvimo,$(MAKECMDGOALS))" ]; then \
+			EDITOR_CMD="nvim"; \
 		fi; \
+		EDITOR_OPTS="-d"; \
+		if [ -n "$(filter vimo nvimo,$(MAKECMDGOALS))" ]; then \
+			EDITOR_OPTS="-d -o"; \
+		fi; \
+		VIM_CMD="$$EDITOR_CMD $$EDITOR_OPTS"; \
 		for test in $$FAILED_TESTS; do \
 			if [ "$@" = "diff-fail-all" ]; then \
 				echo "Next test: $$test"; \
@@ -138,7 +143,7 @@ diff-fail-all diff-fail-first:
 	fi; \
 	if [ -n "$$FAILED_TESTS" ]; then exit 1; fi
 
-vim vimo:
+vim vimo nvim nvimo:
 	@:
 
 #release:
