@@ -38,7 +38,7 @@ CREATE TEMP TABLE source_data (
     valid_until date,
     errors jsonb,
     merge_status jsonb
-) ON COMMIT DROP;
+);
 
 -- 3. Load initial state.
 \echo '--- Loading initial state ---'
@@ -252,16 +252,13 @@ CALL sql_saga.temporal_merge(
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E104' ORDER BY id, valid_from;
 
--- 11. Multi-row insert of a fragmented entity (PATCH mode)
-\echo '--- Scenario 11: Multi-row insert of a fragmented entity (PATCH mode) ---'
+-- 11. Multi-row insert/update of a fragmented entity (PATCH mode)
+\echo '--- Scenario 11: Multi-row insert/update of a fragmented entity (PATCH mode) ---'
 SAVEPOINT s11;
--- This scenario tests the planner's ability to create a complex history for a single new entity from
--- multiple source rows with fragmented natural key and data information. The planner must correctly:
--- 1. Unify all 5 source rows under a single grouping key.
--- 2. For each atomic time segment, find all overlapping source rows.
--- 3. Apply the PATCH logic by merging the data payloads of the source rows in ascending order of their row_id.
--- 4. Correctly aggregate the `row_ids` of all contributing source rows for each final plan operation.
--- 5. Coalesce adjacent segments with identical final data payloads.
+-- This scenario tests the planner's ability to create and update a complex history for a single entity
+-- from multiple source rows with fragmented natural key and data information.
+
+-- First, set up the complete source data for all parts of this test.
 TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
@@ -273,21 +270,50 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
 \echo '--- Source for fragmented entity ---'
 TABLE source_data ORDER BY row_id;
 
+\echo
+\echo '--- Case 11a: Merging all source rows in a single batch ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
-TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- State after single-batch merge (PATCH mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
-\echo '--- State after adding Dee (PATCH mode) ---'
+\echo
+\echo '--- Case 11b: Merging in two batches with MERGE_ENTITY_PATCH ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_b AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_b AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b', mode => 'MERGE_ENTITY_PATCH');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b', mode => 'MERGE_ENTITY_PATCH');
+\echo '--- State after two-batch merge (PATCH mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+\echo
+\echo '--- Case 11c: Merging in two batches with PATCH_FOR_PORTION_OF ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_c AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_c AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c', mode => 'MERGE_ENTITY_PATCH');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows with PATCH_FOR_PORTION_OF ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c', mode => 'PATCH_FOR_PORTION_OF');
+\echo '--- State after two-batch merge (PORTION_OF mode) ---'
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
 ROLLBACK TO SAVEPOINT s11;
 
--- 12. Multi-row insert of a fragmented entity (UPSERT mode)
-\echo '--- Scenario 12: Multi-row insert of a fragmented entity (UPSERT mode) ---'
+-- 12. Multi-row insert/update of a fragmented entity (UPSERT mode)
+\echo '--- Scenario 12: Multi-row insert/update of a fragmented entity (UPSERT mode) ---'
 SAVEPOINT s12;
 -- This scenario uses the same fragmented source data as the PATCH test, but with
 -- UPSERT mode. The key difference is that UPSERT treats NULLs in the source as
 -- explicit values that should overwrite existing data.
+
 TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
@@ -299,22 +325,51 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
 \echo '--- Source for fragmented entity ---'
 TABLE source_data ORDER BY row_id;
 
+\echo
+\echo '--- Case 12a: Merging all source rows in a single batch ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_UPSERT');
-TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- State after single-batch merge (UPSERT mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
-\echo '--- State after adding Dee (UPSERT mode) ---'
+\echo
+\echo '--- Case 12b: Merging in two batches with MERGE_ENTITY_UPSERT ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_b_12 AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_b_12 AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b_12', mode => 'MERGE_ENTITY_UPSERT');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b_12', mode => 'MERGE_ENTITY_UPSERT');
+\echo '--- State after two-batch merge (UPSERT mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+\echo
+\echo '--- Case 12c: Merging in two batches with UPDATE_FOR_PORTION_OF ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_c_12 AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_c_12 AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c_12', mode => 'MERGE_ENTITY_UPSERT');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows with UPDATE_FOR_PORTION_OF ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c_12', mode => 'UPDATE_FOR_PORTION_OF');
+\echo '--- State after two-batch merge (PORTION_OF mode) ---'
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
 ROLLBACK TO SAVEPOINT s12;
 
--- 13. Multi-row insert of a fragmented entity (REPLACE mode)
-\echo '--- Scenario 13: Multi-row insert of a fragmented entity (REPLACE mode) ---'
+-- 13. Multi-row insert/update of a fragmented entity (REPLACE mode)
+\echo '--- Scenario 13: Multi-row insert/update of a fragmented entity (REPLACE mode) ---'
 SAVEPOINT s13;
 -- This scenario uses the same fragmented source data as the PATCH/UPSERT tests,
 -- but with REPLACE mode. REPLACE completely overwrites data for overlapping
 -- time periods. Unlike PATCH/UPSERT, absent columns in a later source row will
 -- cause data from an earlier source row to be removed.
+
 TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
@@ -326,10 +381,38 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
 \echo '--- Source for fragmented entity ---'
 TABLE source_data ORDER BY row_id;
 
+\echo
+\echo '--- Case 13a: Merging all source rows in a single batch ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_REPLACE');
-TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+\echo '--- State after single-batch merge (REPLACE mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
-\echo '--- State after adding Dee (REPLACE mode) ---'
+\echo
+\echo '--- Case 13b: Merging in two batches with MERGE_ENTITY_REPLACE ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_b_13 AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_b_13 AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b_13', mode => 'MERGE_ENTITY_REPLACE');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b_13', mode => 'MERGE_ENTITY_REPLACE');
+\echo '--- State after two-batch merge (REPLACE mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+\echo
+\echo '--- Case 13c: Merging in two batches with REPLACE_FOR_PORTION_OF ---'
+TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
+CREATE TEMP TABLE source_step1_c_13 AS SELECT * FROM source_data WHERE row_id = 1;
+CREATE TEMP TABLE source_step2_c_13 AS SELECT * FROM source_data WHERE row_id > 1;
+\echo '--- Step 1: Seeding target with first row ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c_13', mode => 'MERGE_ENTITY_REPLACE');
+TABLE identity_discovery.person;
+\echo '--- Step 2: Merging remaining rows with REPLACE_FOR_PORTION_OF ---'
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c_13', mode => 'REPLACE_FOR_PORTION_OF');
+\echo '--- State after two-batch merge (PORTION_OF mode) ---'
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
