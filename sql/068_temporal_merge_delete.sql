@@ -46,13 +46,13 @@ TABLE tmd.target ORDER BY id, valid_from;
 TABLE source_1 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_1'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_TIMELINE',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_1'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_TIMELINE',
+    era_name          => 'valid'
 );
 
 \echo '--- Planner: Actual Plan ---'
@@ -87,13 +87,13 @@ TABLE tmd.target ORDER BY id, valid_from;
 TABLE source_2 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_2'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_ENTITIES',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_2'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_ENTITIES',
+    era_name          => 'valid'
 );
 
 \echo '--- Planner: Actual Plan ---'
@@ -130,13 +130,13 @@ TABLE tmd.target ORDER BY id, valid_from;
 TABLE source_3 ORDER BY row_id;
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_3'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_3'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
+    era_name          => 'valid'
 );
 
 \echo '--- Planner: Actual Plan ---'

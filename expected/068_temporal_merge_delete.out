@@ -91,30 +91,30 @@ TABLE source_1 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_1'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_TIMELINE',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_1'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_TIMELINE',
+    era_name          => 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 | feedback | trace |     entity_key     
--------------+---------+-----------+---------------+-----------+---------------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+----------+-------+--------------------
-           1 | {101}   | UPDATE    | GROW          | 101       | f             | {"id": 1}  | started_by   | starts       | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} |          |       | existing_entity__1
-           2 |         | DELETE    |               |           | f             | {"id": 1}  |              |              | 2024-01-01     | 2024-02-01      |                |                 |                                                                     |          |       | 
-           3 |         | DELETE    |               |           | f             | {"id": 1}  |              |              | 2024-04-01     | 2024-05-01      |                |                 |                                                                     |          |       | 
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 | feedback | trace |     entity_key     
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+----------+-------+--------------------
+           1 | {101}   | UPDATE    | GROW          | 101       | f             | {"id": 1}   | {"id": 1}     | {}          | started_by   | starts       | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} |          |       | existing_entity__1
+           2 |         | DELETE    |               |           | f             | {"id": 1}   | {"id": 1}     | {}          |              |              | 2024-01-01     | 2024-02-01      |                |                 |                                                                     |          |       | 
+           3 |         | DELETE    |               |           | f             | {"id": 1}   | {"id": 1}     | {}          |              |              | 2024-04-01     | 2024-05-01      |                |                 |                                                                     |          |       | 
 (3 rows)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_ids | status  | error_message 
----------------+-------------------+---------+---------------
-           101 | [{"id": 1}]       | APPLIED | 
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+           101 | [{"id": 1}]        | APPLIED | 
 (1 row)
 
 \echo '--- Target: Expected Final State ---'
@@ -173,31 +173,31 @@ TABLE source_2 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_2'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_ENTITIES',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_2'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_ENTITIES',
+    era_name          => 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |     entity_key     
--------------+---------+-----------+---------------+-----------+---------------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
-           1 | {201}   | INSERT    |               | 201       | f             | {"id": 1}  | during       | contains     | 2024-02-01     | 2024-03-01      | 2024-02-10     | 2024-02-20      | {"value": "A2-patch", "edit_comment": "Patch S2"}     |          |       | existing_entity__1
-           2 | {201}   | INSERT    |               | 201       | f             | {"id": 1}  | during       | finished_by  | 2024-02-01     | 2024-03-01      | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"} |          |       | existing_entity__1
-           3 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}  | during       | started_by   | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"} |          |       | existing_entity__1
-           4 |         | DELETE    |               |           | f             | {"id": 2}  |              |              | 2023-01-01     | 2026-01-01      |                |                 |                                                       |          |       | 
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |     entity_key     
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
+           1 | {201}   | INSERT    |               | 201       | f             | {"id": 1}   | {"id": 1}     | {}          | during       | contains     | 2024-02-01     | 2024-03-01      | 2024-02-10     | 2024-02-20      | {"value": "A2-patch", "edit_comment": "Patch S2"}     |          |       | existing_entity__1
+           2 | {201}   | INSERT    |               | 201       | f             | {"id": 1}   | {"id": 1}     | {}          | during       | finished_by  | 2024-02-01     | 2024-03-01      | 2024-02-20     | 2024-03-01      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"} |          |       | existing_entity__1
+           3 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}   | {"id": 1}     | {}          | during       | started_by   | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-02-10      | {"value": "A2", "edit_comment": "Slice 2 (Adjacent)"} |          |       | existing_entity__1
+           4 |         | DELETE    |               |           | f             | {"id": 2}   | {"id": 2}     | {}          |              |              | 2023-01-01     | 2026-01-01      |                |                 |                                                       |          |       | 
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_ids | status  | error_message 
----------------+-------------------+---------+---------------
-           201 | [{"id": 1}]       | APPLIED | 
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+           201 | [{"id": 1}]        | APPLIED | 
 (1 row)
 
 \echo '--- Target: Expected Final State ---'
@@ -265,31 +265,31 @@ TABLE source_3 ORDER BY row_id;
 (1 row)
 
 CALL sql_saga.temporal_merge(
-    target_table      := 'tmd.target'::regclass,
-    source_table      := 'source_3'::regclass,
-    identity_columns        := '{id}'::text[],
-    ephemeral_columns := '{edit_comment}'::text[],
-    mode              := 'MERGE_ENTITY_REPLACE',
-    delete_mode       := 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
-    era_name          := 'valid'
+    target_table      => 'tmd.target'::regclass,
+    source_table      => 'source_3'::regclass,
+    primary_identity_columns        => '{id}'::text[],
+    ephemeral_columns => '{edit_comment}'::text[],
+    mode              => 'MERGE_ENTITY_REPLACE',
+    delete_mode       => 'DELETE_MISSING_TIMELINE_AND_ENTITIES',
+    era_name          => 'valid'
 );
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 | feedback | trace |     entity_key     
--------------+---------+-----------+---------------+-----------+---------------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+----------+-------+--------------------
-           1 | {301}   | UPDATE    | GROW          | 301       | f             | {"id": 1}  | started_by   | starts       | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} |          |       | existing_entity__1
-           2 |         | DELETE    |               |           | f             | {"id": 1}  |              |              | 2024-01-01     | 2024-02-01      |                |                 |                                                                     |          |       | 
-           3 |         | DELETE    |               |           | f             | {"id": 1}  |              |              | 2024-04-01     | 2024-05-01      |                |                 |                                                                     |          |       | 
-           4 |         | DELETE    |               |           | f             | {"id": 2}  |              |              | 2023-01-01     | 2026-01-01      |                |                 |                                                                     |          |       | 
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                 | feedback | trace |     entity_key     
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------+----------+-------+--------------------
+           1 | {301}   | UPDATE    | GROW          | 301       | f             | {"id": 1}   | {"id": 1}     | {}          | started_by   | starts       | 2024-02-01     | 2024-03-01      | 2024-02-01     | 2024-04-01      | {"value": "A2-updated", "edit_comment": "Update S2 and bridge gap"} |          |       | existing_entity__1
+           2 |         | DELETE    |               |           | f             | {"id": 1}   | {"id": 1}     | {}          |              |              | 2024-01-01     | 2024-02-01      |                |                 |                                                                     |          |       | 
+           3 |         | DELETE    |               |           | f             | {"id": 1}   | {"id": 1}     | {}          |              |              | 2024-04-01     | 2024-05-01      |                |                 |                                                                     |          |       | 
+           4 |         | DELETE    |               |           | f             | {"id": 2}   | {"id": 2}     | {}          |              |              | 2023-01-01     | 2026-01-01      |                |                 |                                                                     |          |       | 
 (4 rows)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_ids | status  | error_message 
----------------+-------------------+---------+---------------
-           301 | [{"id": 1}]       | APPLIED | 
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+           301 | [{"id": 1}]        | APPLIED | 
 (1 row)
 
 \echo '--- Target: Expected Final State ---'

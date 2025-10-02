@@ -34,7 +34,7 @@ SAVEPOINT expect_error;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL
 );
 ROLLBACK TO SAVEPOINT expect_error;
@@ -45,7 +45,7 @@ SAVEPOINT expect_error;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr_typo']
 );
 ROLLBACK TO SAVEPOINT expect_error;
@@ -57,7 +57,7 @@ CREATE TEMP TABLE source_with_typo (row_id int, org_nr_typo text, valid_from dat
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_with_typo',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr_typo']
 );
 ROLLBACK TO SAVEPOINT expect_error;
@@ -69,7 +69,7 @@ CREATE TEMP TABLE source_with_id (row_id int, org_nr text, id_typo int, valid_fr
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_with_id',
-    identity_columns => ARRAY['id_typo'],
+    primary_identity_columns => ARRAY['id_typo'],
     natural_identity_columns => ARRAY['org_nr']
 );
 ROLLBACK TO SAVEPOINT expect_error;
@@ -87,7 +87,7 @@ TABLE source_units;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr'],
     mode => 'MERGE_ENTITY_UPSERT'
 );
@@ -109,7 +109,7 @@ TABLE source_units;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL,
     mode => 'MERGE_ENTITY_UPSERT'
 );
@@ -123,7 +123,7 @@ SAVEPOINT expect_error;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['org_nr'],
     update_source_with_identity => true
 );
@@ -136,7 +136,7 @@ SAVEPOINT expect_error;
 CALL sql_saga.temporal_merge(
     target_table => 'repro.units',
     source_table => 'source_units',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL,
     update_source_with_identity => true
 );

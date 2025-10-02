@@ -72,10 +72,10 @@ CREATE TEMP TABLE tm_gen_col_source (
 );
 INSERT INTO tm_gen_col_source VALUES (1, 1, 100, '2024-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_gen_col_target'::regclass,
-    source_table      := 'tm_gen_col_source'::regclass,
-    identity_columns        := ARRAY['id']::text[],
-    mode              := 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
+    target_table              => 'tm_gen_col_target'::regclass,
+    source_table              => 'tm_gen_col_source'::regclass,
+    primary_identity_columns  => ARRAY['id']::text[],
+    mode                      => 'INSERT_NEW_ENTITIES'::sql_saga.temporal_merge_mode
 );
 -- Verify that the generated column was computed correctly.
 \echo '--- Executor: Expected Final State ---'
@@ -117,29 +117,29 @@ INSERT INTO tm_mix_bug_target VALUES (1, 'existing', '2023-01-01', 'infinity');
 CREATE TEMP TABLE tm_mix_bug_source (row_id int, id int, value text, valid_from date, valid_until date);
 INSERT INTO tm_mix_bug_source VALUES (1, 2, 'new', '2024-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_mix_bug_target'::regclass,
-    source_table      := 'tm_mix_bug_source'::regclass,
-    identity_columns        := ARRAY['id']::text[],
-    mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+    target_table              => 'tm_mix_bug_target'::regclass,
+    source_table              => 'tm_mix_bug_source'::regclass,
+    primary_identity_columns  => ARRAY['id']::text[],
+    mode                      => 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
 );
 -- Verify the plan does not contain chaotic operations.
 \echo '--- Executor: Expected Plan ---'
 --- Executor: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::int[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 2}'::jsonb)
-) AS t(plan_op_seq, row_ids, operation, entity_ids);
- plan_op_seq | row_ids | operation | entity_ids 
--------------+---------+-----------+------------
+) AS t(plan_op_seq, row_ids, operation, entity_keys);
+ plan_op_seq | row_ids | operation | entity_keys 
+-------------+---------+-----------+-------------
            1 | {1}     | INSERT    | {"id": 2}
 (1 row)
 
 \echo '--- Executor: Actual Plan ---'
 --- Executor: Actual Plan ---
-SELECT plan_op_seq, row_ids, operation, entity_ids
+SELECT plan_op_seq, row_ids, operation, entity_keys
 FROM pg_temp.temporal_merge_plan
 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | entity_ids 
--------------+---------+-----------+------------
+ plan_op_seq | row_ids | operation | entity_keys 
+-------------+---------+-----------+-------------
            1 | {1}     | INSERT    | {"id": 2}
 (1 row)
 
@@ -180,25 +180,25 @@ CREATE TEMP TABLE tm_bad_params_source (row_id int, id int, value text, valid_fr
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        target_table      := 'tm_bad_params_target'::regclass,
-        source_table      := 'tm_bad_params_source'::regclass,
-        identity_columns        := NULL,
-        mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+        target_table              => 'tm_bad_params_target'::regclass,
+        source_table              => 'tm_bad_params_source'::regclass,
+        primary_identity_columns  => NULL,
+        mode                      => 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for NULL identity_columns';
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for NULL identity_columns: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for NULL identity_columns: Could not discover a stable key (primary or natural) for table "tm_bad_params_target". Please register a key using sql_saga.add_unique_key() or explicitly provide identity_columns.
+NOTICE:  Caught expected error for NULL identity_columns: Could not discover an identity key (primary or natural) for table "tm_bad_params_target". Please register a key using sql_saga.add_unique_key() or explicitly provide primary_identity_columns.
 -- Test with empty identity_columns
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        target_table      := 'tm_bad_params_target'::regclass,
-        source_table      := 'tm_bad_params_source'::regclass,
-        identity_columns        := ARRAY[]::TEXT[],
-        mode              := 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
+        target_table              => 'tm_bad_params_target'::regclass,
+        source_table              => 'tm_bad_params_source'::regclass,
+        primary_identity_columns  => ARRAY[]::TEXT[],
+        mode                      => 'MERGE_ENTITY_REPLACE'::sql_saga.temporal_merge_mode
     );
     RAISE EXCEPTION 'temporal_merge should have failed for empty identity_columns';
 EXCEPTION WHEN others THEN
@@ -221,10 +221,10 @@ CREATE TEMP TABLE tm_bad_cols_source (real_row_id int, id int, value text, valid
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        target_table      := 'tm_bad_cols_target'::regclass,
-        source_table      := 'tm_bad_cols_source'::regclass,
-        identity_columns        := ARRAY['id'],
-        row_id_column := 'non_existent_row_id'::name
+        target_table              => 'tm_bad_cols_target'::regclass,
+        source_table              => 'tm_bad_cols_source'::regclass,
+        primary_identity_columns  => ARRAY['id'],
+        row_id_column             => 'non_existent_row_id'::name
     );
     RAISE EXCEPTION 'temporal_merge should have failed for non-existent row_id_column';
 EXCEPTION WHEN others THEN
@@ -236,11 +236,11 @@ NOTICE:  Caught expected error for non-existent row_id_column: row_id_column "no
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        target_table      := 'tm_bad_cols_target'::regclass,
-        source_table      := 'tm_bad_cols_source'::regclass,
-        identity_columns        := ARRAY['id'],
-        row_id_column := 'real_row_id',
-        founding_id_column := 'non_existent_founding_id'::name
+        target_table              => 'tm_bad_cols_target'::regclass,
+        source_table              => 'tm_bad_cols_source'::regclass,
+        primary_identity_columns  => ARRAY['id'],
+        row_id_column             => 'real_row_id',
+        founding_id_column        => 'non_existent_founding_id'::name
     );
     RAISE EXCEPTION 'temporal_merge should have failed for non-existent founding_id_column';
 EXCEPTION WHEN others THEN
@@ -274,10 +274,10 @@ CREATE TEMP TABLE tm_custom_rowid_source (
 );
 INSERT INTO tm_custom_rowid_source VALUES (101, 1, 'A', '2024-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_custom_rowid_target'::regclass,
-    source_table      := 'tm_custom_rowid_source'::regclass,
-    identity_columns        := ARRAY['id'],
-    row_id_column := 'source_pk'::name
+    target_table              => 'tm_custom_rowid_target'::regclass,
+    source_table              => 'tm_custom_rowid_source'::regclass,
+    primary_identity_columns  => ARRAY['id'],
+    row_id_column             => 'source_pk'::name
 );
 -- Verify that the merge was successful and feedback works.
 \echo '--- Executor: Expected Final State ---'
@@ -299,18 +299,18 @@ TABLE tm_custom_rowid_target;
 \echo '--- Executor: Expected Feedback ---'
 --- Executor: Expected Feedback ---
 SELECT * FROM (VALUES (101, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
-    AS t(source_row_id, target_entity_ids, status);
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-           101 | [{"id": 1}]       | APPLIED
+    AS t(source_row_id, target_entity_keys, status);
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+           101 | [{"id": 1}]        | APPLIED
 (1 row)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback WHERE source_row_id = 101;
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-           101 | [{"id": 1}]       | APPLIED
+SELECT source_row_id, target_entity_keys, status FROM pg_temp.temporal_merge_feedback WHERE source_row_id = 101;
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+           101 | [{"id": 1}]        | APPLIED
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_11;
@@ -327,9 +327,9 @@ CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, va
 DO $$
 BEGIN
     CALL sql_saga.temporal_merge(
-        target_table      := 'tm_no_rowid_target'::regclass,
-        source_table      := 'tm_no_rowid_sources'::regclass,
-        identity_columns        := ARRAY['id']
+        target_table              => 'tm_no_rowid_target'::regclass,
+        source_table              => 'tm_no_rowid_sources'::regclass,
+        primary_identity_columns  => ARRAY['id']
         -- row_id_column is deliberately omitted to test the default
     );
     RAISE EXCEPTION 'temporal_merge should have failed for missing default row_id column';
@@ -369,11 +369,11 @@ CREATE TEMP TABLE tm_weird_names_source (
 );
 INSERT INTO tm_weird_names_source VALUES (1, 1, 'X', '2024-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_weird_names'::regclass,
-    source_table      := 'tm_weird_names_source'::regclass,
-    identity_columns        := ARRAY['unit_pk'],
-    era_name          := 'timeline'::name,
-    row_id_column := 'source_op_id'::name
+    target_table              => 'tm_weird_names'::regclass,
+    source_table              => 'tm_weird_names_source'::regclass,
+    primary_identity_columns  => ARRAY['unit_pk'],
+    era_name                  => 'timeline'::name,
+    row_id_column             => 'source_op_id'::name
 );
 -- Verify merge was successful
 \echo '--- Executor: Expected Final State ---'
@@ -395,18 +395,18 @@ TABLE tm_weird_names;
 \echo '--- Executor: Expected Feedback ---'
 --- Executor: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"unit_pk": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
-    AS t(source_row_id, target_entity_ids, status);
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-             1 | [{"unit_pk": 1}]  | APPLIED
+    AS t(source_row_id, target_entity_keys, status);
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+             1 | [{"unit_pk": 1}]   | APPLIED
 (1 row)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-             1 | [{"unit_pk": 1}]  | APPLIED
+SELECT source_row_id, target_entity_keys, status FROM pg_temp.temporal_merge_feedback;
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+             1 | [{"unit_pk": 1}]   | APPLIED
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_13;
@@ -438,10 +438,10 @@ CREATE TEMP TABLE tm_no_data_cols_source (
 );
 INSERT INTO tm_no_data_cols_source VALUES (1, 1, '2024-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_no_data_cols_target'::regclass,
-    source_table      := 'tm_no_data_cols_source'::regclass,
-    identity_columns        := ARRAY['id'],
-    mode              := 'INSERT_NEW_ENTITIES'
+    target_table              => 'tm_no_data_cols_target'::regclass,
+    source_table              => 'tm_no_data_cols_source'::regclass,
+    primary_identity_columns  => ARRAY['id'],
+    mode                      => 'INSERT_NEW_ENTITIES'
 );
 -- Verify merge was successful and feedback is correct
 \echo '--- Executor: Expected Final State ---'
@@ -463,18 +463,18 @@ TABLE tm_no_data_cols_target;
 \echo '--- Executor: Expected Feedback ---'
 --- Executor: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"id": 1}]'::jsonb, 'APPLIED'::sql_saga.temporal_merge_feedback_status))
-    AS t(source_row_id, target_entity_ids, status);
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-             1 | [{"id": 1}]       | APPLIED
+    AS t(source_row_id, target_entity_keys, status);
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+             1 | [{"id": 1}]        | APPLIED
 (1 row)
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
-SELECT source_row_id, target_entity_ids, status FROM pg_temp.temporal_merge_feedback;
- source_row_id | target_entity_ids | status  
----------------+-------------------+---------
-             1 | [{"id": 1}]       | APPLIED
+SELECT source_row_id, target_entity_keys, status FROM pg_temp.temporal_merge_feedback;
+ source_row_id | target_entity_keys | status  
+---------------+--------------------+---------
+             1 | [{"id": 1}]        | APPLIED
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_14;
@@ -506,10 +506,10 @@ CREATE TEMP TABLE tm_extra_cols_source (
 );
 INSERT INTO tm_extra_cols_source VALUES (1, 1, 'A', 'ignore me', '2024-01-01', 'infinity', 999);
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_extra_cols_target'::regclass,
-    source_table      := 'tm_extra_cols_source'::regclass,
-    identity_columns        := ARRAY['id'],
-    mode              := 'INSERT_NEW_ENTITIES'
+    target_table              => 'tm_extra_cols_target'::regclass,
+    source_table              => 'tm_extra_cols_source'::regclass,
+    primary_identity_columns  => ARRAY['id'],
+    mode                      => 'INSERT_NEW_ENTITIES'
 );
 -- Verify merge was successful
 \echo '--- Executor: Expected Final State ---'
@@ -564,11 +564,11 @@ INSERT INTO tm_founding_source VALUES
 (1, 101, 'NEW_ENTITY_1', 'A', '2024-01-01', '2024-06-01'),
 (2, 101, 'NEW_ENTITY_1', 'B', '2024-06-01', 'infinity');
 CALL sql_saga.temporal_merge(
-    target_table      := 'tm_founding_target'::regclass,
-    source_table      := 'tm_founding_source'::regclass,
-    identity_columns        := ARRAY['entity_ident'],
-    mode              := 'INSERT_NEW_ENTITIES',
-    founding_id_column := 'founding_group_id'::name
+    target_table              => 'tm_founding_target'::regclass,
+    source_table              => 'tm_founding_source'::regclass,
+    primary_identity_columns  => ARRAY['entity_ident'],
+    mode                      => 'INSERT_NEW_ENTITIES',
+    founding_id_column        => 'founding_group_id'::name
 );
 -- Verify that a single new entity was created with two historical slices.
 \echo '--- Executor: Expected Final State (A single entity with a consistent surrogate key) ---'
@@ -600,8 +600,8 @@ ORDER BY valid_from;
 SELECT * FROM (VALUES
     (1, '[{"id": 1, "entity_ident": "NEW_ENTITY_1"}]'::jsonb),
     (2, '[{"id": 1, "entity_ident": "NEW_ENTITY_1"}]'::jsonb)
-) AS t (source_row_id, target_entity_ids);
- source_row_id |              target_entity_ids              
+) AS t (source_row_id, target_entity_keys);
+ source_row_id |             target_entity_keys              
 ---------------+---------------------------------------------
              1 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]
              2 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]
@@ -609,10 +609,10 @@ SELECT * FROM (VALUES
 
 \echo '--- Executor: Actual Feedback ---'
 --- Executor: Actual Feedback ---
-SELECT source_row_id, target_entity_ids
+SELECT source_row_id, target_entity_keys
 FROM pg_temp.temporal_merge_feedback
 ORDER BY source_row_id;
- source_row_id |              target_entity_ids              
+ source_row_id |             target_entity_keys              
 ---------------+---------------------------------------------
              1 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]
              2 | [{"id": 1, "entity_ident": "NEW_ENTITY_1"}]

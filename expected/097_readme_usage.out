@@ -239,7 +239,7 @@ CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_co
 CALL sql_saga.temporal_merge(
     target_table => 'readme.legal_unit'::regclass,
     source_table => 'source_legal_unit'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -249,15 +249,15 @@ CALL sql_saga.temporal_merge(
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |            entity_ids             | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                      | feedback | trace |  entity_key   
--------------+---------+-----------+---------------+-----------+---------------+-----------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {101}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"name": "AutoSpareParts INC", "status": "active", "valid_to": "2023-12-31"}   |          |       | new_entity__1
-           2 | {102}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} |              |              |                |                 | 2024-01-01     | infinity        | {"name": "SpareParts Corporation", "status": "active", "valid_to": "infinity"} |          |       | new_entity__1
-           3 | {103}   | INSERT    |               | 2         | t             | {"id": 2, "legal_ident": "LU002"} |              |              |                |                 | 2023-01-01     | infinity        | {"name": "General Refinement LLC", "status": "active", "valid_to": "infinity"} |          |       | new_entity__2
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |            entity_keys            | identity_keys |             lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                      | feedback | trace |  entity_key   
+-------------+---------+-----------+---------------+-----------+---------------+-----------------------------------+---------------+--------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------+----------+-------+---------------
+           1 | {101}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"name": "AutoSpareParts INC", "status": "active", "valid_to": "2023-12-31"}   |          |       | new_entity__1
+           2 | {102}   | INSERT    |               | 1         | t             | {"id": 1, "legal_ident": "LU001"} | {"id": null}  | {"id": null, "legal_ident": "LU001"} |              |              |                |                 | 2024-01-01     | infinity        | {"name": "SpareParts Corporation", "status": "active", "valid_to": "infinity"} |          |       | new_entity__1
+           3 | {103}   | INSERT    |               | 2         | t             | {"id": 2, "legal_ident": "LU002"} | {"id": null}  | {"id": null, "legal_ident": "LU002"} |              |              |                |                 | 2023-01-01     | infinity        | {"name": "General Refinement LLC", "status": "active", "valid_to": "infinity"} |          |       | new_entity__2
 (3 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id |          target_entity_ids          | status  | error_message 
+ source_row_id |         target_entity_keys          | status  | error_message 
 ---------------+-------------------------------------+---------+---------------
            101 | [{"id": 1, "legal_ident": "LU001"}] | APPLIED | 
            102 | [{"id": 1, "legal_ident": "LU001"}] | APPLIED | 
@@ -310,7 +310,7 @@ CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, identity
 CALL sql_saga.temporal_merge(
     target_table => 'readme.establishment'::regclass,
     source_table => 'source_establishment'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -319,17 +319,17 @@ CALL sql_saga.temporal_merge(
 \echo '--- Verification: Feedback from temporal_merge ---'
 --- Verification: Feedback from temporal_merge ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_ids | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | feedback | trace |  entity_key   
--------------+---------+-----------+---------------+-----------+---------------+------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {201}   | INSERT    |               | 1         | t             | {"id": 1}  |              |              |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  |          |       | new_entity__1
-           2 | {202}   | INSERT    |               | 2         | t             | {"id": 2}  |              |              |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} |          |       | new_entity__2
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys  | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | feedback | trace |  entity_key   
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+--------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------+-------+---------------
+           1 | {201}   | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {"id": null} |              |              |                |                 | 2023-08-01     | infinity        | {"name": "Main Branch", "address": "123 Innovation Drive", "legal_unit_id": 1}  |          |       | new_entity__1
+           2 | {202}   | INSERT    |               | 2         | t             | {"id": 2}   | {"id": null}  | {"id": null} |              |              |                |                 | 2023-01-01     | infinity        | {"name": "Refinery Plant", "address": "456 Industrial Ave", "legal_unit_id": 2} |          |       | new_entity__2
 (2 rows)
 
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_ids | status  | error_message 
----------------+-------------------+---------+---------------
-           201 | [{"id": 1}]       | APPLIED | 
-           202 | [{"id": 2}]       | APPLIED | 
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+           201 | [{"id": 1}]        | APPLIED | 
+           202 | [{"id": 2}]        | APPLIED | 
 (2 rows)
 
 \echo '--- Verification: Final state of establishment table ---'

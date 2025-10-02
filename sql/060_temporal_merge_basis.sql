@@ -138,7 +138,7 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_1',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -178,7 +178,7 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_2',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -218,7 +218,7 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_3',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -259,7 +259,7 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_4',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -300,7 +300,7 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_5',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -340,7 +340,7 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_6',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -380,7 +380,7 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_7',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -420,7 +420,7 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_8',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -460,7 +460,7 @@ SELECT * FROM temp_source_9 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_9',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -500,7 +500,7 @@ SELECT * FROM temp_source_10 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_10',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -540,7 +540,7 @@ SELECT * FROM temp_source_11 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_11',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -585,7 +585,7 @@ SELECT * FROM temp_source_12 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_12',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -626,7 +626,7 @@ SELECT * FROM temp_source_13 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_13',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -667,7 +667,7 @@ SELECT * FROM temp_source_14 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_14',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -709,7 +709,7 @@ SELECT * FROM temp_source_15 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_15',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -750,7 +750,7 @@ SELECT * FROM temp_source_16 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_16',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -788,7 +788,7 @@ SELECT * FROM temp_source_17 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_17',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -832,7 +832,7 @@ SELECT * FROM temp_source_18 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_18',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'PATCH_FOR_PORTION_OF',
     era_name => 'valid'
@@ -869,7 +869,7 @@ SELECT * FROM temp_source_19 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_19',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'REPLACE_FOR_PORTION_OF',
     era_name => 'valid'
@@ -909,7 +909,7 @@ SELECT * FROM temp_source_20 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_20',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -950,7 +950,7 @@ SELECT * FROM temp_source_21 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_21',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'PATCH_FOR_PORTION_OF',
     era_name => 'valid'
@@ -993,7 +993,7 @@ SELECT * FROM temp_source_22 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_22',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1034,7 +1034,7 @@ SELECT * FROM temp_source_23 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_23',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1079,7 +1079,7 @@ SELECT * FROM temp_source_24 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_24',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1124,7 +1124,7 @@ SELECT * FROM temp_source_35 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_35',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'PATCH_FOR_PORTION_OF',
     era_name => 'valid'
@@ -1150,7 +1150,7 @@ SELECT * FROM temp_source_35 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_35',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1170,7 +1170,7 @@ SELECT * FROM temp_source_35 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_35',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1225,7 +1225,7 @@ SELECT * FROM temp_source_36 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_36',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1268,7 +1268,7 @@ SELECT * FROM temp_source_37 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_37',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1309,7 +1309,7 @@ SELECT * FROM temp_source_38 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_38',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1351,7 +1351,7 @@ SELECT * FROM temp_source_39 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_39',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1452,7 +1452,7 @@ SELECT * FROM temp_source_40 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_40',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1535,7 +1535,7 @@ SELECT * FROM temp_source_41 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_41',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
@@ -1616,14 +1616,14 @@ SELECT * FROM temp_source_42 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_42',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
 );
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-TABLE pg_temp.temporal_merge_plan ORDER BY (entity_ids->>'id')::INT, new_valid_from;
+TABLE pg_temp.temporal_merge_plan ORDER BY (entity_keys->>'id')::INT, new_valid_from;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1711,14 +1711,14 @@ SELECT * FROM temp_source_43 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_43',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
     era_name => 'valid'
 );
 
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
-TABLE pg_temp.temporal_merge_plan ORDER BY (entity_ids->>'id')::INT, new_valid_from;
+TABLE pg_temp.temporal_merge_plan ORDER BY (entity_keys->>'id')::INT, new_valid_from;
 
 \echo '--- Orchestrator: Actual Feedback ---'
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -1785,7 +1785,7 @@ SELECT * FROM temp_source_44 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_44',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -1856,7 +1856,7 @@ SELECT * FROM temp_source_45 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => :'target_table'::regclass,
     source_table => 'temp_source_45',
-    identity_columns => :'entity_id_cols'::TEXT[],
+    primary_identity_columns => :'entity_id_cols'::TEXT[],
     ephemeral_columns => '{}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -1929,7 +1929,7 @@ TABLE source_46;
 CALL sql_saga.temporal_merge(
   target_table => 'tm_44_not_null_test.test_unit'::regclass,
   source_table => 'source_46'::regclass,
-  identity_columns => ARRAY['id'],
+  primary_identity_columns => ARRAY['id'],
   ephemeral_columns => ARRAY[]::TEXT[],
   mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
   row_id_column => 'row_id'
@@ -1994,7 +1994,7 @@ TABLE source_47;
 CALL sql_saga.temporal_merge(
   target_table => 'tm_47_surgical_patch.test_target'::regclass,
   source_table => 'source_47'::regclass,
-  identity_columns => ARRAY['id'],
+  primary_identity_columns => ARRAY['id'],
   mode => 'PATCH_FOR_PORTION_OF'::sql_saga.temporal_merge_mode,
   row_id_column => 'row_id'
 );

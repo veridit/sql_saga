@@ -97,7 +97,7 @@ BEGIN
     CALL sql_saga.temporal_merge(
         target_table => (info.table_schema || '.' || info.table_name)::regclass,
         source_table => source_table_name::regclass,
-        identity_columns => identifier_columns,
+        primary_identity_columns => identifier_columns,
         mode => 'UPDATE_FOR_PORTION_OF',
         era_name => info.era_name,
         update_source_with_feedback => true,

@@ -43,7 +43,7 @@ TABLE target_units;
 CALL sql_saga.temporal_merge(
     target_table => 'target_units',
     source_table => 'source_units',
-    identity_columns => NULL, -- Discover based on sql_saga setup.
+    primary_identity_columns => NULL, -- Discover based on sql_saga setup.
     natural_identity_columns => NULL, -- Discover based on sql_saga setup.
     row_id_column => 'row_id',
     founding_id_column => 'founding_row_id',

@@ -26,7 +26,7 @@ INSERT INTO source_int VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmt.target_int'::regclass,
     source_table => 'source_int'::regclass,
-    identity_columns => '{id}'::text[]
+    primary_identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -54,7 +54,7 @@ INSERT INTO source_bigint VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmt.target_bigint'::regclass,
     source_table => 'source_bigint'::regclass,
-    identity_columns => '{id}'::text[]
+    primary_identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -82,7 +82,7 @@ INSERT INTO source_numeric VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmt.target_numeric'::regclass,
     source_table => 'source_numeric'::regclass,
-    identity_columns => '{id}'::text[]
+    primary_identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -110,7 +110,7 @@ INSERT INTO source_timestamp VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmt.target_timestamp'::regclass,
     source_table => 'source_timestamp'::regclass,
-    identity_columns => '{id}'::text[]
+    primary_identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'
@@ -138,7 +138,7 @@ INSERT INTO source_timestamptz VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmt.target_timestamptz'::regclass,
     source_table => 'source_timestamptz'::regclass,
-    identity_columns => '{id}'::text[]
+    primary_identity_columns => '{id}'::text[]
 );
 
 \echo '--- Expected Final State ---'

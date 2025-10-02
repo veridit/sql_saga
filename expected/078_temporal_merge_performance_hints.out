@@ -70,7 +70,7 @@ ANALYZE source_table_no_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_no_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 \echo
 
@@ -86,7 +86,7 @@ ANALYZE source_table_no_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_no_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 WARNING:  Performance warning: The source relation source_table_no_index lacks a GIST index on its temporal columns.
 HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON source_table_no_index USING GIST (daterange(valid_from, valid_until, '[)'));
@@ -114,7 +114,7 @@ ANALYZE source_table_with_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_with_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 -- Scenario 3: Source is a VIEW. Check if index on underlying table is detected.
 \echo
@@ -145,7 +145,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 \echo
 
@@ -160,7 +160,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 WARNING:  Performance warning: The source relation source_view lacks a GIST index on its temporal columns.
 HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON source_table_for_view USING GIST (daterange(valid_from, valid_until, '[)'));
@@ -181,7 +181,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 -- Verify final state of target table to ensure merge worked
 SELECT COUNT(*) FROM target_table;

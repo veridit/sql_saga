@@ -131,7 +131,7 @@ INSERT INTO temp_stat_merge_source (
 CALL sql_saga.temporal_merge(
     target_table => 'repro.stat_for_unit',
     source_table => 'temp_stat_merge_source',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',

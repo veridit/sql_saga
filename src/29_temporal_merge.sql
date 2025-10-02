@@ -3,7 +3,7 @@
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
     target_table regclass,
     source_table regclass,
-    identity_columns TEXT[] DEFAULT NULL,
+    primary_identity_columns TEXT[] DEFAULT NULL,
     mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH',
     era_name name DEFAULT 'valid',
     row_id_column name DEFAULT 'row_id',
@@ -21,6 +21,21 @@ CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge(
 )
 LANGUAGE plpgsql AS $temporal_merge$
 DECLARE
+    -- The `temporal_merge` procedure distinguishes between two types of identity columns,
+    -- which serve different roles in the merge process:
+    --
+    -- 1. Identity Columns (`primary_identity_columns` parameter):
+    --    - Role: The partitioning key. This is the set of columns that uniquely and immutably
+    --      identifies a single conceptual entity throughout its entire history.
+    --    - Example: A surrogate key like `id` or `person_id`. It is typically derived from
+    --      the table's primary key (`sql_saga.unique_keys.key_type = 'primary'`).
+    --
+    -- 2. Lookup Columns (`natural_identity_columns` parameter):
+    --    - Role: The lookup key. This is a "business key" used to find an entity when its
+    --      identity is not known by the source data.
+    --    - Example: A social security number (`ssn`) or `employee_nr`. It is derived
+    --      from the table's natural keys (`sql_saga.unique_keys.key_type = 'natural'`).
+
     v_log_trace boolean;
     v_log_sql boolean;
     v_log_plan boolean;
@@ -44,10 +59,10 @@ BEGIN
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
 
     -- Automatic Discovery of identity columns if they are NULL.
-    v_identity_cols_discovered := temporal_merge.identity_columns;
+    v_identity_cols_discovered := temporal_merge.primary_identity_columns;
     v_natural_identity_cols_discovered := temporal_merge.natural_identity_columns;
 
-    -- If identity_columns is NULL, discover a stable key. Prioritize the primary key,
+    -- If primary_identity_columns is NULL, discover an identity key. Prioritize the primary key,
     -- but fall back to the first available natural key if no primary key is defined.
     IF v_identity_cols_discovered IS NULL THEN
         SELECT uk.column_names INTO v_identity_cols_discovered
@@ -55,12 +70,14 @@ BEGIN
         JOIN pg_class c ON uk.table_schema = c.relnamespace::regnamespace::name AND uk.table_name = c.relname
         WHERE c.oid = temporal_merge.target_table
           AND uk.era_name = temporal_merge.era_name
+          -- This is a fallback to find a sensible default for the entity identifier.
+          -- If a primary key isn't available, a natural key is the next best candidate.
           AND uk.key_type IN ('primary', 'natural')
         ORDER BY (uk.key_type = 'primary') DESC, uk.unique_key_name
         LIMIT 1;
 
-        IF NOT FOUND AND identity_columns IS NULL THEN
-             RAISE EXCEPTION 'Could not discover a stable key (primary or natural) for table "%". Please register a key using sql_saga.add_unique_key() or explicitly provide identity_columns.', target_table;
+        IF NOT FOUND AND primary_identity_columns IS NULL THEN
+             RAISE EXCEPTION 'Could not discover an identity key (primary or natural) for table "%". Please register a key using sql_saga.add_unique_key() or explicitly provide primary_identity_columns.', target_table;
         END IF;
     END IF;
 
@@ -149,7 +166,7 @@ BEGIN
     END IF;
 
     v_summary_line := format(
-        'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, natural_identity_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
+        'on %s: mode=>%s, delete_mode=>%s, primary_identity_columns=>%L, natural_identity_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
         temporal_merge.target_table,
         temporal_merge.mode,
         temporal_merge.delete_mode,
@@ -177,7 +194,7 @@ BEGIN
         row_id_column => temporal_merge.row_id_column,
         founding_id_column => temporal_merge.founding_id_column,
         delete_mode => temporal_merge.delete_mode,
-        natural_identity_keys => v_natural_identity_keys_discovered,
+        lookup_keys => v_natural_identity_keys_discovered,
         ephemeral_columns => temporal_merge.ephemeral_columns,
         p_log_trace => v_log_trace,
         p_log_sql => v_log_sql
@@ -197,7 +214,7 @@ BEGIN
                     'update_effect', v_plan_rec.update_effect,
                     'causal_id', v_plan_rec.causal_id,
                     'is_new_entity', v_plan_rec.is_new_entity,
-                    'entity_ids', v_plan_rec.entity_ids,
+                    'entity_keys', v_plan_rec.entity_keys,
                     'old_valid_from', v_plan_rec.old_valid_from,
                     'old_valid_until', v_plan_rec.old_valid_until,
                     'new_valid_from', v_plan_rec.new_valid_from,
@@ -221,7 +238,7 @@ BEGIN
         row_id_column => temporal_merge.row_id_column,
         founding_id_column => temporal_merge.founding_id_column,
         update_source_with_identity => temporal_merge.update_source_with_identity,
-        natural_identity_columns => v_natural_identity_cols_discovered,
+        lookup_columns => v_natural_identity_cols_discovered,
         delete_mode => temporal_merge.delete_mode,
         update_source_with_feedback => temporal_merge.update_source_with_feedback,
         feedback_status_column => temporal_merge.feedback_status_column,
@@ -234,5 +251,5 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge IS 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
+COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean) IS 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 

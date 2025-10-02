@@ -126,7 +126,7 @@ CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_co
 CALL sql_saga.temporal_merge(
     target_table => 'readme.legal_unit'::regclass,
     source_table => 'source_legal_unit'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -160,7 +160,7 @@ CREATE TEMP TABLE source_establishment ON COMMIT DROP AS SELECT row_id, identity
 CALL sql_saga.temporal_merge(
     target_table => 'readme.establishment'::regclass,
     source_table => 'source_establishment'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',

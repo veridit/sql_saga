@@ -91,6 +91,7 @@ TRUNCATE source_data RESTART IDENTITY;
 -- This source row links Alice's employee_nr with Bob's ssn, creating ambiguity.
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('222', 'E101', 'conflict@example.com', 'Conflict Person', '2023-10-01', '2024-01-01');
+    
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
@@ -100,6 +101,9 @@ CALL sql_saga.temporal_merge(
     feedback_error_column => 'errors',
     feedback_error_key => 'test'    
 );
+
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+
 \echo '--- Feedback for ambiguous row ---'
 SELECT row_id, merge_status, errors
 FROM source_data;
@@ -154,7 +158,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL
 );
 \echo '--- Final state (9a) ---'
@@ -171,7 +175,7 @@ TABLE source_data;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['employee_nr']
 );
 \echo '--- Final state (9b) ---'
@@ -186,7 +190,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => ARRAY['employee_nr']
 );
 \echo '--- Final state (9c) ---'
@@ -203,7 +207,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => ARRAY['ssn']
 );
 \echo '--- Final state (9d) ---'
@@ -218,7 +222,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL -- Let the planner auto-discover both ['ssn'] and ['employee_nr']
 );
 \echo '--- Final state (9e) ---'
@@ -262,13 +266,14 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
 TABLE source_data ORDER BY row_id;
 
 SET client_min_messages TO NOTICE;
-SET sql_saga.temporal_merge.log_plan = true;
 SET sql_saga.temporal_merge.enable_trace = true;
 SET sql_saga.temporal_merge.log_vars = true;
+
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
-SET sql_saga.temporal_merge.log_plan = false;
 SET sql_saga.temporal_merge.enable_trace = false;
 SET sql_saga.temporal_merge.log_vars = false;
+
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- State after adding Dee (multi-row target) ---'
 -- AI: The following is the correct way to handle this pathological source, but it is not yet correctly implemented in the planner, can you help out?
@@ -364,7 +369,7 @@ TABLE source_data;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['employee_nr'] -- Still provided for robust lookup
 );
 

@@ -18,11 +18,11 @@ CREATE TABLE tmisd.establishment (
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_from) DEFERRABLE
 );
 SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
 -- The conceptual key for the entity
-SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', unique_key_name => 'tmisd_establishment_uk');
+SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', key_type => 'primary', unique_key_name => 'tmisd_establishment_uk');
 
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE tmisd.reset_target() LANGUAGE plpgsql AS $$
@@ -71,7 +71,7 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmisd.establishment',
     source_table => 'temp_source_1',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -146,7 +146,7 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmisd.establishment',
     source_table => 'temp_source_2',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -238,7 +238,7 @@ SELECT * FROM v_source_3b ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmisd.establishment',
     source_table => 'v_source_3a',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -265,7 +265,7 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmisd.establishment',
     source_table => 'v_source_3b',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',

@@ -70,14 +70,14 @@ BEGIN
         source_table_oid := to_regclass(pg_my_temp_schema()::regnamespace::text || '.' || quote_ident(source_table_name));
 
         CALL sql_saga.temporal_merge(
-            target_table      := info.table_oid,
-            source_table      := source_table_oid,
-            identity_columns        := identifier_columns::text[],
-            ephemeral_columns := '{}'::text[],
-            era_name          := info.era_name,
-            mode              := 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
-            row_id_column := 'row_id',
-            founding_id_column := 'row_id'
+            target_table             => info.table_oid,
+            source_table             => source_table_oid,
+            primary_identity_columns => identifier_columns::text[],
+            ephemeral_columns        => '{}'::text[],
+            era_name                 => info.era_name,
+            mode                     => 'MERGE_ENTITY_UPSERT'::sql_saga.temporal_merge_mode,
+            row_id_column            => 'row_id',
+            founding_id_column       => 'row_id'
         );
         RETURN NEW;
 

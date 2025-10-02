@@ -131,6 +131,7 @@ TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (employee_nr, full_name, valid_from, valid_until) VALUES
     ('E101', 'Alice Jones', '2023-06-01', '2024-01-01');
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data');
+    
 \echo '--- State after update via employee_nr ---'
 --- State after update via employee_nr ---
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
@@ -189,6 +190,7 @@ TRUNCATE source_data RESTART IDENTITY;
 -- This source row links Alice's employee_nr with Bob's ssn, creating ambiguity.
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('222', 'E101', 'conflict@example.com', 'Conflict Person', '2023-10-01', '2024-01-01');
+    
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
@@ -198,6 +200,12 @@ CALL sql_saga.temporal_merge(
     feedback_error_column => 'errors',
     feedback_error_key => 'test'    
 );
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                  entity_keys                   | identity_keys |              lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                    feedback                                                    | trace |     entity_key     
+-------------+---------+-----------+---------------+-----------+---------------+------------------------------------------------+---------------+---------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------------+-------+--------------------
+           1 | {1}     | ERROR     |               | 1         | f             | {"id": 1, "ssn": "222", "employee_nr": "E101"} | {"id": 1}     | {"ssn": "222", "employee_nr": "E101"} |              |              |                |                 |                |                 |      | {"error": "Source row is ambiguous. It matches multiple distinct target entities: [{\"id\": 1}, {\"id\": 2}]"} |       | existing_entity__1
+(1 row)
+
 \echo '--- Feedback for ambiguous row ---'
 --- Feedback for ambiguous row ---
 SELECT row_id, merge_status, errors
@@ -269,7 +277,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL
 );
 \echo '--- Final state (9a) ---'
@@ -314,7 +322,7 @@ TABLE source_data;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['employee_nr']
 );
 \echo '--- Final state (9b) ---'
@@ -339,7 +347,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => ARRAY['employee_nr']
 );
 \echo '--- Final state (9c) ---'
@@ -364,7 +372,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => ARRAY['ssn']
 );
 \echo '--- Final state (9d) ---'
@@ -390,7 +398,7 @@ SAVEPOINT s9;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => NULL -- Let the planner auto-discover both ['ssn'] and ['employee_nr']
 );
 \echo '--- Final state (9e) ---'
@@ -554,7 +562,7 @@ TABLE source_data;
 CALL sql_saga.temporal_merge(
     target_table => 'identity_discovery.person',
     source_table => 'source_data',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['employee_nr'] -- Still provided for robust lookup
 );
 \echo '--- Final state after multi-row update with pre-filled ID ---'

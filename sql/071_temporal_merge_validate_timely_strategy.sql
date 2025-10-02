@@ -340,7 +340,7 @@ BEGIN;
 CALL sql_saga.temporal_merge(
     target_table => 'stm.parent',
     source_table => 'stm.source',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     ephemeral_columns => '{}',
     mode => 'MERGE_ENTITY_PATCH'
 );

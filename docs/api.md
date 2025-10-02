@@ -466,7 +466,7 @@ SECURITY INVOKER
 PROCEDURE temporal_merge(
     IN target_table regclass,
     IN source_table regclass,
-    IN identity_columns text[] DEFAULT NULL::text[],
+    IN primary_identity_columns text[] DEFAULT NULL::text[],
     IN mode sql_saga.temporal_merge_mode DEFAULT 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
     IN era_name name DEFAULT 'valid'::name,
     IN row_id_column name DEFAULT 'row_id'::name,

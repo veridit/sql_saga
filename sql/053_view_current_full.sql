@@ -17,7 +17,7 @@ CREATE TABLE test_schema.schema_test (
     value text
 );
 SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
-SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
+SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mode := 'delete_as_cutoff', current_func_name := 'test_now()');
 
 \d test_schema.schema_test__current_valid

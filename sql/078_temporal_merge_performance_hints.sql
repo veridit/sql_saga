@@ -32,7 +32,7 @@ ANALYZE source_table_no_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_no_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 \echo
@@ -46,7 +46,7 @@ ANALYZE source_table_no_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_no_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 -- Scenario 2: GIST index exists on source table, should be silent.
@@ -73,7 +73,7 @@ ANALYZE source_table_with_index;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_table_with_index',
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 -- Scenario 3: Source is a VIEW. Check if index on underlying table is detected.
@@ -102,7 +102,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 \echo
@@ -116,7 +116,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 -- Add the recommended index to the *base table*
@@ -136,7 +136,7 @@ ANALYZE source_table_for_view;
 CALL sql_saga.temporal_merge(
     'target_table',
     'source_view'::regclass,
-    identity_columns => ARRAY['id']
+    primary_identity_columns => ARRAY['id']
 );
 
 -- Verify final state of target table to ensure merge worked

@@ -181,7 +181,7 @@ SELECT * FROM temp_source_1 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
     source_table => 'temp_source_1',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
@@ -238,7 +238,7 @@ SELECT * FROM temp_source_2 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
     source_table => 'temp_source_2',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
@@ -294,7 +294,7 @@ SELECT * FROM temp_source_3 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
     source_table => 'temp_source_3',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
@@ -346,7 +346,7 @@ SELECT * FROM temp_source_4 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
     source_table => 'temp_source_4',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
@@ -399,7 +399,7 @@ SELECT * FROM temp_source_5 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_gen',
     source_table => 'temp_source_5',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
@@ -452,7 +452,7 @@ SELECT * FROM temp_source_6 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
     source_table => 'temp_source_6',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
@@ -505,7 +505,7 @@ SELECT * FROM temp_source_7 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_gen',
     source_table => 'temp_source_7',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => '{edit_comment}'::TEXT[],
     mode => 'MERGE_ENTITY_PATCH',
@@ -558,7 +558,7 @@ SELECT * FROM temp_source_8 ORDER BY row_id;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_no_pk',
     source_table => 'temp_source_8',
-    identity_columns => '{id}'::TEXT[],
+    primary_identity_columns => '{id}'::TEXT[],
     natural_identity_columns => '{stat_definition_id, establishment_id}'::TEXT[],
     ephemeral_columns => :'ephemeral_cols'::TEXT[],
     mode => 'MERGE_ENTITY_REPLACE',
@@ -628,7 +628,7 @@ TABLE temp_source_9;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{type, legal_unit_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -649,7 +649,7 @@ TABLE temp_source_9;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{type, establishment_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -690,7 +690,7 @@ TABLE temp_source_10;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => '{type, legal_unit_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -708,7 +708,7 @@ TABLE temp_source_10;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
-    identity_columns => NULL,
+    primary_identity_columns => NULL,
     natural_identity_columns => '{type, establishment_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -748,7 +748,7 @@ TABLE temp_source_11;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{type, legal_unit_id, establishment_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -768,7 +768,7 @@ TABLE temp_source_11;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{type, legal_unit_id, establishment_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',
@@ -831,7 +831,7 @@ SAVEPOINT expect_error;
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
     source_table => 'temp_source_12',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{stat_definition_id, establishment_id}',
     ephemeral_columns => '{edit_comment}',
     mode => 'MERGE_ENTITY_REPLACE',

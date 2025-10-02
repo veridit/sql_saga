@@ -242,7 +242,7 @@ BEGIN
     CALL sql_saga.temporal_merge(
         target_table => 'etl.legal_unit',
         source_table => 'source_view_lu',
-        identity_columns => ARRAY['id'],
+        primary_identity_columns => ARRAY['id'],
         ephemeral_columns => ARRAY['comment'],
         mode => 'MERGE_ENTITY_PATCH',
         founding_id_column => 'founding_id',
@@ -320,7 +320,7 @@ BEGIN
     CALL sql_saga.temporal_merge(
         target_table => 'etl.location',
         source_table => 'source_view_loc_phys',
-        identity_columns => ARRAY['id'],
+        primary_identity_columns => ARRAY['id'],
         natural_identity_columns => ARRAY['legal_unit_id', 'type'],
         ephemeral_columns => ARRAY['comment'],
         mode => 'MERGE_ENTITY_PATCH',
@@ -389,7 +389,7 @@ BEGIN
     CALL sql_saga.temporal_merge(
         target_table => 'etl.location',
         source_table => 'source_view_loc_post',
-        identity_columns => ARRAY['id'],
+        primary_identity_columns => ARRAY['id'],
         -- Explicitly disable natural key discovery for this call. Postal locations
         -- are only identified by their surrogate 'id'.
         natural_identity_columns => ARRAY[]::text[],
@@ -477,7 +477,7 @@ BEGIN
         CALL sql_saga.temporal_merge(
             target_table => 'etl.stat_for_unit',
             source_table => format('source_view_stat_%s', v_stat_def.code)::regclass,
-            identity_columns => ARRAY['id'],
+            primary_identity_columns => ARRAY['id'],
             ephemeral_columns => ARRAY['comment'],
             mode => 'MERGE_ENTITY_PATCH',
             founding_id_column => 'founding_id',
@@ -632,7 +632,7 @@ BEGIN
             CALL sql_saga.temporal_merge(
                 target_table => 'etl.activity'::regclass,
                 source_table => 'source_view_activity'::regclass,
-                identity_columns => ARRAY['legal_unit_id', 'activity_type_id'],
+                primary_identity_columns => ARRAY['legal_unit_id', 'activity_type_id'],
                 ephemeral_columns => ARRAY['comment'],
                 mode => 'MERGE_ENTITY_PATCH',
                 update_source_with_identity => false,

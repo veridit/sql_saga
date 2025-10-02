@@ -39,7 +39,7 @@ TABLE source_data_1;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_1',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
@@ -65,7 +65,7 @@ TABLE source_data_2;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
@@ -81,7 +81,7 @@ INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01'
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_1',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
@@ -93,7 +93,7 @@ CALL sql_saga.temporal_merge(
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['legal_unit_id'],
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
@@ -127,7 +127,7 @@ INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01'
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_bad_pk',
     source_table => 'source_data_1',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     update_source_with_identity => true
@@ -154,7 +154,7 @@ BEGIN
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_bad_pk',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL
 );
@@ -180,7 +180,7 @@ INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01'
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_good_pk',
     source_table => 'source_data_1',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     update_source_with_identity => true
@@ -197,7 +197,7 @@ TABLE tmrb.my_stat_for_unit_good_pk;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_good_pk',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL
 );
@@ -240,7 +240,7 @@ BEGIN
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_gen_always',
     source_table => 'source_data_1',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     founding_id_column => 'founding_row_id'
@@ -268,7 +268,7 @@ INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', '2023-04-01'
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_gen_default',
     source_table => 'source_data_1',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL,
     update_source_with_identity => true
@@ -285,7 +285,7 @@ TABLE source_data_2;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.my_stat_for_unit_gen_default',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL,
     ephemeral_columns => NULL
 );
@@ -316,7 +316,7 @@ INSERT INTO source_data_1 VALUES (1, 1, NULL, 100, 4, '2023-01-01', 'infinity');
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.bug_repro_1',
     source_table => 'source_data_1',
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     natural_identity_columns => '{legal_unit_id}',
     update_source_with_identity => true
 );
@@ -333,7 +333,7 @@ TABLE source_data_2;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.bug_repro_1',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => ARRAY['legal_unit_id'],
     mode => 'MERGE_ENTITY_REPLACE'
 );
@@ -352,7 +352,7 @@ SET sql_saga.temporal_merge.log_plan = '';
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.bug_repro_1',
     source_table => 'source_data_2',
-    identity_columns => ARRAY['id'],
+    primary_identity_columns => ARRAY['id'],
     natural_identity_columns => NULL
 );
 -- Reset GUC for any subsequent tests
@@ -404,7 +404,7 @@ TABLE source_data_kranloft;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.legal_unit_kranloft'::regclass,
     source_table => 'source_data_kranloft'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid',
@@ -436,7 +436,7 @@ DO $$ BEGIN
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.ephemeral_validation'::regclass,
     source_table => 'source_data_kranloft'::regclass,
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     ephemeral_columns => ARRAY['valid_from']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
@@ -446,7 +446,7 @@ DO $$ BEGIN
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.ephemeral_validation'::regclass,
     source_table => 'source_data_kranloft'::regclass,
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     ephemeral_columns => ARRAY['valid_until']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
@@ -456,7 +456,7 @@ DO $$ BEGIN
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.ephemeral_validation'::regclass,
     source_table => 'source_data_kranloft'::regclass,
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     ephemeral_columns => ARRAY['valid_to']
 );
 EXCEPTION WHEN OTHERS THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
@@ -515,7 +515,7 @@ INSERT INTO source_data_fk_bug VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.legal_unit_fk_bug'::regclass,
     source_table => 'source_data_fk_bug'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -559,7 +559,7 @@ INSERT INTO source_data_default_bug VALUES
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.unit_default_bug'::regclass,
     source_table => 'source_data_default_bug'::regclass,
-    identity_columns => '{id}'::text[],
+    primary_identity_columns => '{id}'::text[],
     founding_id_column => 'founding_row_id',
     mode => 'MERGE_ENTITY_REPLACE',
     era_name => 'valid'
@@ -610,7 +610,7 @@ TABLE source_coalesce_bug;
 CALL sql_saga.temporal_merge(
     target_table => 'tmrb.coalesce_bug'::regclass,
     source_table => 'source_coalesce_bug'::regclass,
-    identity_columns => '{id}',
+    primary_identity_columns => '{id}',
     ephemeral_columns => '{edit_comment}'
 );
 
