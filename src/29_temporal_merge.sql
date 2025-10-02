@@ -207,23 +207,7 @@ BEGIN
         IF v_log_plan THEN
             RAISE NOTICE 'temporal_merge plan (%) %', v_log_id, v_summary_line;
             FOR v_plan_rec IN SELECT * FROM temporal_merge_plan ORDER BY plan_op_seq LOOP
-                RAISE NOTICE '(%) %', v_log_id, json_build_object(
-                    'plan_op_seq', v_plan_rec.plan_op_seq,
-                    'row_ids', v_plan_rec.row_ids,
-                    'operation', v_plan_rec.operation,
-                    'update_effect', v_plan_rec.update_effect,
-                    'causal_id', v_plan_rec.causal_id,
-                    'is_new_entity', v_plan_rec.is_new_entity,
-                    'entity_keys', v_plan_rec.entity_keys,
-                    'old_valid_from', v_plan_rec.old_valid_from,
-                    'old_valid_until', v_plan_rec.old_valid_until,
-                    'new_valid_from', v_plan_rec.new_valid_from,
-                    'new_valid_until', v_plan_rec.new_valid_until,
-                    'data', v_plan_rec.data,
-                    's_t_relation', v_plan_rec.s_t_relation,
-                    'b_a_relation', v_plan_rec.b_a_relation,
-                    'trace', v_plan_rec.trace
-                );
+                RAISE NOTICE '(%) %', v_log_id, to_json(v_plan_rec);
             END LOOP;
         END IF;
     END;

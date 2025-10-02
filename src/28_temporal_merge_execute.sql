@@ -905,12 +905,7 @@ BEGIN
         IF v_log_feedback THEN
             RAISE NOTICE 'temporal_merge feedback (%) %', v_log_id, v_summary_line;
             FOR v_feedback_rec IN SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id LOOP
-                RAISE NOTICE '(%) %', v_log_id, json_build_object(
-                    'source_row_id', v_feedback_rec.source_row_id,
-                    'target_entity_keys', v_feedback_rec.target_entity_keys,
-                    'status', v_feedback_rec.status,
-                    'error_message', v_feedback_rec.error_message
-                );
+                RAISE NOTICE '(%) %', v_log_id, to_json(v_feedback_rec);
             END LOOP;
         END IF;
     END;
