@@ -252,11 +252,16 @@ CALL sql_saga.temporal_merge(
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E104' ORDER BY id, valid_from;
 
--- 11. Multi-row update of a multi-row target
-\echo '--- Scenario 11: Multi-row update of a multi-row target ---'
+-- 11. Multi-row insert of a fragmented entity (PATCH mode)
+\echo '--- Scenario 11: Multi-row insert of a fragmented entity (PATCH mode) ---'
 SAVEPOINT s11;
--- First, create a target with a multi-row history in a single merge call.
--- This creates three distinct time slices for the entity.
+-- This scenario tests the planner's ability to create a complex history for a single new entity from
+-- multiple source rows with fragmented natural key and data information. The planner must correctly:
+-- 1. Unify all 5 source rows under a single grouping key.
+-- 2. For each atomic time segment, find all overlapping source rows.
+-- 3. Apply the PATCH logic by merging the data payloads of the source rows in ascending order of their row_id.
+-- 4. Correctly aggregate the `row_ids` of all contributing source rows for each final plan operation.
+-- 5. Coalesce adjacent segments with identical final data payloads.
 TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
     ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
@@ -265,19 +270,85 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
     ( NULL, 'E105', 'doe@example.com', NULL       , '2023-03-01', '2023-05-01'),
     ( NULL, 'E105', NULL             , 'Sweet Doe', '2023-05-01', '2023-07-01');
 
+\echo '--- Source for fragmented entity ---'
 TABLE source_data ORDER BY row_id;
 
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
+\echo '--- State after adding Dee (PATCH mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+ROLLBACK TO SAVEPOINT s11;
+
+-- 12. Multi-row insert of a fragmented entity (UPSERT mode)
+\echo '--- Scenario 12: Multi-row insert of a fragmented entity (UPSERT mode) ---'
+SAVEPOINT s12;
+-- This scenario uses the same fragmented source data as the PATCH test, but with
+-- UPSERT mode. The key difference is that UPSERT treats NULLs in the source as
+-- explicit values that should overwrite existing data.
+TRUNCATE source_data RESTART IDENTITY;
+INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
+    ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
+    ('555',  NULL , 'dee@example.com', NULL       , '2023-02-01', '2023-04-01'),
+    ('555',  NULL , NULL             , 'Sweet Dee', '2023-04-01', '2023-06-01'),
+    ( NULL, 'E105', 'doe@example.com', NULL       , '2023-03-01', '2023-05-01'),
+    ( NULL, 'E105', NULL             , 'Sweet Doe', '2023-05-01', '2023-07-01');
+
+\echo '--- Source for fragmented entity ---'
+TABLE source_data ORDER BY row_id;
+
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_UPSERT');
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+
+\echo '--- State after adding Dee (UPSERT mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+ROLLBACK TO SAVEPOINT s12;
+
+-- 13. Multi-row insert of a fragmented entity (REPLACE mode)
+\echo '--- Scenario 13: Multi-row insert of a fragmented entity (REPLACE mode) ---'
+SAVEPOINT s13;
+-- This scenario uses the same fragmented source data as the PATCH/UPSERT tests,
+-- but with REPLACE mode. REPLACE completely overwrites data for overlapping
+-- time periods. Unlike PATCH/UPSERT, absent columns in a later source row will
+-- cause data from an earlier source row to be removed.
+TRUNCATE source_data RESTART IDENTITY;
+INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
+    ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
+    ('555',  NULL , 'dee@example.com', NULL       , '2023-02-01', '2023-04-01'),
+    ('555',  NULL , NULL             , 'Sweet Dee', '2023-04-01', '2023-06-01'),
+    ( NULL, 'E105', 'doe@example.com', NULL       , '2023-03-01', '2023-05-01'),
+    ( NULL, 'E105', NULL             , 'Sweet Doe', '2023-05-01', '2023-07-01');
+
+\echo '--- Source for fragmented entity ---'
+TABLE source_data ORDER BY row_id;
+
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_REPLACE');
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+
+\echo '--- State after adding Dee (REPLACE mode) ---'
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+
+ROLLBACK TO SAVEPOINT s13;
+
+-- 14. Multi-row update of a multi-row target
+\echo '--- Scenario 14: Multi-row update of a multi-row target ---'
+SAVEPOINT s14;
+-- First, create the same multi-row history for Dee using PATCH mode.
+TRUNCATE source_data RESTART IDENTITY;
+INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_until) VALUES
+    ('555', 'E105', 'dee@doe.com'    , 'Dee Doe'  , '2023-01-01', '2024-01-01'),
+    ('555',  NULL , 'dee@example.com', NULL       , '2023-02-01', '2023-04-01'),
+    ('555',  NULL , NULL             , 'Sweet Dee', '2023-04-01', '2023-06-01'),
+    ( NULL, 'E105', 'doe@example.com', NULL       , '2023-03-01', '2023-05-01'),
+    ( NULL, 'E105', NULL             , 'Sweet Doe', '2023-05-01', '2023-07-01');
+CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
+
 \echo '--- State after adding Dee (multi-row target) ---'
--- This scenario tests the planner's ability to create a complex history for a single new entity from
--- multiple source rows with fragmented natural key and data information. The planner must correctly:
--- 1. Unify all 5 source rows under a single grouping key.
--- 2. For each atomic time segment, find all overlapping source rows.
--- 3. Apply the PATCH logic by merging the data payloads of the source rows in ascending order of their row_id.
--- 4. Correctly aggregate the `row_ids` of all contributing source rows for each final plan operation.
--- 5. Coalesce adjacent segments with identical final data payloads.
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
@@ -298,11 +369,11 @@ CALL sql_saga.temporal_merge(
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
-ROLLBACK TO SAVEPOINT s11;
+ROLLBACK TO SAVEPOINT s14;
 
--- 12. Multi-row update of multi-row target with pre-filled stable ID
-\echo '--- Scenario 12: Multi-row update of multi-row target with pre-filled stable ID ---'
-SAVEPOINT s12;
+-- 15. Multi-row update of multi-row target with pre-filled stable ID
+\echo '--- Scenario 15: Multi-row update of multi-row target with pre-filled stable ID ---'
+SAVEPOINT s15;
 -- Reset the target state by truncating and re-populating with all previous entities
 -- to ensure the IDENTITY column generates a predictable ID for the final entity.
 TRUNCATE identity_discovery.person RESTART IDENTITY CASCADE;
@@ -349,7 +420,7 @@ CALL sql_saga.temporal_merge(
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 
-ROLLBACK TO SAVEPOINT s12;
+ROLLBACK TO SAVEPOINT s15;
 
 ROLLBACK;
 
