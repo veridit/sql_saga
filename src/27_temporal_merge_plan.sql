@@ -474,6 +474,7 @@ BEGIN
         v_source_table_ident TEXT;
         v_target_table_ident TEXT;
         v_source_data_payload_expr TEXT;
+        v_source_ephemeral_payload_expr TEXT;
         v_final_data_payload_expr TEXT;
         v_resolver_ctes TEXT;
         v_resolver_from TEXT;
@@ -988,10 +989,13 @@ BEGIN
         -- First, determine payload semantics based on the mode name.
         IF mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
             v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
+            v_source_ephemeral_payload_expr := format('jsonb_strip_nulls(%s)', v_source_ephemeral_cols_jsonb_build);
         ELSIF mode = 'DELETE_FOR_PORTION_OF' THEN
             v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
+            v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
         ELSE -- MERGE_ENTITY_REPLACE, MERGE_ENTITY_UPSERT, REPLACE_FOR_PORTION_OF, UPDATE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
             v_source_data_payload_expr := v_source_data_cols_jsonb_build;
+            v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
         END IF;
 
         -- Second, determine timeline semantics. The default is a non-destructive merge where we
@@ -1345,7 +1349,7 @@ source_initial AS (
         %64$s /* v_non_temporal_lookup_cols_select_list_prefix */
         %78$s, /* v_source_temporal_cols_expr */
         %2$s /* v_source_data_payload_expr */ AS data_payload,
-        %56$s /* v_source_ephemeral_cols_jsonb_build */ AS ephemeral_payload,
+        %56$s /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
         -- `stable_pk_payload` is a jsonb object containing the key-value pairs of the `v_identity_columns`.
         -- The name is chosen for semantic clarity:
         -- - "stable": Refers to the stable, long-term identifier of a conceptual entity (e.g., a surrogate `id`),
@@ -1827,7 +1831,7 @@ resolved_atomic_segments AS (
         t_data_payload,
         sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
         %8$s /* v_final_data_payload_expr */ as data_payload,
-        md5((%8$s /* v_final_data_payload_expr */ - %5$L /* v_ephemeral_columns */::text[])::text) as data_hash,
+        md5((%8$s)::text) as data_hash,
         COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) as ephemeral_payload,
         CASE WHEN %54$L /* p_log_trace */::boolean
              THEN trace || jsonb_build_object(
@@ -2242,7 +2246,7 @@ $SQL$,
             v_qualified_r_id_cols_sans_vf,                          /* %53$s - v_qualified_r_id_cols_sans_vf */
             p_log_trace,                                            /* %54$L - p_log_trace */
             v_entity_id_check_is_null_expr_no_alias,                /* %55$s - v_entity_id_check_is_null_expr_no_alias */
-            v_source_ephemeral_cols_jsonb_build,                    /* %56$s - v_source_ephemeral_cols_jsonb_build */
+            v_source_ephemeral_payload_expr,                        /* %56$s - v_source_ephemeral_payload_expr */
             v_target_ephemeral_cols_jsonb_build_bare,               /* %57$s - v_target_ephemeral_cols_jsonb_build_bare */
             v_target_ephemeral_cols_jsonb_build,                    /* %58$s - v_target_ephemeral_cols_jsonb_build */
             v_coalesced_payload_expr,                               /* %59$s - v_coalesced_payload_expr */

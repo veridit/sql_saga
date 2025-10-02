@@ -59,6 +59,7 @@ DECLARE
     v_causal_col name;
     v_log_id TEXT;
     v_summary_line TEXT;
+    v_not_null_defaulted_cols TEXT[];
 BEGIN
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
@@ -71,6 +72,15 @@ BEGIN
     -- Identity and lookup columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.lookup_columns, temporal_merge_execute.identity_columns);
     v_causal_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
+
+    -- Introspect columns that are NOT NULL and have a DEFAULT. For these columns,
+    -- an incoming NULL in UPSERT mode should preserve the existing value rather
+    -- than cause a NOT NULL violation.
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_not_null_defaulted_cols
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = temporal_merge_execute.target_table
+      AND a.attnum > 0 AND NOT a.attisdropped AND a.atthasdef AND a.attnotnull;
     
     v_summary_line := format(
         'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, lookup_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
@@ -443,7 +453,20 @@ BEGIN
             WHERE attname <> ALL(v_insert_defaulted_columns)
         )
         SELECT
-            (SELECT string_agg(format('%1$I = CASE WHEN p.data ? %2$L THEN (p.data->>%2$L)::%3$s ELSE t.%1$I END', cdc.attname, cdc.attname, format_type(cdc.atttypid, -1)), ', ') FROM common_data_cols cdc),
+            (SELECT string_agg(
+                format(
+                    '%1$I = CASE WHEN p.data ? %2$L THEN %4$s ELSE t.%1$I END',
+                    cdc.attname,
+                    cdc.attname,
+                    format_type(cdc.atttypid, -1),
+                    -- For NOT NULL columns with a DEFAULT, COALESCE with the existing value to prevent NULL overwrites.
+                    CASE
+                        WHEN cdc.attname = ANY(v_not_null_defaulted_cols)
+                        THEN format('COALESCE((p.data->>%1$L)::%2$s, t.%3$I)', cdc.attname, format_type(cdc.atttypid, -1), cdc.attname)
+                        ELSE format('(p.data->>%1$L)::%2$s', cdc.attname, format_type(cdc.atttypid, -1))
+                    END
+                ),
+            ', ') FROM common_data_cols cdc),
             (SELECT string_agg(format('%I', cfi.attname), ', ') FROM cols_for_insert cfi WHERE cfi.attname NOT IN (v_valid_from_col, v_valid_until_col)),
             (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ') FROM cols_for_insert cfi WHERE cfi.attname NOT IN (v_valid_from_col, v_valid_until_col)),
             (SELECT string_agg(format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)), ', ')
