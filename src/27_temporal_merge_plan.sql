@@ -1,3 +1,5 @@
+CREATE or replace AGGREGATE array_concat_agg(anycompatiblearray) (   SFUNC = array_cat,   STYPE = anycompatiblearray );
+
 -- Unified Planning Function
 CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
     target_table regclass,
@@ -88,7 +90,7 @@ DECLARE
     v_natural_key_join_condition TEXT;
     v_interval TEXT;
     v_constellation TEXT;
-    v_entity_key_expr TEXT;
+    v_grouping_key_expr TEXT;
     v_entity_id_check_is_null_expr_no_alias TEXT;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
@@ -228,7 +230,7 @@ BEGIN
             v_new_entity_key_expr := 'causal_id::text';
         END IF;
 
-        v_entity_key_expr := format(
+        v_grouping_key_expr := format(
             $$CASE
                 WHEN is_new_entity
                 THEN 'new_entity__' || %2$s
@@ -492,7 +494,6 @@ BEGIN
         v_lookup_cols_are_null_expr TEXT;
         v_lookup_cols_sans_valid_from TEXT;
         v_lookup_cols_select_list_no_alias_sans_vf TEXT;
-        v_entity_key_cols TEXT;
         v_trace_select_list TEXT;
         v_target_rows_lookup_cols_expr TEXT;
         v_source_rows_exists_join_expr TEXT;
@@ -510,11 +511,12 @@ BEGIN
         v_rcte_join_condition TEXT;
         v_unqualified_id_cols_sans_vf TEXT;
         v_qualified_r_id_cols_sans_vf TEXT;
-        v_entity_key_expr_for_union TEXT;
+        v_grouping_key_expr_for_union TEXT;
         v_coalesced_payload_expr TEXT;
         v_stable_id_aggregates_expr_prefixed_with_comma TEXT;
         v_plan_select_key_cols TEXT;
-        v_entity_key_cols_prefix TEXT;
+        v_grouping_key_cols TEXT;
+        v_grouping_key_cols_prefix TEXT;
         v_non_temporal_lookup_cols_select_list_no_alias_prefix TEXT;
         v_stable_id_projection_expr_prefix TEXT;
         v_non_temporal_lookup_cols_select_list_prefix TEXT;
@@ -639,7 +641,7 @@ BEGIN
         -- to their internal, aliased names, which are used in all relevant CTEs (sr, tr, seg).
         v_lateral_join_sr_to_seg := format($$
             (CASE WHEN seg.is_new_entity
-             THEN source_row.entity_key = seg.entity_key
+             THEN source_row.grouping_key = seg.grouping_key
              ELSE %s
              END)
         $$, (
@@ -681,14 +683,14 @@ BEGIN
             WHERE c.col <> ALL(v_temporal_cols)
         );
 
-        -- The entity key must contain ALL identity columns to uniquely identify an entity's timeline.
+        -- The grouping key must contain ALL identity columns to uniquely identify an entity's timeline.
         SELECT string_agg(format('%I', col), ', ')
-        INTO v_entity_key_cols
+        INTO v_grouping_key_cols
         FROM unnest(v_original_entity_segment_key_cols) col
         WHERE col <> ALL(v_temporal_cols);
 
-        v_entity_key_cols := COALESCE(v_entity_key_cols, '');
-        v_entity_key_cols_prefix := COALESCE(NULLIF(v_entity_key_cols, '') || ', ', '');
+        v_grouping_key_cols := COALESCE(v_grouping_key_cols, '');
+        v_grouping_key_cols_prefix := COALESCE(NULLIF(v_grouping_key_cols, '') || ', ', '');
 
         -- When the stable ID columns are not part of the partition key, they must be aggregated.
         -- A simple `max()` correctly coalesces the NULL from a source row and the non-NULL
@@ -1009,7 +1011,7 @@ BEGIN
         -- derived from. The join must be on the non-temporal entity identifier and the start of the original
         -- target row's validity period, which is preserved as `ancestor_valid_from`.
         v_diff_join_condition := format(
-            $$final_seg.entity_key = ('existing_entity__' || %s) AND final_seg.ancestor_valid_from = target_seg.valid_from$$,
+            $$final_seg.grouping_key = ('existing_entity__' || %s) AND final_seg.ancestor_valid_from = target_seg.valid_from$$,
             (
                 SELECT COALESCE(string_agg(format('COALESCE(target_seg.%I::text, ''_NULL_'')', col), ' || ''__'' || '), '''''')
                 FROM unnest(v_identity_columns) AS t(col)
@@ -1044,10 +1046,10 @@ BEGIN
             v_resolver_ctes := v_resolver_ctes || format($$
     resolved_atomic_segments_with_flag AS (
         SELECT *,
-            bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY %s) as entity_is_in_source
+            bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY grouping_key) as entity_is_in_source
         FROM %s
     ),
-$$, v_entity_key_cols, v_resolver_from);
+$$, v_resolver_from);
             v_resolver_from := 'resolved_atomic_segments_with_flag';
 
             -- If deleting missing entities, the final payload for those entities must be NULL.
@@ -1116,7 +1118,7 @@ $$, v_entity_key_cols, v_resolver_from);
         -- The causal_id must also match. This is critical for new entities that share a NULL lookup key.
         v_rcte_join_condition := format('(%s) AND (c.causal_id = r.causal_id OR (c.causal_id IS NULL and r.causal_id IS NULL))', v_rcte_join_condition);
 
-        -- The `entity_key` is a robust, composite identifier used in all window functions to group
+        -- The `grouping_key` is a robust, composite identifier used in all window functions to group
         -- together all time points and rows that belong to a single conceptual entity. It solves a
         -- critical flaw where the simpler `causal_id` was insufficient.
         --
@@ -1125,14 +1127,14 @@ $$, v_entity_key_cols, v_resolver_from);
         -- they would get different `causal_id` values, causing the planner to incorrectly treat them
         -- as separate entities, creating fragmented timelines.
         --
-        -- Solution with `entity_key`:
+        -- Solution with `grouping_key`:
         -- - For existing entities, the key is built from the stable identity columns (e.g., 'existing_entity__123').
         -- - For new entities, the key is built from the natural key columns (e.g., 'new_entity__E104'). This correctly
         --   groups all source rows for the new entity 'E104' together.
         --
-        -- Example: Two source rows for a new employee 'E104' both get the entity key 'new_entity__E104',
+        -- Example: Two source rows for a new employee 'E104' both get the grouping key 'new_entity__E104',
         -- allowing their timelines to be correctly constructed as a single history. `causal_id` alone would have failed.
-        v_entity_key_expr_for_union := format(
+        v_grouping_key_expr_for_union := format(
             $$CASE
                 WHEN source_row.is_new_entity
                 THEN 'new_entity__' || %2$s
@@ -1185,7 +1187,7 @@ $$, v_entity_key_cols, v_resolver_from);
          * `trace` column incurs no runtime overhead when tracing is not active.
         */
         IF p_log_trace THEN
-            v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'entity_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'propagated_stable_pk_payload', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id, 'direct_source_causal_id', source_payloads.causal_id) as trace$$,
+            v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'grouping_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'propagated_stable_pk_payload', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id, 'direct_source_causal_id', source_payloads.causal_id) as trace$$,
                 (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                 v_identity_cols_trace_expr,
                 v_natural_identity_cols_trace_expr,
@@ -1243,7 +1245,7 @@ $$, v_entity_key_cols, v_resolver_from);
                               AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
                         ),
                         running_payload AS (
-                            SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id] as contributing_row_ids
+                            SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
                             FROM ordered_sources WHERE rn = 1
                             UNION ALL
                             SELECT
@@ -1251,7 +1253,7 @@ $$, v_entity_key_cols, v_resolver_from);
                                 r.data_payload || jsonb_strip_nulls(s.data_payload),
                                 r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
                                 s.valid_from, s.valid_until, s.causal_id,
-                                r.contributing_row_ids || s.source_row_id
+                                r.contributing_row_ids || s.source_row_id::BIGINT
                             FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
                         )
                         SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
@@ -1273,7 +1275,7 @@ $$, v_entity_key_cols, v_resolver_from);
                               AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
                         ),
                         running_payload AS (
-                            SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id] as contributing_row_ids
+                            SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
                             FROM ordered_sources WHERE rn = 1
                             UNION ALL
                             SELECT
@@ -1281,7 +1283,7 @@ $$, v_entity_key_cols, v_resolver_from);
                                 r.data_payload || s.data_payload,
                                 r.ephemeral_payload || s.ephemeral_payload,
                                 s.valid_from, s.valid_until, s.causal_id,
-                                r.contributing_row_ids || s.source_row_id
+                                r.contributing_row_ids || s.source_row_id::BIGINT
                             FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
                         )
                         SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
@@ -1293,7 +1295,7 @@ $$, v_entity_key_cols, v_resolver_from);
             WHEN 'MERGE_ENTITY_REPLACE', 'REPLACE_FOR_PORTION_OF', 'INSERT_NEW_ENTITIES', 'DELETE_FOR_PORTION_OF' THEN
                 v_lateral_source_resolver_sql := format($$
                     LEFT JOIN LATERAL (
-                        SELECT source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload, source_row.valid_from, source_row.valid_until, source_row.causal_id, ARRAY[source_row.source_row_id] as contributing_row_ids
+                        SELECT source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload, source_row.valid_from, source_row.valid_until, source_row.causal_id, ARRAY[source_row.source_row_id::BIGINT] as contributing_row_ids
                         FROM active_source_rows source_row
                         WHERE %1$s
                           AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
@@ -1504,7 +1506,7 @@ source_rows_with_nk_json AS (
 -- This is critical for correctly handling fragmented source data where multiple rows describe
 -- a single new conceptual entity with partial key information.
 source_rows_with_canonical_key AS (
-    SELECT *, (%84$s /* v_entity_key_expr */) as entity_key
+    SELECT *, (%84$s /* v_grouping_key_expr */) as grouping_key
     FROM (
         SELECT
             s1.*,
@@ -1529,7 +1531,7 @@ source_rows_with_early_feedback AS (
             WHEN s.is_ambiguous
             THEN jsonb_build_object(
                 'operation', 'ERROR'::text,
-                'message', format('Source row is ambiguous. It matches multiple distinct target entities: %%s', s.conflicting_ids)
+                'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text
             )
             WHEN NOT s.is_identifiable AND s.is_new_entity
             THEN jsonb_build_object(
@@ -1539,12 +1541,12 @@ source_rows_with_early_feedback AS (
             WHEN NOT s.temporal_columns_are_consistent
             THEN jsonb_build_object(
                 'operation', 'ERROR'::text,
-                'message', format('Source row has inconsistent temporal columns. Column "%%s" must be equal to column "%%s" + %%s.', %81$L, %82$L, %80$L)
+                'message', 'Source row has inconsistent temporal columns. Column "' || %81$L || '" must be equal to column "' || %82$L || '" + ' || %80$L || '.'
             )
             WHEN s.is_eclipsed
             THEN jsonb_build_object(
                 'operation', 'SKIP_ECLIPSED'::text,
-                'message', format('Source row was eclipsed by row_ids=%%s in the same batch.', s.eclipsed_by)
+                'message', 'Source row was eclipsed by row_ids=' || s.eclipsed_by::text || ' in the same batch.'
             )
             ELSE NULL
         END as early_feedback
@@ -1614,20 +1616,20 @@ time_points_raw AS (
 time_points_unified AS (
     SELECT
         *,
-        %84$s /* v_entity_key_expr */ AS entity_key,
+        %84$s /* v_grouping_key_expr */ AS grouping_key,
         -- For new entities constructed from multiple source rows, each row's original causal_id is significant
         -- for tie-breaking in the next CTE. We must preserve it.
         -- For existing entities, we establish a single canonical causal_id for the entire timeline, which
         -- correctly groups all source and target points.
         CASE
             WHEN is_new_entity THEN causal_id
-            ELSE FIRST_VALUE(causal_id) OVER (PARTITION BY %84$s /* v_entity_key_expr */ ORDER BY causal_id ASC NULLS LAST)
+            ELSE FIRST_VALUE(causal_id) OVER (PARTITION BY %84$s /* v_grouping_key_expr */ ORDER BY causal_id ASC NULLS LAST)
         END as unified_causal_id,
         -- Propagate the stable_pk_payload to all points within the same entity partition.
         -- This ensures that points originating from source rows (where the stable key might be NULL)
         -- receive the correct stable key from a point that originated from a target row.
-        FIRST_VALUE(stable_pk_payload) OVER (PARTITION BY %84$s /* v_entity_key_expr */ ORDER BY causal_id ASC NULLS FIRST) as unified_stable_pk_payload,
-        FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY %84$s /* v_entity_key_expr */ ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
+        FIRST_VALUE(stable_pk_payload) OVER (PARTITION BY %84$s /* v_grouping_key_expr */ ORDER BY causal_id ASC NULLS FIRST) as unified_stable_pk_payload,
+        FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY %84$s /* v_grouping_key_expr */ ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
     FROM time_points_raw
 ),
 -- CTE 12.5: time_points_with_unified_ids
@@ -1635,7 +1637,7 @@ time_points_unified AS (
 -- This ensures that all segments derived from these points will have a consistent, non-fragmented entity identifier.
 time_points_with_unified_ids AS (
     SELECT
-        tpu.entity_key,
+        tpu.grouping_key,
         %91$s, /* v_unified_id_cols_projection */
         tpu.unified_causal_id as causal_id,
         tpu.point,
@@ -1652,7 +1654,7 @@ time_points_with_unified_ids AS (
 -- CTE 13: time_points
 -- Purpose: De-duplicates the unified time points to get a distinct, ordered set for each entity. 
 time_points AS (
-    SELECT DISTINCT ON (entity_key, point)
+    SELECT DISTINCT ON (grouping_key, point)
         *
     FROM time_points_with_unified_ids
     -- The ORDER BY here must match the DISTINCT ON to be valid and deterministic.
@@ -1660,7 +1662,7 @@ time_points AS (
     -- When a `valid_until` from one source row meets a `valid_from` from the next,
     -- we must prioritize the point from the later row (higher `causal_id`) to ensure
     -- the timeline is not truncated. Therefore, we use `DESC`.
-    ORDER BY entity_key, point, causal_id DESC NULLS LAST
+    ORDER BY grouping_key, point, causal_id DESC NULLS LAST
 ),
 -- CTE 14: atomic_segments
 -- Purpose: Reconstructs the timeline from the points into a set of atomic, non-overlapping, contiguous segments.
@@ -1674,11 +1676,11 @@ time_points AS (
 -- segments from the ordered list of time points. The partitioning is critical here to ensure timelines for
 -- different entities are handled independently.
 atomic_segments AS (
-    SELECT entity_key, %26$s /* v_lookup_cols_select_list_no_alias */, causal_id, point as valid_from, next_point as valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json
+    SELECT grouping_key, %26$s /* v_lookup_cols_select_list_no_alias */, causal_id, point as valid_from, next_point as valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json
     FROM (
         SELECT
             *,
-            LEAD(point) OVER (PARTITION BY entity_key ORDER BY point) as next_point
+            LEAD(point) OVER (PARTITION BY grouping_key ORDER BY point) as next_point
         FROM time_points
     ) with_lead
     WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
@@ -1697,9 +1699,9 @@ resolved_atomic_segments_with_payloads AS (
         with_base_payload.stable_pk_payload as propagated_stable_pk_payload
     FROM (
         SELECT
-            seg.entity_key,
+            seg.grouping_key,
             seg.canonical_nk_json,
-            %36$s, /* v_entity_key_for_with_base_payload_expr */
+            %36$s, /* v_grouping_key_for_with_base_payload_expr */
             seg.is_new_entity,
             seg.is_identifiable,
             seg.is_ambiguous,
@@ -1711,6 +1713,7 @@ resolved_atomic_segments_with_payloads AS (
             target_payloads.t_valid_from,
             target_payloads.t_valid_until,
             source_payloads.source_row_id,
+            source_payloads.contributing_row_ids,
             source_payloads.data_payload as s_data_payload,
             source_payloads.ephemeral_payload as s_ephemeral_payload,
             target_payloads.data_payload as t_data_payload,
@@ -1720,7 +1723,7 @@ resolved_atomic_segments_with_payloads AS (
             -- in the outer SELECT of this CTE.
             -- Note: source_payloads.causal_id and causal.causal_id are selected here for tracing/debugging purposes only.
             -- The canonical entity causal ID is seg.causal_id, which is passed through via the
-            -- entity key (`v_entity_key_for_with_base_payload_expr`).
+            -- grouping key (`v_grouping_key_for_with_base_payload_expr`).
             source_payloads.causal_id as s_causal_id,
             source_payloads.causal_id as direct_source_causal_id, -- This is now just for placeholder stability, the value is from the direct source.
             source_payloads.valid_from AS s_valid_from,
@@ -1764,28 +1767,28 @@ resolved_atomic_segments_with_payloads AS (
     SELECT
         *,
         -- Propagate the canonical natural key to all segments of the same entity.
-        FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY entity_key ORDER BY valid_from) as unified_canonical_nk_json,
+        FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY grouping_key ORDER BY valid_from) as unified_canonical_nk_json,
         -- This COALESCE implements the causal priority: look-behind is preferred over look-ahead.
         COALESCE(
-            source_row_id,
-            (max(source_row_id) OVER (PARTITION BY entity_key, t_valid_from, look_behind_grp)),
-            (max(source_row_id) OVER (PARTITION BY entity_key, t_valid_from, look_ahead_grp))
-        ) as propagated_source_row_id,
+            contributing_row_ids,
+            (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+            (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
+        ) as propagated_contributing_row_ids,
         COALESCE(
             s_valid_from,
-            (max(s_valid_from) OVER (PARTITION BY entity_key, t_valid_from, look_behind_grp)),
-            (max(s_valid_from) OVER (PARTITION BY entity_key, t_valid_from, look_ahead_grp))
+            (max(s_valid_from) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+            (max(s_valid_from) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
         ) as propagated_s_valid_from,
         COALESCE(
             s_valid_until,
-            (max(s_valid_until) OVER (PARTITION BY entity_key, t_valid_from, look_behind_grp)),
-            (max(s_valid_until) OVER (PARTITION BY entity_key, t_valid_from, look_ahead_grp))
+            (max(s_valid_until) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+            (max(s_valid_until) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
         ) as propagated_s_valid_until
     FROM (
         SELECT
             *,
-            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY entity_key, t_valid_from ORDER BY valid_from) AS look_behind_grp,
-            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY entity_key, t_valid_from ORDER BY valid_from DESC) AS look_ahead_grp
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY grouping_key, t_valid_from ORDER BY valid_from) AS look_behind_grp,
+            sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY grouping_key, t_valid_from ORDER BY valid_from DESC) AS look_ahead_grp
         FROM %10$s /* v_resolver_from */
     ) with_grp
 ),
@@ -1797,7 +1800,7 @@ resolved_atomic_segments_with_payloads AS (
 -- This is a stateless, declarative way to compute the final state for each segment independently.
 resolved_atomic_segments AS (
     SELECT
-        entity_key,
+        grouping_key,
         %66$s /* v_lookup_cols_sans_valid_from_prefix */
         stable_identity_columns_are_null,
         natural_identity_column_values_are_null,
@@ -1812,14 +1815,14 @@ resolved_atomic_segments AS (
         t_valid_until,
         propagated_s_valid_from,
         propagated_s_valid_until,
-        propagated_source_row_id as source_row_id,
+        propagated_contributing_row_ids,
         causal_id,
         propagated_stable_pk_payload as stable_pk_payload,
         -- This flag is critical. A segment is only truly unaffected if it has no
         -- causal link to a source row AFTER propagation. Basing this on the
         -- initial s_data_payload was incorrect and caused segments created by
         -- a split to be dropped.
-        propagated_source_row_id IS NULL AS unaffected_target_only_segment,
+        propagated_contributing_row_ids IS NULL AS unaffected_target_only_segment,
         s_data_payload,
         t_data_payload,
         sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
@@ -1860,7 +1863,7 @@ coalesced_final_segments AS (
     WITH island_group AS (
         SELECT
             *,
-            SUM(is_island_start) OVER (PARTITION BY entity_key ORDER BY valid_from) as island_group_id
+            SUM(is_island_start) OVER (PARTITION BY grouping_key ORDER BY valid_from) as island_group_id
         FROM (
             SELECT
                 *,
@@ -1878,12 +1881,12 @@ coalesced_final_segments AS (
                     LAG(data_hash) OVER w as prev_data_hash
                 FROM resolved_atomic_segments ras
                 WHERE ras.data_payload IS NOT NULL
-                WINDOW w AS (PARTITION BY entity_key ORDER BY valid_from)
+                WINDOW w AS (PARTITION BY grouping_key ORDER BY valid_from)
             ) s1
         ) s2
     )
     SELECT
-        entity_key,
+        grouping_key,
         %48$s, /* v_stable_id_aggregates_expr */
         sql_saga.first(causal_id ORDER BY valid_from) as causal_id,
         sql_saga.first(stable_identity_columns_are_null ORDER BY valid_from) as stable_identity_columns_are_null,
@@ -1900,7 +1903,7 @@ coalesced_final_segments AS (
         %59$s /* v_coalesced_payload_expr */ as data_payload,
         sql_saga.first(stable_pk_payload ORDER BY valid_from DESC) as stable_pk_payload,
         bool_and(unaffected_target_only_segment) as unaffected_target_only_segment,
-        array_agg(DISTINCT source_row_id::BIGINT) FILTER (WHERE source_row_id IS NOT NULL) as row_ids,
+        (SELECT array_agg(DISTINCT e) FROM unnest(array_concat_agg(propagated_contributing_row_ids)) e WHERE e IS NOT NULL) as row_ids,
         CASE WHEN %54$L /* p_log_trace */::boolean
              THEN jsonb_build_object(
                  'cte', 'coalesced',
@@ -1914,7 +1917,7 @@ coalesced_final_segments AS (
         END as trace
     FROM island_group
     GROUP BY
-        entity_key,
+        grouping_key,
         island_group_id
 ),
 -- CTE 18: diff
@@ -1924,7 +1927,7 @@ coalesced_final_segments AS (
 -- an INSERT, UPDATE, DELETE, or an unchanged state.
 diff AS (
     SELECT
-        final_seg.entity_key,
+        final_seg.grouping_key,
         %30$s, /* v_diff_select_expr */ -- now using final_seg and target_seg aliases
         COALESCE(final_seg.is_new_entity, false) as is_new_entity,
         COALESCE(final_seg.is_identifiable, true) as is_identifiable,
@@ -1967,7 +1970,7 @@ diff_ranked AS (
             -- Otherwise, it's a candidate. Rank them.
             ELSE
                 row_number() OVER (
-                    PARTITION BY d.entity_key, d.t_from -- Partition by entity and the original row's start time
+                    PARTITION BY d.grouping_key, d.t_from -- Partition by entity and the original row's start time
                     ORDER BY
                         -- The segment that preserves the start time is the best candidate for an UPDATE.
                         CASE WHEN d.f_from = d.t_from THEN 1 ELSE 2 END,
@@ -2041,7 +2044,7 @@ plan_with_op AS (
                     ELSE NULL
                 END as feedback,
                 d.b_a_relation,
-                d.entity_key,
+                d.grouping_key,
                 CASE WHEN %54$L /* p_log_trace */::boolean
                      THEN d.trace || jsonb_build_object(
                          'cte', 'plan_with_op',
@@ -2093,7 +2096,7 @@ plan_with_op AS (
                 ELSE jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.')
             END,
             NULL,
-            %85$s /* v_entity_key_expr_for_union */ AS entity_key,
+            %85$s /* v_grouping_key_expr_for_union */ AS grouping_key,
             NULL::jsonb -- trace
         FROM source_rows_with_early_feedback source_row
         WHERE
@@ -2128,7 +2131,7 @@ plan AS (
         p.lookup_keys,
         p.s_t_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
         p.new_valid_from, p.new_valid_until, p.data, p.feedback, p.trace,
-        p.entity_key,
+        p.grouping_key,
         CASE
             WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
             WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
@@ -2150,7 +2153,7 @@ plan AS (
 SELECT
     row_number() OVER (
         ORDER BY
-            p.entity_key,
+            p.grouping_key,
             %34$s, /* v_final_order_by_expr */
             CASE p.operation
                 WHEN 'INSERT' THEN 1
@@ -2179,8 +2182,8 @@ SELECT
     p.new_valid_until::TEXT,
     p.data,
     p.feedback,
-    CASE WHEN p.trace IS NOT NULL THEN p.trace || jsonb_build_object('final_entity_key', p.entity_key) ELSE NULL END,
-    p.entity_key
+    CASE WHEN p.trace IS NOT NULL THEN p.trace || jsonb_build_object('final_grouping_key', p.grouping_key) ELSE NULL END,
+    p.grouping_key
 FROM plan p
 ORDER BY plan_op_seq;
 $SQL$,
@@ -2220,7 +2223,7 @@ $SQL$,
             v_final_order_by_expr,                                  /* %34$s - v_final_order_by_expr */
             NULL,                                                   /* %35$s - (OBSOLETE) v_entity_key_cols */
             v_entity_key_for_with_base_payload_expr,                /* %36$s - v_entity_key_for_with_base_payload_expr */
-            v_entity_key_cols,                                      /* %37$s - v_entity_key_cols */
+            NULL,                                                   /* %37$s - (OBSOLETE) v_entity_key_cols */
             v_s_founding_join_condition,                            /* %38$s - v_s_founding_join_condition */
             v_tr_qualified_lookup_cols,                             /* %39$s - v_tr_qualified_lookup_cols */
             v_causal_column_type,                                   /* %40$s - v_causal_column_type */
@@ -2244,7 +2247,7 @@ $SQL$,
             v_target_ephemeral_cols_jsonb_build,                    /* %58$s - v_target_ephemeral_cols_jsonb_build */
             v_coalesced_payload_expr,                               /* %59$s - v_coalesced_payload_expr */
             v_stable_id_aggregates_expr_prefixed_with_comma,        /* %60$s - v_stable_id_aggregates_expr_prefixed_with_comma */
-            v_entity_key_cols_prefix,                               /* %61$s - v_entity_key_cols_prefix */
+            v_grouping_key_cols_prefix,                             /* %61$s - v_grouping_key_cols_prefix */
             v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %62$s - v_non_temporal_lookup_cols_select_list_no_alias_prefix */
             v_stable_id_projection_expr_prefix,                     /* %63$s - v_stable_id_projection_expr_prefix */
             v_non_temporal_lookup_cols_select_list_prefix,          /* %64$s - v_non_temporal_lookup_cols_select_list_prefix */
@@ -2267,8 +2270,8 @@ $SQL$,
             v_valid_until_col,                                      /* %81$L - v_valid_until_col */
             v_valid_to_col,                                         /* %82$L - v_valid_to_col */
             v_natural_key_join_condition,                           /* %83$s - v_natural_key_join_condition */
-            v_entity_key_expr,                                      /* %84$s - v_entity_key_expr */
-            v_entity_key_expr_for_union,                            /* %85$s - v_entity_key_expr_for_union */
+            v_grouping_key_expr,                                    /* %84$s - v_grouping_key_expr */
+            v_grouping_key_expr_for_union,                          /* %85$s - v_grouping_key_expr_for_union */
             v_identity_columns,                              /* %86$L */
             lookup_keys,                                  /* %87$L */
             v_lookup_keys_as_jsonb_expr,                           /* %88$s */

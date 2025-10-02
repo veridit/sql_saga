@@ -59,7 +59,9 @@ FROM identity_discovery.person ORDER BY id, valid_from;
 TRUNCATE source_data RESTART IDENTITY;
 INSERT INTO source_data (employee_nr, full_name, valid_from, valid_until) VALUES
     ('E101', 'Alice Jones', '2023-06-01', '2024-01-01');
+
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data');
+    
 \echo '--- State after update via employee_nr ---'
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person ORDER BY id, valid_from;
@@ -265,47 +267,17 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
 
 TABLE source_data ORDER BY row_id;
 
-SET client_min_messages TO NOTICE;
-SET sql_saga.temporal_merge.enable_trace = true;
-SET sql_saga.temporal_merge.log_vars = true;
-
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
-SET sql_saga.temporal_merge.enable_trace = false;
-SET sql_saga.temporal_merge.log_vars = false;
-
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 
 \echo '--- State after adding Dee (multi-row target) ---'
--- AI: The following is the correct way to handle this pathological source, but it is not yet correctly implemented in the planner, can you help out?
--- This initial load creates a complex history for a single new entity from 5 source rows.
--- The merge is stateless. For each atomic time segment, the planner shall find all the relevant source
--- segments, and the one relevant target segment. Notice that Due to constraints in sql_saga.era
--- an entity can only have ONE relevant time segment, but, it may be applicable to multiple
--- source segments, those that interact with it.
--- For source segments, that is not the case, as they can come in any shape or form.
--- It is important to notice that the source row can have multiple relevant segments,
--- that must be combined in order, using jsonb where the null handling is adjusted,
--- and where the order is from higher to lower row_id to source. So the source is the foundation.
--- There is no carrying across segments, but each source can match with multiple other sources,
--- depending on temporal overlap. So each atomic segment must join once against the relevant source segments and the target segment.
--- The planner is expected to coalesce adjacent segments with identical final data payloads.
---
--- Given these source rows:
---  row_id | employee_id | ssn | employee_nr |      email      | full_name | valid_from | valid_until | errors | merge_status
--- --------+-------------+-----+-------------+-----------------+-----------+------------+-------------+--------+--------------
---       1 |             | 555 | E105        | dee@doe.com     | Dee Doe   | 2023-01-01 | 2024-01-01  |        |
---       2 |             | 555 |             | dee@example.com |           | 2023-02-01 | 2023-04-01  |        |
---       3 |             | 555 |             |                 | Sweet Dee | 2023-04-01 | 2023-06-01  |        |
---       4 |             |     | E105        | doe@example.com |           | 2023-03-01 | 2023-05-01  |        |
---       5 |             |     | E105        |                 | Sweet Doe | 2023-05-01 | 2023-07-01  |        |
--- Here are Segments and their derivation
--- [23-01-01, 23-02-01): row_ids: 1
--- [23-02-01, 23-03-01): row_ids: 2 || 1
--- [23-03-01, 23-05-01): row_ids: 4 || 2 || 1
--- [23-05-01, 23-07-01): row_ids: 5 || 3 || 1
--- [23-07-01, 24-01-01): row_ids: 1
--- 
--- The handling of NULL and how how data is propagated is described in docs/semantical_principles.md
+-- This scenario tests the planner's ability to create a complex history for a single new entity from
+-- multiple source rows with fragmented natural key and data information. The planner must correctly:
+-- 1. Unify all 5 source rows under a single grouping key.
+-- 2. For each atomic time segment, find all overlapping source rows.
+-- 3. Apply the PATCH logic by merging the data payloads of the source rows in ascending order of their row_id.
+-- 4. Correctly aggregate the `row_ids` of all contributing source rows for each final plan operation.
+-- 5. Coalesce adjacent segments with identical final data payloads.
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
 

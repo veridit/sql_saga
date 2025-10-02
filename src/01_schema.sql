@@ -355,7 +355,7 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     data JSONB,
     feedback JSONB,
     trace JSONB,
-    entity_key TEXT
+    grouping_key TEXT
 );
 
 -- Defines the structure for a temporal executor feedback result.

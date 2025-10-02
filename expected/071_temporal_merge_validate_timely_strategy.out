@@ -572,7 +572,7 @@ CALL sql_saga.temporal_merge(
 \echo '--- temporal_merge plan ---'
 --- temporal_merge plan ---
 SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data         | feedback | trace |     entity_key     
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data         | feedback | trace |    grouping_key    
 -------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------+----------+-------+--------------------
            1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | finished_by  | 2024-01-01     | infinity        | 2024-05-01     | infinity        | {"value": "updated"} |          |       | existing_entity__1
            2 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2024-05-01      | {"value": "initial"} |          |       | existing_entity__1

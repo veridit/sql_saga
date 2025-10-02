@@ -201,7 +201,7 @@ CALL sql_saga.temporal_merge(
     feedback_error_key => 'test'    
 );
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                  entity_keys                   | identity_keys |              lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                    feedback                                                    | trace |     entity_key     
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                  entity_keys                   | identity_keys |              lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                    feedback                                                    | trace |    grouping_key    
 -------------+---------+-----------+---------------+-----------+---------------+------------------------------------------------+---------------+---------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------------+-------+--------------------
            1 | {1}     | ERROR     |               | 1         | f             | {"id": 1, "ssn": "222", "employee_nr": "E101"} | {"id": 1}     | {"ssn": "222", "employee_nr": "E101"} |              |              |                |                 |                |                 |      | {"error": "Source row is ambiguous. It matches multiple distinct target entities: [{\"id\": 1}, {\"id\": 2}]"} |       | existing_entity__1
 (1 row)
@@ -460,9 +460,36 @@ INSERT INTO source_data (ssn, employee_nr, email, full_name, valid_from, valid_u
     ( NULL, 'E105', 'doe@example.com', NULL       , '2023-03-01', '2023-05-01'),
     ( NULL, 'E105', NULL             , 'Sweet Doe', '2023-05-01', '2023-07-01');
 TABLE source_data ORDER BY row_id;
+ row_id | employee_id | ssn | employee_nr |      email      | full_name | valid_from | valid_until | errors | merge_status 
+--------+-------------+-----+-------------+-----------------+-----------+------------+-------------+--------+--------------
+      1 |             | 555 | E105        | dee@doe.com     | Dee Doe   | 2023-01-01 | 2024-01-01  |        | 
+      2 |             | 555 |             | dee@example.com |           | 2023-02-01 | 2023-04-01  |        | 
+      3 |             | 555 |             |                 | Sweet Dee | 2023-04-01 | 2023-06-01  |        | 
+      4 |             |     | E105        | doe@example.com |           | 2023-03-01 | 2023-05-01  |        | 
+      5 |             |     | E105        |                 | Sweet Doe | 2023-05-01 | 2023-07-01  |        | 
+(5 rows)
+
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_data', mode => 'MERGE_ENTITY_PATCH');
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                  entity_keys                   | identity_keys |              lookup_keys              | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                          data                          | feedback | trace |     grouping_key      
+-------------+---------+-----------+---------------+-----------+---------------+------------------------------------------------+---------------+---------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------+----------+-------+-----------------------
+           1 | {1}     | INSERT    |               | 1         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-01-01     | 2023-02-01      | {"email": "dee@doe.com", "full_name": "Dee Doe"}       |          |       | new_entity__E105__555
+           2 | {1,2}   | INSERT    |               | 2         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-02-01     | 2023-03-01      | {"email": "dee@example.com", "full_name": "Dee Doe"}   |          |       | new_entity__E105__555
+           3 | {1,2,4} | INSERT    |               | 4         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-03-01     | 2023-04-01      | {"email": "doe@example.com", "full_name": "Dee Doe"}   |          |       | new_entity__E105__555
+           4 | {1,3,4} | INSERT    |               | 3         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-04-01     | 2023-05-01      | {"email": "doe@example.com", "full_name": "Sweet Dee"} |          |       | new_entity__E105__555
+           5 | {1,3,5} | INSERT    |               | 5         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-05-01     | 2023-07-01      | {"email": "dee@doe.com", "full_name": "Sweet Doe"}     |          |       | new_entity__E105__555
+           6 | {1}     | INSERT    |               | 5         | t             | {"id": 5, "ssn": "555", "employee_nr": "E105"} | {"id": null}  | {"ssn": "555", "employee_nr": "E105"} |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"email": "dee@doe.com", "full_name": "Dee Doe"}       |          |       | new_entity__E105__555
+(6 rows)
+
 \echo '--- State after adding Dee (multi-row target) ---'
 --- State after adding Dee (multi-row target) ---
+-- This scenario tests the planner's ability to create a complex history for a single new entity from
+-- multiple source rows with fragmented natural key and data information. The planner must correctly:
+-- 1. Unify all 5 source rows under a single grouping key.
+-- 2. For each atomic time segment, find all overlapping source rows.
+-- 3. Apply the PATCH logic by merging the data payloads of the source rows in ascending order of their row_id.
+-- 4. Correctly aggregate the `row_ids` of all contributing source rows for each final plan operation.
+-- 5. Coalesce adjacent segments with identical final data payloads.
 SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
 FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
  id | ssn | employee_nr |      email      | full_name | valid_from | valid_until 
@@ -471,10 +498,9 @@ FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER B
   5 | 555 | E105        | dee@example.com | Dee Doe   | 2023-02-01 | 2023-03-01
   5 | 555 | E105        | doe@example.com | Dee Doe   | 2023-03-01 | 2023-04-01
   5 | 555 | E105        | doe@example.com | Sweet Dee | 2023-04-01 | 2023-05-01
-  5 | 555 | E105        | doe@example.com | Sweet Doe | 2023-05-01 | 2023-06-01
-  5 | 555 | E105        | doe@example.com | Sweet Doe | 2023-06-01 | 2023-07-01
-  5 | 555 | E105        | dee@doe.com     | Dee Doe   | 2023-07-01 | 2023-06-01
-(7 rows)
+  5 | 555 | E105        | dee@doe.com     | Sweet Doe | 2023-05-01 | 2023-07-01
+  5 | 555 | E105        | dee@doe.com     | Dee Doe   | 2023-07-01 | 2024-01-01
+(6 rows)
 
 -- Now, apply a multi-row update to the multi-row target
 TRUNCATE source_data RESTART IDENTITY;
@@ -496,16 +522,17 @@ CALL sql_saga.temporal_merge(
 );
 \echo '--- Final state after multi-row update ---'
 --- Final state after multi-row update ---
-SELECT id, ssn, employee_nr, full_name, valid_from, valid_until
-FROM identity_discovery.person WHERE employee_nr = 'E105' ORDER BY id, valid_from;
- id | ssn | employee_nr |    full_name     | valid_from | valid_until 
-----+-----+-------------+------------------+------------+-------------
-  5 | 555 | E105        | Deandra Reynolds | 2023-01-01 | 2023-02-01
-  5 | 555 | E105        | Bird             | 2023-02-01 | 2023-05-01
-  5 | 555 | E105        | Sweet Dee        | 2023-05-01 | 2023-07-01
-  5 | 555 | E105        | Aluminum Monster | 2023-07-01 | 2023-09-01
-  5 | 555 | E105        | Sweet Dee        | 2023-09-01 | 2024-01-01
-(5 rows)
+SELECT id, ssn, employee_nr, email, full_name, valid_from, valid_until
+FROM identity_discovery.person WHERE employee_nr = 'E105' OR ssn = '555' ORDER BY id, valid_from;
+ id | ssn | employee_nr |      email      |    full_name     | valid_from | valid_until 
+----+-----+-------------+-----------------+------------------+------------+-------------
+  5 | 555 | E105        | dee@doe.com     | Dee Doe          | 2023-01-01 | 2023-02-01
+  5 | 555 | E105        | dee@example.com | Bird             | 2023-02-01 | 2023-03-01
+  5 | 555 | E105        | doe@example.com | Bird             | 2023-03-01 | 2023-05-01
+  5 | 555 | E105        | dee@doe.com     | Sweet Doe        | 2023-05-01 | 2023-07-01
+  5 | 555 | E105        | dee@doe.com     | Aluminum Monster | 2023-07-01 | 2023-09-01
+  5 | 555 | E105        | dee@doe.com     | Dee Doe          | 2023-09-01 | 2024-01-01
+(6 rows)
 
 ROLLBACK TO SAVEPOINT s11;
 -- 12. Multi-row update of multi-row target with pre-filled stable ID
