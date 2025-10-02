@@ -2,13 +2,13 @@
 -------------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                                     |         0 | 0 ms            |                | 0 rows     | 
  History Only Benchmark                    |         0 | 19 ms           | 19 ms          | 0 rows     | 
- History INSERTs                           |     10000 | 207 ms          | 188 ms         | 10000 rows | ~53308 rows/s
- History Update                            |     10000 | 401 ms          | 194 ms         | 10000 rows | ~51591 rows/s
- Era + History Benchmark                   |         0 | 450 ms          | 49 ms          | 0 rows     | 
- Era + History INSERTs                     |     10000 | 1 secs          | 628 ms         | 10000 rows | ~15918 rows/s
- Era + History Update deferred constraints |     10000 | 2 secs          | 657 ms         | 10000 rows | ~15230 rows/s
- Era + History Update non-key              |     10000 | 2 secs          | 706 ms         | 10000 rows | ~14155 rows/s
- Constraints disabled                      |         0 | 3 secs          | 65 ms          | 0 rows     | 
- Tear down complete                        |         0 | 3 secs          | 4 ms           | 0 rows     | 
+ History INSERTs                           |     10000 | 206 ms          | 186 ms         | 10000 rows | ~53664 rows/s
+ History Update                            |     10000 | 400 ms          | 194 ms         | 10000 rows | ~51429 rows/s
+ Era + History Benchmark                   |         0 | 446 ms          | 45 ms          | 0 rows     | 
+ Era + History INSERTs                     |     10000 | 1 secs          | 664 ms         | 10000 rows | ~15071 rows/s
+ Era + History Update deferred constraints |     10000 | 2 secs          | 686 ms         | 10000 rows | ~14575 rows/s
+ Era + History Update non-key              |     10000 | 3 secs          | 746 ms         | 10000 rows | ~13410 rows/s
+ Constraints disabled                      |         0 | 3 secs          | 67 ms          | 0 rows     | 
+ Tear down complete                        |         0 | 3 secs          | 5 ms           | 0 rows     | 
 (10 rows)
 
