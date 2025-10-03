@@ -7,7 +7,7 @@ DECLARE
     info record;
     jnew jsonb;
     identifier_columns text[];
-    source_table_name text;
+    temp_source_table_name text;
 BEGIN
     -- This view only supports UPDATE operations
     IF TG_OP <> 'UPDATE' THEN
@@ -39,9 +39,9 @@ BEGIN
     -- is based on the view's OID to be unique per view. It is created only if it
     -- doesn't exist for the session to avoid noisy NOTICEs from CREATE IF NOT EXISTS,
     -- and is truncated before use to ensure it's clean for each row trigger.
-    source_table_name := format('__temp_for_portion_of_%s', TG_RELID);
+    temp_source_table_name := format('__temp_for_portion_of_%s', TG_RELID);
 
-    IF to_regclass('pg_temp.' || quote_ident(source_table_name)) IS NULL THEN
+    IF to_regclass('pg_temp.' || quote_ident(temp_source_table_name)) IS NULL THEN
         DECLARE
             v_cols_def text;
         BEGIN
@@ -59,11 +59,15 @@ BEGIN
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
             EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s, merge_status jsonb) ON COMMIT DROP',
-                source_table_name, v_cols_def);
+                temp_source_table_name, v_cols_def);
         END;
     END IF;
 
-    EXECUTE format('DELETE FROM %I', source_table_name);
+    
+    -- Avoid banning by pg-safeupdate used by PostgREST
+    -- Ref. https://docs.postgrest.org/en/v12/integrations/pg-safeupdate.html
+    -- by specifying a WHERE clause.
+    EXECUTE format('DELETE FROM %I WHERE true;', temp_source_table_name);
 
     -- The `for_portion_of` view allows specifying a time slice using either `valid_until` (exclusive)
     -- or `valid_to` (inclusive). To provide a clean, unambiguous source row to the underlying
@@ -86,7 +90,7 @@ BEGIN
     BEGIN
         EXECUTE format(
             'INSERT INTO %I SELECT 1, (r).*, NULL FROM jsonb_populate_record(null::%I.%I, $1) AS r',
-            source_table_name,
+            temp_source_table_name,
             info.table_schema,
             info.table_name
         )
@@ -96,7 +100,7 @@ BEGIN
     -- Use temporal_merge to apply the change.
     CALL sql_saga.temporal_merge(
         target_table => (info.table_schema || '.' || info.table_name)::regclass,
-        source_table => source_table_name::regclass,
+        source_table => temp_source_table_name::regclass,
         primary_identity_columns => identifier_columns,
         mode => 'UPDATE_FOR_PORTION_OF',
         era_name => info.era_name,
@@ -110,7 +114,7 @@ BEGIN
         v_error_count integer;
         v_error_message text;
     BEGIN
-        EXECUTE format('SELECT count(*), max(merge_status->''temporal_merge''->>''error_message'') FROM %I WHERE (merge_status->''temporal_merge''->>''status'')::sql_saga.temporal_merge_feedback_status = ''ERROR''', source_table_name)
+        EXECUTE format('SELECT count(*), max(merge_status->''temporal_merge''->>''error_message'') FROM %I WHERE (merge_status->''temporal_merge''->>''status'')::sql_saga.temporal_merge_feedback_status = ''ERROR''', temp_source_table_name)
         INTO v_error_count, v_error_message;
 
         IF v_error_count > 0 THEN
