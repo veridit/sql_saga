@@ -29,7 +29,7 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 \t
 \a
 -- Redirect output to the API documentation file
-\o docs/api.md
+\o doc/api.md
 -- Generate the header for the documentation file
 SELECT '# sql_saga API Reference
 
@@ -166,10 +166,10 @@ FROM (
 \t
 \a
 -- A simple select to confirm the script ran
-SELECT 'API documentation generated in docs/api.md' AS result;
-                   result                   
---------------------------------------------
- API documentation generated in docs/api.md
+SELECT 'API documentation generated in doc/api.md' AS result;
+                  result                   
+-------------------------------------------
+ API documentation generated in doc/api.md
 (1 row)
 
 -- Check for any public functions that have not been assigned to a category

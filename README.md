@@ -265,7 +265,7 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 
 ### Level 3: The Deep Dive - Complete API Reference
 
-For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./docs/api.md).
+For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./doc/api.md).
 
 ## Usage
 

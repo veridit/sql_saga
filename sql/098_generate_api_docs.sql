@@ -8,7 +8,7 @@
 \a
 
 -- Redirect output to the API documentation file
-\o docs/api.md
+\o doc/api.md
 
 -- Generate the header for the documentation file
 SELECT '# sql_saga API Reference
@@ -156,7 +156,7 @@ FROM (
 \a
 
 -- A simple select to confirm the script ran
-SELECT 'API documentation generated in docs/api.md' AS result;
+SELECT 'API documentation generated in doc/api.md' AS result;
 
 -- Check for any public functions that have not been assigned to a category
 SELECT 'Uncategorized API functions found. Please add them to a category in `sql/80_generate_api_docs.sql`:' AS " ",
