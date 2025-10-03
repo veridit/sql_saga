@@ -1,27 +1,13 @@
 # SQL Saga - TODO
 
 A living document of upcoming tasks.
-Tasks are checked ✅ when done and made brief.
+Tasks are checked [x] when done and made brief.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
-- [x] **Fix `temporal_merge` identity propagation:** Corrected planner logic to robustly propagate identity for existing entities. Window functions now use distinct ordering (`NULLS FIRST` vs `NULLS LAST`) to correctly source causality from source rows and canonical identity from target rows, fixing a critical regression that caused incorrect `DELETE` operations.
-- [x] **Enforce natural key to primary key consistency:** Enhanced `add_unique_key` to automatically create and manage non-temporal `EXCLUDE` constraints that enforce a permanent mapping between a natural key and a single-column primary key. This feature is on by default and works regardless of the order in which keys are created.
-- [x] **Fix `temporal_merge` to handle SERIAL/IDENTITY columns correctly on INSERT:** The executor's `INSERT` logic correctly omits `SERIAL` columns to allow the database to generate values. A regression test was failing due to a flawed setup that did not advance the sequence after a manual `INSERT`, causing a key collision. The test has been fixed to correctly manage its sequence, and the executor was verified to be correct.
-- [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
 ## Medium Priority - Refactoring & API Improvements
-- [x] **Enhance `temporal_merge` to accept `valid_to` from source tables:** Modify the procedure to automatically detect a `valid_to` column (inclusive end) in the source and calculate the required `valid_until` (exclusive end) internally. This will improve usability and fix the `079_...` regression test failure.
-- [x] **Fix `temporal_merge` planner and executor to handle multi-row inserts/updates:** Corrected a series of critical bugs to fully support multi-row operations on a single conceptual entity within one batch, especially for new entities with fragmented natural key information. The logic is now fully documented in `docs/temporal_merge_constellations.md`.
-    1.  **Planner Timeline Construction:** The `time_points_unified` CTE's causal ID logic was flawed, causing it to discard time points at meeting boundaries and truncate timelines. This was fixed by preserving the original `causal_id` for new entities.
-    2.  **Executor Founding Inserts:** The "founding insert" logic incorrectly used `causal_id` instead of the correct `grouping_key` for `DISTINCT ON`, causing exclusion constraint violations. This has been fixed.
-    3.  **Planner Grouping Key:** The logic for constructing the `grouping_key` now correctly unifies fragmented natural key information for new entities, preventing them from being treated as separate conceptual entities.
-    4.  **Planner `PATCH` Payload Merging:** The recursive CTE for `PATCH` modes now correctly handles multiple overlapping source rows, ensuring payloads are merged in the correct order.
-    5.  **Planner Stable ID Propagation:** The window function that propagates stable IDs was incorrectly partitioned, causing `NULL` values from source rows to overwrite known IDs from target rows during multi-row updates. The partition key has been corrected to include `is_new_entity`, resolving `NOT NULL` constraint violations.
-- [x] **Fix `temporal_merge` planner to preserve unaffected timeline segments:** Corrected a logic bug in the `plan_with_op` CTE that incorrectly dropped unaffected parts of a target entity's timeline during `MERGE_ENTITY_*` operations. The `CASE` statement that determines the final DML operation now correctly differentiates between a true `SKIP_IDENTICAL` (where source data was applied but resulted in no change) and an unaffected target-only segment. Unaffected segments are now correctly excluded from the final plan of action.
-- [x] **Improve `temporal_merge_plan` clarity and maintainability:** Decomposed the ambiguous `entity_ids` column into `identity_keys` and `lookup_keys`. Systematically added comments to all numbered parameters in the main `format()` call to make the dynamic SQL self-documenting. Standardized internal terminology to clearly distinguish between `identity_columns` (the stable partitioning key) and `lookup_columns` (the business key for finding entities). Refactored planner to use a single, unified mechanism for handling and reporting all error and skip conditions, improving clarity.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
-- [x] **Add early warnings for incompatible schemas:** The `add_era` function now issues a `WARNING` if it detects a simple `PRIMARY KEY` or `GENERATED ALWAYS AS IDENTITY` column, guiding users away from schemas that are incompatible with SCD Type 2 history. Added a dedicated test to verify this behavior.
 
 ## Low Priority - Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**
@@ -29,6 +15,15 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+- [x] **Fix `temporal_merge` identity propagation:** Corrected planner logic to robustly propagate identity for existing entities.
+- [x] **Enforce natural key to primary key consistency:** Enhanced `add_unique_key` to automatically create and manage non-temporal `EXCLUDE` constraints that enforce a permanent mapping between a natural key and a single-column primary key.
+- [x] **Fix `temporal_merge` to handle SERIAL/IDENTITY columns correctly on INSERT:** The executor's `INSERT` logic correctly omits `SERIAL` columns to allow the database to generate values.
+- [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
+- [x] **Enhance `temporal_merge` to accept `valid_to` from source tables:** Modify the procedure to automatically detect a `valid_to` column (inclusive end) in the source and calculate the required `valid_until` (exclusive end) internally.
+- [x] **Fix `temporal_merge` planner and executor to handle multi-row inserts/updates:** Corrected a series of critical bugs to fully support multi-row operations on a single conceptual entity within one batch, especially for new entities with fragmented natural key information.
+- [x] **Fix `temporal_merge` planner to preserve unaffected timeline segments:** Corrected a logic bug in the `plan_with_op` CTE that incorrectly dropped unaffected parts of a target entity's timeline during `MERGE_ENTITY_*` operations.
+- [x] **Improve `temporal_merge_plan` clarity and maintainability:** Decomposed the ambiguous `entity_ids` column into `identity_keys` and `lookup_keys`.
+- [x] **Add early warnings for incompatible schemas:** The `add_era` function now issues a `WARNING` if it detects a simple `PRIMARY KEY` or `GENERATED ALWAYS AS IDENTITY` column, guiding users away from schemas that are incompatible with SCD Type 2 history.
 - [x] **Refactor `temporal_merge_plan` for clarity and maintainability:** The planner function has been refactored to use a single source of truth for all column lists, with consistent naming and aliasing throughout all CTEs. This makes the data flow self-evident and the code easier to maintain. This also included a fix for the final regression where a test case used a non-temporal primary key, which correctly caused the executor to fail. The test has been corrected.
 - [x] **Refine `temporal_merge` column validation:** Clarify and enforce validation rules for identity and natural key columns. Natural keys must exist in both source and target. Stable identity keys must exist in the target, but only in the source if no natural key is provided for lookups. Using `update_source_with_identity` requires identity columns to exist in the source.
 - [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
