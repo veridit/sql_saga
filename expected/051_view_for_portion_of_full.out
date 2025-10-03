@@ -616,7 +616,7 @@ TABLE valid_to_test;
 
 -- Test 3: Exact match update. This should now perform a simple UPDATE.
 SAVEPOINT test_exact_match;
-UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_until = '2025-01-01' WHERE id = 1;
+UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_to = '2024-12-31' WHERE id = 1;
 -- We expect one row, with the value updated.
 TABLE valid_to_test ORDER BY valid_from;
  id | value | valid_from | valid_until |  valid_to  
@@ -625,6 +625,68 @@ TABLE valid_to_test ORDER BY valid_from;
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_exact_match;
+-- Test 4: Exact match UPDATE with WHERE clause (data correction on a specific historical slice)
+SAVEPOINT exact_match_update_with_where_should_succeed;
+UPDATE valid_to_test__for_portion_of_valid
+SET
+    value = 'D',
+    valid_from = '2024-01-01',
+    valid_to = '2024-12-31'
+WHERE id = 1
+  -- For a REST query on a view with valid_to, this is the expected pattern
+  AND valid_from >= '2024-01-01'
+  AND valid_to <= '2024-12-31';
+-- Since this is an exact match, temporal_merge should generate a simple UPDATE.
+-- There should be no DELETE.
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |    grouping_key    
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+--------------------
+           1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"value": "D", "valid_to": "2024-12-31"} |          |       | existing_entity__1
+(1 row)
+
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+             1 | [{"id": 1}]        | APPLIED | 
+(1 row)
+
+-- Verify value is updated on just that one row.
+TABLE valid_to_test ORDER BY valid_from;
+ id | value | valid_from | valid_until |  valid_to  
+----+-------+------------+-------------+------------
+  1 | D     | 2024-01-01 | 2025-01-01  | 2024-12-31
+(1 row)
+
+ROLLBACK TO exact_match_update_with_where_should_succeed;
+-- Test 5: Exact match UPDATE without WHERE on temporal columns
+SAVEPOINT exact_temporal_match_without_where_should_succeed;
+UPDATE valid_to_test__for_portion_of_valid
+SET
+    value = 'E',
+    valid_from = '2024-01-01',
+    valid_to = '2024-12-31'
+WHERE id = 1;
+-- Verify there is not DELETE in the plan
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |    grouping_key    
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+--------------------
+           1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"value": "E", "valid_to": "2024-12-31"} |          |       | existing_entity__1
+(1 row)
+
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+             1 | [{"id": 1}]        | APPLIED | 
+(1 row)
+
+-- Verify value is updated on just that one row.
+TABLE valid_to_test ORDER BY valid_from;
+ id | value | valid_from | valid_until |  valid_to  
+----+-------+------------+-------------+------------
+  1 | E     | 2024-01-01 | 2025-01-01  | 2024-12-31
+(1 row)
+
+ROLLBACK TO exact_temporal_match_without_where_should_succeed;
 ROLLBACK TO SAVEPOINT scenario_8;
 ROLLBACK;
 DROP ROLE view_test_role;

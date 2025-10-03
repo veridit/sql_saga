@@ -307,13 +307,50 @@ TABLE valid_to_test;
 
 -- Test 3: Exact match update. This should now perform a simple UPDATE.
 SAVEPOINT test_exact_match;
-UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_until = '2025-01-01' WHERE id = 1;
+UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_to = '2024-12-31' WHERE id = 1;
 -- We expect one row, with the value updated.
 TABLE valid_to_test ORDER BY valid_from;
 ROLLBACK TO SAVEPOINT test_exact_match;
 
-ROLLBACK TO SAVEPOINT scenario_8;
+-- Test 4: Exact match UPDATE with WHERE clause (data correction on a specific historical slice)
+SAVEPOINT exact_match_update_with_where_should_succeed;
+UPDATE valid_to_test__for_portion_of_valid
+SET
+    value = 'D',
+    valid_from = '2024-01-01',
+    valid_to = '2024-12-31'
+WHERE id = 1
+  -- For a REST query on a view with valid_to, this is the expected pattern
+  AND valid_from >= '2024-01-01'
+  AND valid_to <= '2024-12-31';
+-- Since this is an exact match, temporal_merge should generate a simple UPDATE.
+-- There should be no DELETE.
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
+-- Verify value is updated on just that one row.
+TABLE valid_to_test ORDER BY valid_from;
+ROLLBACK TO exact_match_update_with_where_should_succeed;
+
+
+-- Test 5: Exact match UPDATE without WHERE on temporal columns
+SAVEPOINT exact_temporal_match_without_where_should_succeed;
+UPDATE valid_to_test__for_portion_of_valid
+SET
+    value = 'E',
+    valid_from = '2024-01-01',
+    valid_to = '2024-12-31'
+WHERE id = 1;
+-- Verify there is not DELETE in the plan
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+
+-- Verify value is updated on just that one row.
+TABLE valid_to_test ORDER BY valid_from;
+ROLLBACK TO exact_temporal_match_without_where_should_succeed;
+
+
+ROLLBACK TO SAVEPOINT scenario_8;
 
 ROLLBACK;
 

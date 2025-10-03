@@ -63,17 +63,47 @@ ROLLBACK TO simple_update_should_succeed;
 TABLE products ORDER BY id, valid_from;
 
 -- Test exact match UPDATE (data correction on a specific historical slice)
+SAVEPOINT exact_match_update_with_where_should_succeed;
+
+UPDATE products__for_portion_of_valid
+SET
+    price = 1250,
+    valid_from = '2023-01-01',
+    valid_until = '2024-01-01'
+WHERE id = 1
+  -- Notice this matches the REST represenation of valid_from=gte.x&valid_until=lt.y
+  AND valid_from >= '2023-01-01'
+  AND valid_until <= '2024-01-01';
+-- Verify there is not DELETE in the plan
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+
+-- Verify price is updated on just that one row.
+TABLE products ORDER BY id, valid_from;
+ROLLBACK TO exact_match_update_with_where_should_succeed;
+
+-- Verify state is restored
+TABLE products ORDER BY id, valid_from;
+TABLE products_view_select_for_portion_of;
+
+
+-- Test exact match UPDATE (data correction on a specific historical slice)
 -- This is now allowed.
-SAVEPOINT exact_match_update_should_succeed;
+SAVEPOINT exact_temporal_match_without_where_should_succeed;
 UPDATE products__for_portion_of_valid
 SET
     price = 1250,
     valid_from = '2023-01-01',
     valid_until = '2024-01-01'
 WHERE id = 1;
+-- Verify there is not DELETE in the plan
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
+
 -- Verify price is updated on just that one row.
 TABLE products ORDER BY id, valid_from;
-ROLLBACK TO exact_match_update_should_succeed;
+ROLLBACK TO exact_temporal_match_without_where_should_succeed;
+
 
 -- Verify state is restored
 TABLE products ORDER BY id, valid_from;
