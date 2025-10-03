@@ -284,11 +284,14 @@ ROLLBACK TO SAVEPOINT scenario_ordering_dependency;
 -- adjacent, identical time segments when they are processed in separate batches.
 --------------------------------------------------------------------------------
 SAVEPOINT scenario_coalescing;
-\echo '\n--- SCENARIO 2: Coalescing identical, adjacent records ---'
+\echo '\n--- SCENARIO 2: Coalescing identical, adjacent records across batches ---'
 
---- SCENARIO 2: Coalescing identical, adjacent records ---
+--- SCENARIO 2: Coalescing identical, adjacent records across batches ---
 -- Setup for Scenario 2
-CREATE TABLE saga_repro.target_units_coalesce (LIKE saga_repro.target_units_template);
+CREATE TABLE saga_repro.target_units_coalesce (
+    LIKE saga_repro.target_units_template,
+    notes text -- Add a nullable column that does not exist in the source table
+);
 CREATE TABLE saga_repro.source_units_coalesce (LIKE saga_repro.source_units_template INCLUDING ALL);
 SELECT sql_saga.add_era('saga_repro.target_units_coalesce', synchronize_valid_to_column := 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_coalesce_synchronize_temporal_columns_trigger" on table saga_repro.target_units_coalesce to synchronize columns: valid_to
@@ -307,71 +310,66 @@ NOTICE:  sql_saga: altering table saga_repro.target_units_coalesce to add constr
 GRANT ALL ON saga_repro.target_units_coalesce TO sql_saga_unprivileged_user;
 GRANT ALL ON saga_repro.source_units_coalesce TO sql_saga_unprivileged_user;
 -- Batch 1
-INSERT INTO saga_repro.source_units_coalesce (unit_ident, name, sector, valid_from, valid_to) VALUES
-    ('unit1', 'Unit A', 'Manufacturing', '2023-01-01', '2023-07-01');
-CALL sql_saga.temporal_merge('saga_repro.target_units_coalesce', 'saga_repro.source_units_coalesce', natural_identity_columns => ARRAY['unit_ident'], mode => 'MERGE_ENTITY_UPSERT');
+INSERT INTO saga_repro.source_units_coalesce (unit_ident, name, valid_from, valid_to) VALUES
+    ('unit1', 'Unit A', '2023-01-01', '2023-06-30');
+SET ROLE TO sql_saga_unprivileged_user;
+CALL sql_saga.temporal_merge('saga_repro.target_units_coalesce', 'saga_repro.source_units_coalesce', natural_identity_columns => ARRAY['unit_ident'], mode => 'MERGE_ENTITY_PATCH');
+RESET ROLE;
 \echo '\n--- State after Batch 1 ---'
 
 --- State after Batch 1 ---
-TABLE saga_repro.target_units_coalesce;
- unit_ident |  name  | valid_from |  valid_to  | valid_until 
-------------+--------+------------+------------+-------------
- unit1      | Unit A | 2023-01-01 | 2023-07-01 | 2023-07-02
+SELECT unit_ident, name, valid_from, valid_to, notes FROM saga_repro.target_units_coalesce;
+ unit_ident |  name  | valid_from |  valid_to  | notes 
+------------+--------+------------+------------+-------
+ unit1      | Unit A | 2023-01-01 | 2023-06-30 | 
 (1 row)
 
 -- Batch 2 (the failing step)
 TRUNCATE saga_repro.source_units_coalesce;
-INSERT INTO saga_repro.source_units_coalesce (unit_ident, name, sector, valid_from, valid_to) VALUES
-    ('unit1', 'Unit A', 'Manufacturing', '2023-07-01', '2024-01-01');
-CALL sql_saga.temporal_merge('saga_repro.target_units_coalesce', 'saga_repro.source_units_coalesce', natural_identity_columns => ARRAY['unit_ident'], mode => 'MERGE_ENTITY_UPSERT');
+INSERT INTO saga_repro.source_units_coalesce (unit_ident, name, valid_from, valid_to) VALUES
+    ('unit1', 'Unit A', '2023-07-01', '2023-12-31');
+SET ROLE TO sql_saga_unprivileged_user;
+CALL sql_saga.temporal_merge('saga_repro.target_units_coalesce', 'saga_repro.source_units_coalesce', natural_identity_columns => ARRAY['unit_ident'], mode => 'MERGE_ENTITY_PATCH');
+RESET ROLE;
 -- Final results for Scenario 2
-\echo '\n-- Coalescing Test Final State (Expected: 1 row)'
+\echo '\n-- Coalescing Test Final State (Bug Repro: 2 rows, Correct: 1 row)'
 
--- Coalescing Test Final State (Expected: 1 row)
-SELECT unit_ident, name, valid_from, valid_to FROM saga_repro.target_units_coalesce ORDER BY valid_from;
- unit_ident |  name  | valid_from |  valid_to  
-------------+--------+------------+------------
- unit1      | Unit A | 2023-01-01 | 2024-01-01
+-- Coalescing Test Final State (Bug Repro: 2 rows, Correct: 1 row)
+SELECT unit_ident, name, valid_from, valid_to, notes FROM saga_repro.target_units_coalesce ORDER BY valid_from;
+ unit_ident |  name  | valid_from |  valid_to  | notes 
+------------+--------+------------+------------+-------
+ unit1      | Unit A | 2023-01-01 | 2023-12-31 | 
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_coalescing;
 --------------------------------------------------------------------------------
--- SCENARIO 3: Ephemeral column patch regression
+-- SCENARIO 3: Ephemeral column handling in PATCH, UPSERT, and REPLACE modes
 --
--- Root Cause Analysis: The log provided shows that two adjacent time segments
--- that should have been coalesced were not, because their `data_hash` values
--- were different. The `data_hash` is computed on the data payload *after*
--- stripping ephemeral columns. The fact that the hashes differ indicates that
--- the data payloads themselves were different, meaning some non-ephemeral data
--- changed between the segments.
---
--- The bug is that when only an ephemeral column is updated on a portion of a
--- timeline, the planner should perform an in-place update of the original
--- record. Instead, it is splitting the record, indicating a failure to
--- coalesce the segments. This test reproduces that failure.
+-- This scenario clarifies the semantic differences between the main merge modes
+-- with respect to NULLs and ephemeral columns.
 --------------------------------------------------------------------------------
-SAVEPOINT scenario_ephemeral_patch;
-\echo '\n--- SCENARIO 3: Ephemeral column PATCH should not split segment ---'
+SAVEPOINT scenario_ephemeral_modes;
+\echo '\n--- SCENARIO 3: Ephemeral column handling in PATCH, UPSERT, and REPLACE modes ---'
 
---- SCENARIO 3: Ephemeral column PATCH should not split segment ---
+--- SCENARIO 3: Ephemeral column handling in PATCH, UPSERT, and REPLACE modes ---
 CREATE TABLE saga_repro.target_units_ephemeral (
     id int GENERATED BY DEFAULT AS IDENTITY,
     unit_ident text NOT NULL,
     name text NOT NULL,
+    notes text,
     valid_from date NOT NULL,
     valid_to date,
     valid_until date,
-    edit_at timestamptz NOT NULL DEFAULT '2025-10-02 16:39:00+00', -- Use fixed timestamp for deterministic test output, would be now() in reality.
-    edit_comment text NOT NULL
+    -- NOTE: Use a fixed timestamp for `edit_at` to ensure deterministic test results.
+    -- Using `now()` or `clock_timestamp()` would cause the output to change on every run.
+    edit_at timestamptz NOT NULL DEFAULT '2025-10-03 12:00:00+00',
+    edit_comment text
 );
 CREATE TABLE saga_repro.source_units_ephemeral (
     row_id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    unit_ident text,
-    name text,
-    valid_from date,
-    valid_to date,
-    edit_at date,
-    edit_comment text
+    unit_ident text, name text, notes text,
+    valid_from date, valid_to date,
+    edit_at timestamptz, edit_comment text
 );
 SELECT sql_saga.add_era('saga_repro.target_units_ephemeral', synchronize_valid_to_column := 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.target_units_ephemeral to synchronize columns: valid_to
@@ -396,123 +394,243 @@ NOTICE:  sql_saga: altering table saga_repro.target_units_ephemeral to add const
 
 GRANT ALL ON saga_repro.target_units_ephemeral TO sql_saga_unprivileged_user;
 GRANT ALL ON saga_repro.source_units_ephemeral TO sql_saga_unprivileged_user;
--- Initial state: one record
-INSERT INTO saga_repro.target_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment)
-VALUES ('unit1', 'Unit A', '2023-01-01', '2023-06-01', 'Initial version');
-\echo '\n--- State before merge ---'
+\echo '\n-- Case 3a: MERGE_ENTITY_PATCH'
 
---- State before merge ---
+-- Case 3a: MERGE_ENTITY_PATCH
+\echo '-- Expectation: The NULL for `edit_comment` is ignored, and the original value is preserved. `notes` is inherited.'
+-- Expectation: The NULL for `edit_comment` is ignored, and the original value is preserved. `notes` is inherited.
+SAVEPOINT case_patch;
+-- Initial state for this case
+TRUNCATE saga_repro.target_units_ephemeral, saga_repro.source_units_ephemeral RESTART IDENTITY;
+INSERT INTO saga_repro.target_units_ephemeral (unit_ident, name, notes, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A', 'Original notes', '2023-01-01', '2023-12-31', 'Initial version');
+INSERT INTO saga_repro.source_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A Updated', '2023-06-01', '2023-08-31', NULL); -- `edit_comment` is NULL, `notes` is absent
+\echo '\n--- Initial State ---'
+
+--- Initial State ---
 TABLE saga_repro.target_units_ephemeral;
- id | unit_ident |  name  | valid_from |  valid_to  | valid_until |        edit_at         |  edit_comment   
-----+------------+--------+------------+------------+-------------+------------------------+-----------------
-  1 | unit1      | Unit A | 2023-01-01 | 2023-06-01 | 2023-06-02  | 2025-10-02 09:39:00-07 | Initial version
+ id | unit_ident |  name  |     notes      | valid_from |  valid_to  | valid_until |        edit_at         |  edit_comment   
+----+------------+--------+----------------+------------+------------+-------------+------------------------+-----------------
+  1 | unit1      | Unit A | Original notes | 2023-01-01 | 2023-12-31 | 2024-01-01  | 2025-10-03 05:00:00-07 | Initial version
 (1 row)
 
--- Source data: update a portion of the timeline with only an ephemeral column change.
-INSERT INTO saga_repro.source_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment) VALUES
-    ('unit1', 'Unit A', '2023-06-01', '2023-12-31', 'Updated comment');
+\echo '\n--- Source Data ---'
+
+--- Source Data ---
+TABLE saga_repro.source_units_ephemeral;
+ row_id | unit_ident |      name      | notes | valid_from |  valid_to  | edit_at | edit_comment 
+--------+------------+----------------+-------+------------+------------+---------+--------------
+      1 | unit1      | Unit A Updated |       | 2023-06-01 | 2023-08-31 |         | 
+(1 row)
+
+SET ROLE TO sql_saga_unprivileged_user;
 CALL sql_saga.temporal_merge(
     'saga_repro.target_units_ephemeral', 'saga_repro.source_units_ephemeral',
     natural_identity_columns => ARRAY['unit_ident'],
     ephemeral_columns => ARRAY['edit_at', 'edit_comment'],
     mode => 'MERGE_ENTITY_PATCH'
 );
-\echo '\n-- Ephemeral Update Test Final State (Expected: 1 row with updated comment for the whole period)'
+RESET ROLE;
+\echo '\n--- Final State (PATCH) ---'
 
--- Ephemeral Update Test Final State (Expected: 1 row with updated comment for the whole period)
-SELECT unit_ident, name, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
- unit_ident |  name  | valid_from |  valid_to  |  edit_comment   
-------------+--------+------------+------------+-----------------
- unit1      | Unit A | 2023-01-01 | 2023-12-31 | Updated comment
-(1 row)
+--- Final State (PATCH) ---
+SELECT unit_ident, name, notes, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
+ unit_ident |      name      |     notes      | valid_from |  valid_to  |  edit_comment   
+------------+----------------+----------------+------------+------------+-----------------
+ unit1      | Unit A         | Original notes | 2023-01-01 | 2023-05-31 | Initial version
+ unit1      | Unit A Updated | Original notes | 2023-06-01 | 2023-08-31 | Initial version
+ unit1      | Unit A         | Original notes | 2023-09-01 | 2023-12-31 | Initial version
+(3 rows)
 
-ROLLBACK TO SAVEPOINT scenario_ephemeral_patch;
---------------------------------------------------------------------------------
--- SCENARIO 4: Ephemeral column UPSERT regression with NOT NULL DEFAULT
---
--- This test validates that when using MERGE_ENTITY_UPSERT, an incoming NULL
--- for a column that is defined as NOT NULL DEFAULT does not cause a NOT NULL
--- violation. Instead, the executor should be smart enough to preserve the
--- existing value, effectively treating NULL as "no change" for this specific
--- combination of constraints and mode.
---------------------------------------------------------------------------------
-SAVEPOINT scenario_ephemeral_upsert;
-\echo '\n--- SCENARIO 4: Ephemeral column UPSERT with NOT NULL DEFAULT ---'
+ROLLBACK TO SAVEPOINT case_patch;
+\echo '\n-- Case 3b: MERGE_ENTITY_UPSERT'
 
---- SCENARIO 4: Ephemeral column UPSERT with NOT NULL DEFAULT ---
-CREATE TABLE saga_repro.target_units_ephemeral (
-    id int GENERATED BY DEFAULT AS IDENTITY,
-    unit_ident text NOT NULL,
-    name text NOT NULL,
-    valid_from date NOT NULL,
-    valid_to date,
-    valid_until date,
-    edit_at timestamptz NOT NULL DEFAULT '2025-10-02 16:39:00+00', -- Use fixed timestamp for deterministic test output, would be now() in reality.
-    edit_comment text NOT NULL
-);
-CREATE TABLE saga_repro.source_units_ephemeral (
-    row_id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    unit_ident text,
-    name text,
-    valid_from date,
-    valid_to date,
-    edit_at date,
-    edit_comment text
-);
-SELECT sql_saga.add_era('saga_repro.target_units_ephemeral', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "target_units_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.target_units_ephemeral to synchronize columns: valid_to
- add_era 
----------
- t
-(1 row)
+-- Case 3b: MERGE_ENTITY_UPSERT
+\echo '-- Expectation: The NULL for `edit_comment` overwrites the original value. `notes` is also overwritten with NULL as it is absent from the source INSERT, but present as a column in the source table.'
+-- Expectation: The NULL for `edit_comment` overwrites the original value. `notes` is also overwritten with NULL as it is absent from the source INSERT, but present as a column in the source table.
+SAVEPOINT case_upsert;
+-- Initial state for this case
+TRUNCATE saga_repro.target_units_ephemeral, saga_repro.source_units_ephemeral RESTART IDENTITY;
+INSERT INTO saga_repro.target_units_ephemeral (unit_ident, name, notes, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A', 'Original notes', '2023-01-01', '2023-12-31', 'Initial version');
+INSERT INTO saga_repro.source_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A Updated', '2023-06-01', '2023-08-31', NULL); -- `edit_comment` is NULL, `notes` is absent
+\echo '\n--- Initial State ---'
 
-SELECT sql_saga.add_unique_key('saga_repro.target_units_ephemeral', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table saga_repro.target_units_ephemeral to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_units_ephemeral_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-         add_unique_key          
----------------------------------
- target_units_ephemeral_id_valid
-(1 row)
-
-SELECT sql_saga.add_unique_key('saga_repro.target_units_ephemeral', ARRAY['unit_ident'], key_type => 'natural');
-NOTICE:  sql_saga: altering table saga_repro.target_units_ephemeral to add constraints: ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT target_units_ephemeral_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
-             add_unique_key              
------------------------------------------
- target_units_ephemeral_unit_ident_valid
-(1 row)
-
-GRANT ALL ON saga_repro.target_units_ephemeral TO sql_saga_unprivileged_user;
-GRANT ALL ON saga_repro.source_units_ephemeral TO sql_saga_unprivileged_user;
--- Initial state: one record
-INSERT INTO saga_repro.target_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment)
-VALUES ('unit1', 'Unit A', '2023-01-01', '2023-06-01', 'Initial version');
-\echo '\n--- State before merge ---'
-
---- State before merge ---
+--- Initial State ---
 TABLE saga_repro.target_units_ephemeral;
- id | unit_ident |  name  | valid_from |  valid_to  | valid_until |        edit_at         |  edit_comment   
-----+------------+--------+------------+------------+-------------+------------------------+-----------------
-  1 | unit1      | Unit A | 2023-01-01 | 2023-06-01 | 2023-06-02  | 2025-10-02 09:39:00-07 | Initial version
+ id | unit_ident |  name  |     notes      | valid_from |  valid_to  | valid_until |        edit_at         |  edit_comment   
+----+------------+--------+----------------+------------+------------+-------------+------------------------+-----------------
+  1 | unit1      | Unit A | Original notes | 2023-01-01 | 2023-12-31 | 2024-01-01  | 2025-10-03 05:00:00-07 | Initial version
 (1 row)
 
--- Source data: update a portion of the timeline with only an ephemeral column change.
-INSERT INTO saga_repro.source_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment) VALUES
-    ('unit1', 'Unit A', '2023-06-01', '2023-12-31', 'Updated comment');
+\echo '\n--- Source Data ---'
+
+--- Source Data ---
+TABLE saga_repro.source_units_ephemeral;
+ row_id | unit_ident |      name      | notes | valid_from |  valid_to  | edit_at | edit_comment 
+--------+------------+----------------+-------+------------+------------+---------+--------------
+      1 | unit1      | Unit A Updated |       | 2023-06-01 | 2023-08-31 |         | 
+(1 row)
+
+SET ROLE TO sql_saga_unprivileged_user;
 CALL sql_saga.temporal_merge(
     'saga_repro.target_units_ephemeral', 'saga_repro.source_units_ephemeral',
     natural_identity_columns => ARRAY['unit_ident'],
     ephemeral_columns => ARRAY['edit_at', 'edit_comment'],
     mode => 'MERGE_ENTITY_UPSERT'
 );
-\echo '\n-- Ephemeral Update Test Final State (Expected: 1 row with updated comment for the whole period)'
+RESET ROLE;
+\echo '\n--- Final State (UPSERT) ---'
 
--- Ephemeral Update Test Final State (Expected: 1 row with updated comment for the whole period)
-SELECT unit_ident, name, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
- unit_ident |  name  | valid_from |  valid_to  |  edit_comment   
-------------+--------+------------+------------+-----------------
- unit1      | Unit A | 2023-01-01 | 2023-12-31 | Updated comment
+--- Final State (UPSERT) ---
+SELECT unit_ident, name, notes, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
+ unit_ident |      name      |     notes      | valid_from |  valid_to  |  edit_comment   
+------------+----------------+----------------+------------+------------+-----------------
+ unit1      | Unit A         | Original notes | 2023-01-01 | 2023-05-31 | Initial version
+ unit1      | Unit A Updated |                | 2023-06-01 | 2023-08-31 | 
+ unit1      | Unit A         | Original notes | 2023-09-01 | 2023-12-31 | Initial version
+(3 rows)
+
+ROLLBACK TO SAVEPOINT case_upsert;
+\echo '\n-- Case 3c: MERGE_ENTITY_REPLACE'
+
+-- Case 3c: MERGE_ENTITY_REPLACE
+\echo '-- Expectation: The source payload completely replaces the target. `notes` is set to NULL because it is absent from the source INSERT, but present as a column in the source table.'
+-- Expectation: The source payload completely replaces the target. `notes` is set to NULL because it is absent from the source INSERT, but present as a column in the source table.
+SAVEPOINT case_replace;
+-- Initial state for this case
+TRUNCATE saga_repro.target_units_ephemeral, saga_repro.source_units_ephemeral RESTART IDENTITY;
+INSERT INTO saga_repro.target_units_ephemeral (unit_ident, name, notes, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A', 'Original notes', '2023-01-01', '2023-12-31', 'Initial version');
+INSERT INTO saga_repro.source_units_ephemeral (unit_ident, name, valid_from, valid_to, edit_comment)
+VALUES ('unit1', 'Unit A Updated', '2023-06-01', '2023-08-31', NULL); -- `edit_comment` is NULL, `notes` is absent
+\echo '\n--- Initial State ---'
+
+--- Initial State ---
+TABLE saga_repro.target_units_ephemeral;
+ id | unit_ident |  name  |     notes      | valid_from |  valid_to  | valid_until |        edit_at         |  edit_comment   
+----+------------+--------+----------------+------------+------------+-------------+------------------------+-----------------
+  1 | unit1      | Unit A | Original notes | 2023-01-01 | 2023-12-31 | 2024-01-01  | 2025-10-03 05:00:00-07 | Initial version
 (1 row)
 
-ROLLBACK TO SAVEPOINT scenario_ephemeral_upsert;
+\echo '\n--- Source Data ---'
+
+--- Source Data ---
+TABLE saga_repro.source_units_ephemeral;
+ row_id | unit_ident |      name      | notes | valid_from |  valid_to  | edit_at | edit_comment 
+--------+------------+----------------+-------+------------+------------+---------+--------------
+      1 | unit1      | Unit A Updated |       | 2023-06-01 | 2023-08-31 |         | 
+(1 row)
+
+SET ROLE TO sql_saga_unprivileged_user;
+CALL sql_saga.temporal_merge(
+    'saga_repro.target_units_ephemeral', 'saga_repro.source_units_ephemeral',
+    natural_identity_columns => ARRAY['unit_ident'],
+    ephemeral_columns => ARRAY['edit_at', 'edit_comment'],
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+RESET ROLE;
+\echo '\n--- Final State (REPLACE) ---'
+
+--- Final State (REPLACE) ---
+SELECT unit_ident, name, notes, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
+ unit_ident |      name      |     notes      | valid_from |  valid_to  |  edit_comment   
+------------+----------------+----------------+------------+------------+-----------------
+ unit1      | Unit A         | Original notes | 2023-01-01 | 2023-05-31 | Initial version
+ unit1      | Unit A Updated |                | 2023-06-01 | 2023-08-31 | 
+ unit1      | Unit A         | Original notes | 2023-09-01 | 2023-12-31 | Initial version
+(3 rows)
+
+ROLLBACK TO SAVEPOINT case_replace;
+ROLLBACK TO SAVEPOINT scenario_ephemeral_modes;
+--------------------------------------------------------------------------------
+-- SCENARIO 4: UPSERT mode with NOT NULL DEFAULT columns
+--
+-- This test validates that when using MERGE_ENTITY_UPSERT, an incoming NULL
+-- for a column that is defined as NOT NULL DEFAULT does not cause a NOT NULL
+-- violation. Instead, the executor preserves the existing value, effectively
+-- treating NULL as "no change" for this specific combination of constraints and mode.
+--------------------------------------------------------------------------------
+SAVEPOINT scenario_not_null_default;
+\echo '\n--- SCENARIO 4: UPSERT with NOT NULL DEFAULT columns ---'
+
+--- SCENARIO 4: UPSERT with NOT NULL DEFAULT columns ---
+CREATE TABLE saga_repro.target_not_null_default (
+    unit_ident text NOT NULL,
+    name text NOT NULL,
+    status text NOT NULL DEFAULT 'active',
+    valid_from date NOT NULL,
+    valid_to date,
+    valid_until date
+);
+CREATE TABLE saga_repro.source_not_null_default (
+    row_id int GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    unit_ident text, name text, status text,
+    valid_from date, valid_to date
+);
+SELECT sql_saga.add_era('saga_repro.target_not_null_default', synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "target_not_null_default_synchronize_temporal_columns_trigger" on table saga_repro.target_not_null_default to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('saga_repro.target_not_null_default', ARRAY['unit_ident'], key_type => 'natural');
+NOTICE:  sql_saga: altering table saga_repro.target_not_null_default to add constraints: ADD CONSTRAINT target_not_null_default_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_not_null_default_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+              add_unique_key              
+------------------------------------------
+ target_not_null_default_unit_ident_valid
+(1 row)
+
+GRANT ALL ON saga_repro.target_not_null_default TO sql_saga_unprivileged_user;
+GRANT ALL ON saga_repro.source_not_null_default TO sql_saga_unprivileged_user;
+-- Initial state: one record with default status
+INSERT INTO saga_repro.target_not_null_default (unit_ident, name, valid_from, valid_to)
+VALUES ('unit1', 'Unit A', '2023-01-01', '2023-12-31');
+\echo '\n--- Initial State ---'
+
+--- Initial State ---
+TABLE saga_repro.target_not_null_default;
+ unit_ident |  name  | status | valid_from |  valid_to  | valid_until 
+------------+--------+--------+------------+------------+-------------
+ unit1      | Unit A | active | 2023-01-01 | 2023-12-31 | 2024-01-01
+(1 row)
+
+-- Source data: provides NULL for the 'status' column, which has a NOT NULL DEFAULT constraint.
+INSERT INTO saga_repro.source_not_null_default (unit_ident, name, status, valid_from, valid_to)
+VALUES ('unit1', 'Unit A Updated', NULL, '2023-06-01', '2023-08-31');
+\echo '\n--- Source Data ---'
+
+--- Source Data ---
+TABLE saga_repro.source_not_null_default;
+ row_id | unit_ident |      name      | status | valid_from |  valid_to  
+--------+------------+----------------+--------+------------+------------
+      1 | unit1      | Unit A Updated |        | 2023-06-01 | 2023-08-31
+(1 row)
+
+SET ROLE TO sql_saga_unprivileged_user;
+CALL sql_saga.temporal_merge(
+    'saga_repro.target_not_null_default', 'saga_repro.source_not_null_default',
+    natural_identity_columns => ARRAY['unit_ident'],
+    mode => 'MERGE_ENTITY_UPSERT'
+);
+RESET ROLE;
+\echo '\n--- Final State (UPSERT with NOT NULL DEFAULT) ---'
+
+--- Final State (UPSERT with NOT NULL DEFAULT) ---
+\echo '-- Expectation: The `status` remains "active" in all segments, as the incoming NULL was ignored.'
+-- Expectation: The `status` remains "active" in all segments, as the incoming NULL was ignored.
+SELECT unit_ident, name, status, valid_from, valid_to FROM saga_repro.target_not_null_default ORDER BY valid_from;
+ unit_ident |      name      | status | valid_from |  valid_to  
+------------+----------------+--------+------------+------------
+ unit1      | Unit A         | active | 2023-01-01 | 2023-05-31
+ unit1      | Unit A Updated | active | 2023-06-01 | 2023-08-31
+ unit1      | Unit A         | active | 2023-09-01 | 2023-12-31
+(3 rows)
+
+ROLLBACK TO SAVEPOINT scenario_not_null_default;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

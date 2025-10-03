@@ -457,7 +457,7 @@ SELECT * FROM (VALUES
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
  plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |       grouping_key       
 -------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+--------------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": null}             |          |       | existing_entity__10__100
+           1 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
            2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
            3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
 (3 rows)
@@ -498,7 +498,7 @@ SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edi
  stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
 --------------------+------------------+------------+-------------+-------+----------------
                  10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | 
+                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Original Value
                  10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
 (3 rows)
 

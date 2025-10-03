@@ -1831,7 +1831,7 @@ resolved_atomic_segments AS (
         t_data_payload,
         sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
         %8$s /* v_final_data_payload_expr */ as data_payload,
-        md5((%8$s)::text) as data_hash,
+        md5((jsonb_strip_nulls(%8$s))::text) as data_hash,
         COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) as ephemeral_payload,
         CASE WHEN %54$L /* p_log_trace */::boolean
              THEN trace || jsonb_build_object(
@@ -1882,7 +1882,8 @@ coalesced_final_segments AS (
                 SELECT
                     *,
                     LAG(valid_until) OVER w as prev_valid_until,
-                    LAG(data_hash) OVER w as prev_data_hash
+                    LAG(data_hash) OVER w as prev_data_hash,
+                    LAG(data_payload) OVER w as prev_data_payload
                 FROM resolved_atomic_segments ras
                 WHERE ras.data_payload IS NOT NULL
                 WINDOW w AS (PARTITION BY grouping_key ORDER BY valid_from)
@@ -1915,7 +1916,7 @@ coalesced_final_segments AS (
                  'coalesced_stable_pk_payload', sql_saga.first(stable_pk_payload ORDER BY valid_from DESC),
                  'final_payload', sql_saga.first(data_payload ORDER BY valid_from DESC),
                  'final_payload_sans_ephemeral', sql_saga.first(data_payload - %5$L /* v_ephemeral_columns */::text[] ORDER BY valid_from DESC),
-                 'atomic_traces', jsonb_agg((trace || jsonb_build_object('data_hash', data_hash, 'prev_data_hash', prev_data_hash)) ORDER BY valid_from)
+                 'atomic_traces', jsonb_agg((trace || jsonb_build_object('data_hash', data_hash, 'prev_data_hash', prev_data_hash, 'prev_data_payload', prev_data_payload)) ORDER BY valid_from)
              )
              ELSE NULL
         END as trace
