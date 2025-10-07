@@ -28,6 +28,7 @@ TABLE test_schema.schema_test;
 TABLE pg_temp.temporal_merge_plan;
 TABLE pg_temp.temporal_merge_feedback;
 DROP TABLE pg_temp.temporal_merge_plan;
+CALL sql_saga.temporal_merge_delete_temp_tables();
 DROP TABLE pg_temp.temporal_merge_feedback;
 DROP TABLE pg_temp.temporal_merge_cache;
 
@@ -106,5 +107,7 @@ SELECT sql_saga.drop_current_view('acl_test'::regclass);
 ROLLBACK;
 
 DROP ROLE view_test_role;
+
+CALL sql_saga.temporal_merge_delete_temp_tables();
 
 \i sql/include/test_teardown.sql
