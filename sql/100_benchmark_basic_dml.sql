@@ -2,6 +2,8 @@
 
 SET ROLE TO sql_saga_unprivileged_user;
 
+SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
+
 \i sql/include/benchmark_setup.sql
 
 -- Enable detailed temporal_merge index logging for this benchmark session.
@@ -248,12 +250,27 @@ DROP TABLE establishment;
 DROP TABLE legal_unit;
 DROP TABLE projects;
 
+\echo '-- Performance log from pg_stat_monitor --'
+-- Check if pg_stat_monitor is installed, and output performance log if so.
+SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
+\if :pg_stat_monitor_exists
+    -- The output of this query will be captured in the test's .out file.
+    -- We select a stable subset of columns to avoid volatility.
+    -- We don't show time, just I/O and row counts. Query is truncated.
+    -- This provides a baseline for performance regression testing.
+    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
+    FROM pg_temp.temporal_merge_performance_log
+    ORDER BY event, total_time DESC, query_part;
+\else
+    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
+\endif
+
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/100_benchmark_basic_dml_performance.out
+\o expected/performance/100_benchmark_basic_dml_performance.out
 
 \i sql/include/benchmark_report.sql
 

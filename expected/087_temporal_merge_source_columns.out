@@ -85,7 +85,7 @@ CALL sql_saga.temporal_merge(
     natural_identity_columns => ARRAY['org_nr_typo']
 );
 ERROR:  lookup_column org_nr_typo does not exist in target table repro.units
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 399 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 428 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,
@@ -115,7 +115,7 @@ CALL sql_saga.temporal_merge(
     natural_identity_columns => ARRAY['org_nr_typo']
 );
 ERROR:  lookup_column org_nr_typo does not exist in target table repro.units
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 399 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 428 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,
@@ -145,7 +145,7 @@ CALL sql_saga.temporal_merge(
     natural_identity_columns => ARRAY['org_nr']
 );
 ERROR:  identity_column id_typo does not exist in target table repro.units
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 385 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 414 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,

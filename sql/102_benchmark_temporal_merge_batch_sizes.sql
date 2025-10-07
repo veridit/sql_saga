@@ -22,6 +22,8 @@ GRANT EXECUTE ON FUNCTION mtt.get_trigger_status(regclass) TO sql_saga_unprivile
 
 SET ROLE TO sql_saga_unprivileged_user;
 
+SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
+
 \i sql/include/benchmark_setup.sql
 
 CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL);
@@ -176,6 +178,22 @@ SELECT 'legal_unit_tm_bs_off' AS type, COUNT(*) AS count FROM legal_unit_tm_bs_o
 UNION ALL
 SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_tm_bs_off;
 
+\echo '-- Performance log from pg_stat_monitor --'
+-- Check if pg_stat_monitor is installed, and output performance log if so.
+SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
+\if :pg_stat_monitor_exists
+    -- The output of this query will be captured in the test's .out file.
+    -- We select a stable subset of columns to avoid volatility.
+    -- We don't show time, just I/O and row counts. Query is truncated.
+    -- This provides a baseline for performance regression testing.
+    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
+    FROM pg_temp.temporal_merge_performance_log
+    ORDER BY event, total_time DESC, query_part;
+\else
+    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
+\endif
+
+
 -- Teardown for batch size benchmark tables
 SELECT sql_saga.drop_foreign_key('establishment_tm_bs_on', ARRAY['legal_unit_id'], 'valid');
 SELECT sql_saga.drop_unique_key('establishment_tm_bs_on', ARRAY['id'], 'valid');
@@ -200,7 +218,7 @@ DROP TABLE legal_unit_tm_bs_off;
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/102_benchmark_temporal_merge_batch_sizes_performance.out
+\o expected/performance/102_benchmark_temporal_merge_batch_sizes_performance.out
 
 \i sql/include/benchmark_report.sql
 

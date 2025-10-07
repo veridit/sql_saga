@@ -42,6 +42,7 @@ $$ LANGUAGE sql;
 GRANT USAGE ON SCHEMA mtt TO sql_saga_unprivileged_user;
 GRANT EXECUTE ON FUNCTION mtt.get_trigger_status(regclass) TO sql_saga_unprivileged_user;
 SET ROLE TO sql_saga_unprivileged_user;
+SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
 \i sql/include/benchmark_setup.sql
 CREATE TEMPORARY TABLE benchmark (
   seq_id BIGINT GENERATED ALWAYS AS IDENTITY,
@@ -241,6 +242,102 @@ BEGIN
     END LOOP;
 END;
 $$;
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
+NOTICE:  sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.
 \echo '-- Trigger status log from benchmark --'
 -- Trigger status log from benchmark --
 SELECT * FROM trigger_log ORDER BY event, table_name, trigger_name;
@@ -275,6 +372,26 @@ SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_t
  establishment_tm_bs_off |     0
 (4 rows)
 
+\echo '-- Performance log from pg_stat_monitor --'
+-- Performance log from pg_stat_monitor --
+-- Check if pg_stat_monitor is installed, and output performance log if so.
+SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
+\if :pg_stat_monitor_exists
+    -- The output of this query will be captured in the test's .out file.
+    -- We select a stable subset of columns to avoid volatility.
+    -- We don't show time, just I/O and row counts. Query is truncated.
+    -- This provides a baseline for performance regression testing.
+    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
+    FROM pg_temp.temporal_merge_performance_log
+    ORDER BY event, total_time DESC, query_part;
+\else
+    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
+                             notice                              
+-----------------------------------------------------------------
+ pg_stat_monitor not installed, skipping performance log output.
+(1 row)
+
+\endif
 -- Teardown for batch size benchmark tables
 SELECT sql_saga.drop_foreign_key('establishment_tm_bs_on', ARRAY['legal_unit_id'], 'valid');
 NOTICE:  Dropping automatically created index "establishment_tm_bs_on_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_bs_on_legal_unit_id_valid"
@@ -450,7 +567,7 @@ SELECT event, row_count FROM benchmark ORDER BY seq_id;
 (97 rows)
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/102_benchmark_temporal_merge_batch_sizes_performance.out
+\o expected/performance/102_benchmark_temporal_merge_batch_sizes_performance.out
 \i sql/include/benchmark_report.sql
 -- Calculate rows per second
 CREATE OR REPLACE FUNCTION format_duration(p_interval interval) RETURNS TEXT AS $$

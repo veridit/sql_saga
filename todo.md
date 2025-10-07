@@ -6,6 +6,11 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 ## High Priority - Bugs & Core Features
 ## Medium Priority - Refactoring & API Improvements
+- [ ] Review application time support in PostgreSQL 18, and use that, simplifying sql_saga.
+      PRIMARY KEY ... column_name WITHOUT OVERLAPS
+      REFERENCES ... PERIOD column_name
+      FOREIGN KEY ... PERIOD column_name
+      Ref. https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-PARMS-REFERENCES
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 
@@ -15,6 +20,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+- [x] **Add performance monitoring for `temporal_merge`:** Added optional (`sql_saga.temporal_merge.use_pg_stat_monitor` GUC) performance logging using `pg_stat_monitor` to capture detailed metrics for planner and executor steps into a temporary table for analysis. Performance output files are now stored in `expected/performance/`.
 - [x] **Re-implement `temporal_merge` planner caching:** After refactoring to temporary tables, planner caching was removed. It has been re-implemented using a session-local temporary table to cache the generated SQL, restoring performance for batch operations. Fixed a name collision between the planner cache and the executor's index-check cache.
 - [x] **Fix `temporal_merge` planner instability after temp table refactor:** Added a deterministic `ORDER BY` to the `source_rows` query to ensure consistent row selection with `DISTINCT ON`, resolving a regression in the ambiguous key test.
 - [x] **Fix regression in `temporal_merge` planner after refactoring to temp tables:** Corrected dynamic SQL generation for the `resolved_atomic_segments` temporary table, which had a redundant comma causing a syntax error.
