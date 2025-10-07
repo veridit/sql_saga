@@ -64,7 +64,7 @@ DECLARE
     -- Other planner variables
     --
     v_plan_key_text TEXT;
-    v_plan_sqls TEXT[];
+    v_plan_sqls JSONB;
     v_causal_col name;
     v_causal_column_type regtype;
     v_plan_with_op_entity_id_json_build_expr_part_A TEXT;
@@ -99,7 +99,7 @@ BEGIN
     IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
         CREATE TEMP TABLE temporal_merge_plan_cache (
             cache_key TEXT PRIMARY KEY,
-            plan_sqls TEXT[] NOT NULL
+            plan_sqls JSONB NOT NULL
         );
     END IF;
 
@@ -536,6 +536,7 @@ BEGIN
             v_identity_keys_jsonb_build_expr_sr TEXT;
             v_lookup_keys_jsonb_build_expr_sr TEXT;
         BEGIN
+            v_plan_sqls := '[]'::jsonb;
             -- On cache miss, proceed with the expensive introspection and query building.
             v_unified_id_cols_projection := (
                 SELECT string_agg(
@@ -1343,7 +1344,20 @@ BEGIN
                 v_consistency_check_expr,                            /* %11$s */
                 v_source_table_ident                                 /* %12$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+    
+            v_sql := 'CREATE INDEX ON source_initial (source_row_id);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            IF v_lookup_columns IS NOT NULL AND cardinality(v_lookup_columns) > 0 THEN
+                SELECT format('CREATE INDEX ON source_initial (%s);', string_agg(quote_ident(c), ', '))
+                INTO v_sql
+                FROM unnest(v_lookup_columns) AS c;
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+            END IF;
+
+            v_sql := 'ANALYZE source_initial;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             v_sql := format($SQL$
                 CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
@@ -1371,7 +1385,7 @@ BEGIN
                 v_range_constructor,          -- %1$I
                 v_natural_key_join_condition  -- %2$s
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- Phase 4.2: Construct and execute the main query to generate the execution plan.
             -- Each CTE is materialized into a temporary table for performance analysis and debugging.
@@ -1400,7 +1414,7 @@ BEGIN
                 v_target_nk_json_expr,                                  /* %8$s */
                 v_target_rows_filter                                    /* %9$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 4: source_rows_with_matches
             v_sql := format($SQL$
@@ -1415,7 +1429,7 @@ BEGIN
                 v_propagated_id_cols_list,      /* %1$s */
                 v_source_rows_exists_join_expr  /* %2$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 5: source_rows_with_aggregates
             v_sql := $SQL$
@@ -1427,7 +1441,7 @@ BEGIN
                 FROM source_rows_with_matches
                 GROUP BY source_row_id
             $SQL$;
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 5: source_rows_with_discovery
             v_sql := $SQL$
@@ -1440,7 +1454,7 @@ BEGIN
                 FROM source_rows_with_matches m
                 JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
             $SQL$;
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 6: source_rows
             v_sql := format($SQL$
@@ -1460,7 +1474,7 @@ BEGIN
                 v_target_entity_exists_expr, /* %1$s */
                 v_coalesced_id_cols_list     /* %2$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 8: source_rows_with_new_flag
             v_sql := $SQL$
@@ -1468,7 +1482,7 @@ BEGIN
                 SELECT *, NOT target_entity_exists as is_new_entity
                 FROM source_rows
             $SQL$;
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 9.1: source_rows_with_nk_json
             v_sql := format($SQL$
@@ -1479,7 +1493,7 @@ BEGIN
                 v_lookup_keys_as_jsonb_expr, /* %1$s */
                 v_lookup_keys_as_array_expr  /* %2$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 9.2: source_rows_with_canonical_key
             v_sql := format($SQL$
@@ -1501,7 +1515,7 @@ BEGIN
             $SQL$,
                 v_grouping_key_expr /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 9.3: source_rows_with_early_feedback
             v_sql := format($SQL$
@@ -1527,7 +1541,7 @@ BEGIN
                 v_valid_to_col,     /* %4$L */
                 v_interval          /* %5$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 10: active_source_rows
             v_sql := format($SQL$
@@ -1549,7 +1563,7 @@ BEGIN
             $SQL$,
                 mode /* %1$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 10: all_rows
             v_sql := format($SQL$
@@ -1575,7 +1589,7 @@ BEGIN
                 v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %1$s */
                 v_non_temporal_tr_qualified_lookup_cols_prefix          /* %2$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 11: time_points_raw
             v_sql := format($SQL$
@@ -1586,7 +1600,7 @@ BEGIN
             $SQL$,
                 v_lookup_cols_select_list_no_alias /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 12: time_points_unified
             v_sql := format($SQL$
@@ -1604,7 +1618,7 @@ BEGIN
             $SQL$,
                 v_grouping_key_expr /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 12.5: time_points_with_unified_ids
             v_sql := format($SQL$
@@ -1626,7 +1640,7 @@ BEGIN
             $SQL$,
                 v_unified_id_cols_projection /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 13: time_points
             v_sql := $SQL$
@@ -1635,7 +1649,7 @@ BEGIN
                 FROM time_points_with_unified_ids
                 ORDER BY grouping_key, point, causal_id DESC NULLS LAST
             $SQL$;
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 14: atomic_segments
             v_sql := format($SQL$
@@ -1649,7 +1663,7 @@ BEGIN
             $SQL$,
                 v_lookup_cols_select_list_no_alias /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 15: resolved_atomic_segments_with_payloads
             v_sql := format($SQL$
@@ -1687,7 +1701,7 @@ BEGIN
                 v_lateral_source_resolver_sql,           /* %5$s */
                 mode                                     /* %6$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             v_resolver_from := 'resolved_atomic_segments_with_payloads';
     
@@ -1697,7 +1711,7 @@ BEGIN
                     SELECT *, bool_or(s_data_payload IS NOT NULL) OVER (PARTITION BY grouping_key) as entity_is_in_source
                     FROM %s
                 $$, v_resolver_from);
-                v_plan_sqls := v_plan_sqls || v_sql;
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
                 v_resolver_from := 'resolved_atomic_segments_with_flag';
             END IF;
     
@@ -1732,7 +1746,7 @@ BEGIN
             $SQL$,
                 v_resolver_from /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 16: resolved_atomic_segments
             v_sql := format($SQL$
@@ -1757,7 +1771,7 @@ BEGIN
                 v_final_data_payload_expr,            /* %2$s */
                 p_log_trace                           /* %3$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 17: island_group
             v_sql := $SQL$
@@ -1787,7 +1801,7 @@ BEGIN
                     ) s1
                 ) s2
             $SQL$;
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 17.5: coalesced_final_segments
             v_sql := format($SQL$
@@ -1822,7 +1836,7 @@ BEGIN
                 p_log_trace,                 /* %3$L */
                 v_ephemeral_columns          /* %4$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 18: diff
             v_sql := format($SQL$
@@ -1851,7 +1865,7 @@ BEGIN
                 p_log_trace,           /* %2$L */
                 v_diff_join_condition  /* %3$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 19: diff_ranked
             v_sql := format($SQL$
@@ -1875,7 +1889,7 @@ BEGIN
             $SQL$,
                 v_ephemeral_columns /* %1$L */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
             -- CTE 20: plan_with_op
             v_sql := format($SQL$
@@ -1990,7 +2004,7 @@ BEGIN
                 v_lookup_keys_jsonb_build_expr_sr,                /* %12$s */
                 v_grouping_key_expr_for_union                     /* %13$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- CTE 21: plan
             v_sql := format($SQL$
@@ -2015,7 +2029,7 @@ BEGIN
             $SQL$,
                 v_plan_select_key_cols /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- Final SELECT
             v_sql := format($SQL$
@@ -2028,7 +2042,7 @@ BEGIN
             $SQL$,
                 v_final_order_by_expr /* %1$s */
             );
-            v_plan_sqls := v_plan_sqls || v_sql;
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'query', 'sql', v_sql);
     
             -- Conditionally log the generated SQL for debugging.
             BEGIN
@@ -2045,13 +2059,21 @@ BEGIN
 
     -- Delete any temp tables that are created by the prepared statments.
     CALL sql_saga.temporal_merge_drop_temp_tables();
-    -- Execute all statements in the plan. The first N-1 are CREATE TEMP TABLE,
-    -- and the last one is the final SELECT.
-    FOR i IN 1 .. (cardinality(v_plan_sqls) - 1) LOOP
-        EXECUTE v_plan_sqls[i];
-    END LOOP;
-
-    RETURN QUERY EXECUTE v_plan_sqls[cardinality(v_plan_sqls)];
+    -- Execute all statements in the plan.
+    DECLARE
+        v_step JSONB;
+        v_final_query TEXT;
+    BEGIN
+        FOR v_step IN SELECT * FROM jsonb_array_elements(v_plan_sqls)
+        LOOP
+            IF v_step->>'type' = 'query' THEN
+                v_final_query := v_step->>'sql';
+            ELSE
+                EXECUTE v_step->>'sql';
+            END IF;
+        END LOOP;
+        RETURN QUERY EXECUTE v_final_query;
+    END;
 END;
 $temporal_merge_plan$;
 

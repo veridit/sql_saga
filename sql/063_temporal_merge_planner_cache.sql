@@ -41,30 +41,58 @@ ANALYZE tmpc.target;
 ANALYZE tmpc.source1;
 
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query ---'
-
-\o /dev/null
-SELECT * FROM sql_saga.temporal_merge_plan(
-    target_table => 'tmpc.target'::regclass,
-    source_table => 'tmpc.source1'::regclass,
-    identity_columns => '{id}'::text[],
-    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    era_name => 'valid'
-);
-\o
-SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%' \gset
-\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
-:explain_command
-
-\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 DO $$
-DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
+DECLARE
+    plan_sqls JSONB;
+    sql_step JSONB;
+    sql_stmt TEXT;
+    rec RECORD;
+    has_seq_scan BOOLEAN;
 BEGIN
-    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source1 t%';
-    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the temporal_merge_plan.'; END IF;
-    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
-        IF rec."QUERY PLAN" LIKE '%Seq Scan on target%' THEN has_seq_scan := true; EXIT; END IF;
+    -- Run once to populate cache. Output is discarded.
+    PERFORM * FROM sql_saga.temporal_merge_plan(
+        target_table => 'tmpc.target'::regclass,
+        source_table => 'tmpc.source1'::regclass,
+        identity_columns => '{id}'::text[],
+        mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+        era_name => 'valid'
+    );
+
+    -- Find the plan SQLs for the source table of this scenario.
+    SELECT c.plan_sqls INTO plan_sqls
+    FROM pg_temp.temporal_merge_plan_cache c
+    WHERE c.cache_key LIKE '%' || 'tmpc.source1'::regclass::text;
+
+    -- Clean up temp tables created by the first run so we can re-execute them.
+    CALL sql_saga.temporal_merge_drop_temp_tables();
+
+    RAISE NOTICE '--- Explaining % steps from cache', jsonb_array_length(plan_sqls);
+    FOR sql_step IN SELECT * FROM jsonb_array_elements(plan_sqls)
+    LOOP
+        RAISE NOTICE '---';
+        sql_stmt := sql_step->>'sql';
+
+        IF sql_step->>'type' = 'setup' THEN
+            RAISE NOTICE 'Executing setup: %', sql_stmt;
+            EXECUTE sql_stmt;
+        ELSE
+            RAISE NOTICE 'Explaining: %', sql_stmt;
+            has_seq_scan := false;
+            FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
+            LOOP
+                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- The schema is hardcoded here, which is fine for this specific test.
+                -- We add a space to not match "target_rows".
+                IF rec."QUERY PLAN" LIKE '%Seq Scan on target %' THEN
+                    has_seq_scan := true;
+                END IF;
+            END LOOP;
+
+            IF has_seq_scan THEN
+                RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target".';
+            END IF;
+        END IF;
     END LOOP;
-    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on target". Check for non-SARGable query conditions.'; END IF;
 END;
 $$;
 \echo '--- OK: Verified that EXPLAIN plan is optimal. ---'
@@ -93,29 +121,57 @@ ANALYZE tmpc.source_nk_not_null;
 \d tmpc.source_nk_not_null
 
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NOT NULL) ---'
-\o /dev/null
-SELECT * FROM sql_saga.temporal_merge_plan(
-    target_table => 'tmpc.target_nk_not_null'::regclass,
-    source_table => 'tmpc.source_nk_not_null'::regclass,
-    identity_columns => '{type,lu_id}'::text[],
-    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    era_name => 'valid'
-);
-\o
-SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk_nn FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%' \gset
-\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
-:explain_command_nk_nn
-
-\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 DO $$
-DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
+DECLARE
+    plan_sqls JSONB;
+    sql_step JSONB;
+    sql_stmt TEXT;
+    rec RECORD;
+    has_seq_scan BOOLEAN;
 BEGIN
-    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk_not_null t%';
-    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the non-null natural key temporal_merge_plan.'; END IF;
-    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
-        IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk_not_null%' THEN has_seq_scan := true; EXIT; END IF;
+    -- Run once to populate cache. Output is discarded.
+    PERFORM * FROM sql_saga.temporal_merge_plan(
+        target_table => 'tmpc.target_nk_not_null'::regclass,
+        source_table => 'tmpc.source_nk_not_null'::regclass,
+        identity_columns => '{type,lu_id}'::text[],
+        mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+        era_name => 'valid'
+    );
+
+    -- Find the plan SQLs for the source table of this scenario.
+    SELECT c.plan_sqls INTO plan_sqls
+    FROM pg_temp.temporal_merge_plan_cache c
+    WHERE c.cache_key LIKE '%' || 'tmpc.source_nk_not_null'::regclass::text;
+
+    -- Clean up temp tables created by the first run so we can re-execute them.
+    CALL sql_saga.temporal_merge_drop_temp_tables();
+
+    RAISE NOTICE '--- Explaining % steps from cache', jsonb_array_length(plan_sqls);
+    FOR sql_step IN SELECT * FROM jsonb_array_elements(plan_sqls)
+    LOOP
+        RAISE NOTICE '---';
+        sql_stmt := sql_step->>'sql';
+
+        IF sql_step->>'type' = 'setup' THEN
+            RAISE NOTICE 'Executing setup: %', sql_stmt;
+            EXECUTE sql_stmt;
+        ELSE
+            RAISE NOTICE 'Explaining: %', sql_stmt;
+            has_seq_scan := false;
+            FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
+            LOOP
+                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- We add a space to not match temp tables.
+                IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk_not_null %' THEN
+                    has_seq_scan := true;
+                END IF;
+            END LOOP;
+
+            IF has_seq_scan THEN
+                RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for non-null natural key contains a "Seq Scan on target_nk_not_null".';
+            END IF;
+        END IF;
     END LOOP;
-    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for non-null natural key contains a "Seq Scan on target_nk_not_null".'; END IF;
 END;
 $$;
 \echo '--- OK: Verified that EXPLAIN plan for non-null natural key is optimal. ---'
@@ -151,29 +207,57 @@ ANALYZE tmpc.source_nk;
 \d tmpc.source_nk
 
 \echo '\n--- Performance Monitoring: EXPLAIN the cached planner query (Natural Key, NULLable) ---'
-\o /dev/null
-SELECT * FROM sql_saga.temporal_merge_plan(
-    target_table => 'tmpc.target_nk'::regclass,
-    source_table => 'tmpc.source_nk'::regclass,
-    identity_columns => '{type,lu_id,es_id}'::text[],
-    mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
-    era_name => 'valid'
-);
-\o
-SELECT format('EXPLAIN (COSTS OFF) EXECUTE %I;', name) as explain_command_nk FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%' \gset
-\echo EXPLAIN (COSTS OFF) EXECUTE tm_plan_<...>;
-:explain_command_nk
-
-\echo '\n--- Verifying that the plan is optimal (no Seq Scan on target) ---'
 DO $$
-DECLARE plan_name TEXT; rec RECORD; has_seq_scan BOOLEAN := false;
+DECLARE
+    plan_sqls JSONB;
+    sql_step JSONB;
+    sql_stmt TEXT;
+    rec RECORD;
+    has_seq_scan BOOLEAN;
 BEGIN
-    SELECT name INTO plan_name FROM pg_prepared_statements WHERE name LIKE 'tm_plan_%' AND statement LIKE '%FROM tmpc.source_nk t%';
-    IF plan_name IS NULL THEN RAISE EXCEPTION 'Could not find the prepared statement for the nullable natural key temporal_merge_plan.'; END IF;
-    FOR rec IN EXECUTE 'EXPLAIN (COSTS OFF) EXECUTE ' || quote_ident(plan_name) LOOP
-        IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk%' THEN has_seq_scan := true; EXIT; END IF;
+    -- Run once to populate cache. Output is discarded.
+    PERFORM * FROM sql_saga.temporal_merge_plan(
+        target_table => 'tmpc.target_nk'::regclass,
+        source_table => 'tmpc.source_nk'::regclass,
+        identity_columns => '{type,lu_id,es_id}'::text[],
+        mode => 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode,
+        era_name => 'valid'
+    );
+
+    -- Find the plan SQLs for the source table of this scenario.
+    SELECT c.plan_sqls INTO plan_sqls
+    FROM pg_temp.temporal_merge_plan_cache c
+    WHERE c.cache_key LIKE '%' || 'tmpc.source_nk'::regclass::text;
+
+    -- Clean up temp tables created by the first run so we can re-execute them.
+    CALL sql_saga.temporal_merge_drop_temp_tables();
+
+    RAISE NOTICE '--- Explaining % steps from cache', jsonb_array_length(plan_sqls);
+    FOR sql_step IN SELECT * FROM jsonb_array_elements(plan_sqls)
+    LOOP
+        RAISE NOTICE '---';
+        sql_stmt := sql_step->>'sql';
+
+        IF sql_step->>'type' = 'setup' THEN
+            RAISE NOTICE 'Executing setup: %', sql_stmt;
+            EXECUTE sql_stmt;
+        ELSE
+            RAISE NOTICE 'Explaining: %', sql_stmt;
+            has_seq_scan := false;
+            FOR rec IN EXECUTE 'EXPLAIN (ANALYZE, COSTS OFF, TIMING OFF, SUMMARY OFF, BUFFERS) ' || sql_stmt
+            LOOP
+                RAISE NOTICE '%', rec."QUERY PLAN";
+                -- We add a space to not match temp tables or other target tables.
+                IF rec."QUERY PLAN" LIKE '%Seq Scan on target_nk %' THEN
+                    has_seq_scan := true;
+                END IF;
+            END LOOP;
+
+            IF has_seq_scan THEN
+                RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for nullable natural key contains a "Seq Scan on target_nk".';
+            END IF;
+        END IF;
     END LOOP;
-    IF has_seq_scan THEN RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan for nullable natural key contains a "Seq Scan on target_nk".'; END IF;
 END;
 $$;
 \echo '--- OK: Verified that EXPLAIN plan for natural key is optimal. ---'
