@@ -270,8 +270,8 @@ CREATE TABLE valid_to_test (
     id integer,
     value text,
     valid_from date,
-    valid_until date,
     valid_to date,
+    valid_until date,
     PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('valid_to_test', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
@@ -351,6 +351,52 @@ ROLLBACK TO exact_temporal_match_without_where_should_succeed;
 
 
 ROLLBACK TO SAVEPOINT scenario_8;
+
+
+-- Scenario 9: Reproduce statbus regression with valid_to, where an incorrect plan is generated.
+SAVEPOINT scenario_9;
+CREATE TABLE statbus_repro (
+    id integer,
+    category_id integer,
+    valid_from date,
+    valid_to date,
+    valid_until date,
+    PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('statbus_repro', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_unique_key('statbus_repro', ARRAY['id']);
+SELECT sql_saga.add_for_portion_of_view('statbus_repro');
+
+INSERT INTO statbus_repro (id, category_id, valid_from, valid_to) VALUES (1, 13, '2023-01-01', '2025-12-31');
+TABLE statbus_repro;
+
+-- Test 1: Update using valid_until (the baseline for correct behavior)
+SAVEPOINT test_valid_until;
+UPDATE statbus_repro__for_portion_of_valid
+ SET category_id = 30, valid_from = '2024-01-01', valid_until = '2025-01-01'
+ WHERE id = 1;
+
+-- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+-- Check result
+TABLE statbus_repro ORDER BY valid_from;
+ROLLBACK TO SAVEPOINT test_valid_until;
+
+
+-- Test 2: Update using valid_to (this is expected to show the regression)
+SAVEPOINT test_valid_to;
+UPDATE statbus_repro__for_portion_of_valid
+ SET category_id = 30, valid_from = '2024-01-01', valid_to = '2024-12-31'
+ WHERE id = 1;
+
+-- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+-- Check result
+TABLE statbus_repro ORDER BY valid_from;
+ROLLBACK TO SAVEPOINT test_valid_to;
+
+
+ROLLBACK TO SAVEPOINT scenario_9;
 
 ROLLBACK;
 

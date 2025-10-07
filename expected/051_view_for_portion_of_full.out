@@ -539,8 +539,8 @@ CREATE TABLE valid_to_test (
     id integer,
     value text,
     valid_from date,
-    valid_until date,
     valid_to date,
+    valid_until date,
     PRIMARY KEY (id, valid_from)
 );
 SELECT sql_saga.add_era('valid_to_test', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
@@ -558,9 +558,9 @@ SELECT sql_saga.add_for_portion_of_view('valid_to_test');
 
 INSERT INTO valid_to_test (id, value, valid_from, valid_until) VALUES (1, 'A', '2024-01-01', '2025-01-01');
 TABLE valid_to_test;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Test 1: Using valid_to should now work correctly.
@@ -568,50 +568,51 @@ SAVEPOINT test_valid_to;
 -- The new trigger implementation correctly derives valid_until from valid_to.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-02-01', valid_to = '2024-02-28' WHERE id = 1;
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2024-02-01  | 2024-01-31
-  1 | B     | 2024-02-01 | 2025-01-01  | 2024-12-31
-(2 rows)
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | 2024-02-01 | 2024-02-28 | 2024-02-29
+  1 | A     | 2024-02-29 | 2024-12-31 | 2025-01-01
+(3 rows)
 
 ROLLBACK TO SAVEPOINT test_valid_to;
 -- Test 2: Coalescing of adjacent identical segments.
 SAVEPOINT test_coalescing;
 -- Before changing
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Update one slice. This creates a 3-way split.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
 -- After changing
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2024-02-01  | 2024-01-31
-  1 | B     | 2024-02-01 | 2024-03-01  | 2024-02-29
-  1 | A     | 2024-03-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | 2024-02-01 | 2024-02-29 | 2024-03-01
+  1 | A     | 2024-03-01 | 2024-12-31 | 2025-01-01
 (3 rows)
 
 -- Update an adjacent slice with the same data. The new logic should coalesce them.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-03-01', valid_until = '2024-04-01' WHERE id = 1;
 -- The rewritten version correctly coalesces the two 'B' rows into a single row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2024-02-01  | 2024-01-31
-  1 | B     | 2024-02-01 | 2024-04-01  | 2024-03-31
-  1 | A     | 2024-04-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | 2024-02-01 | 2024-03-31 | 2024-04-01
+  1 | A     | 2024-04-01 | 2024-12-31 | 2025-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT test_coalescing;
 -- Verify state after rollback
 TABLE valid_to_test;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | A     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Test 3: Exact match update. This should now perform a simple UPDATE.
@@ -619,9 +620,9 @@ SAVEPOINT test_exact_match;
 UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_to = '2024-12-31' WHERE id = 1;
 -- We expect one row, with the value updated.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | C     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | C     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_exact_match;
@@ -652,9 +653,9 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify value is updated on just that one row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | D     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | D     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO exact_match_update_with_where_should_succeed;
@@ -681,13 +682,99 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify value is updated on just that one row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from | valid_until |  valid_to  
-----+-------+------------+-------------+------------
-  1 | E     | 2024-01-01 | 2025-01-01  | 2024-12-31
+ id | value | valid_from |  valid_to  | valid_until 
+----+-------+------------+------------+-------------
+  1 | E     | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO exact_temporal_match_without_where_should_succeed;
 ROLLBACK TO SAVEPOINT scenario_8;
+-- Scenario 9: Reproduce statbus regression with valid_to, where an incorrect plan is generated.
+SAVEPOINT scenario_9;
+CREATE TABLE statbus_repro (
+    id integer,
+    category_id integer,
+    valid_from date,
+    valid_to date,
+    valid_until date,
+    PRIMARY KEY (id, valid_from)
+);
+SELECT sql_saga.add_era('statbus_repro', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
+NOTICE:  sql_saga: Created trigger "statbus_repro_synchronize_temporal_columns_trigger" on table statbus_repro to synchronize columns: valid_to
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('statbus_repro', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.statbus_repro to add constraints: ADD CONSTRAINT statbus_repro_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT statbus_repro_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT statbus_repro_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+     add_unique_key     
+------------------------
+ statbus_repro_id_valid
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('statbus_repro');
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+INSERT INTO statbus_repro (id, category_id, valid_from, valid_to) VALUES (1, 13, '2023-01-01', '2025-12-31');
+TABLE statbus_repro;
+ id | category_id | valid_from |  valid_to  | valid_until 
+----+-------------+------------+------------+-------------
+  1 |          13 | 2023-01-01 | 2025-12-31 | 2026-01-01
+(1 row)
+
+-- Test 1: Update using valid_until (the baseline for correct behavior)
+SAVEPOINT test_valid_until;
+UPDATE statbus_repro__for_portion_of_valid
+ SET category_id = 30, valid_from = '2024-01-01', valid_until = '2025-01-01'
+ WHERE id = 1;
+-- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                     data                      | feedback | trace |    grouping_key    
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------+----------+-------+--------------------
+           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
+           2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
+           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+(3 rows)
+
+-- Check result
+TABLE statbus_repro ORDER BY valid_from;
+ id | category_id | valid_from |  valid_to  | valid_until 
+----+-------------+------------+------------+-------------
+  1 |          13 | 2023-01-01 | 2023-12-31 | 2024-01-01
+  1 |          30 | 2024-01-01 | 2024-12-31 | 2025-01-01
+  1 |          13 | 2025-01-01 | 2025-12-31 | 2026-01-01
+(3 rows)
+
+ROLLBACK TO SAVEPOINT test_valid_until;
+-- Test 2: Update using valid_to (this is expected to show the regression)
+SAVEPOINT test_valid_to;
+UPDATE statbus_repro__for_portion_of_valid
+ SET category_id = 30, valid_from = '2024-01-01', valid_to = '2024-12-31'
+ WHERE id = 1;
+-- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
+TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
+ plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                     data                      | feedback | trace |    grouping_key    
+-------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------+----------+-------+--------------------
+           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
+           2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
+           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+(3 rows)
+
+-- Check result
+TABLE statbus_repro ORDER BY valid_from;
+ id | category_id | valid_from |  valid_to  | valid_until 
+----+-------------+------------+------------+-------------
+  1 |          13 | 2023-01-01 | 2023-12-31 | 2024-01-01
+  1 |          30 | 2024-01-01 | 2024-12-31 | 2025-01-01
+  1 |          13 | 2025-01-01 | 2025-12-31 | 2026-01-01
+(3 rows)
+
+ROLLBACK TO SAVEPOINT test_valid_to;
+ROLLBACK TO SAVEPOINT scenario_9;
 ROLLBACK;
 DROP ROLE view_test_role;
 \i sql/include/test_teardown.sql

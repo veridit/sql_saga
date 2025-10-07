@@ -17,7 +17,7 @@ BEGIN
     -- Get metadata about the view's underlying table.
     SELECT v.table_schema, v.table_name, v.era_name,
            e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column,
-           e.range_subtype_category
+           e.range_subtype_category, e.range_subtype
     INTO info
     FROM sql_saga.updatable_view AS v
     JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
@@ -71,18 +71,38 @@ BEGIN
 
     -- The `for_portion_of` view allows specifying a time slice using either `valid_until` (exclusive)
     -- or `valid_to` (inclusive). To provide a clean, unambiguous source row to the underlying
-    -- temporal_merge procedure, we must ensure only one of these is passed.
-    --
-    -- The convention is to prefer `valid_until` if both happen to be present, and to clear `valid_to`.
-    -- If only `valid_to` is present, we clear `valid_until` and let the planner derive it.
-    IF jnew ? info.valid_until_column_name AND jnew->>info.valid_until_column_name IS NOT NULL THEN
-        -- valid_until is the source of truth, so clear valid_to.
-        IF info.synchronize_valid_to_column IS NOT NULL THEN
-            jnew := jnew - info.synchronize_valid_to_column;
-        END IF;
-    ELSIF info.synchronize_valid_to_column IS NOT NULL AND jnew ? info.synchronize_valid_to_column AND jnew->>info.synchronize_valid_to_column IS NOT NULL THEN
-        -- valid_to is the source of truth, so clear valid_until.
-        jnew := jnew - info.valid_until_column_name;
+    -- temporal_merge procedure, the trigger must derive valid_until and pass only that column.
+    IF info.synchronize_valid_to_column IS NOT NULL THEN
+        DECLARE
+             v_valid_to_changed BOOLEAN;
+             v_valid_until_changed BOOLEAN;
+        BEGIN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.synchronize_valid_to_column, info.synchronize_valid_to_column) INTO v_valid_to_changed USING NEW, OLD;
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_until_column_name, info.valid_until_column_name) INTO v_valid_until_changed USING NEW, OLD;
+
+            -- If valid_to was changed but valid_until was not, then valid_until is stale and must be derived.
+            IF v_valid_to_changed AND NOT v_valid_until_changed THEN
+                DECLARE
+                    v_interval text;
+                    v_derived_valid_until jsonb;
+                BEGIN
+                    CASE info.range_subtype_category
+                        WHEN 'D' THEN v_interval := '''1 day''::interval';
+                        WHEN 'N' THEN v_interval := '1';
+                        ELSE RAISE EXCEPTION 'Unsupported range subtype category for valid_to -> valid_until conversion: %', info.range_subtype_category;
+                    END CASE;
+
+                    EXECUTE format('SELECT to_jsonb(($1->>%L)::%s + %s)',
+                        info.synchronize_valid_to_column, info.range_subtype, v_interval)
+                    INTO v_derived_valid_until
+                    USING jnew;
+
+                    jnew := jnew || jsonb_build_object(info.valid_until_column_name, v_derived_valid_until);
+                END;
+            END IF;
+        END;
+        -- Always remove valid_to before passing to temporal_merge.
+        jnew := jnew - info.synchronize_valid_to_column;
     END IF;
 
     -- We no longer need the complex IF/ELSE for insertion.
