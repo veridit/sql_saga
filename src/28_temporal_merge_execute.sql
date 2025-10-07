@@ -109,8 +109,8 @@ BEGIN
     CREATE TEMP TABLE temporal_merge_feedback (LIKE sql_saga.temporal_merge_feedback) ON COMMIT DROP;
 
     -- Create a unified, session-local cache for index checks to avoid redundant lookups.
-    IF to_regclass('pg_temp.temporal_merge_cache') IS NULL THEN
-        CREATE TEMP TABLE temporal_merge_cache (
+    IF to_regclass('pg_temp.temporal_merge_index_cache') IS NULL THEN
+        CREATE TEMP TABLE temporal_merge_index_cache (
             rel_oid oid NOT NULL,
             lookup_columns text[], -- NULL for GIST checks. NOT NULL for BTREE checks.
             has_index boolean NOT NULL,
@@ -125,9 +125,9 @@ BEGIN
         ) ON COMMIT DROP;
 
         -- Unique index for GIST checks
-        CREATE UNIQUE INDEX ON temporal_merge_cache (rel_oid) WHERE lookup_columns IS NULL;
+        CREATE UNIQUE INDEX ON temporal_merge_index_cache (rel_oid) WHERE lookup_columns IS NULL;
         -- Unique index for BTREE checks
-        CREATE UNIQUE INDEX ON temporal_merge_cache (rel_oid, lookup_columns) WHERE lookup_columns IS NOT NULL;
+        CREATE UNIQUE INDEX ON temporal_merge_index_cache (rel_oid, lookup_columns) WHERE lookup_columns IS NOT NULL;
     END IF;
 
     -- Introspect era information to get the correct column names
@@ -155,7 +155,7 @@ BEGIN
     -- Check cache for original source relation OID. This provides a fast path for repeated calls with the same view.
     SELECT has_index, hint_rel_name
     INTO v_has_gist_index, v_source_rel_name_for_hint
-    FROM pg_temp.temporal_merge_cache AS tmc
+    FROM pg_temp.temporal_merge_index_cache AS tmc
     WHERE rel_oid = temporal_merge_execute.source_table AND tmc.lookup_columns IS NULL;
 
     IF NOT FOUND THEN
@@ -196,7 +196,7 @@ BEGIN
                 -- We have a resolvable base table. Check cache for it.
                 SELECT has_index
                 INTO v_has_gist_index
-                FROM pg_temp.temporal_merge_cache AS tmc
+                FROM pg_temp.temporal_merge_index_cache AS tmc
                 WHERE rel_oid = v_source_rel_oid AND tmc.lookup_columns IS NULL;
 
                 IF NOT FOUND THEN
@@ -235,7 +235,7 @@ BEGIN
                     END IF;
 
                     -- Populate cache for the base table.
-                    INSERT INTO pg_temp.temporal_merge_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+                    INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
                     VALUES (v_source_rel_oid, NULL, v_has_gist_index, v_source_rel_name_for_hint);
                 END IF;
             END IF;
@@ -244,7 +244,7 @@ BEGIN
             -- This is the key optimization for subsequent calls with the same view.
             -- We only need to do this if the original source was different from the resolved one (i.e., it was a view).
             IF temporal_merge_execute.source_table <> v_source_rel_oid THEN
-                INSERT INTO pg_temp.temporal_merge_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+                INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
                 VALUES (temporal_merge_execute.source_table, NULL, v_has_gist_index, v_source_rel_name_for_hint);
             END IF;
         END;
@@ -327,7 +327,7 @@ BEGIN
     -- This check is cached per transaction to avoid redundant lookups.
     SELECT has_index
     INTO v_has_lookup_btree_index
-    FROM pg_temp.temporal_merge_cache AS tmc
+    FROM pg_temp.temporal_merge_index_cache AS tmc
     WHERE rel_oid = temporal_merge_execute.target_table
       AND tmc.lookup_columns = v_lookup_columns;
 
@@ -349,7 +349,7 @@ BEGIN
         )
         INTO v_has_lookup_btree_index;
 
-        INSERT INTO pg_temp.temporal_merge_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
+        INSERT INTO pg_temp.temporal_merge_index_cache (rel_oid, lookup_columns, has_index, hint_rel_name)
         VALUES (temporal_merge_execute.target_table, v_lookup_columns, v_has_lookup_btree_index, NULL);
     END IF;
 
