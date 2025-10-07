@@ -235,5 +235,17 @@ BEGIN
 END;
 $temporal_merge$;
 
-COMMENT ON PROCEDURE sql_saga.temporal_merge(regclass, regclass, text[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean) IS 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
+COMMENT ON PROCEDURE sql_saga.temporal_merge IS 'Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.';
 
+
+CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_drop_cache()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_plan_cache; END IF;
+    IF to_regclass('pg_temp.temporal_merge_index_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_index_cache; END IF;
+    CALL sql_saga.temporal_merge_drop_temp_tables();
+END;
+$procedure$;
+
+COMMENT ON PROCEDURE sql_saga.temporal_merge_drop_cache IS
+'Drops cached prepared statements and all temporary tables created by the temporal_merge_plan function. This is intended for use in specialized test cases that involve role switching within a single transaction, where automatic ON COMMIT DROP cleanup does not suffice.';

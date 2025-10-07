@@ -2094,15 +2094,3 @@ $procedure$;
 
 COMMENT ON PROCEDURE sql_saga.temporal_merge_drop_temp_tables IS
 'Drops all temporary tables created by the temporal_merge_plan function. This is used before executing the cached prepared statements that create them.';
-
-CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_drop_cache()
-LANGUAGE plpgsql AS $procedure$
-BEGIN
-    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_plan_cache; END IF;
-    IF to_regclass('pg_temp.temporal_merge_index_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_index_cache; END IF;
-    CALL sql_saga.temporal_merge_drop_temp_tables();
-END;
-$procedure$;
-
-COMMENT ON PROCEDURE sql_saga.temporal_merge_drop_cache IS
-'Drops cached prepared statements and all temporary tables created by the temporal_merge_plan function. This is intended for use in specialized test cases that involve role switching within a single transaction, where automatic ON COMMIT DROP cleanup does not suffice.';
