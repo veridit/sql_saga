@@ -29,7 +29,8 @@ ifeq (benchmark,$(filter benchmark,$(MAKECMDGOALS)))
 endif
 
 REGRESS = $(if $(TESTS),$(patsubst sql/%,%,$(TESTS)),$(REGRESS_TO_RUN))
-REGRESS_OPTS := --create-role=sql_saga_regress --dbname=sql_saga_regress
+override CONTRIB_TESTDB = sql_saga_regress
+REGRESS_OPTS += --create-role=$(CONTRIB_TESTDB) --load-extension=pg_stat_monitor
 
 OBJS = src/sql_saga.o src/covers_without_gaps.o $(WIN32RES)
 
@@ -46,6 +47,7 @@ all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql
 # tests are run.
 install: $(EXTENSION)--$(EXTVERSION).sql
 
+
 # Build the main extension script from component files.
 # The source files are numbered to ensure correct concatenation order.
 $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
@@ -59,6 +61,8 @@ $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
 # To run a subset of tests: `make test TESTS="001_install 002_era"`
 .PHONY: test setup_test_files
 test: setup_test_files installcheck
+
+
 
 # expected updates the .out files for the last run test suite.
 # It parses regression.out to find which tests were run.
