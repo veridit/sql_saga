@@ -49,7 +49,7 @@ NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_colu
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           |          | 
  validity    | daterange |           |          | 
 Check constraints:
     "sync_range_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -136,7 +136,7 @@ NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_colum
 -----------+-----------+-----------+----------+---------
  id        | integer   |           |          | 
  start_num | integer   |           | not null | 
- until_num | integer   |           | not null | 
+ until_num | integer   |           |          | 
  num_range | int4range |           |          | 
  to_num    | integer   |           |          | 
 Check constraints:
@@ -218,7 +218,7 @@ NOTICE:  sql_saga: Created trigger "sync_range_generated_synchronize_temporal_co
 -------------+-----------+-----------+----------+-----------------------------------------------------------------------------
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           |          | 
  validity    | daterange |           |          | generated always as (daterange(valid_from, valid_until, '[)'::text)) stored
 Check constraints:
     "sync_range_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -253,7 +253,7 @@ NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigg
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
  valid_to    | date      |           |          | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           |          | 
  validity    | daterange |           |          | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -307,7 +307,7 @@ NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigg
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
  valid_to    | date      |           |          | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           |          | 
  validity    | daterange |           |          | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -330,7 +330,7 @@ ROLLBACK TO with_defaults_test;
  id          | integer   |           |          | 
  valid_from  | date      |           | not null | 
  valid_to    | date      |           |          | 
- valid_until | date      |           | not null | 
+ valid_until | date      |           |          | 
  validity    | daterange |           |          | 
 Check constraints:
     "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -390,7 +390,7 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
  id          | integer                  |           |          | 
  valid_from  | timestamp with time zone |           | not null | 
  valid_to    | timestamp with time zone |           |          | 
- valid_until | timestamp with time zone |           | not null | 
+ valid_until | timestamp with time zone |           |          | 
 Check constraints:
     "sync_continuous_tstz_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp with time zone)
 
@@ -420,7 +420,7 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
  id          | integer                     |           |          | 
  valid_from  | timestamp without time zone |           | not null | 
  valid_to    | timestamp without time zone |           |          | 
- valid_until | timestamp without time zone |           | not null | 
+ valid_until | timestamp without time zone |           |          | 
 Check constraints:
     "sync_continuous_ts_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp without time zone)
 
@@ -450,7 +450,7 @@ WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete ty
  id          | integer |           |          | 
  valid_from  | numeric |           | not null | 
  valid_to    | numeric |           |          | 
- valid_until | numeric |           | not null | 
+ valid_until | numeric |           |          | 
 Check constraints:
     "sync_continuous_numeric_valid_check" CHECK (valid_from < valid_until AND valid_from > '-Infinity'::numeric)
 

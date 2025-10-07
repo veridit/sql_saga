@@ -228,7 +228,11 @@ BEGIN
         alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name /* %I */);
     END IF;
     IF NOT valid_until_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name /* %I */);
+        -- If we are using a trigger to synchronize other columns, the trigger will handle
+        -- enforcing NOT NULL by providing a default when applicable. Otherwise, we can set it directly.
+        IF synchronize_valid_to_column IS NULL AND synchronize_range_column IS NULL THEN
+            alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name /* %I */);
+        END IF;
     END IF;
 
 
