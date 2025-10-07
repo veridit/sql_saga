@@ -124,7 +124,7 @@ CREATE INDEX ON source_table_for_view USING GIST (daterange(valid_from, valid_un
 
 -- Manually truncate the internal cache to ensure the new index is detected in the next call.
 -- This is necessary because the cache is session-local and this entire test runs in a single transaction.
-TRUNCATE pg_temp.temporal_merge_cache;
+CALL sql_saga.temporal_merge_drop_cache();
 
 \echo
 \echo '# Scenario 3c: View over large table WITH index. Expect NO warning.'

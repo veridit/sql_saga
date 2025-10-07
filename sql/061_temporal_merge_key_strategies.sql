@@ -851,7 +851,7 @@ DROP PROCEDURE tmtc.reset_target();
 DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id;
 DROP TABLE tmtc.legal_unit, tmtc.establishment;
 DROP TABLE tmtc.stat_definition;
-CALL sql_saga.temporal_merge_delete_temp_tables();
+CALL sql_saga.temporal_merge_drop_cache();
 DROP SCHEMA tmtc CASCADE;
 ROLLBACK;
 \i sql/include/test_teardown.sql

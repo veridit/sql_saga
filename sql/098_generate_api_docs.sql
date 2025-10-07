@@ -115,7 +115,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         AND p.proname NOT LIKE E'\\_\\_%'
         AND p.proname NOT IN (
             'temporal_merge_plan', 'temporal_merge_execute',
-            'temporal_merge_delete_temp_tables',
+            'temporal_merge_drop_cache','temporal_merge_drop_temp_tables',
             'covers_without_gaps_transfn', 'covers_without_gaps_finalfn',
             'first_sfunc'
         );
