@@ -1494,6 +1494,12 @@ BEGIN
                 v_lookup_keys_as_array_expr  /* %2$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            v_sql := 'CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := 'ANALYZE source_rows_with_nk_json;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             -- CTE 9.2: source_rows_with_canonical_key
             v_sql := format($SQL$

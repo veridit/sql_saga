@@ -159,7 +159,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 31 steps from cache
+NOTICE:  --- Explaining 33 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -391,6 +391,10 @@ NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=38
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
                 SELECT *, (CASE
@@ -425,7 +429,7 @@ NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared hit=62, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -1271,7 +1275,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 31 steps from cache
+NOTICE:  --- Explaining 33 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -1503,6 +1507,10 @@ NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=40
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
                 SELECT *, (CASE
@@ -1537,7 +1545,7 @@ NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44
+NOTICE:    Buffers: shared hit=65, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -2404,7 +2412,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 31 steps from cache
+NOTICE:  --- Explaining 33 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -2649,6 +2657,10 @@ NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=42
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
                 SELECT *, (CASE
@@ -2683,7 +2695,7 @@ NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46
+NOTICE:    Buffers: shared hit=68, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
