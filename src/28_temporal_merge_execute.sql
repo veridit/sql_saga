@@ -60,10 +60,7 @@ DECLARE
     v_log_id TEXT;
     v_summary_line TEXT;
     v_not_null_defaulted_cols TEXT[];
-    v_use_pg_stat_monitor BOOLEAN;
-    v_pg_stat_monitor_exists BOOLEAN;
 BEGIN
-    v_use_pg_stat_monitor := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.use_pg_stat_monitor', true), ''), 'false')::boolean;
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
     v_log_index_checks := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_index_checks', true), ''), 'false')::boolean;
@@ -71,35 +68,6 @@ BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_execute := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_execute', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
-
-    IF v_use_pg_stat_monitor THEN
-        SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') INTO v_pg_stat_monitor_exists;
-        IF v_pg_stat_monitor_exists THEN
-            IF to_regclass('pg_temp.temporal_merge_performance_log') IS NULL THEN
-                -- This schema mirrors a subset of pg_stat_monitor's columns.
-                CREATE TEMP TABLE temporal_merge_performance_log (
-                    log_id TEXT,
-                    event TEXT,
-                    queryid TEXT,
-                    query TEXT,
-                    calls BIGINT,
-                    total_time DOUBLE PRECISION,
-                    rows_retrieved BIGINT,
-                    shared_blks_hit BIGINT,
-                    shared_blks_read BIGINT,
-                    temp_blks_read BIGINT,
-                    temp_blks_written BIGINT
-                ) ON COMMIT DROP;
-                -- This is likely a standalone call, so we reset. The main `temporal_merge`
-                -- procedure is expected to call `temporal_merge_plan` first, which would
-                -- have already created the table and reset the stats.
-                PERFORM pg_stat_monitor_reset();
-            END IF;
-        ELSE
-            RAISE NOTICE 'sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.';
-            v_use_pg_stat_monitor := false; -- Disable for the rest of this execution.
-        END IF;
-    END IF;
 
     -- Identity and lookup columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.lookup_columns, temporal_merge_execute.identity_columns);
@@ -884,20 +852,6 @@ BEGIN
                 EXECUTE format('SET search_path = %s', v_old_search_path);
             END IF;
         END;
-
-        IF v_use_pg_stat_monitor THEN
-            INSERT INTO temporal_merge_performance_log (
-                log_id, event, queryid, query, calls, total_time, rows_retrieved,
-                shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written
-            )
-            SELECT
-                v_log_id, 'executor', m.queryid, m.query, m.calls, m.total_time, m.rows_retrieved,
-                m.shared_blks_hit, m.shared_blks_read, m.temp_blks_read, m.temp_blks_written
-            FROM pg_stat_monitor m
-            -- Filter to DML on the target table. The comment is a robust way to identify these queries.
-            WHERE m.query LIKE format('%%%s%%', v_target_table_ident)
-              AND (m.query ILIKE 'INSERT %' OR m.query ILIKE 'UPDATE %' OR m.query ILIKE 'DELETE %' OR m.query ILIKE 'MERGE %');
-        END IF;
 
         -- 4. Generate and store feedback
         v_sql := format($$

@@ -17,8 +17,6 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_plan(
 ) RETURNS SETOF sql_saga.temporal_merge_plan
 LANGUAGE plpgsql VOLATILE AS $temporal_merge_plan$
 DECLARE
-    v_use_pg_stat_monitor BOOLEAN;
-    v_pg_stat_monitor_exists BOOLEAN;
     v_log_vars BOOLEAN;
     v_log_id TEXT;
     --
@@ -96,34 +94,7 @@ DECLARE
     v_entity_id_check_is_null_expr_no_alias TEXT;
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
-    v_use_pg_stat_monitor := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.use_pg_stat_monitor', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
-
-    IF v_use_pg_stat_monitor THEN
-        SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') INTO v_pg_stat_monitor_exists;
-        IF v_pg_stat_monitor_exists THEN
-            IF to_regclass('pg_temp.temporal_merge_performance_log') IS NULL THEN
-                -- This schema mirrors a subset of pg_stat_monitor's columns.
-                CREATE TEMP TABLE temporal_merge_performance_log (
-                    log_id TEXT,
-                    event TEXT,
-                    queryid TEXT,
-                    query TEXT,
-                    calls BIGINT,
-                    total_time DOUBLE PRECISION,
-                    rows_retrieved BIGINT,
-                    shared_blks_hit BIGINT,
-                    shared_blks_read BIGINT,
-                    temp_blks_read BIGINT,
-                    temp_blks_written BIGINT
-                ) ON COMMIT DROP;
-            END IF;
-            PERFORM pg_stat_monitor_reset();
-        ELSE
-            RAISE NOTICE 'sql_saga.temporal_merge.use_pg_stat_monitor is true, but pg_stat_monitor extension is not installed. Skipping performance monitoring.';
-            v_use_pg_stat_monitor := false; -- Disable for the rest of this execution.
-        END IF;
-    END IF;
 
     IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
         CREATE TEMP TABLE temporal_merge_plan_cache (
@@ -2102,38 +2073,7 @@ BEGIN
             END IF;
         END LOOP;
 
-        IF v_use_pg_stat_monitor THEN
-            INSERT INTO temporal_merge_performance_log (
-                log_id, event, queryid, query, calls, total_time, rows_retrieved,
-                shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written
-            )
-            SELECT
-                v_log_id, 'planner_setup', m.queryid, m.query, m.calls, m.total_time, m.rows_retrieved,
-                m.shared_blks_hit, m.shared_blks_read, m.temp_blks_read, m.temp_blks_written
-            FROM pg_stat_monitor m
-            WHERE m.query ILIKE 'CREATE TEMP TABLE %';
-        END IF;
-
-        IF to_regclass('pg_temp.temporal_merge_plan_result') IS NOT NULL THEN
-             DROP TABLE pg_temp.temporal_merge_plan_result;
-        END IF;
-        CREATE TEMP TABLE temporal_merge_plan_result (LIKE sql_saga.temporal_merge_plan) ON COMMIT DROP;
-        EXECUTE 'INSERT INTO pg_temp.temporal_merge_plan_result ' || v_final_query;
-
-        IF v_use_pg_stat_monitor THEN
-            INSERT INTO temporal_merge_performance_log (
-                log_id, event, queryid, query, calls, total_time, rows_retrieved,
-                shared_blks_hit, shared_blks_read, temp_blks_read, temp_blks_written
-            )
-            SELECT
-                v_log_id, 'planner_final_select', m.queryid, m.query, m.calls, m.total_time, m.rows_retrieved,
-                m.shared_blks_hit, m.shared_blks_read, m.temp_blks_read, m.temp_blks_written
-            FROM pg_stat_monitor m
-            -- Find the final SELECT query. It's the one that selected from 'plan' temp table.
-            WHERE m.query ILIKE '%FROM plan p%';
-        END IF;
-
-        RETURN QUERY SELECT * FROM pg_temp.temporal_merge_plan_result;
+        RETURN QUERY EXECUTE v_final_query;
     END;
 END;
 $temporal_merge_plan$;

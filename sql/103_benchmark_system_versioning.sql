@@ -1,11 +1,7 @@
 \i sql/include/test_setup.sql
-
-SET ROLE TO sql_saga_unprivileged_user;
-
-SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
-
 \i sql/include/benchmark_setup.sql
 
+SET ROLE TO sql_saga_unprivileged_user;
 --
 -- Benchmark with System Versioning ONLY
 --
@@ -29,6 +25,7 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Hist
 
 -- With immediate constraints (the default)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
 DO $$
 BEGIN
@@ -38,13 +35,16 @@ BEGIN
   END LOOP;
 END; $$;
 END;
+CALL sql_saga.benchmark_log_and_reset('History INSERTs');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs end', 10000, true);
 
 -- UPDATE
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   UPDATE legal_unit_sv SET name = 'New ' || name WHERE id <= 10000;
 END;
+CALL sql_saga.benchmark_log_and_reset('History Update');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update end', 10000, true);
 
 SELECT 'legal_unit_sv' AS type, COUNT(*) AS count FROM legal_unit_sv
@@ -90,6 +90,7 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era 
 
 -- With immediate constraints (the default)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
 DO $$
 BEGIN
@@ -99,23 +100,28 @@ BEGIN
   END LOOP;
 END; $$;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History INSERTs');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs end', 10000, true);
 
 -- UPDATE with delayed commit checking
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit_era_history SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
   INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) SELECT id, '2016-01-01', 'infinity', name FROM legal_unit_era_history WHERE valid_until = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History Update deferred constraints');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints end', 10000, true);
 
 -- UPDATE with immediate constraints (non-key column)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   UPDATE legal_unit_era_history SET name = 'New ' || name WHERE id <= 10000;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History Update non-key');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key end', 10000, true);
 
 SELECT 'legal_unit_era_history' AS type, COUNT(*) AS count FROM legal_unit_era_history
@@ -147,30 +153,16 @@ DROP TABLE legal_unit_era_history;
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 
 \echo '-- Performance log from pg_stat_monitor --'
--- Check if pg_stat_monitor is installed, and output performance log if so.
-SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
-\if :pg_stat_monitor_exists
-    -- The output of this query will be captured in the test's .out file.
-    -- We select a stable subset of columns to avoid volatility.
-    -- We don't show time, just I/O and row counts. Query is truncated.
-    -- This provides a baseline for performance regression testing.
-    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
-    FROM pg_temp.temporal_merge_performance_log
-    ORDER BY event, total_time DESC, query_part;
-\else
-    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
-\endif
+\set monitor_log_filename expected/performance/103_benchmark_system_versioning_benchmark_monitor.csv
+\i sql/include/benchmark_monitor_csv.sql
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/performance/103_benchmark_system_versioning_performance.out
+\set benchmark_log_filename expected/performance/103_benchmark_system_versioning_benchmark_report.log
+\i sql/include/benchmark_report_log.sql
 
-\i sql/include/benchmark_report.sql
-
--- Stop redirecting output
-\o
-
+\i sql/include/benchmark_teardown.sql
 \i sql/include/test_teardown.sql

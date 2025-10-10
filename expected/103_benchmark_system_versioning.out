@@ -23,17 +23,9 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
-SET ROLE TO sql_saga_unprivileged_user;
-SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
 \i sql/include/benchmark_setup.sql
-CREATE TEMPORARY TABLE benchmark (
-  seq_id BIGINT GENERATED ALWAYS AS IDENTITY,
-  timestamp TIMESTAMPTZ DEFAULT clock_timestamp(),
-  event TEXT,
-  row_count INTEGER,
-  is_performance_benchmark BOOLEAN NOT NULL
-);
-INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('BEGIN', 0, false);
+\set ECHO none
+SET ROLE TO sql_saga_unprivileged_user;
 --
 -- Benchmark with System Versioning ONLY
 --
@@ -62,6 +54,7 @@ SELECT sql_saga.add_system_versioning(table_oid => 'establishment_sv');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Only Benchmark', 0, false);
 -- With immediate constraints (the default)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
 DO $$
 BEGIN
@@ -71,12 +64,15 @@ BEGIN
   END LOOP;
 END; $$;
 END;
+CALL sql_saga.benchmark_log_and_reset('History INSERTs');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History INSERTs end', 10000, true);
 -- UPDATE
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   UPDATE legal_unit_sv SET name = 'New ' || name WHERE id <= 10000;
 END;
+CALL sql_saga.benchmark_log_and_reset('History Update');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('History Update end', 10000, true);
 SELECT 'legal_unit_sv' AS type, COUNT(*) AS count FROM legal_unit_sv
 UNION ALL
@@ -157,6 +153,7 @@ SELECT sql_saga.add_system_versioning(table_oid => 'establishment_era_history');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Benchmark', 0, false);
 -- With immediate constraints (the default)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
 DO $$
 BEGIN
@@ -166,21 +163,26 @@ BEGIN
   END LOOP;
 END; $$;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History INSERTs');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History INSERTs end', 10000, true);
 -- UPDATE with delayed commit checking
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
   UPDATE legal_unit_era_history SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
   INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) SELECT id, '2016-01-01', 'infinity', name FROM legal_unit_era_history WHERE valid_until = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History Update deferred constraints');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update deferred constraints end', 10000, true);
 -- UPDATE with immediate constraints (non-key column)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key start', 0, false);
+CALL sql_saga.benchmark_reset();
 BEGIN;
   UPDATE legal_unit_era_history SET name = 'New ' || name WHERE id <= 10000;
 END;
+CALL sql_saga.benchmark_log_and_reset('Era + History Update non-key');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era + History Update non-key end', 10000, true);
 SELECT 'legal_unit_era_history' AS type, COUNT(*) AS count FROM legal_unit_era_history
 UNION ALL
@@ -256,24 +258,14 @@ DROP TABLE legal_unit_era_history;
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Tear down complete', 0, false);
 \echo '-- Performance log from pg_stat_monitor --'
 -- Performance log from pg_stat_monitor --
--- Check if pg_stat_monitor is installed, and output performance log if so.
-SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
-\if :pg_stat_monitor_exists
-    -- The output of this query will be captured in the test's .out file.
-    -- We select a stable subset of columns to avoid volatility.
-    -- We don't show time, just I/O and row counts. Query is truncated.
-    -- This provides a baseline for performance regression testing.
-    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
-    FROM pg_temp.temporal_merge_performance_log
-    ORDER BY event, total_time DESC, query_part;
-\else
-    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
-                             notice                              
------------------------------------------------------------------
- pg_stat_monitor not installed, skipping performance log output.
+\set monitor_log_filename expected/performance/103_benchmark_system_versioning_benchmark_monitor.csv
+\i sql/include/benchmark_monitor_csv.sql
+\set ECHO none
+ monitor_log_has_rows 
+----------------------
+ t
 (1 row)
 
-\endif
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
@@ -297,75 +289,11 @@ SELECT event, row_count FROM benchmark ORDER BY seq_id;
 (15 rows)
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/performance/103_benchmark_system_versioning_performance.out
-\i sql/include/benchmark_report.sql
--- Calculate rows per second
-CREATE OR REPLACE FUNCTION format_duration(p_interval interval) RETURNS TEXT AS $$
-BEGIN
-    IF p_interval IS NULL THEN RETURN ''; END IF;
-    IF EXTRACT(EPOCH FROM p_interval) >= 1 THEN
-        RETURN ROUND(EXTRACT(EPOCH FROM p_interval))::numeric || ' secs';
-    ELSE
-        RETURN ROUND(EXTRACT(EPOCH FROM p_interval) * 1000)::numeric || ' ms';
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
-psql:sql/include/benchmark_report.sql:11: ERROR:  must be owner of function format_duration
-WITH benchmark_events AS (
-  SELECT
-    seq_id,
-    timestamp,
-    event,
-    row_count,
-    is_performance_benchmark,
-    regexp_replace(event, ' (start|end)$', '') AS operation,
-    CASE
-      WHEN event LIKE '% start' THEN 'start'
-      WHEN event LIKE '% end' THEN 'end'
-      ELSE 'milestone'
-    END AS phase,
-    FIRST_VALUE(timestamp) OVER (ORDER BY seq_id) as benchmark_start_time,
-    LAG(timestamp) OVER (ORDER BY seq_id) as prev_event_time
-  FROM
-    benchmark
-),
-benchmark_durations AS (
-  SELECT
-    *,
-    LAG(timestamp) OVER (PARTITION BY operation ORDER BY seq_id) AS operation_start_time
-  FROM
-    benchmark_events
-)
-SELECT
-  CASE WHEN phase = 'end' THEN operation ELSE event END AS event,
-  row_count,
-  format_duration(timestamp - benchmark_start_time) AS time_from_start,
-  CASE
-    WHEN phase = 'end' THEN format_duration(timestamp - operation_start_time)
-    WHEN phase = 'milestone' THEN format_duration(timestamp - prev_event_time)
-    ELSE ''
-  END AS time_from_prev,
-  row_count || ' rows' AS row_count,
-  CASE
-    WHEN is_performance_benchmark AND phase = 'end' THEN
-        '~' ||
-            CASE
-            WHEN EXTRACT(EPOCH FROM (timestamp - operation_start_time)) > 0.001 THEN
-                ROUND(row_count::FLOAT8 / EXTRACT(EPOCH FROM (timestamp - operation_start_time)))::text
-            ELSE
-                '0'
-            END
-        || ' rows/s'
-    ELSE
-        ''
-  END AS rows_per_second
-FROM
-  benchmark_durations
-WHERE phase <> 'start'
-ORDER BY
-  seq_id;
--- Stop redirecting output
-\o
+\set benchmark_log_filename expected/performance/103_benchmark_system_versioning_benchmark_report.log
+\i sql/include/benchmark_report_log.sql
+\set ECHO none
+\i sql/include/benchmark_teardown.sql
+\set ECHO none
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql

@@ -1,7 +1,7 @@
 # SQL Saga - TODO
 
 A living document of upcoming tasks.
-Tasks are checked [x] when done and made brief.
+Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
@@ -21,7 +21,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 # Done
 - [x] **Fix `Makefile` test execution:** Resolved issues with `pg_regress` path, `installcheck` override warnings, and test database configuration to ensure tests run correctly, especially with non-standard PostgreSQL distributions like Postgres.app.
-- [x] **Add performance monitoring for `temporal_merge`:** Added optional (`sql_saga.temporal_merge.use_pg_stat_monitor` GUC) performance logging using `pg_stat_monitor` to capture detailed metrics for planner and executor steps into a temporary table for analysis. Performance output files are now stored in `expected/performance/`.
+- [x] **Add performance monitoring for `temporal_merge`:** Added optional performance logging using `pg_stat_monitor`. Logging is enabled declaratively by the caller creating a temporary table (`temporal_merge_performance_log`). The test harness is now solely responsible for resetting stats and logging results, keeping the core procedures free of instrumentation. Performance output files are stored in `expected/performance/`.
 - [x] **Re-implement `temporal_merge` planner caching:** After refactoring to temporary tables, planner caching was removed. It has been re-implemented using a session-local temporary table to cache the generated SQL, restoring performance for batch operations. Fixed a name collision between the planner cache and the executor's index-check cache.
 - [x] **Fix `temporal_merge` planner instability after temp table refactor:** Added a deterministic `ORDER BY` to the `source_rows` query to ensure consistent row selection with `DISTINCT ON`, resolving a regression in the ambiguous key test.
 - [x] **Fix regression in `temporal_merge` planner after refactoring to temp tables:** Corrected dynamic SQL generation for the `resolved_atomic_segments` temporary table, which had a redundant comma causing a syntax error.

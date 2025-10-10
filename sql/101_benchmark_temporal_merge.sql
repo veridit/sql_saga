@@ -1,10 +1,8 @@
 \i sql/include/test_setup.sql
+\i sql/include/benchmark_setup.sql
 
 SET ROLE TO sql_saga_unprivileged_user;
 
-SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
-
-\i sql/include/benchmark_setup.sql
 
 -- Enable detailed temporal_merge index logging for this benchmark session.
 --SET sql_saga.temporal_merge.log_index_checks = true;
@@ -62,11 +60,15 @@ BEGIN;
   ANALYZE establishment_seed_source;
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_seed_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Parent (Triggers ON)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers ON) end', 8000, true);
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_seed_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Child (Triggers ON)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers ON) end', 8000, true);
 END;
 
@@ -95,11 +97,15 @@ BEGIN;
   ANALYZE establishment_source;
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON) end', 10000, true);
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON) end', 10000, true);
 END;
 
@@ -162,11 +168,15 @@ BEGIN;
   ANALYZE establishment_seed_source_dt;
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers OFF)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_seed_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Parent (Triggers OFF)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers OFF) end', 8000, true);
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers OFF)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_seed_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Child (Triggers OFF)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers OFF) end', 8000, true);
 
   CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
@@ -196,11 +206,15 @@ BEGIN;
   ANALYZE establishment_source_dt;
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) end', 10000, true);
 
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)', 0, false);
+  CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF) end', 10000, true);
 
   CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
@@ -231,30 +245,16 @@ DROP TABLE establishment_tm_dt;
 DROP TABLE legal_unit_tm_dt;
 
 \echo '-- Performance log from pg_stat_monitor --'
--- Check if pg_stat_monitor is installed, and output performance log if so.
-SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
-\if :pg_stat_monitor_exists
-    -- The output of this query will be captured in the test's .out file.
-    -- We select a stable subset of columns to avoid volatility.
-    -- We don't show time, just I/O and row counts. Query is truncated.
-    -- This provides a baseline for performance regression testing.
-    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
-    FROM pg_temp.temporal_merge_performance_log
-    ORDER BY event, total_time DESC, query_part;
-\else
-    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
-\endif
+\set monitor_log_filename expected/performance/101_benchmark_temporal_merge_benchmark_monitor.csv
+\i sql/include/benchmark_monitor_csv.sql
 
 -- Verify the benchmark events and row counts, but exclude volatile timing data
 -- from the regression test output to ensure stability.
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/performance/101_benchmark_temporal_merge_performance.out
+\set benchmark_log_filename expected/performance/101_benchmark_temporal_merge_benchmark_report.log
+\i sql/include/benchmark_report_log.sql
 
-\i sql/include/benchmark_report.sql
-
--- Stop redirecting output
-\o
-
+\i sql/include/benchmark_teardown.sql
 \i sql/include/test_teardown.sql

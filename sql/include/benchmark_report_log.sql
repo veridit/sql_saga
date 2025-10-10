@@ -1,15 +1,24 @@
--- Calculate rows per second
-CREATE OR REPLACE FUNCTION format_duration(p_interval interval) RETURNS TEXT AS $$
-BEGIN
-    IF p_interval IS NULL THEN RETURN ''; END IF;
-    IF EXTRACT(EPOCH FROM p_interval) >= 1 THEN
-        RETURN ROUND(EXTRACT(EPOCH FROM p_interval))::numeric || ' secs';
-    ELSE
-        RETURN ROUND(EXTRACT(EPOCH FROM p_interval) * 1000)::numeric || ' ms';
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
+\set ECHO none
 
+-- Ref. https://stackoverflow.com/a/32597876/1023558
+\set benchmark_log_filename :benchmark_log_filename
+-- now benchmark_log_filename is set to the string ':benchmark_log_filename' if was not already set.
+-- Checking it using a CASE statement:
+SELECT CASE
+  WHEN :'benchmark_log_filename'= ':benchmark_log_filename'
+  THEN 'false'
+  ELSE 'true'
+END::BOOL AS "benchmark_log_filename_is_set" \gset
+-- \gset call at end of the query to set the variable "benchmark_log_filename_is_set"
+\if :benchmark_log_filename_is_set
+\else
+\echo ":benchmark_log_filename is missing set it with \set benchmark_log_filename ..."
+\quit
+\endif
+
+\o :benchmark_log_filename
+
+-- Calculate rows per second
 WITH benchmark_events AS (
   SELECT
     seq_id,
@@ -63,3 +72,7 @@ FROM
 WHERE phase <> 'start'
 ORDER BY
   seq_id;
+
+\o
+
+\set ECHO all

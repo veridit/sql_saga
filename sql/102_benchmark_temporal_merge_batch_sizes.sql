@@ -1,4 +1,5 @@
 \i sql/include/test_setup.sql
+\i sql/include/benchmark_setup.sql
 
 -- Helper function to check trigger status. Must be created before SET ROLE.
 CREATE SCHEMA mtt;
@@ -21,10 +22,6 @@ GRANT USAGE ON SCHEMA mtt TO sql_saga_unprivileged_user;
 GRANT EXECUTE ON FUNCTION mtt.get_trigger_status(regclass) TO sql_saga_unprivileged_user;
 
 SET ROLE TO sql_saga_unprivileged_user;
-
-SET sql_saga.temporal_merge.use_pg_stat_monitor = true;
-
-\i sql/include/benchmark_setup.sql
 
 CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL);
 CREATE TABLE establishment_tm_bs_on (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
@@ -118,11 +115,15 @@ BEGIN
             ANALYZE establishment_source_bs;
 
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Parent (Triggers OFF) iter %s', v_batch_size, v_mode, v_loop_iter), 0, false);
+            CALL sql_saga.benchmark_reset();
             CALL sql_saga.temporal_merge('legal_unit_tm_bs_off'::regclass, 'legal_unit_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            CALL sql_saga.benchmark_log_and_reset(format('tm_loop, batch %s / %s Parent (Triggers OFF) iter %s', v_batch_size, v_mode, v_loop_iter));
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Parent (Triggers OFF) iter %s end', v_batch_size, v_mode, v_loop_iter), v_end_id - v_start_id + 1, true);
 
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Child (Triggers OFF) iter %s', v_batch_size, v_mode, v_loop_iter), 0, false);
+            CALL sql_saga.benchmark_reset();
             CALL sql_saga.temporal_merge('establishment_tm_bs_off'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            CALL sql_saga.benchmark_log_and_reset(format('tm_loop, batch %s / %s Child (Triggers OFF) iter %s', v_batch_size, v_mode, v_loop_iter));
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Child (Triggers OFF) iter %s end', v_batch_size, v_mode, v_loop_iter), v_end_id - v_start_id + 1, true);
 
             v_start_id := v_end_id + 1;
@@ -152,11 +153,15 @@ BEGIN
             ANALYZE establishment_source_bs;
 
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Parent (Triggers ON) iter %s', v_batch_size, v_mode, v_loop_iter), 0, false);
+            CALL sql_saga.benchmark_reset();
             CALL sql_saga.temporal_merge('legal_unit_tm_bs_on'::regclass, 'legal_unit_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            CALL sql_saga.benchmark_log_and_reset(format('tm_loop, batch %s / %s Parent (Triggers ON) iter %s', v_batch_size, v_mode, v_loop_iter));
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Parent (Triggers ON) iter %s end', v_batch_size, v_mode, v_loop_iter), v_end_id - v_start_id + 1, true);
 
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Child (Triggers ON) iter %s', v_batch_size, v_mode, v_loop_iter), 0, false);
+            CALL sql_saga.benchmark_reset();
             CALL sql_saga.temporal_merge('establishment_tm_bs_on'::regclass, 'establishment_source_bs'::regclass, ARRAY['id'], mode => v_mode::sql_saga.temporal_merge_mode, ephemeral_columns => ARRAY[]::text[]);
+            CALL sql_saga.benchmark_log_and_reset(format('tm_loop, batch %s / %s Child (Triggers ON) iter %s', v_batch_size, v_mode, v_loop_iter));
             INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES (format('tm_loop, batch %s / %s Child (Triggers ON) iter %s end', v_batch_size, v_mode, v_loop_iter), v_end_id - v_start_id + 1, true);
 
             v_start_id := v_end_id + 1;
@@ -179,19 +184,8 @@ UNION ALL
 SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_tm_bs_off;
 
 \echo '-- Performance log from pg_stat_monitor --'
--- Check if pg_stat_monitor is installed, and output performance log if so.
-SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') AS pg_stat_monitor_exists \gset
-\if :pg_stat_monitor_exists
-    -- The output of this query will be captured in the test's .out file.
-    -- We select a stable subset of columns to avoid volatility.
-    -- We don't show time, just I/O and row counts. Query is truncated.
-    -- This provides a baseline for performance regression testing.
-    SELECT event, calls, rows_retrieved, shared_blks_hit, shared_blks_read, left(query, 80) as query_part
-    FROM pg_temp.temporal_merge_performance_log
-    ORDER BY event, total_time DESC, query_part;
-\else
-    SELECT 'pg_stat_monitor not installed, skipping performance log output.' as notice;
-\endif
+\set monitor_log_filename expected/performance/102_benchmark_temporal_merge_batch_sizes_benchmark_monitor.csv
+\i sql/include/benchmark_monitor_csv.sql
 
 
 -- Teardown for batch size benchmark tables
@@ -218,11 +212,8 @@ DROP TABLE legal_unit_tm_bs_off;
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review.
-\o expected/performance/102_benchmark_temporal_merge_batch_sizes_performance.out
+\set benchmark_log_filename expected/performance/102_benchmark_temporal_merge_batch_sizes_benchmark_report.log
+\i sql/include/benchmark_report_log.sql
 
-\i sql/include/benchmark_report.sql
-
--- Stop redirecting output
-\o
-
+\i sql/include/benchmark_teardown.sql
 \i sql/include/test_teardown.sql

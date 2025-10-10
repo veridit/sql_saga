@@ -67,7 +67,7 @@ CALL sql_saga.temporal_merge(
     row_id_column => 'row_id'
 );
 ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 331 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 302 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,
@@ -155,7 +155,7 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_UPSERT'
 );
 ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 331 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 302 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,

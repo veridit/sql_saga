@@ -117,6 +117,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             'temporal_merge_plan', 'temporal_merge_execute',
             'temporal_merge_drop_cache','temporal_merge_drop_temp_tables',
             'covers_without_gaps_transfn', 'covers_without_gaps_finalfn',
+            'benchmark_prepare_log','benchmark_reset_pg_stat_monitor',
             'first_sfunc'
         );
 

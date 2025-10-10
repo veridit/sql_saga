@@ -243,7 +243,6 @@ LANGUAGE plpgsql AS $procedure$
 BEGIN
     IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_plan_cache; END IF;
     IF to_regclass('pg_temp.temporal_merge_index_cache') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_index_cache; END IF;
-    IF to_regclass('pg_temp.temporal_merge_plan_result') IS NOT NULL THEN DROP TABLE pg_temp.temporal_merge_plan_result; END IF;
     CALL sql_saga.temporal_merge_drop_temp_tables();
 END;
 $procedure$;

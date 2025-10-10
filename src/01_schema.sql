@@ -366,7 +366,6 @@ CREATE TYPE sql_saga.temporal_merge_feedback AS (
     error_message TEXT
 );
 
-
 CREATE TYPE sql_saga.updatable_view_type AS ENUM ('for_portion_of', 'current');
 COMMENT ON TYPE sql_saga.updatable_view_type IS 'Defines the semantic type of an updatable view. "for_portion_of" provides direct access to historical records, while "current" provides a simplified view of only the currently active data.';
 
