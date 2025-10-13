@@ -177,7 +177,7 @@ NOTICE:  Explaining:
                     true /* v_consistency_check_expr */ as temporal_columns_are_consistent
                 FROM tmpc.source1 /* v_source_table_ident */ source_table;
             
-NOTICE:  Seq Scan on source1 source_table (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source1 source_table (actual rows=1.00 loops=1)
 NOTICE:    Buffers: shared hit=1
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
@@ -209,25 +209,25 @@ NOTICE:  Explaining:
                         s2.source_row_id > s1.source_row_id
                 ) eclipse_info;
             
-NOTICE:  Nested Loop (actual rows=1 loops=1)
+NOTICE:  Nested Loop (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1 loops=1)
+NOTICE:    ->  Aggregate (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=0 loops=1)
+NOTICE:          ->  Sort (actual rows=0.00 loops=1)
 NOTICE:                Sort Key: s2.valid_from
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Result (actual rows=0 loops=1)
+NOTICE:                ->  Result (actual rows=0.00 loops=1)
 NOTICE:                      One-Time Filter: s1.natural_identity_column_values_are_null
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0 loops=1)
+NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=1)
 NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
 NOTICE:                            Rows Removed by Filter: 1
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=38, local read=2
+NOTICE:    Buffers: shared hit=40, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -251,28 +251,29 @@ NOTICE:  Explaining:
                         )
                     ) AS t  /* v_target_rows_filter */
             
-NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1 loops=1)
+NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1.00 loops=1)
 NOTICE:    Buffers: shared hit=3, local hit=1
-NOTICE:    ->  Unique (actual rows=1 loops=1)
+NOTICE:    ->  Unique (actual rows=1.00 loops=1)
 NOTICE:          Buffers: shared hit=3, local hit=1
-NOTICE:          ->  Incremental Sort (actual rows=1 loops=1)
+NOTICE:          ->  Incremental Sort (actual rows=1.00 loops=1)
 NOTICE:                Sort Key: inner_t.id, inner_t.valid_from
 NOTICE:                Presorted Key: inner_t.id
 NOTICE:                Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                Buffers: shared hit=3, local hit=1
-NOTICE:                ->  Nested Loop (actual rows=1 loops=1)
+NOTICE:                ->  Nested Loop (actual rows=1.00 loops=1)
 NOTICE:                      Buffers: shared hit=3, local hit=1
-NOTICE:                      ->  Unique (actual rows=1 loops=1)
+NOTICE:                      ->  Unique (actual rows=1.00 loops=1)
 NOTICE:                            Buffers: local hit=1
-NOTICE:                            ->  Sort (actual rows=1 loops=1)
+NOTICE:                            ->  Sort (actual rows=1.00 loops=1)
 NOTICE:                                  Sort Key: si.id
 NOTICE:                                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Seq Scan on source_initial si (actual rows=1 loops=1)
+NOTICE:                                  ->  Seq Scan on source_initial si (actual rows=1.00 loops=1)
 NOTICE:                                        Filter: (id IS NOT NULL)
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                      ->  Index Scan using target_id_valid_excl on target inner_t (actual rows=1 loops=1)
+NOTICE:                      ->  Index Scan using target_id_valid_excl on target inner_t (actual rows=1.00 loops=1)
 NOTICE:                            Index Cond: (id = si.id)
+NOTICE:                            Index Searches: 1
 NOTICE:                            Buffers: shared hit=3
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (id);
@@ -290,17 +291,18 @@ NOTICE:  Explaining:
                 FROM source_with_eclipsed_flag source_row
                 LEFT JOIN target_rows target_row ON (source_row.id IS NOT DISTINCT FROM target_row.id /* v_source_rows_exists_join_expr */)
             
-NOTICE:  Nested Loop Left Join (actual rows=1 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
 NOTICE:    Join Filter: (NOT (source_row.id IS DISTINCT FROM target_row.id))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Materialize (actual rows=1 loops=1)
+NOTICE:    ->  Materialize (actual rows=1.00 loops=1)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=41, local read=1
+NOTICE:    Buffers: shared hit=45, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -311,17 +313,17 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches
                 GROUP BY source_row_id
             
-NOTICE:  GroupAggregate (actual rows=1 loops=1)
+NOTICE:  GroupAggregate (actual rows=1.00 loops=1)
 NOTICE:    Group Key: source_row_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
+NOTICE:    ->  Sort (actual rows=1.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=36
+NOTICE:    Buffers: shared hit=38
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -333,18 +335,18 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches m
                 JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
             
-NOTICE:  Hash Join (actual rows=1 loops=1)
+NOTICE:  Hash Join (actual rows=1.00 loops=1)
 NOTICE:    Hash Cond: (a.source_row_id = m.source_row_id)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=8
+NOTICE:    Buffers: shared hit=10
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -360,13 +362,13 @@ NOTICE:  Explaining:
                 FROM source_rows_with_discovery p
                 ORDER BY p.source_row_id, p.discovered_stable_pk_payload
             
-NOTICE:  Unique (actual rows=1 loops=1)
+NOTICE:  Unique (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
+NOTICE:    ->  Sort (actual rows=1.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=42
@@ -376,7 +378,7 @@ NOTICE:  Explaining:
                 SELECT *, NOT target_entity_exists as is_new_entity
                 FROM source_rows
             
-NOTICE:  Seq Scan on source_rows (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=36
@@ -386,13 +388,13 @@ NOTICE:  Explaining:
                 SELECT source_row.*, jsonb_strip_nulls(jsonb_build_object()) /* v_lookup_keys_as_jsonb_expr */ as nk_json, ARRAY(SELECT e FROM unnest(ARRAY[]::TEXT[]) e WHERE e IS NOT NULL ORDER BY e) /* v_lookup_keys_as_array_expr */ as nk_non_null_keys_array
                 FROM source_rows_with_new_flag source_row
             
-NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    InitPlan 1
-NOTICE:      ->  Sort (actual rows=0 loops=1)
+NOTICE:      ->  Sort (actual rows=0.00 loops=1)
 NOTICE:            Sort Key: e.e
 NOTICE:            Sort Method: quicksort  Memory: 25kB
-NOTICE:            ->  Function Scan on unnest e (actual rows=0 loops=1)
+NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=38
@@ -422,20 +424,20 @@ NOTICE:  Explaining:
                     ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=1 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=1)
-NOTICE:          ->  Sort (actual rows=0 loops=1)
+NOTICE:    ->  Limit (actual rows=0.00 loops=1)
+NOTICE:          ->  Sort (actual rows=0.00 loops=1)
 NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0 loops=1)
+NOTICE:                ->  Result (actual rows=0.00 loops=1)
 NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=62, local hit=1
+NOTICE:    Buffers: shared hit=64, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -454,7 +456,7 @@ NOTICE:  Explaining:
                     END as early_feedback
                 FROM source_rows_with_canonical_key s
             
-NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=46
@@ -476,7 +478,7 @@ NOTICE:  Explaining:
                     ELSE false
                 END
             
-NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1.00 loops=1)
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
@@ -510,11 +512,11 @@ NOTICE:  Explaining:
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
-NOTICE:  Append (actual rows=2 loops=1)
+NOTICE:  Append (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on active_source_rows (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on active_source_rows (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=50, local read=2
@@ -525,11 +527,11 @@ NOTICE:  Explaining:
                 UNION ALL
                 SELECT id, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
             
-NOTICE:  Append (actual rows=4 loops=1)
+NOTICE:  Append (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on all_rows (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on all_rows (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=28
@@ -563,20 +565,24 @@ NOTICE:  Explaining:
             END ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
                 FROM time_points_raw
             
-NOTICE:  WindowAgg (actual rows=4 loops=1)
+NOTICE:  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:    Window: w2 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN (id IS NOT NULL) THEN COALESCE((id)::text, '_NULL_'::text) ELSE (causal_id)::text END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=4 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=4.00 loops=1)
 NOTICE:          Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN (id IS NOT NULL) THEN COALESCE((id)::text, '_NULL_'::text) ELSE (causal_id)::text END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id
 NOTICE:          Presorted Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN (id IS NOT NULL) THEN COALESCE((id)::text, '_NULL_'::text) ELSE (causal_id)::text END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END)
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=4 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:                Window: w1 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN (id IS NOT NULL) THEN COALESCE((id)::text, '_NULL_'::text) ELSE (causal_id)::text END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=4 loops=1)
+NOTICE:                ->  Sort (actual rows=4.00 loops=1)
 NOTICE:                      Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN (id IS NOT NULL) THEN COALESCE((id)::text, '_NULL_'::text) ELSE (causal_id)::text END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id NULLS FIRST
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4 loops=1)
+NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=24
@@ -598,7 +604,7 @@ NOTICE:  Explaining:
                     tpu.unified_canonical_nk_json as canonical_nk_json
                 FROM time_points_unified tpu
             
-NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4 loops=1)
+NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=32
@@ -609,13 +615,13 @@ NOTICE:  Explaining:
                 FROM time_points_with_unified_ids
                 ORDER BY grouping_key, point, causal_id DESC NULLS LAST
             
-NOTICE:  Unique (actual rows=4 loops=1)
+NOTICE:  Unique (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=4 loops=1)
+NOTICE:    ->  Sort (actual rows=4.00 loops=1)
 NOTICE:          Sort Key: grouping_key, point, causal_id DESC NULLS LAST
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4 loops=1)
+NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=26
@@ -629,17 +635,19 @@ NOTICE:  Explaining:
                 ) with_lead
                 WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
             
-NOTICE:  Subquery Scan on with_lead (actual rows=3 loops=1)
+NOTICE:  Subquery Scan on with_lead (actual rows=3.00 loops=1)
 NOTICE:    Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
 NOTICE:    Rows Removed by Filter: 1
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=4 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY time_points.grouping_key ORDER BY time_points.point)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=4 loops=1)
+NOTICE:          ->  Sort (actual rows=4.00 loops=1)
 NOTICE:                Sort Key: time_points.grouping_key, time_points.point
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on time_points (actual rows=4 loops=1)
+NOTICE:                ->  Seq Scan on time_points (actual rows=4.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=26
@@ -705,51 +713,58 @@ NOTICE:  Explaining:
                     END
                 ) with_base_payload
             
-NOTICE:  Nested Loop Left Join (actual rows=3 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=3.00 loops=1)
 NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (target_row.data_payload IS NOT NULL))
 NOTICE:    Buffers: local hit=5
-NOTICE:    ->  Nested Loop Left Join (actual rows=3 loops=1)
+NOTICE:    ->  Nested Loop Left Join (actual rows=3.00 loops=1)
 NOTICE:          Join Filter: (((target_row.id = seg.id) OR ((target_row.id IS NULL) AND (seg.id IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
 NOTICE:          Buffers: local hit=2
-NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
-NOTICE:          ->  Materialize (actual rows=1 loops=3)
+NOTICE:          ->  Materialize (actual rows=1.00 loops=3)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                      Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=3)
+NOTICE:    ->  Limit (actual rows=0.33 loops=3)
 NOTICE:          Buffers: local hit=3
 NOTICE:          CTE ordered_sources
-NOTICE:            ->  WindowAgg (actual rows=0 loops=3)
+NOTICE:            ->  WindowAgg (actual rows=0.33 loops=3)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:                  Buffers: local hit=3
-NOTICE:                  ->  Sort (actual rows=0 loops=3)
+NOTICE:                  ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
-NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0 loops=3)
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
 NOTICE:                              Filter: (CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))) END AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
-NOTICE:            ->  Recursive Union (actual rows=0 loops=3)
+NOTICE:            ->  Recursive Union (actual rows=0.33 loops=3)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
 NOTICE:                  Buffers: local hit=3
-NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0 loops=3)
+NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0.33 loops=3)
 NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
 NOTICE:                        Buffers: local hit=3
-NOTICE:                  ->  Hash Join (actual rows=0 loops=3)
+NOTICE:                  ->  Hash Join (actual rows=0.00 loops=3)
 NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
-NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0 loops=2)
-NOTICE:                        ->  Hash (actual rows=0 loops=2)
+NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0.50 loops=2)
+NOTICE:                        ->  Hash (actual rows=0.50 loops=2)
 NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0 loops=2)
-NOTICE:          ->  Sort (actual rows=0 loops=3)
+NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.50 loops=2)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=3
-NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=3)
+NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=49
+NOTICE:    Buffers: shared hit=51
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -779,43 +794,53 @@ NOTICE:  Explaining:
                     FROM resolved_atomic_segments_with_payloads /* v_resolver_from */
                 ) with_grp
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w3 AS (PARTITION BY with_grp.grouping_key ORDER BY with_grp.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: with_grp.grouping_key, with_grp.valid_from
 NOTICE:          Presorted Key: with_grp.grouping_key
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                Window: w2 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                      Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp
 NOTICE:                      Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                      Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                      ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                            Window: w1 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp)
+NOTICE:                            Storage: Memory  Maximum Storage: 17kB
 NOTICE:                            Buffers: local hit=1
-NOTICE:                            ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                            ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                                  Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp
 NOTICE:                                  Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                                  Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=3 loops=1)
+NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=3.00 loops=1)
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                                        ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                                        ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                                              Window: w2 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                              Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                              Buffers: local hit=1
-NOTICE:                                              ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                                              ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                                                    Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from
 NOTICE:                                                    Presorted Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from
 NOTICE:                                                    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                                                    Buffers: local hit=1
-NOTICE:                                                    ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                                                    ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                                                          Window: w1 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                                          Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                                          Buffers: local hit=1
-NOTICE:                                                          ->  Sort (actual rows=3 loops=1)
+NOTICE:                                                          ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                                                                Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from DESC
 NOTICE:                                                                Sort Method: quicksort  Memory: 25kB
 NOTICE:                                                                Buffers: local hit=1
-NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3 loops=1)
+NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=56
@@ -838,7 +863,7 @@ NOTICE:  Explaining:
                     CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
                 FROM resolved_atomic_segments_with_propagated_ids
             
-NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3 loops=1)
+NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=68
@@ -870,17 +895,21 @@ NOTICE:  Explaining:
                     ) s1
                 ) s2
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY s1.grouping_key ORDER BY s1.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Subquery Scan on s1 (actual rows=3 loops=1)
+NOTICE:    ->  Subquery Scan on s1 (actual rows=3.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                Window: w AS (PARTITION BY ras.grouping_key ORDER BY ras.valid_from)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=3 loops=1)
+NOTICE:                ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                      Sort Key: ras.grouping_key, ras.valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=3 loops=1)
+NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=3.00 loops=1)
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
@@ -913,21 +942,21 @@ NOTICE:  Explaining:
                 FROM island_group
                 GROUP BY grouping_key, island_group_id
             
-NOTICE:  GroupAggregate (actual rows=3 loops=1)
+NOTICE:  GroupAggregate (actual rows=3.00 loops=1)
 NOTICE:    Group Key: island_group.grouping_key, island_group.island_group_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=3 loops=1)
+NOTICE:    ->  Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: island_group.grouping_key, island_group.island_group_id, island_group.valid_from
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on island_group (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on island_group (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:    SubPlan 1
-NOTICE:      ->  Aggregate (actual rows=1 loops=3)
-NOTICE:            ->  Sort (actual rows=1 loops=3)
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=3)
+NOTICE:            ->  Sort (actual rows=1.00 loops=3)
 NOTICE:                  Sort Key: e.e
 NOTICE:                  Sort Method: quicksort  Memory: 25kB
-NOTICE:                  ->  Function Scan on unnest e (actual rows=1 loops=3)
+NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=68
@@ -954,18 +983,18 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Hash Full Join (actual rows=3 loops=1)
+NOTICE:  Hash Full Join (actual rows=3.00 loops=1)
 NOTICE:    Hash Cond: ((final_seg.grouping_key = ('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
+NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared hit=42
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -986,13 +1015,15 @@ NOTICE:  Explaining:
                     END as update_rank
                 FROM diff d
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY grouping_key, t_from ORDER BY (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until ROWS UNBOUNDED PRECEDING)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=3 loops=1)
+NOTICE:    ->  Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: grouping_key, t_from, (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on diff d (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on diff d (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=48
@@ -1099,17 +1130,17 @@ NOTICE:  Explaining:
                     )
                 )
             
-NOTICE:  Append (actual rows=3 loops=1)
+NOTICE:  Append (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=3 loops=1)
+NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=3.00 loops=1)
 NOTICE:          Filter: (((f_row_ids IS NOT NULL) OR (t_data IS NOT NULL)) AND (CASE WHEN is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (is_new_entity AND (NOT is_identifiable)) THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (update_rank IS NULL) THEN CASE WHEN unaffected_target_only_segment THEN NULL::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END ELSE 'ERROR'::sql_saga.temporal_merge_plan_action END IS NOT NULL))
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0.00 loops=1)
 NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 1
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared hit=52
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -1131,18 +1162,18 @@ NOTICE:  Explaining:
                 FROM plan_with_op p
                 LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
             
-NOTICE:  Hash Right Join (actual rows=3 loops=1)
+NOTICE:  Hash Right Join (actual rows=3.00 loops=1)
 NOTICE:    Hash Cond: (source_row.source_row_id = p.row_ids[1])
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=3 loops=1)
+NOTICE:    ->  Hash (actual rows=3.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=38
+NOTICE:    Buffers: shared hit=42
 NOTICE:  ---
 NOTICE:  Explaining: 
                 SELECT
@@ -1152,17 +1183,19 @@ NOTICE:  Explaining:
                 FROM plan p
                 ORDER BY plan_op_seq;
             
-NOTICE:  Sort (actual rows=3 loops=1)
-NOTICE:    Sort Key: (row_number() OVER (?))
+NOTICE:  Sort (actual rows=3.00 loops=1)
+NOTICE:    Sort Key: (row_number() OVER w1)
 NOTICE:    Sort Method: quicksort  Memory: 25kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:          Window: w1 AS (ORDER BY grouping_key, id, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1]) ROWS UNBOUNDED PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=3 loops=1)
+NOTICE:          ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                Sort Key: grouping_key, id, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect NULLS FIRST, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1])
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on plan p (actual rows=3 loops=1)
+NOTICE:                ->  Seq Scan on plan p (actual rows=3.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=40
@@ -1302,7 +1335,7 @@ NOTICE:  Explaining:
                     true /* v_consistency_check_expr */ as temporal_columns_are_consistent
                 FROM tmpc.source_nk_not_null /* v_source_table_ident */ source_table;
             
-NOTICE:  Seq Scan on source_nk_not_null source_table (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_nk_not_null source_table (actual rows=1.00 loops=1)
 NOTICE:    Buffers: shared hit=1
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
@@ -1334,25 +1367,25 @@ NOTICE:  Explaining:
                         s2.source_row_id > s1.source_row_id
                 ) eclipse_info;
             
-NOTICE:  Nested Loop (actual rows=1 loops=1)
+NOTICE:  Nested Loop (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1 loops=1)
+NOTICE:    ->  Aggregate (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=0 loops=1)
+NOTICE:          ->  Sort (actual rows=0.00 loops=1)
 NOTICE:                Sort Key: s2.valid_from
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Result (actual rows=0 loops=1)
+NOTICE:                ->  Result (actual rows=0.00 loops=1)
 NOTICE:                      One-Time Filter: s1.natural_identity_column_values_are_null
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0 loops=1)
+NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=1)
 NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
 NOTICE:                            Rows Removed by Filter: 1
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=41, local read=2
+NOTICE:    Buffers: shared hit=43, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -1376,28 +1409,29 @@ NOTICE:  Explaining:
                         )
                     ) AS t  /* v_target_rows_filter */
             
-NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1 loops=1)
+NOTICE:  Subquery Scan on unnamed_subquery (actual rows=1.00 loops=1)
 NOTICE:    Buffers: shared hit=3, local hit=1
-NOTICE:    ->  Unique (actual rows=1 loops=1)
+NOTICE:    ->  Unique (actual rows=1.00 loops=1)
 NOTICE:          Buffers: shared hit=3, local hit=1
-NOTICE:          ->  Incremental Sort (actual rows=1 loops=1)
+NOTICE:          ->  Incremental Sort (actual rows=1.00 loops=1)
 NOTICE:                Sort Key: inner_t.type, inner_t.lu_id, inner_t.valid_from
 NOTICE:                Presorted Key: inner_t.type, inner_t.lu_id
 NOTICE:                Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                Buffers: shared hit=3, local hit=1
-NOTICE:                ->  Nested Loop (actual rows=1 loops=1)
+NOTICE:                ->  Nested Loop (actual rows=1.00 loops=1)
 NOTICE:                      Buffers: shared hit=3, local hit=1
-NOTICE:                      ->  Unique (actual rows=1 loops=1)
+NOTICE:                      ->  Unique (actual rows=1.00 loops=1)
 NOTICE:                            Buffers: local hit=1
-NOTICE:                            ->  Sort (actual rows=1 loops=1)
+NOTICE:                            ->  Sort (actual rows=1.00 loops=1)
 NOTICE:                                  Sort Key: si.type, si.lu_id
 NOTICE:                                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Seq Scan on source_initial si (actual rows=1 loops=1)
+NOTICE:                                  ->  Seq Scan on source_initial si (actual rows=1.00 loops=1)
 NOTICE:                                        Filter: ((type IS NOT NULL) AND (lu_id IS NOT NULL))
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                      ->  Index Scan using target_nk_not_null_type_lu_id_valid_excl on target_nk_not_null inner_t (actual rows=1 loops=1)
+NOTICE:                      ->  Index Scan using target_nk_not_null_type_lu_id_valid_excl on target_nk_not_null inner_t (actual rows=1.00 loops=1)
 NOTICE:                            Index Cond: ((type = si.type) AND (lu_id = si.lu_id))
+NOTICE:                            Index Searches: 1
 NOTICE:                            Buffers: shared hit=3
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (lu_id, type);
@@ -1415,17 +1449,18 @@ NOTICE:  Explaining:
                 FROM source_with_eclipsed_flag source_row
                 LEFT JOIN target_rows target_row ON (source_row.type IS NOT DISTINCT FROM target_row.type AND source_row.lu_id IS NOT DISTINCT FROM target_row.lu_id /* v_source_rows_exists_join_expr */)
             
-NOTICE:  Nested Loop Left Join (actual rows=1 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
 NOTICE:    Join Filter: ((NOT (source_row.type IS DISTINCT FROM target_row.type)) AND (NOT (source_row.lu_id IS DISTINCT FROM target_row.lu_id)))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Materialize (actual rows=1 loops=1)
+NOTICE:    ->  Materialize (actual rows=1.00 loops=1)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46, local read=1
+NOTICE:    Buffers: shared hit=50, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -1436,17 +1471,17 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches
                 GROUP BY source_row_id
             
-NOTICE:  GroupAggregate (actual rows=1 loops=1)
+NOTICE:  GroupAggregate (actual rows=1.00 loops=1)
 NOTICE:    Group Key: source_row_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
+NOTICE:    ->  Sort (actual rows=1.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared hit=42
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -1458,18 +1493,18 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches m
                 JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
             
-NOTICE:  Hash Join (actual rows=1 loops=1)
+NOTICE:  Hash Join (actual rows=1.00 loops=1)
 NOTICE:    Hash Cond: (a.source_row_id = m.source_row_id)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=8
+NOTICE:    Buffers: shared hit=10
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -1485,13 +1520,13 @@ NOTICE:  Explaining:
                 FROM source_rows_with_discovery p
                 ORDER BY p.source_row_id, p.discovered_stable_pk_payload
             
-NOTICE:  Unique (actual rows=1 loops=1)
+NOTICE:  Unique (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
+NOTICE:    ->  Sort (actual rows=1.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=46
@@ -1501,7 +1536,7 @@ NOTICE:  Explaining:
                 SELECT *, NOT target_entity_exists as is_new_entity
                 FROM source_rows
             
-NOTICE:  Seq Scan on source_rows (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=38
@@ -1511,13 +1546,13 @@ NOTICE:  Explaining:
                 SELECT source_row.*, jsonb_strip_nulls(jsonb_build_object()) /* v_lookup_keys_as_jsonb_expr */ as nk_json, ARRAY(SELECT e FROM unnest(ARRAY[]::TEXT[]) e WHERE e IS NOT NULL ORDER BY e) /* v_lookup_keys_as_array_expr */ as nk_non_null_keys_array
                 FROM source_rows_with_new_flag source_row
             
-NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    InitPlan 1
-NOTICE:      ->  Sort (actual rows=0 loops=1)
+NOTICE:      ->  Sort (actual rows=0.00 loops=1)
 NOTICE:            Sort Key: e.e
 NOTICE:            Sort Method: quicksort  Memory: 25kB
-NOTICE:            ->  Function Scan on unnest e (actual rows=0 loops=1)
+NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=40
@@ -1547,20 +1582,20 @@ NOTICE:  Explaining:
                     ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=1 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=1)
-NOTICE:          ->  Sort (actual rows=0 loops=1)
+NOTICE:    ->  Limit (actual rows=0.00 loops=1)
+NOTICE:          ->  Sort (actual rows=0.00 loops=1)
 NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0 loops=1)
+NOTICE:                ->  Result (actual rows=0.00 loops=1)
 NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=65, local hit=1
+NOTICE:    Buffers: shared hit=67, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -1579,7 +1614,7 @@ NOTICE:  Explaining:
                     END as early_feedback
                 FROM source_rows_with_canonical_key s
             
-NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=48
@@ -1601,7 +1636,7 @@ NOTICE:  Explaining:
                     ELSE false
                 END
             
-NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1 loops=1)
+NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=1.00 loops=1)
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
@@ -1635,11 +1670,11 @@ NOTICE:  Explaining:
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
-NOTICE:  Append (actual rows=2 loops=1)
+NOTICE:  Append (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on active_source_rows (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on active_source_rows (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=53, local read=2
@@ -1650,11 +1685,11 @@ NOTICE:  Explaining:
                 UNION ALL
                 SELECT lu_id, type, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
             
-NOTICE:  Append (actual rows=4 loops=1)
+NOTICE:  Append (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on all_rows (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on all_rows (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=30
@@ -1688,20 +1723,24 @@ NOTICE:  Explaining:
             END ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
                 FROM time_points_raw
             
-NOTICE:  WindowAgg (actual rows=4 loops=1)
+NOTICE:  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:    Window: w2 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL)) THEN ((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=4 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=4.00 loops=1)
 NOTICE:          Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL)) THEN ((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) END), causal_id
 NOTICE:          Presorted Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL)) THEN ((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) END)
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=4 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:                Window: w1 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL)) THEN ((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=4 loops=1)
+NOTICE:                ->  Sort (actual rows=4.00 loops=1)
 NOTICE:                      Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL)) THEN ((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) END), causal_id NULLS FIRST
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4 loops=1)
+NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=4.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=26
@@ -1723,7 +1762,7 @@ NOTICE:  Explaining:
                     tpu.unified_canonical_nk_json as canonical_nk_json
                 FROM time_points_unified tpu
             
-NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4 loops=1)
+NOTICE:  Seq Scan on time_points_unified tpu (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=34
@@ -1734,13 +1773,13 @@ NOTICE:  Explaining:
                 FROM time_points_with_unified_ids
                 ORDER BY grouping_key, point, causal_id DESC NULLS LAST
             
-NOTICE:  Unique (actual rows=4 loops=1)
+NOTICE:  Unique (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=4 loops=1)
+NOTICE:    ->  Sort (actual rows=4.00 loops=1)
 NOTICE:          Sort Key: grouping_key, point, causal_id DESC NULLS LAST
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4 loops=1)
+NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=4.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=28
@@ -1754,17 +1793,19 @@ NOTICE:  Explaining:
                 ) with_lead
                 WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
             
-NOTICE:  Subquery Scan on with_lead (actual rows=3 loops=1)
+NOTICE:  Subquery Scan on with_lead (actual rows=3.00 loops=1)
 NOTICE:    Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
 NOTICE:    Rows Removed by Filter: 1
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=4 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=4.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY time_points.grouping_key ORDER BY time_points.point)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=4 loops=1)
+NOTICE:          ->  Sort (actual rows=4.00 loops=1)
 NOTICE:                Sort Key: time_points.grouping_key, time_points.point
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on time_points (actual rows=4 loops=1)
+NOTICE:                ->  Seq Scan on time_points (actual rows=4.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=28
@@ -1830,51 +1871,58 @@ NOTICE:  Explaining:
                     END
                 ) with_base_payload
             
-NOTICE:  Nested Loop Left Join (actual rows=3 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=3.00 loops=1)
 NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (target_row.data_payload IS NOT NULL))
 NOTICE:    Buffers: local hit=5
-NOTICE:    ->  Nested Loop Left Join (actual rows=3 loops=1)
+NOTICE:    ->  Nested Loop Left Join (actual rows=3.00 loops=1)
 NOTICE:          Join Filter: (((target_row.lu_id = seg.lu_id) OR ((target_row.lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((target_row.type = seg.type) OR ((target_row.type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
 NOTICE:          Buffers: local hit=2
-NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
-NOTICE:          ->  Materialize (actual rows=1 loops=3)
+NOTICE:          ->  Materialize (actual rows=1.00 loops=3)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:                      Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=3)
+NOTICE:    ->  Limit (actual rows=0.33 loops=3)
 NOTICE:          Buffers: local hit=3
 NOTICE:          CTE ordered_sources
-NOTICE:            ->  WindowAgg (actual rows=0 loops=3)
+NOTICE:            ->  WindowAgg (actual rows=0.33 loops=3)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:                  Buffers: local hit=3
-NOTICE:                  ->  Sort (actual rows=0 loops=3)
+NOTICE:                  ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
-NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0 loops=3)
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
 NOTICE:                              Filter: (CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE (((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL)))) END AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
-NOTICE:            ->  Recursive Union (actual rows=0 loops=3)
+NOTICE:            ->  Recursive Union (actual rows=0.33 loops=3)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
 NOTICE:                  Buffers: local hit=3
-NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0 loops=3)
+NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0.33 loops=3)
 NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
 NOTICE:                        Buffers: local hit=3
-NOTICE:                  ->  Hash Join (actual rows=0 loops=3)
+NOTICE:                  ->  Hash Join (actual rows=0.00 loops=3)
 NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
-NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0 loops=2)
-NOTICE:                        ->  Hash (actual rows=0 loops=2)
+NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0.50 loops=2)
+NOTICE:                        ->  Hash (actual rows=0.50 loops=2)
 NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0 loops=2)
-NOTICE:          ->  Sort (actual rows=0 loops=3)
+NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.50 loops=2)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (actual rows=0.33 loops=3)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=3
-NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=3)
+NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=51
+NOTICE:    Buffers: shared hit=53
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -1904,43 +1952,53 @@ NOTICE:  Explaining:
                     FROM resolved_atomic_segments_with_payloads /* v_resolver_from */
                 ) with_grp
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w3 AS (PARTITION BY with_grp.grouping_key ORDER BY with_grp.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: with_grp.grouping_key, with_grp.valid_from
 NOTICE:          Presorted Key: with_grp.grouping_key
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                Window: w2 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                      Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp
 NOTICE:                      Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                      Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                      ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                            Window: w1 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp)
+NOTICE:                            Storage: Memory  Maximum Storage: 17kB
 NOTICE:                            Buffers: local hit=1
-NOTICE:                            ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                            ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                                  Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp
 NOTICE:                                  Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                                  Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=3 loops=1)
+NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=3.00 loops=1)
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                                        ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                                        ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                                              Window: w2 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                              Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                              Buffers: local hit=1
-NOTICE:                                              ->  Incremental Sort (actual rows=3 loops=1)
+NOTICE:                                              ->  Incremental Sort (actual rows=3.00 loops=1)
 NOTICE:                                                    Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from
 NOTICE:                                                    Presorted Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from
 NOTICE:                                                    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
 NOTICE:                                                    Buffers: local hit=1
-NOTICE:                                                    ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:                                                    ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                                                          Window: w1 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                                          Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                                          Buffers: local hit=1
-NOTICE:                                                          ->  Sort (actual rows=3 loops=1)
+NOTICE:                                                          ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                                                                Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from DESC
 NOTICE:                                                                Sort Method: quicksort  Memory: 25kB
 NOTICE:                                                                Buffers: local hit=1
-NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3 loops=1)
+NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=58
@@ -1963,7 +2021,7 @@ NOTICE:  Explaining:
                     CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
                 FROM resolved_atomic_segments_with_propagated_ids
             
-NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3 loops=1)
+NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=70
@@ -1995,17 +2053,21 @@ NOTICE:  Explaining:
                     ) s1
                 ) s2
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY s1.grouping_key ORDER BY s1.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 18kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Subquery Scan on s1 (actual rows=3 loops=1)
+NOTICE:    ->  Subquery Scan on s1 (actual rows=3.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:                Window: w AS (PARTITION BY ras.grouping_key ORDER BY ras.valid_from)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=3 loops=1)
+NOTICE:                ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                      Sort Key: ras.grouping_key, ras.valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=3 loops=1)
+NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=3.00 loops=1)
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
@@ -2038,21 +2100,21 @@ NOTICE:  Explaining:
                 FROM island_group
                 GROUP BY grouping_key, island_group_id
             
-NOTICE:  GroupAggregate (actual rows=3 loops=1)
+NOTICE:  GroupAggregate (actual rows=3.00 loops=1)
 NOTICE:    Group Key: island_group.grouping_key, island_group.island_group_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=3 loops=1)
+NOTICE:    ->  Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: island_group.grouping_key, island_group.island_group_id, island_group.valid_from
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on island_group (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on island_group (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:    SubPlan 1
-NOTICE:      ->  Aggregate (actual rows=1 loops=3)
-NOTICE:            ->  Sort (actual rows=1 loops=3)
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=3)
+NOTICE:            ->  Sort (actual rows=1.00 loops=3)
 NOTICE:                  Sort Key: e.e
 NOTICE:                  Sort Method: quicksort  Memory: 25kB
-NOTICE:                  ->  Function Scan on unnest e (actual rows=1 loops=3)
+NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=70
@@ -2079,18 +2141,18 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.type::text, '_NULL_') || '__' || COALESCE(target_seg.lu_id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Hash Full Join (actual rows=3 loops=1)
+NOTICE:  Hash Full Join (actual rows=3.00 loops=1)
 NOTICE:    Hash Cond: ((final_seg.grouping_key = ((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
+NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:    ->  Hash (actual rows=1.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1 loops=1)
+NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared hit=44
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -2111,13 +2173,15 @@ NOTICE:  Explaining:
                     END as update_rank
                 FROM diff d
             
-NOTICE:  WindowAgg (actual rows=3 loops=1)
+NOTICE:  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY grouping_key, t_from ORDER BY (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until ROWS UNBOUNDED PRECEDING)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=3 loops=1)
+NOTICE:    ->  Sort (actual rows=3.00 loops=1)
 NOTICE:          Sort Key: grouping_key, t_from, (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on diff d (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on diff d (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=50
@@ -2224,17 +2288,17 @@ NOTICE:  Explaining:
                     )
                 )
             
-NOTICE:  Append (actual rows=3 loops=1)
+NOTICE:  Append (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=3 loops=1)
+NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=3.00 loops=1)
 NOTICE:          Filter: (((f_row_ids IS NOT NULL) OR (t_data IS NOT NULL)) AND (CASE WHEN is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (is_new_entity AND (NOT is_identifiable)) THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (update_rank IS NULL) THEN CASE WHEN unaffected_target_only_segment THEN NULL::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END ELSE 'ERROR'::sql_saga.temporal_merge_plan_action END IS NOT NULL))
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0.00 loops=1)
 NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 1
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared hit=54
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -2256,18 +2320,18 @@ NOTICE:  Explaining:
                 FROM plan_with_op p
                 LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
             
-NOTICE:  Hash Right Join (actual rows=3 loops=1)
+NOTICE:  Hash Right Join (actual rows=3.00 loops=1)
 NOTICE:    Hash Cond: (source_row.source_row_id = p.row_ids[1])
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=1 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=3 loops=1)
+NOTICE:    ->  Hash (actual rows=3.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3 loops=1)
+NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=3.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=40
+NOTICE:    Buffers: shared hit=44
 NOTICE:  ---
 NOTICE:  Explaining: 
                 SELECT
@@ -2277,17 +2341,19 @@ NOTICE:  Explaining:
                 FROM plan p
                 ORDER BY plan_op_seq;
             
-NOTICE:  Sort (actual rows=3 loops=1)
-NOTICE:    Sort Key: (row_number() OVER (?))
+NOTICE:  Sort (actual rows=3.00 loops=1)
+NOTICE:    Sort Key: (row_number() OVER w1)
 NOTICE:    Sort Method: quicksort  Memory: 25kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=3 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=3.00 loops=1)
+NOTICE:          Window: w1 AS (ORDER BY grouping_key, lu_id, type, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1]) ROWS UNBOUNDED PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=3 loops=1)
+NOTICE:          ->  Sort (actual rows=3.00 loops=1)
 NOTICE:                Sort Key: grouping_key, lu_id, type, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect NULLS FIRST, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1])
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on plan p (actual rows=3 loops=1)
+NOTICE:                ->  Seq Scan on plan p (actual rows=3.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=42
@@ -2448,7 +2514,7 @@ NOTICE:  Explaining:
                     true /* v_consistency_check_expr */ as temporal_columns_are_consistent
                 FROM tmpc.source_nk /* v_source_table_ident */ source_table;
             
-NOTICE:  Seq Scan on source_nk source_table (actual rows=2 loops=1)
+NOTICE:  Seq Scan on source_nk source_table (actual rows=2.00 loops=1)
 NOTICE:    Buffers: shared hit=1
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (source_row_id);
@@ -2480,25 +2546,25 @@ NOTICE:  Explaining:
                         s2.source_row_id > s1.source_row_id
                 ) eclipse_info;
             
-NOTICE:  Nested Loop (actual rows=2 loops=1)
+NOTICE:  Nested Loop (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=3
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1 loops=2)
+NOTICE:    ->  Aggregate (actual rows=1.00 loops=2)
 NOTICE:          Buffers: local hit=2
-NOTICE:          ->  Sort (actual rows=0 loops=2)
+NOTICE:          ->  Sort (actual rows=0.00 loops=2)
 NOTICE:                Sort Key: s2.valid_from
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=2
-NOTICE:                ->  Result (actual rows=0 loops=2)
+NOTICE:                ->  Result (actual rows=0.00 loops=2)
 NOTICE:                      One-Time Filter: s1.natural_identity_column_values_are_null
 NOTICE:                      Buffers: local hit=2
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0 loops=2)
+NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=2)
 NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
 NOTICE:                            Rows Removed by Filter: 2
 NOTICE:                            Buffers: local hit=2
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44, local read=2
+NOTICE:    Buffers: shared hit=46, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -2523,39 +2589,41 @@ NOTICE:  Explaining:
                         )
                     ) AS t  /* v_target_rows_filter */
             
-NOTICE:  Subquery Scan on unnamed_subquery (actual rows=2 loops=1)
+NOTICE:  Subquery Scan on unnamed_subquery (actual rows=2.00 loops=1)
 NOTICE:    Buffers: shared hit=25, local hit=1
-NOTICE:    ->  Unique (actual rows=2 loops=1)
+NOTICE:    ->  Unique (actual rows=2.00 loops=1)
 NOTICE:          Buffers: shared hit=25, local hit=1
-NOTICE:          ->  Unique (actual rows=2 loops=1)
+NOTICE:          ->  Unique (actual rows=2.00 loops=1)
 NOTICE:                Buffers: shared hit=25, local hit=1
-NOTICE:                ->  Sort (actual rows=2 loops=1)
+NOTICE:                ->  Sort (actual rows=2.00 loops=1)
 NOTICE:                      Sort Key: inner_t.type, inner_t.lu_id, inner_t.es_id, inner_t.valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
 NOTICE:                      Buffers: shared hit=25, local hit=1
-NOTICE:                      ->  Nested Loop (actual rows=2 loops=1)
+NOTICE:                      ->  Nested Loop (actual rows=2.00 loops=1)
 NOTICE:                            Buffers: shared hit=25, local hit=1
-NOTICE:                            ->  Unique (actual rows=2 loops=1)
+NOTICE:                            ->  Unique (actual rows=2.00 loops=1)
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Sort (actual rows=2 loops=1)
+NOTICE:                                  ->  Sort (actual rows=2.00 loops=1)
 NOTICE:                                        Sort Key: si.type, si.lu_id, si.es_id
 NOTICE:                                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                                        ->  Seq Scan on source_initial si (actual rows=2 loops=1)
+NOTICE:                                        ->  Seq Scan on source_initial si (actual rows=2.00 loops=1)
 NOTICE:                                              Buffers: local hit=1
-NOTICE:                            ->  Bitmap Heap Scan on target_nk inner_t (actual rows=1 loops=2)
+NOTICE:                            ->  Bitmap Heap Scan on target_nk inner_t (actual rows=1.00 loops=2)
 NOTICE:                                  Recheck Cond: ((si.type = type) OR (type IS NULL))
 NOTICE:                                  Filter: (((si.type = type) OR ((si.type IS NULL) AND (type IS NULL))) AND ((si.lu_id = lu_id) OR ((si.lu_id IS NULL) AND (lu_id IS NULL))) AND ((si.es_id = es_id) OR ((si.es_id IS NULL) AND (es_id IS NULL))))
 NOTICE:                                  Rows Removed by Filter: 999
 NOTICE:                                  Heap Blocks: exact=14
 NOTICE:                                  Buffers: shared hit=25
-NOTICE:                                  ->  BitmapOr (actual rows=0 loops=2)
+NOTICE:                                  ->  BitmapOr (actual rows=0.00 loops=2)
 NOTICE:                                        Buffers: shared hit=11
-NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=1000 loops=2)
+NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=1000.00 loops=2)
 NOTICE:                                              Index Cond: (type = si.type)
+NOTICE:                                              Index Searches: 2
 NOTICE:                                              Buffers: shared hit=7
-NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=0 loops=2)
+NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=0.00 loops=2)
 NOTICE:                                              Index Cond: (type IS NULL)
+NOTICE:                                              Index Searches: 2
 NOTICE:                                              Buffers: shared hit=4
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (es_id, lu_id, type);
@@ -2573,18 +2641,19 @@ NOTICE:  Explaining:
                 FROM source_with_eclipsed_flag source_row
                 LEFT JOIN target_rows target_row ON (source_row.type IS NOT DISTINCT FROM target_row.type AND source_row.lu_id IS NOT DISTINCT FROM target_row.lu_id AND source_row.es_id IS NOT DISTINCT FROM target_row.es_id /* v_source_rows_exists_join_expr */)
             
-NOTICE:  Nested Loop Left Join (actual rows=2 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=2.00 loops=1)
 NOTICE:    Join Filter: ((NOT (source_row.type IS DISTINCT FROM target_row.type)) AND (NOT (source_row.lu_id IS DISTINCT FROM target_row.lu_id)) AND (NOT (source_row.es_id IS DISTINCT FROM target_row.es_id)))
 NOTICE:    Rows Removed by Join Filter: 2
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Materialize (actual rows=2 loops=2)
+NOTICE:    ->  Materialize (actual rows=2.00 loops=2)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2 loops=1)
+NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48, local read=1
+NOTICE:    Buffers: shared hit=52, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -2595,17 +2664,17 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches
                 GROUP BY source_row_id
             
-NOTICE:  GroupAggregate (actual rows=2 loops=1)
+NOTICE:  GroupAggregate (actual rows=2.00 loops=1)
 NOTICE:    Group Key: source_row_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=2 loops=1)
+NOTICE:    ->  Sort (actual rows=2.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=2 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared hit=44
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -2617,18 +2686,18 @@ NOTICE:  Explaining:
                 FROM source_rows_with_matches m
                 JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
             
-NOTICE:  Hash Join (actual rows=2 loops=1)
+NOTICE:  Hash Join (actual rows=2.00 loops=1)
 NOTICE:    Hash Cond: (a.source_row_id = m.source_row_id)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_aggregates a (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=2 loops=1)
+NOTICE:    ->  Hash (actual rows=2.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=2 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_matches m (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=8
+NOTICE:    Buffers: shared hit=10
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -2644,13 +2713,13 @@ NOTICE:  Explaining:
                 FROM source_rows_with_discovery p
                 ORDER BY p.source_row_id, p.discovered_stable_pk_payload
             
-NOTICE:  Unique (actual rows=2 loops=1)
+NOTICE:  Unique (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=2 loops=1)
+NOTICE:    ->  Sort (actual rows=2.00 loops=1)
 NOTICE:          Sort Key: source_row_id, discovered_stable_pk_payload
 NOTICE:          Sort Method: quicksort  Memory: 25kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=2 loops=1)
+NOTICE:          ->  Seq Scan on source_rows_with_discovery p (actual rows=2.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=48
@@ -2660,7 +2729,7 @@ NOTICE:  Explaining:
                 SELECT *, NOT target_entity_exists as is_new_entity
                 FROM source_rows
             
-NOTICE:  Seq Scan on source_rows (actual rows=2 loops=1)
+NOTICE:  Seq Scan on source_rows (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=40
@@ -2670,13 +2739,13 @@ NOTICE:  Explaining:
                 SELECT source_row.*, jsonb_strip_nulls(jsonb_build_object()) /* v_lookup_keys_as_jsonb_expr */ as nk_json, ARRAY(SELECT e FROM unnest(ARRAY[]::TEXT[]) e WHERE e IS NOT NULL ORDER BY e) /* v_lookup_keys_as_array_expr */ as nk_non_null_keys_array
                 FROM source_rows_with_new_flag source_row
             
-NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=2 loops=1)
+NOTICE:  Seq Scan on source_rows_with_new_flag source_row (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:    InitPlan 1
-NOTICE:      ->  Sort (actual rows=0 loops=1)
+NOTICE:      ->  Sort (actual rows=0.00 loops=1)
 NOTICE:            Sort Key: e.e
 NOTICE:            Sort Method: quicksort  Memory: 25kB
-NOTICE:            ->  Function Scan on unnest e (actual rows=0 loops=1)
+NOTICE:            ->  Function Scan on unnest e (actual rows=0.00 loops=1)
 NOTICE:                  Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=42
@@ -2706,20 +2775,20 @@ NOTICE:  Explaining:
                     ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=2 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=2)
-NOTICE:          ->  Sort (actual rows=0 loops=2)
+NOTICE:    ->  Limit (actual rows=0.00 loops=2)
+NOTICE:          ->  Sort (actual rows=0.00 loops=2)
 NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0 loops=2)
+NOTICE:                ->  Result (actual rows=0.00 loops=2)
 NOTICE:                      One-Time Filter: s1.is_new_entity
 NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
 NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=68, local hit=1
+NOTICE:    Buffers: shared hit=70, local hit=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -2738,10 +2807,10 @@ NOTICE:  Explaining:
                     END as early_feedback
                 FROM source_rows_with_canonical_key s
             
-NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=2 loops=1)
+NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared hit=81
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
@@ -2760,7 +2829,7 @@ NOTICE:  Explaining:
                     ELSE false
                 END
             
-NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=2 loops=1)
+NOTICE:  Seq Scan on source_rows_with_early_feedback source_row (actual rows=2.00 loops=1)
 NOTICE:    Filter: (early_feedback IS NULL)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
@@ -2794,11 +2863,11 @@ NOTICE:  Explaining:
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
-NOTICE:  Append (actual rows=4 loops=1)
+NOTICE:  Append (actual rows=4.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on active_source_rows (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on active_source_rows (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=59, local read=2
@@ -2809,11 +2878,11 @@ NOTICE:  Explaining:
                 UNION ALL
                 SELECT es_id, lu_id, type, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
             
-NOTICE:  Append (actual rows=8 loops=1)
+NOTICE:  Append (actual rows=8.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on all_rows (actual rows=4 loops=1)
+NOTICE:    ->  Seq Scan on all_rows (actual rows=4.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=4 loops=1)
+NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=4.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=32
@@ -2847,20 +2916,24 @@ NOTICE:  Explaining:
             END ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
                 FROM time_points_raw
             
-NOTICE:  WindowAgg (actual rows=8 loops=1)
+NOTICE:  WindowAgg (actual rows=8.00 loops=1)
+NOTICE:    Window: w2 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL)) THEN ((((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=8 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=8.00 loops=1)
 NOTICE:          Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL)) THEN ((((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) END), causal_id
 NOTICE:          Presorted Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL)) THEN ((((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) END)
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=8 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=8.00 loops=1)
+NOTICE:                Window: w1 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL)) THEN ((((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=8 loops=1)
+NOTICE:                ->  Sort (actual rows=8.00 loops=1)
 NOTICE:                      Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((type IS NOT NULL) OR (lu_id IS NOT NULL) OR (es_id IS NOT NULL)) THEN ((((COALESCE(type, '_NULL_'::text) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) ELSE (causal_id)::text END) ELSE ((((('existing_entity__'::text || COALESCE(type, '_NULL_'::text)) || '__'::text) || COALESCE((lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((es_id)::text, '_NULL_'::text)) END), causal_id NULLS FIRST
 NOTICE:                      Sort Method: quicksort  Memory: 26kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=8 loops=1)
+NOTICE:                      ->  Seq Scan on time_points_raw (actual rows=8.00 loops=1)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=28
@@ -2882,7 +2955,7 @@ NOTICE:  Explaining:
                     tpu.unified_canonical_nk_json as canonical_nk_json
                 FROM time_points_unified tpu
             
-NOTICE:  Seq Scan on time_points_unified tpu (actual rows=8 loops=1)
+NOTICE:  Seq Scan on time_points_unified tpu (actual rows=8.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=36
@@ -2893,13 +2966,13 @@ NOTICE:  Explaining:
                 FROM time_points_with_unified_ids
                 ORDER BY grouping_key, point, causal_id DESC NULLS LAST
             
-NOTICE:  Unique (actual rows=8 loops=1)
+NOTICE:  Unique (actual rows=8.00 loops=1)
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=8 loops=1)
+NOTICE:    ->  Sort (actual rows=8.00 loops=1)
 NOTICE:          Sort Key: grouping_key, point, causal_id DESC NULLS LAST
 NOTICE:          Sort Method: quicksort  Memory: 26kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=8 loops=1)
+NOTICE:          ->  Seq Scan on time_points_with_unified_ids (actual rows=8.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=30
@@ -2913,17 +2986,19 @@ NOTICE:  Explaining:
                 ) with_lead
                 WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
             
-NOTICE:  Subquery Scan on with_lead (actual rows=6 loops=1)
+NOTICE:  Subquery Scan on with_lead (actual rows=6.00 loops=1)
 NOTICE:    Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
 NOTICE:    Rows Removed by Filter: 2
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=8 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=8.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY time_points.grouping_key ORDER BY time_points.point)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=8 loops=1)
+NOTICE:          ->  Sort (actual rows=8.00 loops=1)
 NOTICE:                Sort Key: time_points.grouping_key, time_points.point
 NOTICE:                Sort Method: quicksort  Memory: 26kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on time_points (actual rows=8 loops=1)
+NOTICE:                ->  Seq Scan on time_points (actual rows=8.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=30
@@ -2989,52 +3064,59 @@ NOTICE:  Explaining:
                     END
                 ) with_base_payload
             
-NOTICE:  Nested Loop Left Join (actual rows=6 loops=1)
+NOTICE:  Nested Loop Left Join (actual rows=6.00 loops=1)
 NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (target_row.data_payload IS NOT NULL))
 NOTICE:    Buffers: local hit=8
-NOTICE:    ->  Nested Loop Left Join (actual rows=6 loops=1)
+NOTICE:    ->  Nested Loop Left Join (actual rows=6.00 loops=1)
 NOTICE:          Join Filter: (((target_row.es_id = seg.es_id) OR ((target_row.es_id IS NULL) AND (seg.es_id IS NULL))) AND ((target_row.lu_id = seg.lu_id) OR ((target_row.lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((target_row.type = seg.type) OR ((target_row.type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
 NOTICE:          Rows Removed by Join Filter: 6
 NOTICE:          Buffers: local hit=2
-NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=6 loops=1)
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
-NOTICE:          ->  Materialize (actual rows=2 loops=6)
+NOTICE:          ->  Materialize (actual rows=2.00 loops=6)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=2 loops=1)
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:                      Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0 loops=6)
+NOTICE:    ->  Limit (actual rows=0.33 loops=6)
 NOTICE:          Buffers: local hit=6
 NOTICE:          CTE ordered_sources
-NOTICE:            ->  WindowAgg (actual rows=0 loops=6)
+NOTICE:            ->  WindowAgg (actual rows=0.33 loops=6)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  Storage: Memory  Maximum Storage: 17kB
 NOTICE:                  Buffers: local hit=6
-NOTICE:                  ->  Sort (actual rows=0 loops=6)
+NOTICE:                  ->  Sort (actual rows=0.33 loops=6)
 NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=6
-NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0 loops=6)
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=6)
 NOTICE:                              Filter: ((daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)) AND CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE (((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL)))) END)
 NOTICE:                              Rows Removed by Filter: 2
 NOTICE:                              Buffers: local hit=6
 NOTICE:          CTE running_payload
-NOTICE:            ->  Recursive Union (actual rows=0 loops=6)
+NOTICE:            ->  Recursive Union (actual rows=0.33 loops=6)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
 NOTICE:                  Buffers: local hit=6
-NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0 loops=6)
+NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0.33 loops=6)
 NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
 NOTICE:                        Buffers: local hit=6
-NOTICE:                  ->  Hash Join (actual rows=0 loops=6)
+NOTICE:                  ->  Hash Join (actual rows=0.00 loops=6)
 NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
-NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=1 loops=3)
-NOTICE:                        ->  Hash (actual rows=0 loops=5)
+NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0.67 loops=3)
+NOTICE:                        ->  Hash (actual rows=0.40 loops=5)
 NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0 loops=5)
-NOTICE:          ->  Sort (actual rows=0 loops=6)
+NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.40 loops=5)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (actual rows=0.33 loops=6)
 NOTICE:                Sort Key: running_payload.rn DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=6
-NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=6)
+NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=6)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=6
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=53
+NOTICE:    Buffers: shared hit=55
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -3064,43 +3146,53 @@ NOTICE:  Explaining:
                     FROM resolved_atomic_segments_with_payloads /* v_resolver_from */
                 ) with_grp
             
-NOTICE:  WindowAgg (actual rows=6 loops=1)
+NOTICE:  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:    Window: w3 AS (PARTITION BY with_grp.grouping_key ORDER BY with_grp.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 18kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Incremental Sort (actual rows=6 loops=1)
+NOTICE:    ->  Incremental Sort (actual rows=6.00 loops=1)
 NOTICE:          Sort Key: with_grp.grouping_key, with_grp.valid_from
 NOTICE:          Presorted Key: with_grp.grouping_key
 NOTICE:          Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:                Window: w2 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Incremental Sort (actual rows=6 loops=1)
+NOTICE:                ->  Incremental Sort (actual rows=6.00 loops=1)
 NOTICE:                      Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp
 NOTICE:                      Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                      Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 27kB  Peak Memory: 27kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:                      ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:                            Window: w1 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp)
+NOTICE:                            Storage: Memory  Maximum Storage: 17kB
 NOTICE:                            Buffers: local hit=1
-NOTICE:                            ->  Incremental Sort (actual rows=6 loops=1)
+NOTICE:                            ->  Incremental Sort (actual rows=6.00 loops=1)
 NOTICE:                                  Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp
 NOTICE:                                  Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
 NOTICE:                                  Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
 NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=6 loops=1)
+NOTICE:                                  ->  Subquery Scan on with_grp (actual rows=6.00 loops=1)
 NOTICE:                                        Buffers: local hit=1
-NOTICE:                                        ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:                                        ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:                                              Window: w2 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                              Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                              Buffers: local hit=1
-NOTICE:                                              ->  Incremental Sort (actual rows=6 loops=1)
+NOTICE:                                              ->  Incremental Sort (actual rows=6.00 loops=1)
 NOTICE:                                                    Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from
 NOTICE:                                                    Presorted Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from
 NOTICE:                                                    Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 26kB  Peak Memory: 26kB
 NOTICE:                                                    Buffers: local hit=1
-NOTICE:                                                    ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:                                                    ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:                                                          Window: w1 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
+NOTICE:                                                          Storage: Memory  Maximum Storage: 17kB
 NOTICE:                                                          Buffers: local hit=1
-NOTICE:                                                          ->  Sort (actual rows=6 loops=1)
+NOTICE:                                                          ->  Sort (actual rows=6.00 loops=1)
 NOTICE:                                                                Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from DESC
 NOTICE:                                                                Sort Method: quicksort  Memory: 26kB
 NOTICE:                                                                Buffers: local hit=1
-NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6 loops=1)
+NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=60
@@ -3123,7 +3215,7 @@ NOTICE:  Explaining:
                     CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
                 FROM resolved_atomic_segments_with_propagated_ids
             
-NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=6 loops=1)
+NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=6.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=72
@@ -3155,17 +3247,21 @@ NOTICE:  Explaining:
                     ) s1
                 ) s2
             
-NOTICE:  WindowAgg (actual rows=6 loops=1)
+NOTICE:  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY s1.grouping_key ORDER BY s1.valid_from)
+NOTICE:    Storage: Memory  Maximum Storage: 18kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Subquery Scan on s1 (actual rows=6 loops=1)
+NOTICE:    ->  Subquery Scan on s1 (actual rows=6.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:          ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:                Window: w AS (PARTITION BY ras.grouping_key ORDER BY ras.valid_from)
+NOTICE:                Storage: Memory  Maximum Storage: 18kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Sort (actual rows=6 loops=1)
+NOTICE:                ->  Sort (actual rows=6.00 loops=1)
 NOTICE:                      Sort Key: ras.grouping_key, ras.valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 26kB
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=6 loops=1)
+NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actual rows=6.00 loops=1)
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
@@ -3198,21 +3294,21 @@ NOTICE:  Explaining:
                 FROM island_group
                 GROUP BY grouping_key, island_group_id
             
-NOTICE:  GroupAggregate (actual rows=6 loops=1)
+NOTICE:  GroupAggregate (actual rows=6.00 loops=1)
 NOTICE:    Group Key: island_group.grouping_key, island_group.island_group_id
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=6 loops=1)
+NOTICE:    ->  Sort (actual rows=6.00 loops=1)
 NOTICE:          Sort Key: island_group.grouping_key, island_group.island_group_id, island_group.valid_from
 NOTICE:          Sort Method: quicksort  Memory: 26kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on island_group (actual rows=6 loops=1)
+NOTICE:          ->  Seq Scan on island_group (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:    SubPlan 1
-NOTICE:      ->  Aggregate (actual rows=1 loops=6)
-NOTICE:            ->  Sort (actual rows=1 loops=6)
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=6)
+NOTICE:            ->  Sort (actual rows=1.00 loops=6)
 NOTICE:                  Sort Key: e.e
 NOTICE:                  Sort Method: quicksort  Memory: 25kB
-NOTICE:                  ->  Function Scan on unnest e (actual rows=1 loops=6)
+NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=6)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=72
@@ -3239,18 +3335,18 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.type::text, '_NULL_') || '__' || COALESCE(target_seg.lu_id::text, '_NULL_') || '__' || COALESCE(target_seg.es_id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Hash Full Join (actual rows=6 loops=1)
+NOTICE:  Hash Full Join (actual rows=6.00 loops=1)
 NOTICE:    Hash Cond: ((((((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.es_id)::text, '_NULL_'::text)) = final_seg.grouping_key) AND (target_seg.valid_from = final_seg.ancestor_valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on target_rows target_seg (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on target_rows target_seg (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=6 loops=1)
+NOTICE:    ->  Hash (actual rows=6.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 10kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=6 loops=1)
+NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=44
+NOTICE:    Buffers: shared hit=46
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -3271,13 +3367,15 @@ NOTICE:  Explaining:
                     END as update_rank
                 FROM diff d
             
-NOTICE:  WindowAgg (actual rows=6 loops=1)
+NOTICE:  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:    Window: w1 AS (PARTITION BY grouping_key, t_from ORDER BY (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until ROWS UNBOUNDED PRECEDING)
+NOTICE:    Storage: Memory  Maximum Storage: 17kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=6 loops=1)
+NOTICE:    ->  Sort (actual rows=6.00 loops=1)
 NOTICE:          Sort Key: grouping_key, t_from, (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until
 NOTICE:          Sort Method: quicksort  Memory: 26kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on diff d (actual rows=6 loops=1)
+NOTICE:          ->  Seq Scan on diff d (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=50
@@ -3384,17 +3482,17 @@ NOTICE:  Explaining:
                     )
                 )
             
-NOTICE:  Append (actual rows=6 loops=1)
+NOTICE:  Append (actual rows=6.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=6 loops=1)
+NOTICE:    ->  Seq Scan on diff_ranked d (actual rows=6.00 loops=1)
 NOTICE:          Filter: (((f_row_ids IS NOT NULL) OR (t_data IS NOT NULL)) AND (CASE WHEN is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (is_new_entity AND (NOT is_identifiable)) THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (update_rank IS NULL) THEN CASE WHEN unaffected_target_only_segment THEN NULL::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END ELSE 'ERROR'::sql_saga.temporal_merge_plan_action END IS NOT NULL))
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_early_feedback source_row (actual rows=0.00 loops=1)
 NOTICE:          Filter: (early_feedback IS NOT NULL)
 NOTICE:          Rows Removed by Filter: 2
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared hit=54
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -3416,18 +3514,18 @@ NOTICE:  Explaining:
                 FROM plan_with_op p
                 LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
             
-NOTICE:  Hash Right Join (actual rows=6 loops=1)
+NOTICE:  Hash Right Join (actual rows=6.00 loops=1)
 NOTICE:    Hash Cond: (source_row.source_row_id = p.row_ids[1])
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=2 loops=1)
+NOTICE:    ->  Seq Scan on source_rows_with_new_flag source_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=6 loops=1)
+NOTICE:    ->  Hash (actual rows=6.00 loops=1)
 NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 10kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=6 loops=1)
+NOTICE:          ->  Seq Scan on plan_with_op p (actual rows=6.00 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=42
+NOTICE:    Buffers: shared hit=46
 NOTICE:  ---
 NOTICE:  Explaining: 
                 SELECT
@@ -3437,17 +3535,19 @@ NOTICE:  Explaining:
                 FROM plan p
                 ORDER BY plan_op_seq;
             
-NOTICE:  Sort (actual rows=6 loops=1)
-NOTICE:    Sort Key: (row_number() OVER (?))
+NOTICE:  Sort (actual rows=6.00 loops=1)
+NOTICE:    Sort Key: (row_number() OVER w1)
 NOTICE:    Sort Method: quicksort  Memory: 26kB
 NOTICE:    Buffers: local hit=1
-NOTICE:    ->  WindowAgg (actual rows=6 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=6.00 loops=1)
+NOTICE:          Window: w1 AS (ORDER BY grouping_key, es_id, lu_id, type, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1]) ROWS UNBOUNDED PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Sort (actual rows=6 loops=1)
+NOTICE:          ->  Sort (actual rows=6.00 loops=1)
 NOTICE:                Sort Key: grouping_key, es_id, lu_id, type, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect NULLS FIRST, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1])
 NOTICE:                Sort Method: quicksort  Memory: 26kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Seq Scan on plan p (actual rows=6 loops=1)
+NOTICE:                ->  Seq Scan on plan p (actual rows=6.00 loops=1)
 NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=44

@@ -88,10 +88,10 @@ NOTICE:  No compatible index found for foreign key on table regular_fk. Creating
 "--- After add_regular_foreign_key ---"
 -- The helper function should be in the schema of the referenced table and have a predictable name.
 \df+ public.temporal_pk_id_exists
-                                                                                   List of functions
- Schema |         Name          | Result data type | Argument data types | Type | Volatility | Parallel | Owner | Security | Access privileges | Language | Internal name | Description 
---------+-----------------------+------------------+---------------------+------+------------+----------+-------+----------+-------------------+----------+---------------+-------------
- public | temporal_pk_id_exists | boolean          | integer             | func | stable     | unsafe   | jhf   | invoker  |                   | sql      |               | 
+                                                                                          List of functions
+ Schema |         Name          | Result data type | Argument data types | Type | Volatility | Parallel | Owner | Security | Leakproof? | Access privileges | Language | Internal name | Description 
+--------+-----------------------+------------------+---------------------+------+------------+----------+-------+----------+------------+-------------------+----------+---------------+-------------
+ public | temporal_pk_id_exists | boolean          | integer             | func | stable     | unsafe   | jhf   | invoker  | no         |                   | sql      |               | 
 (1 row)
 
 -- The CHECK constraint should be on the regular_fk table
@@ -231,9 +231,9 @@ TABLE temporal_pk;
 
 -- The helper function and CHECK constraint should be gone
 \df+ public.temporal_pk_id_exists
-                                                                           List of functions
- Schema | Name | Result data type | Argument data types | Type | Volatility | Parallel | Owner | Security | Access privileges | Language | Internal name | Description 
---------+------+------------------+---------------------+------+------------+----------+-------+----------+-------------------+----------+---------------+-------------
+                                                                                 List of functions
+ Schema | Name | Result data type | Argument data types | Type | Volatility | Parallel | Owner | Security | Leakproof? | Access privileges | Language | Internal name | Description 
+--------+------+------------------+---------------------+------+------------+----------+-------+----------+------------+-------------------+----------+---------------+-------------
 (0 rows)
 
 \d regular_fk

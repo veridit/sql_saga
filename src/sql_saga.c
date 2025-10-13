@@ -1809,7 +1809,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
 
 				if (old_isnull != new_isnull ||
-					(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i] - 1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i] - 1].attlen)))
+					(!old_isnull && !datumIsEqual(old_val, new_val, TupleDescAttr(tupdesc, plan_entry->param_attnums_old[i] - 1)->attbyval, TupleDescAttr(tupdesc, plan_entry->param_attnums_old[i] - 1)->attlen)))
 				{
 					keys_are_equal = false;
 					break;
@@ -1845,7 +1845,7 @@ uk_update_check_c(PG_FUNCTION_ARGS)
 				new_val = heap_getattr(new_row, plan_entry->param_attnums_old[i], tupdesc, &new_isnull);
 
 				if (old_isnull != new_isnull ||
-					(!old_isnull && !datumIsEqual(old_val, new_val, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attbyval, tupdesc->attrs[plan_entry->param_attnums_old[i]-1].attlen)))
+					(!old_isnull && !datumIsEqual(old_val, new_val, TupleDescAttr(tupdesc, plan_entry->param_attnums_old[i]-1)->attbyval, TupleDescAttr(tupdesc, plan_entry->param_attnums_old[i]-1)->attlen)))
 				{
 					keys_are_equal = false;
 					break;
@@ -2137,8 +2137,5 @@ write_history(PG_FUNCTION_ARGS)
 
 
 void _PG_init(void) {
-}
-
-void _PG_fini(void) {
 }
 
