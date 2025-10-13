@@ -306,22 +306,34 @@ INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated vi
 CREATE INDEX ON legal_unit_source(id);
 CREATE INDEX ON legal_unit_source USING GIST (daterange(valid_from, valid_until, '[)'));
 ANALYZE legal_unit_source;
+ANALYZE legal_unit;
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Parent (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
 CALL sql_saga.temporal_merge('legal_unit'::regclass, 'legal_unit_source'::regclass, ARRAY['id']);
 CALL sql_saga.benchmark_log_and_reset('temporal_merge Parent (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Parent (With Index) end', 1000, true);
+\set benchmark_explain_log_filename expected/performance/100_benchmark_basic_dml_legal_unit_explain.log
+\set benchmark_source_table 'legal_unit_source'
+\set benchmark_target_table 'legal_unit'
+\i sql/include/benchmark_explain_log.sql
+\set ECHO none
 -- Child table merge
 CREATE TEMP TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
 INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
 CREATE INDEX ON establishment_source(id);
 CREATE INDEX ON establishment_source USING GIST (daterange(valid_from, valid_until, '[)'));
 ANALYZE establishment_source;
+ANALYZE establishment;
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Child (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
 CALL sql_saga.temporal_merge('establishment'::regclass, 'establishment_source'::regclass, ARRAY['id']);
 CALL sql_saga.benchmark_log_and_reset('temporal_merge Child (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temporal_merge Child (With Index) end', 1000, true);
+\set benchmark_explain_log_filename expected/performance/100_benchmark_basic_dml_establishment_explain.log
+\set benchmark_source_table 'establishment_source'
+\set benchmark_target_table 'establishment'
+\i sql/include/benchmark_explain_log.sql
+\set ECHO none
 -- Teardown sql_saga constraints
 SELECT sql_saga.drop_foreign_key('projects', ARRAY['legal_unit_id']);
 NOTICE:  Dropping automatically created index "projects_legal_unit_id_idx" for foreign key "projects_legal_unit_id_fkey"

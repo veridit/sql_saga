@@ -1,0 +1,1096 @@
+
+--- Performance Monitoring: EXPLAIN the cached planner query from previous temporal_merge call ---
+--- Explaining 40 steps from cache for source legal_unit_source_dt
+---
+Explaining: 
+                CREATE TEMP TABLE source_initial ON COMMIT DROP AS
+                SELECT
+                    source_table.row_id /* row_id_column */ as source_row_id,
+                    source_table.row_id /* v_causal_select_expr */ as causal_id,
+                    source_table.id,  -- v_non_temporal_lookup_cols_select_list_prefix
+                    source_table.valid_from as valid_from, source_table.valid_until as valid_until, /* v_source_temporal_cols_expr */
+                    jsonb_strip_nulls(jsonb_build_object('name', source_table.name)) /* v_source_data_payload_expr */ AS data_payload,
+                    jsonb_strip_nulls(jsonb_build_object()) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
+                    jsonb_build_object('id', source_table.id) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
+                    source_table.id IS NULL /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
+                    (source_table.id IS NULL) /* v_lookup_cols_are_null_expr */ as natural_identity_column_values_are_null,
+                    NOT ((source_table.id IS NULL) AND ((source_table.id IS NULL))) /* v_is_identifiable_expr */ as is_identifiable,
+                    true /* v_consistency_check_expr */ as temporal_columns_are_consistent
+                FROM legal_unit_source_dt /* v_source_table_ident */ source_table;
+            
+Seq Scan on legal_unit_source_dt source_table  (cost=0.00..307.00 rows=10000 width=120) (actual time=0.012..9.543 rows=10000 loops=1)
+  Buffers: local hit=19 read=63 written=32
+Planning Time: 0.017 ms
+Execution Time: 16.875 ms
+---
+Executing setup: CREATE INDEX ON source_initial (source_row_id);
+---
+Executing setup: CREATE INDEX ON source_initial (id);
+---
+Executing setup: ANALYZE source_initial;
+---
+Explaining: 
+                CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
+                SELECT
+                    s1.*,
+                    eclipse_info.is_eclipsed,
+                    eclipse_info.eclipsed_by
+                FROM source_initial s1
+                CROSS JOIN LATERAL (
+                    SELECT
+                        COALESCE(sql_saga.covers_without_gaps(daterange(s2.valid_from, s2.valid_until), daterange(s1.valid_from, s1.valid_until) ORDER BY s2.valid_from), false) as is_eclipsed,
+                        array_agg(s2.source_row_id) as eclipsed_by
+                    FROM source_initial s2
+                    WHERE
+                        (
+                            (NOT s1.natural_identity_column_values_are_null AND (s1.id IS NOT DISTINCT FROM s2.id))
+                            OR
+                            (s1.natural_identity_column_values_are_null AND s1.causal_id = s2.causal_id)
+                        )
+                        AND
+                        -- Only consider newer rows (higher row_id) as potential eclipsers.
+                        s2.source_row_id > s1.source_row_id
+                ) eclipse_info;
+            
+Nested Loop  (cost=182.31..1823567.00 rows=10000 width=122) (actual time=1.344..3330.021 rows=10000 loops=1)
+  Buffers: local hit=916480 read=29 written=29
+  ->  Seq Scan on source_initial s1  (cost=0.00..292.00 rows=10000 width=89) (actual time=0.003..0.494 rows=10000 loops=1)
+        Buffers: local hit=192
+  ->  Aggregate  (cost=182.31..182.32 rows=1 width=33) (actual time=0.333..0.333 rows=1 loops=10000)
+        Buffers: local hit=916288 read=29 written=29
+        ->  Sort  (cost=182.29..182.29 rows=1 width=12) (actual time=0.332..0.332 rows=0 loops=10000)
+              Sort Key: s2.valid_from
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: local hit=916288 read=29 written=29
+              ->  Index Scan using source_initial_source_row_id_idx on source_initial s2  (cost=0.29..182.28 rows=1 width=12) (actual time=0.332..0.332 rows=0 loops=10000)
+                    Index Cond: (source_row_id > s1.source_row_id)
+                    Filter: (((NOT s1.natural_identity_column_values_are_null) AND (NOT (s1.id IS DISTINCT FROM id))) OR (s1.natural_identity_column_values_are_null AND (s1.causal_id = causal_id)))
+                    Rows Removed by Filter: 5000
+                    Buffers: local hit=916288 read=29 written=29
+Planning:
+  Buffers: shared hit=38, local read=2 written=2
+Planning Time: 0.172 ms
+Execution Time: 3338.301 ms
+---
+Explaining: 
+                CREATE TEMP TABLE target_rows ON COMMIT DROP AS
+                SELECT
+                    id,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ -- (non-temporal identity columns)
+                    valid_from /* v_valid_from_col */ as valid_from, -- The temporal identity column (e.g., valid_from)
+                    NULL::integer /* v_causal_column_type */ as causal_id, -- Target rows do not originate from a source row, so causal_id is NULL. Type is introspected.
+                    jsonb_build_object('id', id) /* v_stable_pk_cols_jsonb_build_bare */ as stable_pk_payload,
+                    valid_until /* v_valid_until_col */ as valid_until,
+                    jsonb_build_object('name', name) /* v_target_data_cols_jsonb_build_bare */ AS data_payload,
+                    jsonb_build_object() /* v_target_ephemeral_cols_jsonb_build_bare */ AS ephemeral_payload,
+                    jsonb_strip_nulls(jsonb_build_object('id', t.id)) /* v_target_nk_json_expr */ AS canonical_nk_json
+                FROM (
+                        SELECT * FROM (
+                            SELECT DISTINCT ON (u.id, u.valid_from) * FROM (
+                                (
+                                        SELECT DISTINCT ON (inner_t.id, inner_t.valid_from) inner_t.*
+                                        FROM legal_unit_tm_dt inner_t
+                                        JOIN (SELECT DISTINCT si.id FROM source_initial si) AS si ON ((si.id = inner_t.id OR (si.id IS NULL AND inner_t.id IS NULL)))
+                                    )
+                            ) u
+                        )
+                    ) AS t  /* v_target_rows_filter */
+            
+Subquery Scan on unnamed_subquery  (cost=164012.93..164170.53 rows=200 width=144) (actual time=1054.295..1066.664 rows=10000 loops=1)
+  Buffers: shared hit=928000, local hit=192
+  ->  Unique  (cost=164012.93..164168.03 rows=200 width=44) (actual time=1054.280..1056.041 rows=10000 loops=1)
+        Buffers: shared hit=928000, local hit=192
+        ->  Unique  (cost=164012.93..164160.18 rows=1571 width=44) (actual time=1054.280..1055.349 rows=10000 loops=1)
+---
+              Buffers: shared hit=928000, local hit=192
+              ->  Sort  (cost=164012.93..164062.01 rows=19633 width=44) (actual time=1054.279..1054.604 rows=10000 loops=1)
+                    Sort Key: inner_t.id, inner_t.valid_from
+                    Sort Method: quicksort  Memory: 908kB
+                    Buffers: shared hit=928000, local hit=192
+                    ->  Nested Loop  (cost=326.47..162613.00 rows=19633 width=44) (actual time=2.665..1052.633 rows=10000 loops=1)
+                          Buffers: shared hit=928000, local hit=192
+                          ->  HashAggregate  (cost=317.00..417.00 rows=10000 width=4) (actual time=2.435..4.088 rows=10000 loops=1)
+                                Group Key: si.id
+                                Batches: 1  Memory Usage: 913kB
+                                Buffers: local hit=192
+                                ->  Seq Scan on source_initial si  (cost=0.00..292.00 rows=10000 width=4) (actual time=0.005..0.639 rows=10000 loops=1)
+                                      Buffers: local hit=192
+                          ->  Bitmap Heap Scan on legal_unit_tm_dt inner_t  (cost=9.47..15.43 rows=79 width=44) (actual time=0.104..0.104 rows=1 loops=10000)
+                                Recheck Cond: ((si.id = id) OR (id IS NULL))
+                                Filter: ((si.id = id) OR ((si.id IS NULL) AND (id IS NULL)))
+                                Heap Blocks: exact=18000
+                                Buffers: shared hit=928000
+                                ->  BitmapOr  (cost=9.47..9.47 rows=157 width=0) (actual time=0.103..0.103 rows=0 loops=10000)
+                                      Buffers: shared hit=910000
+                                      ->  Bitmap Index Scan on legal_unit_tm_dt_id_valid_excl  (cost=0.00..0.78 rows=79 width=0) (actual time=0.004..0.004 rows=2 loops=10000)
+                                            Index Cond: (id = si.id)
+                                            Buffers: shared hit=20000
+                                      ->  Bitmap Index Scan on legal_unit_tm_dt_id_valid_excl  (cost=0.00..4.74 rows=79 width=0) (actual time=0.099..0.099 rows=0 loops=10000)
+                                            Index Cond: (id IS NULL)
+                                            Buffers: shared hit=890000
+Planning Time: 0.132 ms
+Execution Time: 1074.869 ms
+---
+Executing setup: CREATE INDEX ON target_rows (id);
+---
+Executing setup: CREATE INDEX ON target_rows USING gist (daterange(valid_from, valid_until));
+---
+Executing setup: ANALYZE target_rows;
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
+                SELECT
+                    source_row.*,
+                    target_row.stable_pk_payload as discovered_stable_pk_payload,
+                    target_row.id AS discovered_id_1 /* v_propagated_id_cols_list */
+                FROM source_with_eclipsed_flag source_row
+                LEFT JOIN target_rows target_row ON (((source_row.id IS NOT DISTINCT FROM target_row.id)) /* v_source_rows_exists_join_expr */)
+            
+Nested Loop Left Join  (cost=0.00..1296595.40 rows=8640 width=182) (actual time=0.060..5010.307 rows=10000 loops=1)
+  Join Filter: (NOT (source_row.id IS DISTINCT FROM target_row.id))
+  Rows Removed by Join Filter: 99990000
+  Buffers: local hit=346 read=38 written=37
+  ->  Seq Scan on source_with_eclipsed_flag source_row  (cost=0.00..278.40 rows=8640 width=153) (actual time=0.054..2.108 rows=10000 loops=1)
+        Buffers: local hit=154 read=38 written=37
+  ->  Materialize  (cost=0.00..342.00 rows=10000 width=29) (actual time=0.000..0.217 rows=10000 loops=10000)
+        Buffers: local hit=192
+        ->  Seq Scan on target_rows target_row  (cost=0.00..292.00 rows=10000 width=29) (actual time=0.003..0.564 rows=10000 loops=1)
+              Buffers: local hit=192
+Planning:
+  Buffers: shared hit=38, local read=1 written=1
+Planning Time: 0.122 ms
+Execution Time: 5029.364 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
+                SELECT
+                    source_row_id,
+                    count(DISTINCT discovered_stable_pk_payload) as match_count,
+                    jsonb_agg(DISTINCT discovered_stable_pk_payload) as conflicting_ids
+                FROM source_rows_with_matches
+                GROUP BY source_row_id
+            
+GroupAggregate  (cost=976.32..1073.54 rows=200 width=44) (actual time=1.480..6.860 rows=10000 loops=1)
+  Group Key: source_row_id
+  Buffers: local hit=256
+  ->  Sort  (cost=976.32..1000.00 rows=9472 width=36) (actual time=1.472..1.702 rows=10000 loops=1)
+        Sort Key: source_row_id, discovered_stable_pk_payload
+        Sort Method: quicksort  Memory: 853kB
+        Buffers: local hit=256
+        ->  Seq Scan on source_rows_with_matches  (cost=0.00..350.72 rows=9472 width=36) (actual time=0.004..0.985 rows=10000 loops=1)
+              Buffers: local hit=256
+Planning:
+  Buffers: shared hit=34
+Planning Time: 0.056 ms
+Execution Time: 10.072 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
+                SELECT
+                    m.*,
+                    a.match_count,
+                    a.conflicting_ids,
+                    (a.match_count > 1) as is_ambiguous
+                FROM source_rows_with_matches m
+                JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
+            
+Merge Join  (cost=2248.44..14283.56 rows=685015 width=230) (actual time=1.782..4.321 rows=10000 loops=1)
+  Merge Cond: (m.source_row_id = a.source_row_id)
+  Buffers: local hit=384
+  ->  Sort  (cost=976.32..1000.00 rows=9472 width=189) (actual time=0.663..0.889 rows=10000 loops=1)
+        Sort Key: m.source_row_id
+        Sort Method: quicksort  Memory: 1845kB
+        Buffers: local hit=256
+        ->  Seq Scan on source_rows_with_matches m  (cost=0.00..350.72 rows=9472 width=189) (actual time=0.003..0.337 rows=10000 loops=1)
+              Buffers: local hit=256
+  ->  Sort  (cost=1272.12..1308.28 rows=14464 width=44) (actual time=1.116..1.342 rows=10000 loops=1)
+        Sort Key: a.source_row_id
+        Sort Method: quicksort  Memory: 1010kB
+        Buffers: local hit=128
+        ->  Seq Scan on source_rows_with_aggregates a  (cost=0.00..272.64 rows=14464 width=44) (actual time=0.003..0.520 rows=10000 loops=1)
+              Buffers: local hit=128
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.044 ms
+Execution Time: 10.686 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows ON COMMIT DROP AS
+                SELECT DISTINCT ON (p.source_row_id)
+                    p.source_row_id, p.causal_id, p.valid_from, p.valid_until, p.data_payload, p.ephemeral_payload,
+                    (p.stable_identity_columns_are_null AND p.discovered_stable_pk_payload IS NULL) as stable_identity_columns_are_null,
+                    p.natural_identity_column_values_are_null, p.is_identifiable,
+                    p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
+                    p.temporal_columns_are_consistent,
+                    COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
+                    (p.discovered_stable_pk_payload IS NOT NULL) /* v_target_entity_exists_expr */ as target_entity_exists,
+                    COALESCE(p.id, p.discovered_id_1) AS id /* v_coalesced_id_cols_list */
+                FROM source_rows_with_discovery p
+                ORDER BY p.source_row_id, p.discovered_stable_pk_payload
+            
+Unique  (cost=1077.70..1127.30 rows=200 width=219) (actual time=3.114..3.973 rows=10000 loops=1)
+  Buffers: local hit=313 read=7 written=7
+  ->  Sort  (cost=1077.70..1102.50 rows=9920 width=219) (actual time=3.113..3.337 rows=10000 loops=1)
+        Sort Key: source_row_id, discovered_stable_pk_payload
+        Sort Method: quicksort  Memory: 2166kB
+        Buffers: local hit=313 read=7 written=7
+        ->  Seq Scan on source_rows_with_discovery p  (cost=0.00..419.20 rows=9920 width=219) (actual time=0.022..1.398 rows=10000 loops=1)
+              Buffers: local hit=313 read=7 written=7
+Planning:
+  Buffers: shared hit=40
+Planning Time: 0.049 ms
+Execution Time: 10.098 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_new_flag ON COMMIT DROP AS
+                SELECT *, NOT target_entity_exists as is_new_entity
+                FROM source_rows
+            
+Seq Scan on source_rows  (cost=0.00..350.72 rows=9472 width=188) (actual time=0.006..1.390 rows=10000 loops=1)
+  Buffers: local hit=256
+Planning:
+  Buffers: shared hit=36
+Planning Time: 0.046 ms
+Execution Time: 7.224 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_nk_json ON COMMIT DROP AS
+                SELECT source_row.*, jsonb_strip_nulls(jsonb_build_object('id', source_row.id)) /* v_lookup_keys_as_jsonb_expr */ as nk_json, ARRAY(SELECT e FROM unnest(ARRAY[CASE WHEN source_row.id IS NOT NULL THEN 'id' END]::TEXT[]) e WHERE e IS NOT NULL ORDER BY e) /* v_lookup_keys_as_array_expr */ as nk_non_null_keys_array
+                FROM source_rows_with_new_flag source_row
+            
+Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..658.56 rows=9472 width=252) (actual time=0.020..14.879 rows=10000 loops=1)
+  Buffers: local hit=256
+  SubPlan 1
+    ->  Sort  (cost=0.02..0.03 rows=1 width=32) (actual time=0.001..0.001 rows=1 loops=10000)
+          Sort Key: e.e
+          Sort Method: quicksort  Memory: 25kB
+          ->  Function Scan on unnest e  (cost=0.00..0.01 rows=1 width=32) (actual time=0.000..0.000 rows=1 loops=10000)
+                Filter: (e IS NOT NULL)
+Planning:
+  Buffers: shared hit=38
+Planning Time: 0.054 ms
+Execution Time: 21.819 ms
+---
+Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
+---
+Executing setup: ANALYZE source_rows_with_nk_json;
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
+                SELECT *, (CASE
+                WHEN is_new_entity
+                THEN 'new_entity__' || CASE WHEN canonical_nk_json IS NOT NULL AND canonical_nk_json <> '{}'::jsonb THEN COALESCE(canonical_nk_json->>'id', '_NULL_') ELSE COALESCE(id::text, '_NULL_') END
+                ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
+            END /* v_grouping_key_expr */) as grouping_key
+                FROM (
+                    SELECT
+                        s1.*,
+                        s2.nk_json as canonical_nk_json
+                    FROM source_rows_with_nk_json s1
+                    LEFT JOIN LATERAL (
+                        SELECT s2_inner.nk_json, s2_inner.nk_non_null_keys_array
+                        FROM source_rows_with_nk_json s2_inner
+                        WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                        ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
+                        LIMIT 1
+                    ) s2 ON true
+                ) s
+            
+Nested Loop Left Join  (cost=226.50..2265875.85 rows=10000 width=269) (actual time=0.009..6.409 rows=10000 loops=1)
+  Buffers: local hit=320
+  ->  Seq Scan on source_rows_with_nk_json s1  (cost=0.00..420.00 rows=10000 width=212) (actual time=0.004..0.432 rows=10000 loops=1)
+        Buffers: local hit=320
+  ->  Limit  (cost=226.50..226.51 rows=1 width=93) (actual time=0.000..0.000 rows=0 loops=10000)
+        ->  Sort  (cost=226.50..226.51 rows=1 width=93) (actual time=0.000..0.000 rows=0 loops=10000)
+              Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
+              Sort Method: quicksort  Memory: 25kB
+  Buffers: local hit=331 read=309 written=228
+              ->  Result  (cost=13.32..226.49 rows=1 width=93) (actual time=0.000..0.000 rows=0 loops=10000)
+                    One-Time Filter: s1.is_new_entity
+                    ->  Bitmap Heap Scan on source_rows_with_nk_json s2_inner  (cost=13.32..226.48 rows=1 width=54) (never executed)
+                          Recheck Cond: (nk_json @> s1.nk_json)
+                          Filter: is_new_entity
+                          ->  Bitmap Index Scan on source_rows_with_nk_json_nk_json_idx  (cost=0.00..13.32 rows=100 width=0) (never executed)
+                                Index Cond: (nk_json @> s1.nk_json)
+Planning:
+  Buffers: shared hit=62, local hit=1
+Planning Time: 0.142 ms
+Execution Time: 13.208 ms
+---
+Explaining: 
+                CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
+                SELECT
+                    s.*,
+                    CASE
+                        WHEN s.is_ambiguous
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is ambiguous. It matches multiple distinct target entities: ' || s.conflicting_ids::text )
+                        WHEN NOT s.is_identifiable AND s.is_new_entity
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace('{id}'::text, '"', '') || ' and all natural keys ' || replace('[["id"]]'::text, '"', '') )
+                        WHEN NOT s.temporal_columns_are_consistent
+                        THEN jsonb_build_object( 'operation', 'ERROR'::text, 'message', 'Source row has inconsistent temporal columns. Column "' || 'valid_until' || '" must be equal to column "' || NULL || '" + ' || NULL || '.' )
+                        WHEN s.is_eclipsed
+                        THEN jsonb_build_object( 'operation', 'SKIP_ECLIPSED'::text, 'message', 'Source row was eclipsed by row_ids=' || s.eclipsed_by::text || ' in the same batch.' )
+                        ELSE NULL
+                    END as early_feedback
+                FROM source_rows_with_canonical_key s
+            
+Seq Scan on source_rows_with_canonical_key s  (cost=0.00..596.00 rows=7360 width=348) (actual time=0.004..1.693 rows=10000 loops=1)
+  Buffers: local hit=302 read=18 written=1
+Planning:
+  Buffers: shared hit=46
+Planning Time: 0.053 ms
+Execution Time: 8.529 ms
+---
+Explaining: 
+                CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
+                SELECT source_row.*
+                FROM source_rows_with_early_feedback source_row
+                WHERE source_row.early_feedback IS NULL
+                AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                    WHEN 'MERGE_ENTITY_PATCH' THEN true
+                    WHEN 'MERGE_ENTITY_REPLACE' THEN true
+                    WHEN 'MERGE_ENTITY_UPSERT' THEN true
+                    WHEN 'INSERT_NEW_ENTITIES' THEN NOT source_row.target_entity_exists
+                    WHEN 'PATCH_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                    WHEN 'REPLACE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                    WHEN 'DELETE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                    WHEN 'UPDATE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                    ELSE false
+                END
+            
+Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..387.20 rows=34 width=348) (actual time=0.004..1.359 rows=10000 loops=1)
+  Filter: (early_feedback IS NULL)
+  Buffers: local hit=305 read=15 written=14
+Planning:
+  Buffers: shared hit=48
+Planning Time: 0.049 ms
+Execution Time: 5.344 ms
+---
+Executing setup: CREATE INDEX ON active_source_rows (id);
+---
+Executing setup: CREATE INDEX ON active_source_rows (grouping_key);
+---
+Executing setup: CREATE INDEX ON active_source_rows USING gist (daterange(valid_from, valid_until));
+---
+Executing setup: ANALYZE active_source_rows;
+---
+Explaining: 
+                CREATE TEMP TABLE all_rows ON COMMIT DROP AS
+                SELECT id,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
+                UNION ALL
+                SELECT
+                    target_row.id,  /* v_non_temporal_tr_qualified_lookup_cols_prefix */
+                    target_row.causal_id,
+                    target_row.valid_from,
+                    target_row.valid_until,
+                    false as is_new_entity,
+                    target_row.stable_pk_payload,
+                    false as stable_identity_columns_are_null,
+                    false as natural_identity_column_values_are_null,
+                    true as is_identifiable,
+                    false as is_ambiguous,
+                    NULL::jsonb as conflicting_ids,
+                    true as temporal_columns_are_consistent,
+                    target_row.canonical_nk_json
+                FROM target_rows target_row
+            
+Append  (cost=0.00..812.00 rows=20000 width=108) (actual time=0.005..4.020 rows=20000 loops=1)
+  Buffers: local hit=320 read=192 written=170
+  ->  Seq Scan on active_source_rows  (cost=0.00..420.00 rows=10000 width=112) (actual time=0.005..1.615 rows=10000 loops=1)
+        Buffers: local hit=320
+  ->  Seq Scan on target_rows target_row  (cost=0.00..292.00 rows=10000 width=104) (actual time=0.017..1.613 rows=10000 loops=1)
+        Buffers: local read=192 written=170
+Planning:
+  Buffers: shared hit=53, local read=2 written=2
+Planning Time: 0.113 ms
+Execution Time: 11.248 ms
+---
+Explaining: 
+                CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
+                SELECT id, causal_id, valid_from AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
+                UNION ALL
+                SELECT id, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
+            
+Append  (cost=0.00..1168.00 rows=35200 width=113) (actual time=0.004..6.197 rows=40000 loops=1)
+  ->  Seq Scan on all_rows  (cost=0.00..496.00 rows=17600 width=113) (actual time=0.004..1.853 rows=20000 loops=1)
+        Buffers: local hit=276 read=44
+  ->  Seq Scan on all_rows all_rows_1  (cost=0.00..496.00 rows=17600 width=113) (actual time=0.005..2.780 rows=20000 loops=1)
+        Buffers: local hit=55 read=265 written=228
+Planning:
+  Buffers: shared hit=28
+Planning Time: 0.045 ms
+Execution Time: 18.040 ms
+---
+Explaining: 
+                CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
+                SELECT
+                    *,
+                    CASE
+                WHEN is_new_entity
+                THEN 'new_entity__' || CASE WHEN canonical_nk_json IS NOT NULL AND canonical_nk_json <> '{}'::jsonb THEN COALESCE(canonical_nk_json->>'id', '_NULL_') ELSE COALESCE(id::text, '_NULL_') END
+                ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
+            END AS grouping_key,
+                    CASE
+                        WHEN is_new_entity THEN causal_id
+                        ELSE FIRST_VALUE(causal_id) OVER (PARTITION BY CASE
+                WHEN is_new_entity
+                THEN 'new_entity__' || CASE WHEN canonical_nk_json IS NOT NULL AND canonical_nk_json <> '{}'::jsonb THEN COALESCE(canonical_nk_json->>'id', '_NULL_') ELSE COALESCE(id::text, '_NULL_') END
+                ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
+            END ORDER BY causal_id ASC NULLS LAST)
+                    END as unified_causal_id,
+                    FIRST_VALUE(stable_pk_payload) OVER (PARTITION BY CASE
+                WHEN is_new_entity
+                THEN 'new_entity__' || CASE WHEN canonical_nk_json IS NOT NULL AND canonical_nk_json <> '{}'::jsonb THEN COALESCE(canonical_nk_json->>'id', '_NULL_') ELSE COALESCE(id::text, '_NULL_') END
+                ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
+            END ORDER BY causal_id ASC NULLS FIRST) as unified_stable_pk_payload,
+                    FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY CASE
+                WHEN is_new_entity
+                THEN 'new_entity__' || CASE WHEN canonical_nk_json IS NOT NULL AND canonical_nk_json <> '{}'::jsonb THEN COALESCE(canonical_nk_json->>'id', '_NULL_') ELSE COALESCE(id::text, '_NULL_') END
+                ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
+            END ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
+                FROM time_points_raw
+            
+WindowAgg  (cost=6495.53..10142.78 rows=32832 width=213) (actual time=46.756..95.417 rows=40000 loops=1)
+  Buffers: local hit=287 read=289 written=289, temp read=543 written=544
+  ->  Incremental Sort  (cost=6495.44..8911.58 rows=32832 width=209) (actual time=46.753..83.083 rows=40000 loops=1)
+        Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id
+        Presorted Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END)
+        Full-sort Groups: 1250  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
+        Buffers: local hit=287 read=289 written=289, temp read=543 written=544
+        ->  WindowAgg  (cost=6494.84..7890.18 rows=32832 width=209) (actual time=46.711..67.282 rows=40000 loops=1)
+              Buffers: local hit=287 read=289 written=289, temp read=543 written=544
+              ->  Sort  (cost=6494.82..6576.90 rows=32832 width=145) (actual time=46.702..50.223 rows=40000 loops=1)
+                    Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id NULLS FIRST
+                    Sort Method: external merge  Disk: 4344kB
+                    Buffers: local hit=287 read=289 written=289, temp read=543 written=544
+                    ->  Seq Scan on time_points_raw  (cost=0.00..1560.96 rows=32832 width=145) (actual time=0.018..6.305 rows=40000 loops=1)
+                          Buffers: local hit=287 read=289 written=289
+Planning:
+  Buffers: shared hit=24
+Planning Time: 0.065 ms
+Execution Time: 114.724 ms
+---
+Explaining: 
+                CREATE TEMP TABLE time_points_with_unified_ids ON COMMIT DROP AS
+                SELECT
+                    tpu.grouping_key,
+                    (tpu.unified_canonical_nk_json->>'id')::integer AS id,
+                    tpu.unified_causal_id as causal_id,
+                    tpu.point,
+                    tpu.is_new_entity,
+                    tpu.unified_stable_pk_payload as stable_pk_payload,
+                    tpu.stable_identity_columns_are_null,
+                    tpu.natural_identity_column_values_are_null,
+                    tpu.is_identifiable,
+                    tpu.is_ambiguous,
+                    tpu.conflicting_ids,
+                    tpu.unified_canonical_nk_json as canonical_nk_json
+                FROM time_points_unified tpu
+            
+Seq Scan on time_points_unified tpu  (cost=0.00..1514.40 rows=31680 width=145) (actual time=0.016..10.705 rows=40000 loops=1)
+  Buffers: local hit=3 read=957 written=695
+Planning:
+  Buffers: shared hit=32
+Planning Time: 0.041 ms
+Execution Time: 28.456 ms
+---
+Explaining: 
+                CREATE TEMP TABLE time_points ON COMMIT DROP AS
+                SELECT DISTINCT ON (grouping_key, point) *
+                FROM time_points_with_unified_ids
+                ORDER BY grouping_key, point, causal_id DESC NULLS LAST
+            
+Unique  (cost=6577.35..6848.07 rows=3610 width=145) (actual time=25.751..31.156 rows=20000 loops=1)
+  Buffers: local hit=318 read=450 written=254, temp read=595 written=596
+  ->  Sort  (cost=6577.35..6667.59 rows=36096 width=145) (actual time=25.750..28.074 rows=40000 loops=1)
+        Sort Key: grouping_key, point, causal_id DESC NULLS LAST
+        Sort Method: external merge  Disk: 4760kB
+        Buffers: local hit=318 read=450 written=254, temp read=595 written=596
+        ->  Seq Scan on time_points_with_unified_ids  (cost=0.00..1128.96 rows=36096 width=145) (actual time=0.006..2.495 rows=40000 loops=1)
+              Buffers: local hit=318 read=450 written=254
+Planning:
+  Buffers: shared hit=26
+Planning Time: 0.041 ms
+Execution Time: 36.568 ms
+---
+Explaining: 
+                CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
+                SELECT grouping_key, id, causal_id, point as valid_from, next_point as valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json
+                FROM (
+                    SELECT *, LEAD(point) OVER (PARTITION BY grouping_key ORDER BY point) as next_point
+                    FROM time_points
+                ) with_lead
+                WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
+            
+Subquery Scan on with_lead  (cost=1840.45..2426.99 rows=5956 width=149) (actual time=5.472..12.979 rows=10000 loops=1)
+  Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
+  Rows Removed by Filter: 10000
+  Buffers: local hit=384
+  ->  WindowAgg  (cost=1840.45..2201.39 rows=18048 width=149) (actual time=5.471..12.019 rows=20000 loops=1)
+        Buffers: local hit=384
+        ->  Sort  (cost=1840.43..1885.55 rows=18048 width=145) (actual time=5.467..5.916 rows=20000 loops=1)
+              Sort Key: time_points.grouping_key, time_points.point
+              Sort Method: quicksort  Memory: 3244kB
+              Buffers: local hit=384
+              ->  Seq Scan on time_points  (cost=0.00..564.48 rows=18048 width=145) (actual time=0.003..2.049 rows=20000 loops=1)
+                    Buffers: local hit=384
+Planning:
+  Buffers: shared hit=26
+Planning Time: 0.060 ms
+Execution Time: 17.241 ms
+---
+Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
+                SELECT
+                    with_base_payload.*,
+                    with_base_payload.stable_pk_payload as propagated_stable_pk_payload
+                FROM (
+                    SELECT
+                        seg.grouping_key, seg.canonical_nk_json, seg.id, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
+                        target_payloads.t_valid_from, target_payloads.t_valid_until, source_payloads.source_row_id, source_payloads.contributing_row_ids, source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                        target_payloads.data_payload as t_data_payload, target_payloads.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
+                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until, NULL::jsonb as trace
+                    FROM atomic_segments seg
+                    LEFT JOIN LATERAL (
+                        SELECT target_row.data_payload, target_row.ephemeral_payload, target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until, target_row.stable_pk_payload
+                        FROM target_rows target_row
+                        WHERE (target_row.id = seg.id OR (target_row.id IS NULL AND seg.id IS NULL)) AND daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)
+                    ) target_payloads ON true
+                    
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE 
+                (CASE WHEN seg.is_new_entity
+                THEN source_row.grouping_key = seg.grouping_key
+                ELSE (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))
+                END)
+             -- v_lateral_join_sr_to_seg
+                                AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    
+                    WHERE (source_payloads.data_payload IS NOT NULL OR target_payloads.data_payload IS NOT NULL)
+                    AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                        WHEN 'PATCH_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+                        WHEN 'REPLACE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+                        WHEN 'DELETE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+                        WHEN 'UPDATE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+                        ELSE true
+                    END
+                ) with_base_payload
+            
+Nested Loop Left Join  (cost=156.89..1396141.55 rows=8832 width=377) (actual time=4.257..27652.371 rows=10000 loops=1)
+  Filter: ((running_payload.data_payload IS NOT NULL) OR (target_row.data_payload IS NOT NULL))
+  Buffers: local hit=15139161 read=1031 written=499
+  ->  Nested Loop Left Join  (cost=0.15..11619.52 rows=8832 width=197) (actual time=1.242..10032.332 rows=10000 loops=1)
+        Buffers: local hit=11359702 read=490 written=238
+        ->  Seq Scan on atomic_segments seg  (cost=0.00..280.32 rows=8832 width=149) (actual time=0.003..3.264 rows=10000 loops=1)
+              Buffers: local hit=2 read=190 written=174
+        ->  Index Scan using target_rows_daterange_idx on target_rows target_row  (cost=0.15..1.27 rows=1 width=52) (actual time=0.501..1.002 rows=1 loops=10000)
+              Index Cond: (daterange(valid_from, valid_until) @> daterange(seg.valid_from, seg.valid_until))
+              Filter: ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL)))
+              Rows Removed by Filter: 9999
+              Buffers: local hit=11359700 read=300 written=64
+  ->  Limit  (cost=156.74..156.74 rows=1 width=120) (actual time=1.761..1.761 rows=1 loops=10000)
+        Buffers: local hit=3779459 read=541 written=261
+        CTE ordered_sources
+          ->  WindowAgg  (cost=140.22..140.64 rows=25 width=64) (actual time=1.756..1.756 rows=1 loops=10000)
+                Buffers: local hit=3779459 read=541 written=261
+                ->  Sort  (cost=140.20..140.26 rows=25 width=56) (actual time=1.755..1.755 rows=1 loops=10000)
+                      Sort Key: source_row.source_row_id
+                      Sort Method: quicksort  Memory: 25kB
+                      Buffers: local hit=3779459 read=541 written=261
+                      ->  Bitmap Heap Scan on active_source_rows source_row  (cost=4.53..139.62 rows=25 width=56) (actual time=1.156..1.753 rows=1 loops=10000)
+                            Recheck Cond: (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until))
+                            Filter: CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))) END
+                            Rows Removed by Filter: 9999
+                            Heap Blocks: exact=3020000
+                            Buffers: local hit=3779459 read=541 written=261
+                            ->  Bitmap Index Scan on active_source_rows_daterange_idx  (cost=0.00..4.53 rows=50 width=0) (actual time=0.552..0.552 rows=10000 loops=10000)
+                                  Index Cond: (daterange(valid_from, valid_until) @> daterange(seg.valid_from, seg.valid_until))
+                                  Buffers: local hit=759848 read=152 written=41
+        CTE running_payload
+          ->  Recursive Union  (cost=0.00..13.57 rows=101 width=120) (actual time=1.757..1.760 rows=1 loops=10000)
+                Buffers: local hit=3779459 read=541 written=261
+                ->  CTE Scan on ordered_sources  (cost=0.00..0.56 rows=1 width=120) (actual time=1.757..1.757 rows=1 loops=10000)
+                      Filter: (rn = 1)
+                      Buffers: local hit=3779459 read=541 written=261
+                ->  Hash Join  (cost=0.33..1.20 rows=10 width=120) (actual time=0.002..0.002 rows=0 loops=10000)
+                      Hash Cond: (s.rn = (r.rn + 1))
+                      ->  CTE Scan on ordered_sources s  (cost=0.00..0.50 rows=25 width=88) (actual time=0.000..0.000 rows=1 loops=10000)
+                      ->  Hash  (cost=0.20..0.20 rows=10 width=104) (actual time=0.000..0.000 rows=1 loops=10000)
+                            Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                            ->  WorkTable Scan on running_payload r  (cost=0.00..0.20 rows=10 width=104) (actual time=0.000..0.000 rows=1 loops=10000)
+        ->  Sort  (cost=2.53..2.78 rows=101 width=120) (actual time=1.761..1.761 rows=1 loops=10000)
+              Sort Key: running_payload.rn DESC
+              Sort Method: quicksort  Memory: 25kB
+              Buffers: local hit=3779459 read=541 written=261
+Planning Time: 0.138 ms
+Execution Time: 68.379 ms
+              ->  CTE Scan on running_payload  (cost=0.00..2.02 rows=101 width=120) (actual time=1.758..1.760 rows=1 loops=10000)
+                    Buffers: local hit=3779459 read=541 written=261
+Planning:
+  Buffers: shared hit=49
+Planning Time: 0.273 ms
+Execution Time: 27667.104 ms
+---
+Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
+                SELECT
+                    *,
+                    FIRST_VALUE(canonical_nk_json) OVER (PARTITION BY grouping_key ORDER BY valid_from) as unified_canonical_nk_json,
+                    COALESCE(
+                        contributing_row_ids,
+                        (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+                        (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
+                    ) as propagated_contributing_row_ids,
+                    COALESCE(
+                        s_valid_from,
+                        (max(s_valid_from) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+                        (max(s_valid_from) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
+                    ) as propagated_s_valid_from,
+                    COALESCE(
+                        s_valid_until,
+                        (max(s_valid_until) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
+                        (max(s_valid_until) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
+                    ) as propagated_s_valid_until
+                FROM (
+                    SELECT
+                        *,
+                        sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY grouping_key, t_valid_from ORDER BY valid_from) AS look_behind_grp,
+                        sum(CASE WHEN source_row_id IS NOT NULL THEN 1 ELSE 0 END) OVER (PARTITION BY grouping_key, t_valid_from ORDER BY valid_from DESC) AS look_ahead_grp
+                    FROM resolved_atomic_segments_with_payloads /* v_resolver_from */
+                ) with_grp
+            
+WindowAgg  (cost=1103.71..3160.23 rows=8512 width=489) (actual time=6.552..58.717 rows=10000 loops=1)
+  Buffers: local hit=78 read=370 written=195
+  ->  Incremental Sort  (cost=1103.47..3011.27 rows=8512 width=497) (actual time=6.548..53.408 rows=10000 loops=1)
+        Sort Key: with_grp.grouping_key, with_grp.valid_from
+        Presorted Key: with_grp.grouping_key
+        Full-sort Groups: 313  Sort Method: quicksort  Average Memory: 37kB  Peak Memory: 37kB
+        Buffers: local hit=78 read=370 written=195
+        ->  WindowAgg  (cost=1094.44..2670.56 rows=8512 width=497) (actual time=6.390..47.553 rows=10000 loops=1)
+              Buffers: local hit=78 read=370 written=195
+              ->  Incremental Sort  (cost=1092.77..2457.76 rows=8512 width=457) (actual time=6.388..40.732 rows=10000 loops=1)
+                    Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp
+                    Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
+                    Full-sort Groups: 313  Sort Method: quicksort  Average Memory: 36kB  Peak Memory: 36kB
+                    Buffers: local hit=78 read=370 written=195
+                    ->  WindowAgg  (cost=1091.31..2192.94 rows=8512 width=457) (actual time=6.274..35.076 rows=10000 loops=1)
+                          Buffers: local hit=78 read=370 written=195
+                          ->  Incremental Sort  (cost=1090.14..1980.14 rows=8512 width=417) (actual time=6.270..28.304 rows=10000 loops=1)
+                                Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp
+                                Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
+                                Full-sort Groups: 313  Sort Method: quicksort  Average Memory: 35kB  Peak Memory: 35kB
+                                Buffers: local hit=78 read=370 written=195
+                                ->  Subquery Scan on with_grp  (cost=1089.24..1715.33 rows=8512 width=417) (actual time=6.199..22.989 rows=10000 loops=1)
+                                      Buffers: local hit=78 read=370 written=195
+                                      ->  WindowAgg  (cost=1089.24..1715.33 rows=8512 width=417) (actual time=6.198..22.222 rows=10000 loops=1)
+                                            Buffers: local hit=78 read=370 written=195
+                                            ->  Incremental Sort  (cost=1089.17..1545.09 rows=8512 width=409) (actual time=6.196..16.880 rows=10000 loops=1)
+                                                  Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from
+                                                  Presorted Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from
+                                                  Full-sort Groups: 313  Sort Method: quicksort  Average Memory: 35kB  Peak Memory: 35kB
+                                                  Buffers: local hit=78 read=370 written=195
+                                                  ->  WindowAgg  (cost=1088.78..1280.27 rows=8512 width=409) (actual time=6.159..11.590 rows=10000 loops=1)
+                                                        Buffers: local hit=78 read=370 written=195
+                                                        ->  Sort  (cost=1088.75..1110.03 rows=8512 width=401) (actual time=6.153..6.388 rows=10000 loops=1)
+                                                              Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from DESC
+                                                              Sort Method: quicksort  Memory: 3339kB
+                                                              Buffers: local hit=78 read=370 written=195
+                                                              ->  Seq Scan on resolved_atomic_segments_with_payloads  (cost=0.00..533.12 rows=8512 width=401) (actual time=0.021..3.034 rows=10000 loops=1)
+                                                                    Buffers: local hit=78 read=370 written=195
+Planning:
+  Buffers: shared hit=62
+Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
+                SELECT
+                    grouping_key, id,  stable_identity_columns_are_null, natural_identity_column_values_are_null, is_new_entity, is_identifiable, is_ambiguous, conflicting_ids, unified_canonical_nk_json,
+                    valid_from, valid_until, t_valid_from, t_valid_until, propagated_s_valid_from, propagated_s_valid_until, propagated_contributing_row_ids, causal_id, propagated_stable_pk_payload as stable_pk_payload,
+                    propagated_contributing_row_ids IS NULL AS unaffected_target_only_segment,
+                    s_data_payload, t_data_payload,
+                    sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
+                    COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb) as data_payload,
+                    md5((jsonb_strip_nulls(COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb)))::text) as data_hash,
+                    COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) as ephemeral_payload,
+                    CASE WHEN 'f'::boolean
+                        THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'final_ephemeral_payload', COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) )
+                        ELSE NULL
+                    END as trace,
+                    CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+                FROM resolved_atomic_segments_with_propagated_ids
+            
+Seq Scan on resolved_atomic_segments_with_propagated_ids  (cost=0.00..1184.00 rows=7680 width=398) (actual time=0.027..15.496 rows=10000 loops=1)
+  Buffers: local hit=504 read=8
+Planning:
+  Buffers: shared hit=68
+Planning Time: 0.119 ms
+Execution Time: 23.510 ms
+---
+Explaining: 
+                CREATE TEMP TABLE island_group ON COMMIT DROP AS
+                SELECT
+                    *,
+                    SUM(is_island_start) OVER (PARTITION BY grouping_key ORDER BY valid_from) as island_group_id
+                FROM (
+                    SELECT
+                        *,
+                        CASE
+                            WHEN prev_valid_until IS NULL
+                            OR prev_valid_until <> valid_from
+                            OR (prev_data_hash IS DISTINCT FROM data_hash)
+                            THEN 1
+                            ELSE 0
+                        END as is_island_start
+                    FROM (
+                        SELECT
+                            *,
+                            LAG(valid_until) OVER w as prev_valid_until,
+                            LAG(data_hash) OVER w as prev_data_hash,
+                            LAG(data_payload) OVER w as prev_data_payload
+                        FROM resolved_atomic_segments ras
+                        WHERE ras.data_payload IS NOT NULL
+                        WINDOW w AS (PARTITION BY grouping_key ORDER BY valid_from)
+                    ) s1
+                ) s2
+            
+WindowAgg  (cost=1085.71..1530.26 rows=8469 width=478) (actual time=5.144..18.714 rows=10000 loops=1)
+  Buffers: local hit=448
+  ->  Subquery Scan on s1  (cost=1085.66..1297.36 rows=8469 width=466) (actual time=5.138..10.387 rows=10000 loops=1)
+        Buffers: local hit=448
+        ->  WindowAgg  (cost=1085.66..1297.36 rows=8469 width=466) (actual time=5.137..9.646 rows=10000 loops=1)
+              Buffers: local hit=448
+              ->  Sort  (cost=1085.64..1106.81 rows=8469 width=398) (actual time=5.131..5.361 rows=10000 loops=1)
+                    Sort Key: ras.grouping_key, ras.valid_from
+                    Sort Method: quicksort  Memory: 3611kB
+                    Buffers: local hit=448
+                    ->  Seq Scan on resolved_atomic_segments ras  (cost=0.00..533.12 rows=8469 width=398) (actual time=0.004..1.940 rows=10000 loops=1)
+                          Filter: (data_payload IS NOT NULL)
+                          Buffers: local hit=448
+Planning:
+  Buffers: shared hit=56
+Planning Time: 0.124 ms
+Execution Time: 28.784 ms
+---
+Explaining: 
+                CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
+                SELECT
+                    grouping_key, max(id) as id,
+                    sql_saga.first(causal_id ORDER BY valid_from) as causal_id,
+                    sql_saga.first(stable_identity_columns_are_null ORDER BY valid_from) as stable_identity_columns_are_null,
+                    sql_saga.first(natural_identity_column_values_are_null ORDER BY valid_from) as natural_identity_column_values_are_null,
+                    sql_saga.first(is_new_entity ORDER BY valid_from) as is_new_entity,
+                    sql_saga.first(is_identifiable ORDER BY valid_from) as is_identifiable,
+                    sql_saga.first(is_ambiguous ORDER BY valid_from) as is_ambiguous,
+                    sql_saga.first(conflicting_ids ORDER BY valid_from) as conflicting_ids,
+                    sql_saga.first(unified_canonical_nk_json ORDER BY valid_from) as canonical_nk_json,
+                    sql_saga.first(s_t_relation ORDER BY valid_from) as s_t_relation,
+                    sql_saga.first(t_valid_from ORDER BY valid_from) as ancestor_valid_from,
+                    MIN(valid_from) as valid_from,
+                    MAX(valid_until) as valid_until,
+                    (sql_saga.first(data_payload ORDER BY valid_from DESC) || sql_saga.first(ephemeral_payload ORDER BY valid_from DESC)) as data_payload,
+                    sql_saga.first(stable_pk_payload ORDER BY valid_from DESC) as stable_pk_payload,
+                    bool_and(unaffected_target_only_segment) as unaffected_target_only_segment,
+                    (SELECT array_agg(DISTINCT e) FROM unnest(array_concat_agg(propagated_contributing_row_ids)) e WHERE e IS NOT NULL) as row_ids,
+                    CASE WHEN 'f'::boolean
+                        THEN jsonb_build_object( 'cte', 'coalesced', 'island_group_id', island_group_id, 'coalesced_stable_pk_payload', sql_saga.first(stable_pk_payload ORDER BY valid_from DESC), 'final_payload', sql_saga.first(data_payload ORDER BY valid_from DESC), 'final_payload_sans_ephemeral', sql_saga.first(data_payload - '{}'::text[] ORDER BY valid_from DESC), 'atomic_traces', jsonb_agg((trace || jsonb_build_object('data_hash', data_hash, 'prev_data_hash', prev_data_hash, 'prev_data_payload', prev_data_payload)) ORDER BY valid_from) )
+                        ELSE NULL
+                    END as trace
+                FROM island_group
+                GROUP BY grouping_key, island_group_id
+            
+GroupAggregate  (cost=1126.40..28195.65 rows=819 width=262) (actual time=4.836..56.027 rows=10000 loops=1)
+  Group Key: island_group.grouping_key, island_group.island_group_id
+  Buffers: local hit=452 read=60 written=60
+  ->  Sort  (cost=1126.40..1146.88 rows=8192 width=262) (actual time=4.788..5.031 rows=10000 loops=1)
+        Sort Key: island_group.grouping_key, island_group.island_group_id, island_group.valid_from
+        Sort Method: quicksort  Memory: 2613kB
+        Buffers: local hit=452 read=60 written=60
+        ->  Seq Scan on island_group  (cost=0.00..593.92 rows=8192 width=262) (actual time=0.024..2.263 rows=10000 loops=1)
+              Buffers: local hit=452 read=60 written=60
+  SubPlan 1
+    ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual time=0.001..0.001 rows=1 loops=10000)
+          ->  Sort  (cost=0.27..0.29 rows=10 width=8) (actual time=0.001..0.001 rows=1 loops=10000)
+                Sort Key: e.e
+                Sort Method: quicksort  Memory: 25kB
+                ->  Function Scan on unnest e  (cost=0.00..0.10 rows=10 width=8) (actual time=0.000..0.000 rows=1 loops=10000)
+                      Filter: (e IS NOT NULL)
+Planning:
+  Buffers: shared hit=68
+Planning Time: 0.121 ms
+Execution Time: 63.471 ms
+---
+Explaining: 
+                CREATE TEMP TABLE diff ON COMMIT DROP AS
+                SELECT
+                    final_seg.grouping_key, COALESCE(final_seg.id, target_seg.id) as id, COALESCE(final_seg.causal_id, target_seg.causal_id) as causal_id,
+                    COALESCE(final_seg.is_new_entity, false) as is_new_entity,
+                    COALESCE(final_seg.is_identifiable, true) as is_identifiable,
+                    COALESCE(final_seg.is_ambiguous, false) as is_ambiguous,
+                    final_seg.conflicting_ids,
+                    final_seg.canonical_nk_json,
+                    COALESCE(final_seg.stable_identity_columns_are_null, false) as stable_identity_columns_are_null,
+                    COALESCE(final_seg.natural_identity_column_values_are_null, false) as natural_identity_column_values_are_null,
+                    final_seg.valid_from AS f_from, final_seg.valid_until AS f_until, final_seg.data_payload AS f_data, final_seg.row_ids AS f_row_ids, final_seg.stable_pk_payload, final_seg.s_t_relation,
+                    CASE WHEN 'f'::boolean
+                        THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'diff_stable_pk_payload', final_seg.stable_pk_payload, 'final_seg_causal_id', final_seg.causal_id, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.data_payload, 't', target_seg.data_payload))
+                        ELSE NULL
+                    END as trace,
+                    final_seg.unaffected_target_only_segment,
+                    target_seg.valid_from as t_from, target_seg.valid_until as t_until, (target_seg.data_payload || target_seg.ephemeral_payload) as t_data,
+                    sql_saga.get_allen_relation(target_seg.valid_from, target_seg.valid_until, final_seg.valid_from, final_seg.valid_until) as b_a_relation
+                FROM coalesced_final_segments AS final_seg
+                FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
+            
+Merge Full Join  (cost=1954.18..2885.98 rows=10000 width=294) (actual time=14.702..20.280 rows=10000 loops=1)
+  Merge Cond: ((final_seg.grouping_key = (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text)))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
+  Buffers: local hit=320 read=192 written=192
+  ->  Sort  (cost=997.79..1020.19 rows=8960 width=222) (actual time=3.919..4.143 rows=10000 loops=1)
+        Sort Key: final_seg.grouping_key, final_seg.ancestor_valid_from
+        Sort Method: quicksort  Memory: 2464kB
+        Buffers: local hit=320
+        ->  Seq Scan on coalesced_final_segments final_seg  (cost=0.00..409.60 rows=8960 width=222) (actual time=0.005..1.599 rows=10000 loops=1)
+              Buffers: local hit=320
+  ->  Sort  (cost=956.39..981.39 rows=10000 width=56) (actual time=10.772..10.991 rows=10000 loops=1)
+        Sort Key: (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text))), target_seg.valid_from
+        Sort Method: quicksort  Memory: 1306kB
+        Buffers: local read=192 written=192
+        ->  Seq Scan on target_rows target_seg  (cost=0.00..292.00 rows=10000 width=56) (actual time=0.017..1.849 rows=10000 loops=1)
+              Buffers: local read=192 written=192
+Planning:
+  Buffers: shared hit=40
+Planning Time: 0.188 ms
+Execution Time: 27.337 ms
+---
+Explaining: 
+                CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
+                SELECT
+                    d.*,
+                    CASE
+                        WHEN d.t_from IS NULL OR d.f_from IS NULL THEN NULL
+                        WHEN d.f_from = d.t_from AND d.f_until = d.t_until AND d.f_data IS NOT DISTINCT FROM d.t_data THEN NULL
+                        ELSE
+                            row_number() OVER (
+                                PARTITION BY d.grouping_key, d.t_from
+                                ORDER BY
+                                    CASE WHEN d.f_from = d.t_from THEN 1 ELSE 2 END,
+                                    CASE WHEN d.f_data - '{}'::text[] IS NOT DISTINCT FROM d.t_data - '{}'::text[] THEN 1 ELSE 2 END,
+                                    d.f_from,
+                                    d.f_until
+                            )
+                    END as update_rank
+                FROM diff d
+            
+WindowAgg  (cost=1211.01..1666.98 rows=9600 width=310) (actual time=6.029..11.222 rows=10000 loops=1)
+  Buffers: local hit=384
+  ->  Sort  (cost=1210.98..1234.98 rows=9600 width=302) (actual time=6.021..6.251 rows=10000 loops=1)
+        Sort Key: grouping_key, t_from, (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_data - '{}'::text[]) IS DISTINCT FROM (t_data - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until
+        Sort Method: quicksort  Memory: 2984kB
+        Buffers: local hit=384
+        ->  Seq Scan on diff d  (cost=0.00..576.00 rows=9600 width=302) (actual time=0.006..3.177 rows=10000 loops=1)
+              Buffers: local hit=384
+Planning:
+  Buffers: shared hit=46
+Planning Time: 0.076 ms
+Execution Time: 19.153 ms
+---
+Explaining: 
+                CREATE TEMP TABLE plan_with_op ON COMMIT DROP AS
+                (
+                    SELECT * FROM (
+                        SELECT
+                            d.f_row_ids as row_ids, d.s_t_relation, d.is_new_entity,
+                            CASE
+                                WHEN d.is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action
+                                WHEN d.is_new_entity AND NOT d.is_identifiable THEN 'ERROR'::sql_saga.temporal_merge_plan_action
+                                WHEN d.t_from IS NULL THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                                WHEN d.f_from IS NULL THEN 'DELETE'::sql_saga.temporal_merge_plan_action
+                                WHEN d.update_rank = 1 THEN 'UPDATE'::sql_saga.temporal_merge_plan_action
+                                WHEN d.update_rank > 1 THEN 'INSERT'::sql_saga.temporal_merge_plan_action
+                                WHEN d.update_rank IS NULL THEN
+                                    CASE
+                                        WHEN d.unaffected_target_only_segment THEN NULL
+                                        ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action
+                                    END
+                                ELSE 'ERROR'::sql_saga.temporal_merge_plan_action
+                            END as operation,
+                            id,
+                            CASE
+                                WHEN d.is_new_entity AND d.canonical_nk_json IS NOT NULL
+                                THEN d.canonical_nk_json || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                                ELSE jsonb_build_object('id', d.id) || COALESCE(d.stable_pk_payload, '{}'::jsonb)
+                            END as entity_keys_json,
+                            jsonb_build_object('id', d.id) as identity_keys,
+                            jsonb_build_object('id', d.id) as lookup_keys,
+                            d.causal_id, d.t_from as old_valid_from, d.t_until as old_valid_until, d.f_from as new_valid_from, d.f_until as new_valid_until,
+                            CASE
+                                WHEN d.is_ambiguous THEN NULL
+                                WHEN d.is_new_entity AND NOT d.is_identifiable THEN NULL
+                                ELSE d.f_data
+                            END as data,
+                            CASE
+                                WHEN d.is_ambiguous
+                                THEN jsonb_build_object('error', format('Source row is ambiguous. It matches multiple distinct target entities: %s', d.conflicting_ids))
+                                WHEN d.is_new_entity AND NOT d.is_identifiable
+                                THEN jsonb_build_object('error', 'Source row is unidentifiable. It has NULL for all stable identity columns ' || replace('{id}'::text, '"', '') || ' and all natural keys ' || replace('[["id"]]'::text, '"', ''))
+                                ELSE NULL
+                            END as feedback,
+                            d.b_a_relation, d.grouping_key,
+                            CASE WHEN 'f'::boolean
+                                THEN d.trace || jsonb_build_object( 'cte', 'plan_with_op', 'diff_is_new_entity', d.is_new_entity, 'diff_causal_id', d.causal_id, 'entity_keys_from_key_cols', jsonb_build_object('id', d.id), 'entity_keys_from_stable_pk', d.stable_pk_payload, 'final_entity_id_json', jsonb_build_object('id', d.id) || COALESCE(d.stable_pk_payload, '{}'::jsonb) )
+                                ELSE NULL
+                            END as trace
+                        FROM diff_ranked d
+                        WHERE d.f_row_ids IS NOT NULL OR d.t_data IS NOT NULL
+                    ) with_op
+                    WHERE with_op.operation IS NOT NULL
+                )
+                UNION ALL
+                (
+                    SELECT
+                        ARRAY[source_row.source_row_id::BIGINT],
+                        NULL::sql_saga.allen_interval_relation, source_row.is_new_entity,
+                        COALESCE(
+                            (source_row.early_feedback->>'operation')::sql_saga.temporal_merge_plan_action,
+                            CASE
+                                WHEN 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode = 'INSERT_NEW_ENTITIES' AND source_row.target_entity_exists THEN 'SKIP_FILTERED'::sql_saga.temporal_merge_plan_action
+                                WHEN 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode IN ('PATCH_FOR_PORTION_OF', 'REPLACE_FOR_PORTION_OF', 'DELETE_FOR_PORTION_OF', 'UPDATE_FOR_PORTION_OF') AND NOT source_row.target_entity_exists THEN 'SKIP_NO_TARGET'::sql_saga.temporal_merge_plan_action
+                                ELSE 'ERROR'::sql_saga.temporal_merge_plan_action
+                            END
+                        ),
+                        id,
+                        CASE
+                            WHEN source_row.is_new_entity AND source_row.canonical_nk_json IS NOT NULL
+                            THEN source_row.canonical_nk_json || COALESCE(source_row.stable_pk_payload, '{}'::jsonb)
+                            ELSE jsonb_build_object('id', source_row.id)
+                        END as entity_keys_json,
+                        jsonb_build_object('id', source_row.id) as identity_keys, jsonb_build_object('id', source_row.id) as lookup_keys,
+                        source_row.causal_id,
+                        NULL, NULL, NULL, NULL, NULL,
+                        CASE
+                            WHEN source_row.early_feedback IS NOT NULL THEN jsonb_build_object('error', source_row.early_feedback->>'message')
+                            ELSE jsonb_build_object('info', 'Source row was correctly filtered by the mode''s logic and did not result in a DML operation.')
+                        END,
+                        NULL,
+                        CASE
+                    WHEN source_row.is_new_entity
+                    THEN 'new_entity__' || COALESCE(source_row.id::text, '_NULL_')
+                    ELSE 'existing_entity__' || COALESCE(source_row.id::text, '_NULL_')
+                END AS grouping_key,
+                        NULL::jsonb
+                    FROM source_rows_with_early_feedback source_row
+                    WHERE
+                        source_row.early_feedback IS NOT NULL
+                        OR NOT (
+                            CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                            WHEN 'MERGE_ENTITY_PATCH' THEN true
+                            WHEN 'MERGE_ENTITY_REPLACE' THEN true
+                            WHEN 'MERGE_ENTITY_UPSERT' THEN true
+                            WHEN 'INSERT_NEW_ENTITIES' THEN NOT source_row.target_entity_exists
+                            WHEN 'PATCH_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                            WHEN 'REPLACE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                            WHEN 'DELETE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                            WHEN 'UPDATE_FOR_PORTION_OF' THEN source_row.target_entity_exists
+                            ELSE false
+                        END
+                    )
+                )
+            
+Append  (cost=0.00..1502.12 rows=15856 width=293) (actual time=0.014..15.600 rows=10000 loops=1)
+  Buffers: local hit=364 read=340 written=300
+  ->  Seq Scan on diff_ranked d  (cost=0.00..751.49 rows=9170 width=293) (actual time=0.014..12.840 rows=10000 loops=1)
+        Filter: (((f_row_ids IS NOT NULL) OR (t_data IS NOT NULL)) AND (CASE WHEN is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (is_new_entity AND (NOT is_identifiable)) THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (update_rank IS NULL) THEN CASE WHEN unaffected_target_only_segment THEN NULL::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END ELSE 'ERROR'::sql_saga.temporal_merge_plan_action END IS NOT NULL))
+        Buffers: local hit=364 read=20 written=5
+  ->  Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..671.36 rows=6686 width=293) (actual time=2.359..2.359 rows=0 loops=1)
+        Filter: (early_feedback IS NOT NULL)
+        Rows Removed by Filter: 10000
+        Buffers: local read=320 written=295
+Planning:
+  Buffers: shared hit=48
+Planning Time: 0.161 ms
+Execution Time: 22.214 ms
+---
+Explaining: 
+                CREATE TEMP TABLE plan ON COMMIT DROP AS
+                SELECT
+                    p.row_ids, p.operation, p.causal_id, p.is_new_entity,
+                    p.id,
+                    p.entity_keys_json as entity_keys,
+                    p.identity_keys, p.lookup_keys,
+                    p.s_t_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
+                    p.new_valid_from, p.new_valid_until, p.data, p.feedback, p.trace,
+                    p.grouping_key,
+                    CASE
+                        WHEN p.operation <> 'UPDATE' THEN NULL::sql_saga.temporal_merge_update_effect
+                        WHEN p.new_valid_from = p.old_valid_from AND p.new_valid_until = p.old_valid_until THEN 'NONE'::sql_saga.temporal_merge_update_effect
+                        WHEN p.new_valid_from <= p.old_valid_from AND p.new_valid_until >= p.old_valid_until THEN 'GROW'::sql_saga.temporal_merge_update_effect
+                        WHEN p.new_valid_from >= p.old_valid_from AND p.new_valid_until <= p.old_valid_until THEN 'SHRINK'::sql_saga.temporal_merge_update_effect
+                        ELSE 'MOVE'::sql_saga.temporal_merge_update_effect
+                    END AS update_effect
+                FROM plan_with_op p
+                LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
+            
+Merge Left Join  (cost=1894.95..14248.55 rows=378880 width=297) (actual time=6.073..8.772 rows=10000 loops=1)
+  Merge Cond: ((p.row_ids[1]) = source_row.source_row_id)
+  Buffers: local hit=310 read=266 written=263
+  ->  Sort  (cost=918.63..938.63 rows=8000 width=293) (actual time=4.307..4.545 rows=10000 loops=1)
+        Sort Key: (p.row_ids[1])
+        Sort Method: quicksort  Memory: 2702kB
+        Buffers: local hit=310 read=10 written=10
+        ->  Seq Scan on plan_with_op p  (cost=0.00..400.00 rows=8000 width=293) (actual time=0.019..1.652 rows=10000 loops=1)
+              Buffers: local hit=310 read=10 written=10
+  ->  Sort  (cost=976.32..1000.00 rows=9472 width=4) (actual time=1.760..1.987 rows=10000 loops=1)
+        Sort Key: source_row.source_row_id
+        Sort Method: quicksort  Memory: 385kB
+        Buffers: local read=256 written=253
+        ->  Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..350.72 rows=9472 width=4) (actual time=0.033..1.502 rows=10000 loops=1)
+              Buffers: local read=256 written=253
+Planning:
+  Buffers: shared hit=38
+Planning Time: 0.086 ms
+Execution Time: 14.842 ms
+---
+Explaining: 
+                SELECT
+                    row_number() OVER ( ORDER BY p.grouping_key, p.id, CASE p.operation WHEN 'INSERT' THEN 1 WHEN 'UPDATE' THEN 2 WHEN 'DELETE' THEN 3 ELSE 4 END, p.update_effect NULLS FIRST, COALESCE(p.old_valid_from, p.new_valid_from), COALESCE(p.new_valid_from, p.old_valid_from), (p.row_ids[1]) )::BIGINT as plan_op_seq,
+                    p.row_ids, p.operation, p.update_effect, p.causal_id::TEXT, p.is_new_entity, p.entity_keys, p.identity_keys, p.lookup_keys, p.s_t_relation, p.b_a_relation, p.old_valid_from::TEXT,
+                    p.old_valid_until::TEXT, p.new_valid_from::TEXT, p.new_valid_until::TEXT, p.data, p.feedback, CASE WHEN p.trace IS NOT NULL THEN p.trace || jsonb_build_object('final_grouping_key', p.grouping_key) ELSE NULL END, p.grouping_key
+                FROM plan p
+                ORDER BY plan_op_seq;
+            
+Sort  (cost=2057.26..2077.26 rows=8000 width=465) (actual time=17.408..17.624 rows=10000 loops=1)
+  Sort Key: (row_number() OVER (?))
+  Sort Method: quicksort  Memory: 3106kB
+  Buffers: local hit=320
+  ->  WindowAgg  (cost=978.66..1538.63 rows=8000 width=465) (actual time=11.575..15.167 rows=10000 loops=1)
+        Buffers: local hit=320
+        ->  Sort  (cost=978.63..998.63 rows=8000 width=317) (actual time=11.568..11.786 rows=10000 loops=1)
+              Sort Key: grouping_key, id, (CASE operation WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), update_effect NULLS FIRST, (COALESCE(old_valid_from, new_valid_from)), (COALESCE(new_valid_from, old_valid_from)), (row_ids[1])
+              Sort Method: quicksort  Memory: 2830kB
+              Buffers: local hit=320
+              ->  Seq Scan on plan p  (cost=0.00..460.00 rows=8000 width=317) (actual time=0.005..1.723 rows=10000 loops=1)
+                    Buffers: local hit=320
+Planning:
+  Buffers: shared hit=40
+Planning Time: 0.089 ms
+Execution Time: 18.814 ms

@@ -6,6 +6,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 ## High Priority - Bugs & Core Features
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Optimize `temporal_merge` planner join logic:** Restructure planner's lateral join to avoid `CASE` statements, allowing the query optimizer to use more efficient index-based access paths.
 - [ ] Review application time support in PostgreSQL 18, and use that, simplifying sql_saga.
       PRIMARY KEY ... column_name WITHOUT OVERLAPS
       REFERENCES ... PERIOD column_name
@@ -21,6 +22,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 
 # Done
 - [x] **Fix `Makefile` test execution:** Resolved issues with `pg_regress` path, `installcheck` override warnings, and test database configuration to ensure tests run correctly, especially with non-standard PostgreSQL distributions like Postgres.app.
+- [x] **Fix benchmark EXPLAIN logging:** Corrected benchmark test harness to robustly handle `psql` variable substitution and temporary table scoping, ensuring `EXPLAIN` logs are generated correctly and performance regressions are reliably detected.
 - [x] **Add performance monitoring for `temporal_merge`:** Added optional performance logging using `pg_stat_monitor`. Logging is enabled declaratively by the caller creating a temporary table (`temporal_merge_performance_log`). The test harness is now solely responsible for resetting stats and logging results, keeping the core procedures free of instrumentation. Performance output files are stored in `expected/performance/`.
 - [x] **Re-implement `temporal_merge` planner caching:** After refactoring to temporary tables, planner caching was removed. It has been re-implemented using a session-local temporary table to cache the generated SQL, restoring performance for batch operations. Fixed a name collision between the planner cache and the executor's index-check cache.
 - [x] **Fix `temporal_merge` planner instability after temp table refactor:** Added a deterministic `ORDER BY` to the `source_rows` query to ensure consistent row selection with `DISTINCT ON`, resolving a regression in the ambiguous key test.

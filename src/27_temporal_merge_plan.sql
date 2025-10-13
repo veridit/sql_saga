@@ -1415,6 +1415,17 @@ BEGIN
                 v_target_rows_filter                                    /* %9$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            IF v_original_entity_key_cols IS NOT NULL AND cardinality(v_original_entity_key_cols) > 0 THEN
+                v_sql := format('CREATE INDEX ON target_rows (%s);', (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_original_entity_key_cols) AS c));
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+            END IF;
+
+            v_sql := format('CREATE INDEX ON target_rows USING gist (%s(valid_from, valid_until));', v_range_constructor);
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := 'ANALYZE target_rows;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             -- CTE 4: source_rows_with_matches
             v_sql := format($SQL$
@@ -1570,6 +1581,20 @@ BEGIN
                 mode /* %1$L */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            IF v_original_entity_key_cols IS NOT NULL AND cardinality(v_original_entity_key_cols) > 0 THEN
+                v_sql := format('CREATE INDEX ON active_source_rows (%s);', (SELECT string_agg(quote_ident(c), ', ') FROM unnest(v_original_entity_key_cols) AS c));
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+            END IF;
+
+            v_sql := 'CREATE INDEX ON active_source_rows (grouping_key);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := format('CREATE INDEX ON active_source_rows USING gist (%s(valid_from, valid_until));', v_range_constructor);
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := 'ANALYZE active_source_rows;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             -- CTE 10: all_rows
             v_sql := format($SQL$

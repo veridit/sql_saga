@@ -159,7 +159,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 33 steps from cache
+NOTICE:  --- Explaining 40 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -275,6 +275,12 @@ NOTICE:                      ->  Index Scan using target_id_valid_excl on target
 NOTICE:                            Index Cond: (id = si.id)
 NOTICE:                            Buffers: shared hit=3
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows (id);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE target_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
                 SELECT
@@ -294,7 +300,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48
+NOTICE:    Buffers: shared hit=41, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -476,6 +482,14 @@ NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=48
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (id);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE active_source_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
                 SELECT id,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
@@ -503,7 +517,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=48
+NOTICE:    Buffers: shared hit=50, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -735,7 +749,7 @@ NOTICE:                Buffers: local hit=3
 NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=3)
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared hit=49
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -940,18 +954,13 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Merge Full Join (actual rows=3 loops=1)
-NOTICE:    Merge Cond: ((final_seg.grouping_key = (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text)))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
+NOTICE:  Hash Full Join (actual rows=3 loops=1)
+NOTICE:    Hash Cond: ((final_seg.grouping_key = ('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Sort (actual rows=3 loops=1)
-NOTICE:          Sort Key: final_seg.grouping_key, final_seg.ancestor_valid_from
-NOTICE:          Sort Method: quicksort  Memory: 25kB
+NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
-NOTICE:          Sort Key: (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text))), target_seg.valid_from
-NOTICE:          Sort Method: quicksort  Memory: 25kB
+NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1 loops=1)
 NOTICE:                Buffers: local hit=1
@@ -1275,7 +1284,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 33 steps from cache
+NOTICE:  --- Explaining 40 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -1391,6 +1400,12 @@ NOTICE:                      ->  Index Scan using target_nk_not_null_type_lu_id_
 NOTICE:                            Index Cond: ((type = si.type) AND (lu_id = si.lu_id))
 NOTICE:                            Buffers: shared hit=3
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows (lu_id, type);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE target_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
                 SELECT
@@ -1410,7 +1425,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared hit=46, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -1592,6 +1607,14 @@ NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=50
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (lu_id, type);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE active_source_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
                 SELECT lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
@@ -1619,7 +1642,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=50
+NOTICE:    Buffers: shared hit=53, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -1851,7 +1874,7 @@ NOTICE:                Buffers: local hit=3
 NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=3)
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=30
+NOTICE:    Buffers: shared hit=51
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -2056,18 +2079,13 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.type::text, '_NULL_') || '__' || COALESCE(target_seg.lu_id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Merge Full Join (actual rows=3 loops=1)
-NOTICE:    Merge Cond: ((final_seg.grouping_key = (((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text)))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
+NOTICE:  Hash Full Join (actual rows=3 loops=1)
+NOTICE:    Hash Cond: ((final_seg.grouping_key = ((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Sort (actual rows=3 loops=1)
-NOTICE:          Sort Key: final_seg.grouping_key, final_seg.ancestor_valid_from
-NOTICE:          Sort Method: quicksort  Memory: 25kB
+NOTICE:    ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
 NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=3 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=1 loops=1)
-NOTICE:          Sort Key: (((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text))), target_seg.valid_from
-NOTICE:          Sort Method: quicksort  Memory: 25kB
+NOTICE:    ->  Hash (actual rows=1 loops=1)
+NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=1 loops=1)
 NOTICE:                Buffers: local hit=1
@@ -2412,7 +2430,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 33 steps from cache
+NOTICE:  --- Explaining 40 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -2540,6 +2558,12 @@ NOTICE:                                        ->  Bitmap Index Scan on target_n
 NOTICE:                                              Index Cond: (type IS NULL)
 NOTICE:                                              Buffers: shared hit=4
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows (es_id, lu_id, type);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON target_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE target_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_matches ON COMMIT DROP AS
                 SELECT
@@ -2560,7 +2584,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56
+NOTICE:    Buffers: shared hit=48, local read=1
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -2742,6 +2766,14 @@ NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=52
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (es_id, lu_id, type);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON active_source_rows USING gist (daterange(valid_from, valid_until));
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE active_source_rows;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
                 SELECT es_id, lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
@@ -2769,7 +2801,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=2 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=52
+NOTICE:    Buffers: shared hit=59, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -3002,7 +3034,7 @@ NOTICE:                Buffers: local hit=6
 NOTICE:                ->  CTE Scan on running_payload (actual rows=0 loops=6)
 NOTICE:                      Buffers: local hit=6
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=32
+NOTICE:    Buffers: shared hit=53
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -3207,20 +3239,15 @@ NOTICE:  Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.type::text, '_NULL_') || '__' || COALESCE(target_seg.lu_id::text, '_NULL_') || '__' || COALESCE(target_seg.es_id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-NOTICE:  Merge Full Join (actual rows=6 loops=1)
-NOTICE:    Merge Cond: ((final_seg.grouping_key = (((((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.es_id)::text, '_NULL_'::text)))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
+NOTICE:  Hash Full Join (actual rows=6 loops=1)
+NOTICE:    Hash Cond: ((((((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.es_id)::text, '_NULL_'::text)) = final_seg.grouping_key) AND (target_seg.valid_from = final_seg.ancestor_valid_from))
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Sort (actual rows=6 loops=1)
-NOTICE:          Sort Key: final_seg.grouping_key, final_seg.ancestor_valid_from
-NOTICE:          Sort Method: quicksort  Memory: 26kB
+NOTICE:    ->  Seq Scan on target_rows target_seg (actual rows=2 loops=1)
+NOTICE:          Buffers: local hit=1
+NOTICE:    ->  Hash (actual rows=6 loops=1)
+NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 10kB
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on coalesced_final_segments final_seg (actual rows=6 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:    ->  Sort (actual rows=4 loops=1)
-NOTICE:          Sort Key: (((((('existing_entity__'::text || COALESCE(target_seg.type, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.lu_id)::text, '_NULL_'::text)) || '__'::text) || COALESCE((target_seg.es_id)::text, '_NULL_'::text))), target_seg.valid_from
-NOTICE:          Sort Method: quicksort  Memory: 25kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_seg (actual rows=2 loops=1)
 NOTICE:                Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=44

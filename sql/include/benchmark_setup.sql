@@ -92,6 +92,11 @@ BEGIN
         GRANT ALL ON TABLE benchmark TO sql_saga_unprivileged_user;
     END IF;
 
+    IF to_regclass('pg_temp.benchmark_explain_output') IS NULL THEN
+        CREATE TEMP TABLE benchmark_explain_output(line TEXT) ON COMMIT PRESERVE ROWS;
+        GRANT ALL ON TABLE benchmark_explain_output TO sql_saga_unprivileged_user;
+    END IF;
+
     -- Initialize performance monitoring if pg_stat_monitor extension exists.
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor')
     THEN

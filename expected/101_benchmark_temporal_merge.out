@@ -254,6 +254,16 @@ BEGIN;
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
   CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)');
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) end', 10000, true);
+  \set benchmark_explain_log_filename expected/performance/101_benchmark_temporal_merge_explain.log
+  \set benchmark_source_table 'legal_unit_source_dt'
+  \set benchmark_target_table 'legal_unit_tm_dt'
+  \i sql/include/benchmark_explain_log.sql
+\set ECHO none
+ check_for_seq_scan 
+--------------------
+ 
+(1 row)
+
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
