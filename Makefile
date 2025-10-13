@@ -30,7 +30,16 @@ endif
 
 REGRESS = $(if $(TESTS),$(patsubst sql/%,%,$(TESTS)),$(REGRESS_TO_RUN))
 override CONTRIB_TESTDB = sql_saga_regress
-REGRESS_OPTS += --create-role=$(CONTRIB_TESTDB) --load-extension=pg_stat_monitor
+REGRESS_OPTS += --create-role=$(CONTRIB_TESTDB)
+
+# Conditionally add pg_stat_monitor if it's available.
+# We connect to template1 as it's guaranteed to exist.
+# The `psql` command will return an empty string if the extension is not found or if psql fails,
+# in which case the option will not be added.
+PG_STAT_MONITOR_AVAILABLE = $(shell psql -d template1 --quiet -t -c "SELECT 1 FROM pg_available_extensions WHERE name = 'pg_stat_monitor'" 2>/dev/null | grep -q 1 && echo yes)
+ifeq ($(PG_STAT_MONITOR_AVAILABLE),yes)
+	REGRESS_OPTS += --load-extension=pg_stat_monitor
+endif
 
 OBJS = src/sql_saga.o src/covers_without_gaps.o $(WIN32RES)
 
