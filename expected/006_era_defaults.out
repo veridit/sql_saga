@@ -27,213 +27,239 @@ BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /* Test default values for types that support infinity */
-CREATE TABLE defaults_date (val text, valid_from date, valid_to date, valid_until date);
+CREATE TABLE defaults_date (val text, valid_range daterange, valid_from date, valid_to date, valid_until date);
 -- For synchronized tables, the trigger handles defaults, not the table DDL.
-SELECT sql_saga.add_era('defaults_date', synchronize_valid_to_column => 'valid_to');
-NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_trigger" on table defaults_date to synchronize columns: valid_to
+SELECT sql_saga.add_era('defaults_date', 'valid_range');
+NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_trigger" on table defaults_date to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d defaults_date
-            Table "public.defaults_date"
-   Column    | Type | Collation | Nullable | Default 
--------------+------+-----------+----------+---------
- val         | text |           |          | 
- valid_from  | date |           | not null | 
- valid_to    | date |           |          | 
- valid_until | date |           |          | 
+               Table "public.defaults_date"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ val         | text      |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_to    | date      |           |          | 
+ valid_until | date      |           |          | 
 Check constraints:
-    "defaults_date_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "defaults_date_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    defaults_date_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON defaults_date FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
+    defaults_date_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON defaults_date FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
 
 -- Test implicit default (omitting column)
-INSERT INTO defaults_date (val, valid_from) VALUES ('a', '2000-01-01');
+INSERT INTO defaults_date (val, valid_range) VALUES ('a', daterange('2000-01-01', NULL));
 -- Test explicit NULL default
-INSERT INTO defaults_date (val, valid_from, valid_until) VALUES ('b', '2001-01-01', NULL);
+INSERT INTO defaults_date (val, valid_range) VALUES ('b', daterange('2001-01-01', 'infinity'));
 TABLE defaults_date ORDER BY val;
- val | valid_from | valid_to | valid_until 
------+------------+----------+-------------
- a   | 2000-01-01 | infinity | infinity
- b   | 2001-01-01 | infinity | infinity
+ val |      valid_range      | valid_from | valid_to | valid_until 
+-----+-----------------------+------------+----------+-------------
+ a   | [2000-01-01,infinity) | 2000-01-01 | infinity | infinity
+ b   | [2001-01-01,infinity) | 2001-01-01 | infinity | infinity
 (2 rows)
 
 DROP TABLE defaults_date;
-CREATE TABLE defaults_ts (val text, valid_from timestamptz, valid_until timestamptz);
-SELECT sql_saga.add_era('defaults_ts');
+CREATE TABLE defaults_ts (val text, valid_range tstzrange, valid_from timestamptz, valid_until timestamptz);
+SELECT sql_saga.add_era('defaults_ts','valid_range');
+NOTICE:  sql_saga: Created trigger "defaults_ts_synchronize_temporal_columns_trigger" on table defaults_ts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d defaults_ts
-                                      Table "public.defaults_ts"
-   Column    |           Type           | Collation | Nullable |               Default                
--------------+--------------------------+-----------+----------+--------------------------------------
+                       Table "public.defaults_ts"
+   Column    |           Type           | Collation | Nullable | Default 
+-------------+--------------------------+-----------+----------+---------
  val         | text                     |           |          | 
- valid_from  | timestamp with time zone |           | not null | 
- valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+ valid_range | tstzrange                |           | not null | 
+ valid_from  | timestamp with time zone |           |          | 
+ valid_until | timestamp with time zone |           |          | 
 Check constraints:
-    "defaults_ts_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp with time zone)
+    "defaults_ts_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    defaults_ts_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_ts FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'timestamp with time zone', 't')
 
-INSERT INTO defaults_ts (val, valid_from) VALUES ('a', '2000-01-01');
+INSERT INTO defaults_ts (val, valid_range) VALUES ('a', tstzrange('2000-01-01', NULL));
 TABLE defaults_ts;
- val |       valid_from       | valid_until 
------+------------------------+-------------
- a   | 2000-01-01 00:00:00-08 | infinity
+ val |             valid_range             |       valid_from       | valid_until 
+-----+-------------------------------------+------------------------+-------------
+ a   | ["2000-01-01 00:00:00-08",infinity) | 2000-01-01 00:00:00-08 | infinity
 (1 row)
 
 DROP TABLE defaults_ts;
-CREATE TABLE defaults_numeric (val text, valid_from numeric, valid_until numeric);
-SELECT sql_saga.add_era('defaults_numeric');
+CREATE TABLE defaults_numeric (val text, valid_range numrange, valid_from numeric, valid_until numeric);
+SELECT sql_saga.add_era('defaults_numeric', 'valid_range');
+NOTICE:  sql_saga: Created trigger "defaults_numeric_synchronize_temporal_columns_trigger" on table defaults_numeric to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d defaults_numeric
-                  Table "public.defaults_numeric"
-   Column    |  Type   | Collation | Nullable |       Default       
--------------+---------+-----------+----------+---------------------
- val         | text    |           |          | 
- valid_from  | numeric |           | not null | 
- valid_until | numeric |           | not null | 'Infinity'::numeric
+             Table "public.defaults_numeric"
+   Column    |   Type   | Collation | Nullable | Default 
+-------------+----------+-----------+----------+---------
+ val         | text     |           |          | 
+ valid_range | numrange |           | not null | 
+ valid_from  | numeric  |           |          | 
+ valid_until | numeric  |           |          | 
 Check constraints:
-    "defaults_numeric_valid_check" CHECK (valid_from < valid_until AND valid_from > '-Infinity'::numeric)
+    "defaults_numeric_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    defaults_numeric_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_numeric FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'numeric', 't')
 
-INSERT INTO defaults_numeric (val, valid_from) VALUES ('a', 100);
+INSERT INTO defaults_numeric (val, valid_range) VALUES ('a', numrange(100, NULL));
 TABLE defaults_numeric;
- val | valid_from | valid_until 
------+------------+-------------
- a   |        100 |    Infinity
+ val |  valid_range   | valid_from | valid_until 
+-----+----------------+------------+-------------
+ a   | [100,Infinity) |        100 |    Infinity
 (1 row)
 
--- This should now fail as 'infinity' is not less than 'infinity'
+-- This should fail because numrange('infinity', 'infinity') creates an empty range
+-- The trigger now explicitly checks for empty ranges with a clear error message
 SAVEPOINT expect_inf_inf_fail;
-INSERT INTO defaults_numeric (val, valid_from, valid_until) VALUES ('b', 'infinity', 'infinity');
-ERROR:  new row for relation "defaults_numeric" violates check constraint "defaults_numeric_valid_check"
-DETAIL:  Failing row contains (b, Infinity, Infinity).
+INSERT INTO defaults_numeric (val, valid_range) VALUES ('b', numrange('infinity', 'infinity'));
+ERROR:  Cannot use an empty range for temporal column "valid_range"
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 57 at RAISE
 ROLLBACK TO SAVEPOINT expect_inf_inf_fail;
 TABLE defaults_numeric;
- val | valid_from | valid_until 
------+------------+-------------
- a   |        100 |    Infinity
+ val |  valid_range   | valid_from | valid_until 
+-----+----------------+------------+-------------
+ a   | [100,Infinity) |        100 |    Infinity
 (1 row)
 
 DROP TABLE defaults_numeric;
 /* Test that -infinity is not allowed for valid_from */
-CREATE TABLE no_neg_inf (val text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('no_neg_inf');
+CREATE TABLE no_neg_inf (val text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('no_neg_inf', 'valid_range');
+NOTICE:  sql_saga: Created trigger "no_neg_inf_synchronize_temporal_columns_trigger" on table no_neg_inf to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d no_neg_inf
-                  Table "public.no_neg_inf"
-   Column    | Type | Collation | Nullable |     Default      
--------------+------+-----------+----------+------------------
- val         | text |           |          | 
- valid_from  | date |           | not null | 
- valid_until | date |           | not null | 'infinity'::date
+                Table "public.no_neg_inf"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ val         | text      |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Check constraints:
-    "no_neg_inf_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "no_neg_inf_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    no_neg_inf_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON no_neg_inf FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
 
 -- This should fail due to the new check constraint
 SAVEPOINT expect_neg_inf_fail;
-INSERT INTO no_neg_inf (val, valid_from, valid_until) VALUES ('c', '-infinity', '2000-01-01');
-ERROR:  new row for relation "no_neg_inf" violates check constraint "no_neg_inf_valid_check"
-DETAIL:  Failing row contains (c, -infinity, 2000-01-01).
+INSERT INTO no_neg_inf (val, valid_range) VALUES ('c', daterange('-infinity', '2000-01-01'));
 ROLLBACK TO SAVEPOINT expect_neg_inf_fail;
 DROP TABLE no_neg_inf;
 /* Test that no default is set for types that do not support infinity */
-CREATE TABLE defaults_int (val text, valid_from int, valid_until int);
-SELECT sql_saga.add_era('defaults_int');
+CREATE TABLE defaults_int (val text, valid_range int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('defaults_int', 'valid_range');
+NOTICE:  sql_saga: Created trigger "defaults_int_synchronize_temporal_columns_trigger" on table defaults_int to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d defaults_int
-              Table "public.defaults_int"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- val         | text    |           |          | 
- valid_from  | integer |           | not null | 
- valid_until | integer |           | not null | 
+               Table "public.defaults_int"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ val         | text      |           |          | 
+ valid_range | int4range |           | not null | 
+ valid_from  | integer   |           |          | 
+ valid_until | integer   |           |          | 
 Check constraints:
-    "defaults_int_valid_check" CHECK (valid_from < valid_until)
+    "defaults_int_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    defaults_int_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_int FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'integer', 't')
 
 -- This should fail because valid_until is NOT NULL and has no default
 SAVEPOINT expect_fail;
-INSERT INTO defaults_int (val, valid_from) VALUES ('a', 1);
-ERROR:  null value in column "valid_until" of relation "defaults_int" violates not-null constraint
-DETAIL:  Failing row contains (a, 1, null).
+INSERT INTO defaults_int (val, valid_range) VALUES ('a', int4range(1, NULL));
+ERROR:  invalid input syntax for type integer: "infinity"
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 167 at assignment
 ROLLBACK TO SAVEPOINT expect_fail;
 TABLE defaults_int;
- val | valid_from | valid_until 
------+------------+-------------
+ val | valid_range | valid_from | valid_until 
+-----+-------------+------------+-------------
 (0 rows)
 
 DROP TABLE defaults_int;
 /* Test optional flags */
-CREATE TABLE flags_test (val text, valid_from date, valid_until date);
--- No defaults
-SELECT sql_saga.add_era('flags_test', add_defaults => false);
+CREATE TABLE flags_test (val text, valid_range daterange, valid_from date, valid_until date);
+-- Test with no defaults
+SAVEPOINT test_no_defaults;
+SELECT sql_saga.add_era('flags_test', 'valid_range', add_defaults => false);
+NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trigger" on table flags_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d flags_test
-              Table "public.flags_test"
-   Column    | Type | Collation | Nullable | Default 
--------------+------+-----------+----------+---------
- val         | text |           |          | 
- valid_from  | date |           | not null | 
- valid_until | date |           | not null | 
+                Table "public.flags_test"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ val         | text      |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Check constraints:
-    "flags_test_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "flags_test_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    flags_test_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 'f')
 
 -- This should fail because there is no default
 SAVEPOINT no_default_fail;
-INSERT INTO flags_test (val, valid_from) VALUES ('a', '2000-01-01');
-ERROR:  null value in column "valid_until" of relation "flags_test" violates not-null constraint
-DETAIL:  Failing row contains (a, 2000-01-01, null).
+INSERT INTO flags_test (val, valid_range) VALUES ('a', daterange('2000-01-01', NULL));
+ERROR:  The temporal period could not be determined. At least one of "valid_range" or the pair "valid_from"/"valid_until" must be provided.
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 138 at RAISE
 ROLLBACK TO SAVEPOINT no_default_fail;
--- No check
-SELECT sql_saga.drop_era('flags_test');
- drop_era 
-----------
- t
-(1 row)
-
--- Recreate the table to ensure the old CHECK constraint is gone.
-DROP TABLE flags_test;
-CREATE TABLE flags_test (val text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('flags_test', add_bounds_check => false);
+ROLLBACK TO SAVEPOINT test_no_defaults;
+-- Test with no bounds check
+SAVEPOINT test_no_bounds_check;
+SELECT sql_saga.add_era('flags_test', 'valid_range', add_bounds_check => false);
+NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trigger" on table flags_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 \d flags_test
-                  Table "public.flags_test"
-   Column    | Type | Collation | Nullable |     Default      
--------------+------+-----------+----------+------------------
- val         | text |           |          | 
- valid_from  | date |           | not null | 
- valid_until | date |           | not null | 'infinity'::date
+                Table "public.flags_test"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ val         | text      |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
+Triggers:
+    flags_test_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
 
-INSERT INTO flags_test VALUES ('a', '2020-01-01', '2000-01-01'); -- should succeed
+-- Range types have built-in validation that prevents invalid bounds
+-- This should fail with range validation error (even with add_bounds_check => false)
+SAVEPOINT expect_range_error;
+INSERT INTO flags_test (val, valid_range) VALUES ('a', daterange('2020-01-01', '2000-01-01'));
+ERROR:  range lower bound must be less than or equal to range upper bound
+ROLLBACK TO SAVEPOINT expect_range_error;
+-- Insert a valid range to verify the table works
+INSERT INTO flags_test (val, valid_range) VALUES ('a', daterange('2000-01-01', '2020-01-01'));
 TABLE flags_test;
- val | valid_from | valid_until 
------+------------+-------------
- a   | 2020-01-01 | 2000-01-01
+ val |       valid_range       | valid_from | valid_until 
+-----+-------------------------+------------+-------------
+ a   | [2000-01-01,2020-01-01) | 2000-01-01 | 2020-01-01
 (1 row)
 
+ROLLBACK TO SAVEPOINT test_no_bounds_check;
 DROP TABLE flags_test;
 ROLLBACK;
 \i sql/include/test_teardown.sql

@@ -16,7 +16,7 @@ CREATE TABLE public.test_range_validation (
 -- This should fail because 'invalid_range_col' is a DATE, not a range type.
 SELECT sql_saga.add_era(
     'public.test_range_validation'::regclass,
-    synchronize_range_column := 'invalid_range_col'
+    range_column_name => 'invalid_range_col'
 );
 
 ROLLBACK;

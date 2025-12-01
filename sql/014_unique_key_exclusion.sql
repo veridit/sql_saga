@@ -28,13 +28,16 @@ INSERT INTO rooms (id, house_id, valid_from, valid_until) VALUES
 ;
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
+-- Notice that the unique constraints native to postgresql can NOT be DEFERRABLE,
+-- so the ordering here matters, i.e. first we move the latter, then we move the former,
+-- withing the same transaction, so at any point there is no uniqueness violation.
 
 UPDATE houses
 SET valid_from = new_valid_from,
     valid_until = new_valid_until
 FROM (VALUES
-    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2016-06-01'::DATE),
-    (1, '2016-01-01'::DATE, '2016-06-01'::DATE, '2017-01-01'::DATE)
+    (1, '2016-01-01'::DATE, '2016-06-01'::DATE, '2017-01-01'::DATE),
+    (1, '2015-01-01'::DATE, '2015-01-01'::DATE, '2016-06-01'::DATE)
 ) AS change(id, old_valid_from, new_valid_from, new_valid_until)
 WHERE houses.id = change.id
   AND valid_from = old_valid_from;
@@ -74,44 +77,6 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 --
--- 1.2.2. When the exclusion constraint is checked immediately,
---        you can't move the time in one transaction with two statements.
---
-
-BEGIN;
-SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_from = '2015-01-01'
-;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_from = '2016-01-01'
-;
-COMMIT;
-
---
--- 1.2.3. When the exclusion constraint is checked deferred,
---        you can move the time in one transaction with two statements.
---
-
-BEGIN;
-SET CONSTRAINTS houses_id_valid_excl DEFERRED;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_from = '2015-01-01'
-;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_from = '2016-01-01'
-;
-COMMIT;
-
---
 --
 -- 1.3. Small shift to a later time, moving the later range first:
 --
@@ -144,14 +109,12 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 --
--- 1.3.2. When the exclusion constraint is checked immediately,
+-- 1.3.2. When the exclusion constraint is checked immediately, while the foreign key check is deferred,
 --        you can move the time in one transaction with two statements.
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
-
+SET CONSTRAINTS rooms_house_id_valid DEFERRED;
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2016-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
@@ -159,26 +122,6 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2016-06-01')
-WHERE   id = 1 AND valid_from = '2015-01-01'
-;
-COMMIT;
-
---
--- 1.3.3. When the exclusion constraint is checked deferred,
---        you can move the time in one transaction with two statements.
---
-
-BEGIN;
-SET CONSTRAINTS houses_id_valid_excl DEFERRED;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2016-09-01', '2017-01-01')
-WHERE   id = 1 AND valid_from = '2016-06-01'
-;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-01-01', '2016-09-01')
 WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 COMMIT;
@@ -240,13 +183,12 @@ WHERE   id = 1 AND valid_from = '2016-01-01'
 ;
 
 --
--- 2.2.2. When the exclusion constraint is checked immediately,
+-- 2.2.2. When the exclusion constraint is checked immediately, and the foreign key check is deferred
 --        you can move the time in one transaction with two statements.
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
+SET CONSTRAINTS rooms_house_id_valid DEFERRED;
 
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
@@ -256,26 +198,6 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'
-;
-COMMIT;
-
---
--- 2.2.3. When the exclusion constraint is checked deferred,
---        you can move the time in one transaction with two statements.
---
-
-BEGIN;
-SET CONSTRAINTS houses_id_valid_excl DEFERRED;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-01-01', '2015-03-01')
-WHERE   id = 1 AND valid_from = '2015-01-01'
-;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-03-01', '2017-01-01')
-WHERE   id = 1 AND valid_from = '2015-06-01'
 ;
 COMMIT;
 
@@ -307,32 +229,11 @@ WHERE   id = 1 AND valid_from = '2015-01-01'
 ;
 
 --
--- 2.3.2. When the exclusion constraint is checked immediately,
+-- 2.3.2. When the exclusion constraint is checked immediately, and the foreign key check is deferred
 --        you can't move the time in one transaction with two statements.
 --
 
 BEGIN;
-SET CONSTRAINTS houses_id_valid_excl IMMEDIATE;
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
-WHERE   id = 1 AND valid_from = '2016-01-01'
-;
-
-UPDATE  houses
-SET     (valid_from, valid_until) = ('2015-01-01', '2015-06-01')
-WHERE   id = 1 AND valid_from = '2015-01-01'
-;
-COMMIT;
-
---
--- 2.3.3. When the exclusion constraint is checked deferred,
---        you can move the time in one transaction with two statements.
---
-
-BEGIN;
-SET CONSTRAINTS houses_id_valid_excl DEFERRED;
-SET CONSTRAINTS rooms_house_id_valid_uk_update DEFERRED;
-
 UPDATE  houses
 SET     (valid_from, valid_until) = ('2015-06-01', '2017-01-01')
 WHERE   id = 1 AND valid_from = '2016-01-01'

@@ -1,8 +1,6 @@
 CREATE FUNCTION sql_saga.__internal_add_system_time_era(
     table_oid regclass,
-    valid_from_column_name name DEFAULT 'system_valid_from',
-    valid_until_column_name name DEFAULT 'system_valid_until',
-    bounds_check_constraint name DEFAULT NULL,
+    range_column_name name DEFAULT 'system_valid_range',
     infinity_check_constraint name DEFAULT NULL,
     generated_always_trigger name DEFAULT NULL,
     write_history_trigger name DEFAULT NULL,
@@ -21,17 +19,10 @@ DECLARE
     kind "char";
     persistence "char";
     alter_commands text[] DEFAULT '{}';
-    valid_from_attnum smallint;
-    valid_from_type oid;
-    valid_from_notnull boolean;
-    valid_until_attnum smallint;
-    valid_until_type oid;
-    valid_until_notnull boolean;
-    excluded_column_name name;
-    DATE_OID CONSTANT integer := 1082;
-    TIMESTAMP_OID CONSTANT integer := 1114;
-    TIMESTAMPTZ_OID CONSTANT integer := 1184;
+    range_attnum smallint;
     range_type regtype;
+    range_notnull boolean;
+    excluded_column_name name;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -65,76 +56,35 @@ BEGIN
     END IF;
 
     SELECT a.attnum, a.atttypid, a.attnotnull
-    INTO valid_from_attnum, valid_from_type, valid_from_notnull
+    INTO range_attnum, range_type, range_notnull
     FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, valid_from_column_name);
+    WHERE (a.attrelid, a.attname) = (table_oid, range_column_name);
 
     IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''-infinity''', valid_from_column_name /* %I */);
-        valid_from_attnum := 0;
-        valid_from_type := 'timestamp with time zone'::regtype;
-        valid_from_notnull := true;
+        alter_commands := alter_commands || format('ADD COLUMN %I tstzrange NOT NULL DEFAULT tstzrange(''-infinity'', ''infinity'')', range_column_name);
+        range_attnum := 0;
+        range_type := 'tstzrange'::regtype;
+        range_notnull := true;
     END IF;
-    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT transaction_timestamp()', valid_from_column_name /* %I */);
+    alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT tstzrange(transaction_timestamp(), ''infinity'')', range_column_name);
 
-    IF valid_from_attnum < 0 THEN
-        RAISE EXCEPTION 'system columns cannot be used in an era';
-    END IF;
-
-    SELECT a.attnum, a.atttypid, a.attnotnull
-    INTO valid_until_attnum, valid_until_type, valid_until_notnull
-    FROM pg_catalog.pg_attribute AS a
-    WHERE (a.attrelid, a.attname) = (table_oid, valid_until_column_name);
-
-    IF NOT FOUND THEN
-        alter_commands := alter_commands || format('ADD COLUMN %I timestamp with time zone NOT NULL DEFAULT ''infinity''', valid_until_column_name /* %I */);
-        valid_until_attnum := 0;
-        valid_until_type := 'timestamp with time zone'::regtype;
-        valid_until_notnull := true;
-    ELSE
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET DEFAULT ''infinity''', valid_until_column_name /* %I */);
+    IF range_attnum < 0 THEN
+        RAISE EXCEPTION 'system columns cannot be used as a system time era range';
     END IF;
 
-    IF valid_until_attnum < 0 THEN
-        RAISE EXCEPTION 'system columns cannot be used in an era';
+    IF range_type <> 'tstzrange'::regtype THEN
+        RAISE EXCEPTION 'system time era range column must be of type tstzrange';
     END IF;
 
-    IF valid_from_type::regtype NOT IN ('date', 'timestamp without time zone', 'timestamp with time zone') THEN
-        RAISE EXCEPTION 'SYSTEM_TIME eras must be of type "date", "timestamp without time zone", or "timestamp with time zone"';
-    END IF;
-    IF valid_from_type <> valid_until_type THEN
-        RAISE EXCEPTION 'start and end columns must be of same type';
-    END IF;
-
-    CASE valid_from_type
-        WHEN DATE_OID THEN range_type := 'daterange';
-        WHEN TIMESTAMP_OID THEN range_type := 'tsrange';
-        WHEN TIMESTAMPTZ_OID THEN range_type := 'tstzrange';
-    ELSE
-        RAISE EXCEPTION 'unexpected data type: "%"', valid_from_type::regtype;
-    END CASE;
-
-    IF NOT valid_from_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_from_column_name /* %I */);
-    END IF;
-    IF NOT valid_until_notnull THEN
-        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', valid_until_column_name /* %I */);
+    IF NOT range_notnull THEN
+        alter_commands := alter_commands || format('ALTER COLUMN %I SET NOT NULL', range_column_name);
     END IF;
 
     DECLARE
-        condef CONSTANT text := format('CHECK ((%I < %I))', valid_from_column_name /* %I */, valid_until_column_name /* %I */);
-    BEGIN
-        IF bounds_check_constraint IS NULL THEN
-            bounds_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, era_name], 'check');
-        END IF;
-        alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', bounds_check_constraint /* %I */, condef /* %s */);
-    END;
-
-    DECLARE
-        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name /* %I */);
+        condef CONSTANT text := format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', range_column_name);
     BEGIN
         IF infinity_check_constraint IS NULL THEN
-            infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
+            infinity_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name, range_column_name], 'infinity_check');
         END IF;
         alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint /* %I */, condef /* %s */);
     END;
@@ -144,25 +94,16 @@ BEGIN
     END IF;
 
     generated_always_trigger := coalesce(generated_always_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_generated_always'));
-    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger /* %I */, table_oid /* %s */);
+    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end(%L)', generated_always_trigger, table_oid, range_column_name);
 
     write_history_trigger := coalesce(write_history_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'system_time_write_history'));
-    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger /* %I */, table_oid /* %s */);
+    EXECUTE format('CREATE TRIGGER %I AFTER UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history(%L)', write_history_trigger, table_oid, range_column_name);
 
     truncate_trigger := coalesce(truncate_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'truncate'));
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
 
-    DECLARE
-        range_subtype_category char(1);
-    BEGIN
-        SELECT t.typcategory
-        INTO range_subtype_category
-        FROM pg_catalog.pg_type t
-        WHERE t.oid = valid_from_type;
-
-        INSERT INTO sql_saga.era (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
-        VALUES (table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name, range_type, valid_from_type, range_subtype_category, bounds_check_constraint);
-    END;
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
+    VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'timestamptz', 'D', NULL);
 
     INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
     VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);

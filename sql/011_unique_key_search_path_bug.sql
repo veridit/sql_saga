@@ -28,12 +28,13 @@ SET search_path TO public, saga_bug_test;
 -- Create the "impostor" table in the `public` schema.
 CREATE TABLE public.legal_unit (
     id INT NOT NULL,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('public.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('public.legal_unit', 'valid_range');
 -- On the impostor table, create a unique key with a non-interfering name.
 SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'impostor_uk');
 
@@ -41,12 +42,13 @@ SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', key_ty
 -- Create the real parent table in the `saga_bug_test` schema.
 CREATE TABLE saga_bug_test.legal_unit (
     id INT NOT NULL,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_range');
 -- Use a different, non-interfering name for the unique key on the correct table.
 SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'correct_table_uk');
 
@@ -54,12 +56,13 @@ SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid',
 CREATE TABLE saga_bug_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT, -- Temporal FK
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_range');
 SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], key_type => 'natural');
 
 -- Add the temporal FK, correctly pointing to the unique key on the

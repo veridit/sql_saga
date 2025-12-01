@@ -27,22 +27,23 @@ BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
 /* Basic period definitions with dates */
-CREATE TABLE basic (val text, valid_from date, valid_until date);
+CREATE TABLE basic (val text, valid daterange, valid_from date, valid_until date);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+----------------------+--------------------------+-------------------+------------------
 (0 rows)
 
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', add_defaults := false);
+NOTICE:  sql_saga: Created trigger "basic_synchronize_temporal_columns_trigger" on table basic to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
- public       | basic      | bp       | valid_from             | valid_until             | daterange  | date          | D                      | basic_bp_check          |                             |                          | f                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+----------------------+--------------------------+-------------------+------------------
+ public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | date          | D                      | basic_bp_check          |                      | f                        |                   | 
 (1 row)
 
 SELECT sql_saga.drop_era('basic', 'bp');
@@ -52,45 +53,46 @@ SELECT sql_saga.drop_era('basic', 'bp');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+----------------------+--------------------------+-------------------+------------------
 (0 rows)
 
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', bounds_check_constraint => 'c', add_defaults => false);
+NOTICE:  sql_saga: Created trigger "basic_synchronize_temporal_columns_trigger" on table basic to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
- public       | basic      | bp       | valid_from             | valid_until             | daterange  | date          | D                      | c                       |                             |                          | f                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+----------------------+--------------------------+-------------------+------------------
+ public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | date          | D                      | c                       |                      | f                        |                   | 
 (1 row)
 
 /* Test constraints */
 SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', null, null); --fail
-ERROR:  null value in column "valid_from" of relation "basic" violates not-null constraint
-DETAIL:  Failing row contains (x, null, null).
+ERROR:  The temporal period could not be determined. At least one of "valid" or the pair "valid_from"/"valid_until" must be provided.
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 138 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', '3000-01-01', null); --fail
-ERROR:  null value in column "valid_until" of relation "basic" violates not-null constraint
-DETAIL:  Failing row contains (x, 3000-01-01, null).
+ERROR:  The temporal period could not be determined. At least one of "valid" or the pair "valid_from"/"valid_until" must be provided.
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 138 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', null, '1000-01-01'); --fail
-ERROR:  null value in column "valid_from" of relation "basic" violates not-null constraint
-DETAIL:  Failing row contains (x, null, 1000-01-01).
+ERROR:  The temporal period could not be determined. At least one of "valid" or the pair "valid_from"/"valid_until" must be provided.
+CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 138 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', '3000-01-01', '1000-01-01'); --fail
-ERROR:  new row for relation "basic" violates check constraint "c"
-DETAIL:  Failing row contains (x, 3000-01-01, 1000-01-01).
+ERROR:  null value in column "valid" of relation "basic" violates not-null constraint
+DETAIL:  Failing row contains (x, null, 3000-01-01, 1000-01-01).
 ROLLBACK TO SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', '1000-01-01', '3000-01-01'); --success
 TABLE basic;
- val | valid_from | valid_until 
------+------------+-------------
- x   | 1000-01-01 | 3000-01-01
+ val |          valid          | valid_from | valid_until 
+-----+-------------------------+------------+-------------
+ x   | [1000-01-01,3000-01-01) | 1000-01-01 | 3000-01-01
 (1 row)
 
 /* Test dropping the whole thing */

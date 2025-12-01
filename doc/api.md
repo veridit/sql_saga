@@ -199,16 +199,17 @@ This document is automatically generated from the database schema by the `80_gen
 ```sql
 FUNCTION add_era(
     table_oid regclass,
-    valid_from_column_name name DEFAULT 'valid_from'::name,
-    valid_until_column_name name DEFAULT 'valid_until'::name,
+    range_column_name name,
     era_name name DEFAULT 'valid'::name,
-    range_type regtype DEFAULT NULL::regtype,
-    bounds_check_constraint name DEFAULT NULL::name,
-    synchronize_valid_to_column name DEFAULT NULL::name,
-    synchronize_range_column name DEFAULT NULL::name,
+    synchronize_columns boolean DEFAULT true,
+    valid_from_column_name name DEFAULT NULL::name,
+    valid_until_column_name name DEFAULT NULL::name,
+    valid_to_column_name name DEFAULT NULL::name,
     create_columns boolean DEFAULT false,
     add_defaults boolean DEFAULT true,
-    add_bounds_check boolean DEFAULT true
+    add_bounds_check boolean DEFAULT true,
+    range_type regtype DEFAULT NULL::regtype,
+    bounds_check_constraint name DEFAULT NULL::name
 ) RETURNS boolean
 SECURITY DEFINER
 ```

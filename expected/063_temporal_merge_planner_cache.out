@@ -2507,7 +2507,7 @@ NOTICE:  Explaining:
                     source_table.valid_from as valid_from, source_table.valid_until as valid_until, /* v_source_temporal_cols_expr */
                     jsonb_strip_nulls(jsonb_build_object('value', source_table.value)) /* v_source_data_payload_expr */ AS data_payload,
                     jsonb_strip_nulls(jsonb_build_object()) /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
-                    jsonb_build_object('type', source_table.type, 'lu_id', source_table.lu_id, 'es_id', source_table.es_id) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
+                    jsonb_build_object('es_id', source_table.es_id, 'lu_id', source_table.lu_id, 'type', source_table.type) /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
                     source_table.type IS NULL AND source_table.lu_id IS NULL AND source_table.es_id IS NULL /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
                     (true) /* v_lookup_cols_are_null_expr */ as natural_identity_column_values_are_null,
                     true /* v_is_identifiable_expr */ as is_identifiable,
@@ -2810,7 +2810,7 @@ NOTICE:  Explaining:
 NOTICE:  Seq Scan on source_rows_with_canonical_key s (actual rows=2.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=81
+NOTICE:    Buffers: shared hit=50
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS

@@ -6,16 +6,17 @@ BEGIN;
 
 -- Test that the overloaded drop_* functions work as expected.
 
-CREATE TABLE parent(id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('parent'::regclass, 'valid_from', 'valid_until', 'p');
+CREATE TABLE parent(id int, valid int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('parent'::regclass, 'valid', 'p');
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
+TABLE sql_saga.unique_keys;
 
-CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
+CREATE TABLE child(id int, parent_id int, valid int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('child'::regclass, 'valid', 'q');
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
+TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_foreign_key for temporal-to-temporal
-TABLE sql_saga.foreign_keys;
 SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q');
 TABLE sql_saga.foreign_keys;
 
@@ -65,25 +66,25 @@ CREATE TABLE era_symmetry_test(id int);
 \d era_symmetry_test
 
 -- 1. Create era and columns together
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v', create_columns => true);
+SELECT sql_saga.add_era(table_oid => 'era_symmetry_test'::regclass, range_column_name => 'v', create_columns => true, range_type => 'tstzrange'::regtype);
 \d era_symmetry_test
 
 -- 2. Drop era and columns together
-SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass, cleanup => true);
 \d era_symmetry_test
 
 -- 3. Verify add_era fails without create_columns => true
 SAVEPOINT before_fail;
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
 ROLLBACK TO SAVEPOINT before_fail;
 
 -- 4. Create columns manually, then add era
-ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
+ALTER TABLE era_symmetry_test ADD COLUMN v tstzrange;
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
 \d era_symmetry_test
 
 -- 5. Drop era but leave columns (default behavior)
-SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v');
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass);
 \d era_symmetry_test
 
 DROP TABLE era_symmetry_test;

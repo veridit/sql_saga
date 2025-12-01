@@ -62,14 +62,14 @@ BEGIN
                 DECLARE
                     alter_parts text[];
                     object_name name;
-                    check_constraint_name name;
                 BEGIN
                     -- Build a list of constraints to drop in a single ALTER TABLE command.
                     alter_parts := ARRAY[]::text[];
 
                     -- 1. Add the CHECK constraint to the drop list.
-                    check_constraint_name := unique_key_row.check_constraint;
-                    alter_parts := alter_parts || format('DROP CONSTRAINT %I', check_constraint_name);
+                    IF unique_key_row.check_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.check_constraint);
+                    END IF;
 
                     -- 2. Drop all partial indexes and constraints.
                     IF unique_key_row.partial_exclude_constraint_names IS NOT NULL THEN
@@ -96,14 +96,16 @@ BEGIN
                     END IF;
                 END;
             ELSIF unique_key_row.key_type = 'predicated' THEN
-                -- This is a unique index, drop it and the exclusion constraint
-                EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
-                    unique_key_row.table_schema, /* %I */
-                    unique_key_row.unique_constraint, /* %I */
-                    unique_key_row.table_schema, /* %I */
-                    unique_key_row.table_name, /* %I */
-                    unique_key_row.exclude_constraint /* %I */
-                );
+                IF unique_key_row.check_constraint IS NOT NULL THEN
+                    -- This is a unique index, drop it and the exclusion constraint
+                    EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
+                        unique_key_row.table_schema, /* %I */
+                        unique_key_row.unique_constraint, /* %I */
+                        unique_key_row.table_schema, /* %I */
+                        unique_key_row.table_name, /* %I */
+                        unique_key_row.exclude_constraint /* %I */
+                    );
+                END IF;
             ELSE -- 'primary' or 'natural'
                 DECLARE
                     alter_parts text[] := '{}';

@@ -137,20 +137,25 @@ BEGIN
     JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = temporal_merge_execute.target_table;
 
-    SELECT e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column, e.range_type::name
-    INTO v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col, v_range_constructor
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type::name
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name
       AND e.table_name = v_target_table_name_only
       AND e.era_name = temporal_merge_execute.era_name;
 
-    IF v_valid_from_col IS NULL THEN
+    IF v_range_col IS NULL THEN
         RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, temporal_merge_execute.target_table;
     END IF;
 
     -- Prepare expected normalized index expressions and logging flag for index checks
-    v_expected_idx_expr_with_bounds := format('%s(%s,%s,''[)'')', v_range_constructor, v_valid_from_col, v_valid_until_col);
-    v_expected_idx_expr_default := format('%s(%s,%s)', v_range_constructor, v_valid_from_col, v_valid_until_col);
+    IF v_valid_from_col IS NOT NULL AND v_valid_until_col IS NOT NULL THEN
+        v_expected_idx_expr_with_bounds := format('%s(%s,%s,''[)'')', v_range_constructor, v_valid_from_col, v_valid_until_col);
+        v_expected_idx_expr_default := format('%s(%s,%s)', v_range_constructor, v_valid_from_col, v_valid_until_col);
+    ELSE
+        v_expected_idx_expr_with_bounds := NULL;
+        v_expected_idx_expr_default := NULL;
+    END IF;
 
     -- Check cache for original source relation OID. This provides a fast path for repeated calls with the same view.
     SELECT has_index, hint_rel_name
@@ -202,18 +207,30 @@ BEGIN
                 IF NOT FOUND THEN
                     -- Still a cache miss, so perform the actual check on the base table.
                     SELECT EXISTS (
+                        -- Check for an index on the range column itself
+                        SELECT 1
+                        FROM pg_index ix
+                        JOIN pg_class i ON i.oid = ix.indexrelid
+                        JOIN pg_am am ON am.oid = i.relam
+                        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+                        WHERE ix.indrelid = v_source_rel_oid
+                          AND am.amname = 'gist'
+                          AND ix.indkey IS NOT NULL AND array_length(ix.indkey, 1) = 1
+                          AND a.attname = v_range_col
+                        UNION ALL
+                        -- Check for an expression-based index on from/until columns (legacy/synchronized)
                         SELECT 1
                         FROM pg_index ix
                         JOIN pg_class i ON i.oid = ix.indexrelid
                         JOIN pg_am am ON am.oid = i.relam
                         WHERE ix.indrelid = v_source_rel_oid
-                        AND am.amname = 'gist'
-                        AND ix.indexprs IS NOT NULL
-                        -- Normalize the index expression to create a robust, format-agnostic comparison.
-                        AND (
-                            regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_with_bounds
-                            OR regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_default
-                        )
+                          AND am.amname = 'gist'
+                          AND ix.indexprs IS NOT NULL
+                          AND v_expected_idx_expr_with_bounds IS NOT NULL
+                          AND (
+                              regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_with_bounds
+                              OR regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_default
+                          )
                     )
                     INTO v_has_gist_index;
 
@@ -258,11 +275,9 @@ BEGIN
             SELECT c.reltuples INTO v_source_row_count FROM pg_class c WHERE c.oid = v_source_rel_name_for_hint::oid;
             IF v_source_row_count >= 512 THEN
                 RAISE WARNING 'Performance warning: The source relation % lacks a GIST index on its temporal columns.', temporal_merge_execute.source_table
-                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%s(%I, %I, ''[)''));',
+                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%I);',
                     v_source_rel_name_for_hint,
-                    v_range_constructor,
-                    v_valid_from_col,
-                    v_valid_until_col
+                    v_range_col
                 );
             END IF;
         END;
@@ -275,6 +290,18 @@ BEGIN
     --   range_constructor(valid_from, valid_until, '[)')
     -- for performance. Checking for a primary key is orthogonal and does not affect range search performance here.
     SELECT EXISTS (
+        -- Check for an index on the range column itself
+        SELECT 1
+        FROM pg_index ix
+        JOIN pg_class i ON i.oid = ix.indexrelid
+        JOIN pg_am am ON am.oid = i.relam
+        JOIN pg_attribute a ON a.attrelid = ix.indrelid AND a.attnum = ANY(ix.indkey)
+        WHERE ix.indrelid = v_target_table_ident::regclass
+          AND am.amname = 'gist'
+          AND ix.indkey IS NOT NULL AND array_length(ix.indkey, 1) = 1
+          AND a.attname = v_range_col
+        UNION ALL
+        -- Check for an expression-based index on from/until columns (legacy/synchronized)
         SELECT 1
         FROM pg_index ix
         JOIN pg_class i ON i.oid = ix.indexrelid
@@ -282,6 +309,7 @@ BEGIN
         WHERE ix.indrelid = v_target_table_ident::regclass
           AND am.amname = 'gist'
           AND ix.indexprs IS NOT NULL
+          AND v_expected_idx_expr_with_bounds IS NOT NULL
           AND (
               regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_with_bounds
               OR regexp_replace(pg_get_expr(ix.indexprs, ix.indrelid), '\s|::\w+', '', 'g') = v_expected_idx_expr_default
@@ -313,11 +341,9 @@ BEGIN
             SELECT c.reltuples INTO v_target_row_count FROM pg_class c WHERE c.oid = temporal_merge_execute.target_table;
             IF v_target_row_count >= 512 THEN
                 RAISE WARNING 'Performance warning: The target relation % lacks a GIST index on its temporal columns.', temporal_merge_execute.target_table
-                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%s(%I, %I, ''[)''));',
+                USING HINT = format('For better performance, consider creating an index, e.g., CREATE INDEX ON %s USING GIST (%I);',
                     v_target_table_ident,
-                    v_range_constructor,
-                    v_valid_from_col,
-                    v_valid_until_col
+                    v_range_col
                 );
             END IF;
         END;
@@ -380,6 +406,12 @@ BEGIN
       AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
 
     -- Also exclude synchronized columns, as the trigger will populate them.
+    IF v_valid_from_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_from_col;
+    END IF;
+    IF v_valid_until_col IS NOT NULL THEN
+        v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_until_col;
+    END IF;
     IF v_valid_to_col IS NOT NULL THEN
         v_insert_defaulted_columns := v_insert_defaulted_columns || v_valid_to_col;
     END IF;
@@ -387,8 +419,12 @@ BEGIN
         v_insert_defaulted_columns := v_insert_defaulted_columns || v_range_col;
     END IF;
 
-    SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_from_col;
-    SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_until_col;
+    IF v_valid_from_col IS NOT NULL THEN
+        SELECT atttypid::regtype INTO v_valid_from_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_from_col;
+    END IF;
+    IF v_valid_until_col IS NOT NULL THEN
+        SELECT atttypid::regtype INTO v_valid_until_col_type FROM pg_attribute WHERE attrelid = temporal_merge_execute.target_table AND attname = v_valid_until_col;
+    END IF;
 
     -- Dynamically construct join clause for composite entity key.
     -- This uses an index-friendly, null-safe pattern.
@@ -415,7 +451,7 @@ BEGIN
             SELECT t.attname, t.atttypid
             FROM target_cols t
             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table AND ad.adnum = t.attnum
-            WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col)
+            WHERE t.attname NOT IN (v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col)
               AND t.attname <> ALL(COALESCE(temporal_merge_execute.identity_columns, '{}'))
               AND t.attname <> ALL(v_lookup_columns)
               AND t.attname <> ALL(COALESCE(v_pk_cols, '{}'))
@@ -580,8 +616,8 @@ BEGIN
                                     MERGE INTO %1$s t
                                     USING founding_plan_ops s ON false
                                     WHEN NOT MATCHED THEN
-                                        INSERT (%2$s, %5$I, %6$I)
-                                        VALUES (%3$s, s.new_valid_from::%8$s, s.new_valid_until::%9$s)
+                                        INSERT (%2$s, %5$I)
+                                        VALUES (%3$s, %7$I(s.new_valid_from::%8$s, s.new_valid_until::%9$s, '[)'))
                                     RETURNING t.*, s.causal_id, s.grouping_key
                                 )
                                 INSERT INTO temporal_merge_entity_id_map (grouping_key, causal_id, new_entity_keys)
@@ -595,9 +631,9 @@ BEGIN
                                 v_founding_all_cols_ident,      /* %2$s */
                                 v_founding_all_cols_from_jsonb, /* %3$s */
                                 v_entity_id_update_jsonb_build, /* %4$s */
-                                v_valid_from_col,               /* %5$I */
-                                v_valid_until_col,              /* %6$I */
-                                NULL,                           /* %7$L (placeholder) */
+                                v_range_col,                    /* %5$I */
+                                NULL,                           /* %6$I (placeholder) */
+                                v_range_constructor,            /* %7$I */
                                 v_valid_from_col_type,          /* %8$s */
                                 v_valid_until_col_type          /* %9$s */
                             );
@@ -615,8 +651,8 @@ BEGIN
                             -- slices now have the correct, generated entity ID (e.g., foreign key),
                             -- which was back-filled into their `entity_keys` payload in the previous step.
                             EXECUTE format($$
-                                INSERT INTO %1$s (%2$s, %4$I, %5$I)
-                                SELECT %3$s, p.new_valid_from::%7$s, p.new_valid_until::%8$s
+                                INSERT INTO %1$s (%2$s, %4$I)
+                                SELECT %3$s, %6$I(p.new_valid_from::%7$s, p.new_valid_until::%8$s, '[)')
                                 FROM temporal_merge_plan p,
                                      LATERAL jsonb_populate_record(null::%1$s, p.entity_keys || p.data) as jpr_all
                                 WHERE p.operation = 'INSERT'
@@ -636,9 +672,9 @@ BEGIN
                                 v_target_table_ident,       /* %1$s */
                                 v_all_cols_ident,           /* %2$s */
                                 v_all_cols_select,          /* %3$s */
-                                v_valid_from_col,           /* %4$I */
-                                v_valid_until_col,          /* %5$I */
-                                NULL,                       /* %6$L (placeholder) */
+                                v_range_col,                /* %4$I */
+                                NULL,                       /* %5$I (placeholder) */
+                                v_range_constructor,        /* %6$I */
                                 v_valid_from_col_type,      /* %7$s */
                                 v_valid_until_col_type      /* %8$s */
                             );
@@ -664,8 +700,8 @@ BEGIN
                                     MERGE INTO %1$s t
                                     USING source_for_insert s ON false
                                     WHEN NOT MATCHED THEN
-                                        INSERT (%2$s, %3$I, %4$I)
-                                        VALUES (%5$s, s.new_valid_from::%6$s, s.new_valid_until::%7$s)
+                                        INSERT (%2$s, %3$I)
+                                        VALUES (%5$s, %9$I(s.new_valid_from::%6$s, s.new_valid_until::%7$s, '[)'))
                                     RETURNING t.*, s.plan_op_seq
                                 )
                                 UPDATE temporal_merge_plan p
@@ -675,12 +711,13 @@ BEGIN
                             $$,
                                 v_target_table_ident,               /* %1$s */
                                 v_all_cols_ident,                   /* %2$s */
-                                v_valid_from_col,                   /* %3$I */
-                                v_valid_until_col,                  /* %4$I */
+                                v_range_col,                        /* %3$I */
+                                NULL,                               /* %4$I (placeholder) */
                                 v_all_cols_from_jsonb,              /* %5$s */
                                 v_valid_from_col_type,              /* %6$s */
                                 v_valid_until_col_type,             /* %7$s */
-                                v_entity_id_update_jsonb_build      /* %8$s */
+                                v_entity_id_update_jsonb_build,     /* %8$s */
+                                v_range_constructor                 /* %9$I */
                             );
                         END;
                      END;
@@ -726,8 +763,8 @@ BEGIN
                                 MERGE INTO %1$s t
                                 USING source_for_insert s ON false
                                 WHEN NOT MATCHED THEN
-                                    INSERT (%3$I, %4$I)
-                                    VALUES (s.new_valid_from::%5$s, s.new_valid_until::%6$s)
+                                    INSERT (%3$I)
+                                    VALUES (%7$I(s.new_valid_from::%5$s, s.new_valid_until::%6$s, '[)'))
                                 RETURNING t.*, s.plan_op_seq
                             )
                             UPDATE temporal_merge_plan p
@@ -737,10 +774,11 @@ BEGIN
                         $$,
                             v_target_table_ident,           /* %1$s */
                             v_entity_id_update_jsonb_build, /* %2$s */
-                            v_valid_from_col,               /* %3$I */
-                            v_valid_until_col,              /* %4$I */
+                            v_range_col,                    /* %3$I */
+                            NULL,                           /* %4$I (placeholder) */
                             v_valid_from_col_type,          /* %5$s */
-                            v_valid_until_col_type          /* %6$s */
+                            v_valid_until_col_type,         /* %6$s */
+                            v_range_constructor             /* %7$I */
                         );
                         EXECUTE v_sql;
                      END;
@@ -798,18 +836,18 @@ BEGIN
                 -- operations are processed before "shrink" or "move" operations,
                 -- preventing transient gaps that would violate foreign key constraints.
                 IF v_update_set_clause IS NOT NULL THEN
-                    v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_from::%6$s, %5$I = p.new_valid_until::%7$s, %2$s
+                    v_sql := format($$ UPDATE %1$s t SET %4$I = %8$I(p.new_valid_from::%6$s, p.new_valid_until::%7$s, '[)'), %2$s
                         FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
                              LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                        WHERE %3$s AND t.%4$I = p.old_valid_from::%6$s;
-                    $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
+                        WHERE %3$s AND t.%4$I = %8$I(p.old_valid_from::%6$s, p.old_valid_until::%7$s, '[)');
+                    $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, NULL, v_valid_from_col_type, v_valid_until_col_type, v_range_constructor);
                     EXECUTE v_sql;
                 ELSIF v_all_cols_ident IS NOT NULL THEN
-                    v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_from::%5$s, %4$I = p.new_valid_until::%6$s
+                    v_sql := format($$ UPDATE %1$s t SET %3$I = %7$I(p.new_valid_from::%5$s, p.new_valid_until::%6$s, '[)')
                         FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' ORDER BY plan_op_seq) p,
                              LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                        WHERE %2$s AND t.%3$I = p.old_valid_from::%5$s;
-                    $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_until_col, v_valid_from_col_type, v_valid_until_col_type);
+                        WHERE %2$s AND t.%3$I = %7$I(p.old_valid_from::%5$s, p.old_valid_until::%6$s, '[)');
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, NULL, v_valid_from_col_type, v_valid_until_col_type, v_range_constructor);
                     EXECUTE v_sql;
                 END IF;
 
@@ -820,8 +858,8 @@ BEGIN
                 IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
                     v_sql := format($$ DELETE FROM %1$s t
                         USING temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_from::%4$s;
-                    $$, v_target_table_ident, v_entity_key_join_clause, v_valid_from_col, v_valid_from_col_type);
+                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = %5$I(p.old_valid_from::%4$s, p.old_valid_until::%6$s, '[)');
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_valid_from_col_type, v_range_constructor, v_valid_until_col_type);
                     EXECUTE v_sql;
                 END IF;
             EXCEPTION

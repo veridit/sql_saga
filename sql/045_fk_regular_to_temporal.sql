@@ -21,8 +21,7 @@ BEGIN;
 CREATE TABLE temporal_pk (
     id integer NOT NULL,
     name text,
-    valid_from date,
-    valid_until date
+    valid_range daterange
 );
 
 CREATE TABLE regular_fk (
@@ -32,7 +31,7 @@ CREATE TABLE regular_fk (
 );
 
 -- 2. Add a unique key to the temporal table.
-SELECT sql_saga.add_era('temporal_pk', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_pk', 'valid_range');
 -- Provide an explicit name for the unique key to make it easy to reference
 SELECT sql_saga.add_unique_key(
     table_oid => 'temporal_pk',
@@ -60,8 +59,8 @@ SELECT sql_saga.add_regular_foreign_key(
 \echo "--- DML Validation ---"
 
 -- First, insert a valid row into the referenced temporal table
-INSERT INTO temporal_pk (id, name, valid_from, valid_until)
-VALUES (1, 'Entity One', '2023-01-01', 'infinity');
+INSERT INTO temporal_pk (id, name, valid_range)
+VALUES (1, 'Entity One', '[2023-01-01,infinity)');
 
 -- Test valid INSERTs
 INSERT INTO regular_fk (id, pk_id, name) VALUES (101, 1, 'Link to Entity One');

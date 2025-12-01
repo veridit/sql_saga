@@ -10,11 +10,11 @@ SET search_path TO fk_idx, sql_saga, public;
 \echo '--- Temporal to Temporal FKs ---'
 
 \echo 'Scenario 1: Auto-create index (default behavior)'
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
 
 SELECT add_foreign_key(
     fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
@@ -31,11 +31,11 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_1');
 DROP TABLE parent_t, child_t CASCADE;
 
 \echo 'Scenario 2: Disable auto-creation of index'
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
 
 SELECT add_foreign_key(
     fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
@@ -49,12 +49,12 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_2');
 DROP TABLE parent_t, child_t CASCADE;
 
 \echo 'Scenario 3: Manually created index exists'
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
-CREATE INDEX manual_child_t_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until));
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
+CREATE INDEX manual_child_t_idx ON child_t USING GIST (parent_id, valid_range);
 
 SELECT add_foreign_key(
     fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
@@ -69,11 +69,11 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_3');
 DROP TABLE parent_t, child_t CASCADE;
 
 \echo 'Scenario 4: Auto-created index is not dropped when requested'
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
 SELECT add_foreign_key(
     fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
@@ -93,8 +93,8 @@ DROP TABLE parent_t, child_t CASCADE;
 \echo '--- Regular to Temporal FKs ---'
 
 \echo 'Scenario 1: Auto-create index (default behavior)'
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
 CREATE TABLE child_r (id int, parent_id int);
 
@@ -113,8 +113,8 @@ SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_1');
 DROP TABLE parent_r, child_r CASCADE;
 
 \echo 'Scenario 2: Disable auto-creation of index'
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
 CREATE TABLE child_r (id int, parent_id int);
 
@@ -130,8 +130,8 @@ SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_2');
 DROP TABLE parent_r, child_r CASCADE;
 
 \echo 'Scenario 3: Manually created index exists'
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
 CREATE TABLE child_r (id int, parent_id int);
 CREATE INDEX manual_child_r_idx ON child_r (parent_id);

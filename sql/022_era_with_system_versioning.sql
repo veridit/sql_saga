@@ -6,12 +6,13 @@
 CREATE TABLE temporal_and_versioned (
     id int,
     name text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 
 -- 2. Add 'valid' era and a unique key
-SELECT sql_saga.add_era('temporal_and_versioned', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_and_versioned', 'valid_range');
 SELECT sql_saga.add_unique_key('temporal_and_versioned', '{id}');
 
 -- 3. Add system versioning
@@ -32,7 +33,7 @@ WHERE id = 1 AND valid_from = '2023-01-01';
 
 -- Check the current and history tables
 SELECT id, name, valid_from, valid_until FROM temporal_and_versioned;
-SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_from;
+SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_range;
 
 -- 5. Drop system versioning and check that the era is still intact
 SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true);

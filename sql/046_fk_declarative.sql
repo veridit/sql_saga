@@ -8,12 +8,12 @@ BEGIN;
 SAVEPOINT natural_key_target;
 
 -- 1. Setup: Temporal parent and child tables, and a regular child table.
-CREATE TABLE parent_natural(id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('parent_natural'::regclass, 'valid_from', 'valid_until', 'p');
+CREATE TABLE parent_natural(id int, valid_range int4range);
+SELECT sql_saga.add_era('parent_natural'::regclass, 'valid_range', 'p');
 SELECT sql_saga.add_unique_key('parent_natural'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
 
-CREATE TABLE temporal_child_natural(id int, parent_id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('temporal_child_natural'::regclass, 'valid_from', 'valid_until', 'q');
+CREATE TABLE temporal_child_natural(id int, parent_id int, valid_range int4range);
+SELECT sql_saga.add_era('temporal_child_natural'::regclass, 'valid_range', 'q');
 
 CREATE TABLE regular_child_natural(id int, parent_id int);
 
@@ -60,16 +60,15 @@ SAVEPOINT primary_key_target;
 -- 1. Setup: Temporal parent and child tables, and a regular child table.
 CREATE TABLE parent_pk(
     id int,
-    valid_from int,
-    valid_until int,
+    valid_range int4range,
     -- Note: A temporal primary key must include a temporal column
-    PRIMARY KEY (id, valid_from) DEFERRABLE
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('parent_pk'::regclass, 'valid_from', 'valid_until', 'p');
+SELECT sql_saga.add_era('parent_pk'::regclass, 'valid_range', 'p');
 SELECT sql_saga.add_unique_key('parent_pk'::regclass, ARRAY['id']::name[], 'p', key_type => 'primary');
 
-CREATE TABLE temporal_child_pk(id int, parent_id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('temporal_child_pk'::regclass, 'valid_from', 'valid_until', 'q');
+CREATE TABLE temporal_child_pk(id int, parent_id int, valid_range int4range);
+SELECT sql_saga.add_era('temporal_child_pk'::regclass, 'valid_range', 'q');
 
 CREATE TABLE regular_child_pk(id int, parent_id int);
 

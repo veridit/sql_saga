@@ -6,16 +6,17 @@ CREATE TABLE products (
     id int,
     name text,
     price numeric,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 
 -- Register era and unique key
-SELECT sql_saga.add_era('products', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('products', 'valid_range');
 SELECT sql_saga.add_unique_key('products', ARRAY['id']);
 
 -- Populate with some historical data
-INSERT INTO products VALUES
+INSERT INTO products(id,name,price,valid_from,valid_until) VALUES
 (1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
 (1, 'Laptop', 1150, '2024-01-01', 'infinity'),
 (2, 'Mouse', 25, '2023-05-01', 'infinity');
@@ -129,7 +130,7 @@ TABLE products_view_select_for_portion_of;
 -- This should shorten two records and insert a new one in the middle.
 -- To get a clean state, we delete and re-insert product 1's history.
 DELETE FROM products WHERE id = 1;
-INSERT INTO products VALUES
+INSERT INTO products(id,name,price,valid_from,valid_until) VALUES
 (1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
 (1, 'Laptop', 1150, '2024-01-01', 'infinity');
 TABLE products ORDER BY id, valid_from;

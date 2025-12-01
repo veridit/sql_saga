@@ -115,12 +115,12 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = target_table;
 
-    SELECT e.range_type, e.range_subtype, e.range_subtype_category, e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column, e.synchronize_range_column
-    INTO v_range_constructor, v_range_subtype, v_range_subtype_category, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_col
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type, e.range_subtype, e.range_subtype_category
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_range_subtype, v_range_subtype_category
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
-    IF v_valid_from_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
+    IF v_range_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
 
     v_temporal_cols := ARRAY[v_valid_from_col, v_valid_until_col];
     IF v_valid_to_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_to_col; END IF;
@@ -265,74 +265,75 @@ BEGIN
     -- handling `valid_to` conversion automatically. It also performs a consistency
     -- check if both `valid_to` and `valid_until` are present.
     DECLARE
+        v_source_has_range_col BOOLEAN;
         v_source_has_valid_from BOOLEAN;
         v_source_has_valid_until BOOLEAN;
         v_source_has_valid_to BOOLEAN;
+        v_from_expr TEXT;
+        v_until_expr TEXT;
     BEGIN
+        -- Introspect all possible temporal source columns.
         SELECT
+            EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_range_col AND NOT attisdropped AND attnum > 0),
             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_from_col AND NOT attisdropped AND attnum > 0),
             EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_until_col AND NOT attisdropped AND attnum > 0)
-        INTO v_source_has_valid_from, v_source_has_valid_until;
+        INTO v_source_has_range_col, v_source_has_valid_from, v_source_has_valid_until;
 
-        -- Check for `valid_to` column. If the era metadata specifies a name, use it.
-        -- Otherwise, fall back to the convention 'valid_to'.
         IF v_valid_to_col IS NOT NULL THEN
             SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_valid_to_col AND NOT attisdropped AND attnum > 0)
             INTO v_source_has_valid_to;
         ELSE
-            SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = source_table AND attname = 'valid_to' AND NOT attisdropped AND attnum > 0)
-            INTO v_source_has_valid_to;
-            IF v_source_has_valid_to THEN
-                v_valid_to_col := 'valid_to';
-            END IF;
+            v_source_has_valid_to := false;
         END IF;
 
-        IF NOT v_source_has_valid_from THEN
-            RAISE EXCEPTION 'Source table "%" must have a "%" column matching the target era''s valid_from column.', source_table::text, v_valid_from_col;
+        -- Must have at least a `valid_from` or `range` column.
+        IF NOT v_source_has_valid_from AND NOT v_source_has_range_col THEN
+             RAISE EXCEPTION 'Source table "%" must have either the range column "%" or the component column "%".', source_table::text, v_range_col, v_valid_from_col;
         END IF;
 
-        -- Determine the correct interval to add to `valid_to` to get `valid_until`,
-        -- using the era's metadata as the single source of truth.
+        -- Build expressions for `_from` and `_until` components.
+        IF v_source_has_valid_from THEN
+            v_from_expr := format('source_table.%I', v_valid_from_col);
+        END IF;
+
         IF v_source_has_valid_to THEN
             CASE v_range_subtype_category
-                WHEN 'D' THEN -- Date/time types
-                    v_interval := '''1 day''::interval';
-                WHEN 'N' THEN -- Numeric types
-                    v_interval := '1';
-                ELSE
-                    RAISE EXCEPTION 'Unsupported range subtype for valid_to -> valid_until conversion: %', v_range_constructor::text;
+                WHEN 'D' THEN v_interval := '''1 day''::interval';
+                WHEN 'N' THEN v_interval := '1';
+                ELSE RAISE EXCEPTION 'Unsupported range subtype for valid_to -> valid_until conversion: %', v_range_constructor::text;
             END CASE;
         END IF;
 
-        -- The logic follows a clear order of precedence:
-        -- 1. If valid_until is present, use it. If valid_to is also present, a
-        --    per-row consistency check will be performed inside the main query.
-        -- 2. If only valid_to is present, derive valid_until.
-        -- 3. If neither is present, raise an error.
-        IF v_source_has_valid_until THEN
-            -- `valid_until` is the source of truth.
-            v_source_temporal_cols_expr := format('source_table.%1$I as valid_from, source_table.%2$I as valid_until', v_valid_from_col, v_valid_until_col);
+        -- Build v_until_expr with per-row logic
+        IF v_source_has_valid_until AND v_source_has_valid_to THEN
+             -- Both exist, so create a COALESCE expression to handle NULL valid_until.
+             v_until_expr := format('COALESCE(source_table.%I, (source_table.%I + %s)::%s)', v_valid_until_col, v_valid_to_col, v_interval, v_range_subtype);
+        ELSIF v_source_has_valid_until THEN
+             v_until_expr := format('source_table.%I', v_valid_until_col);
         ELSIF v_source_has_valid_to THEN
-            -- Only `valid_to` is present; derive `valid_until`.
-            v_source_temporal_cols_expr := format('source_table.%1$I as valid_from, (source_table.%2$I + %3$s)::%4$s as valid_until', v_valid_from_col, v_valid_to_col, v_interval, v_range_subtype);
-        ELSE
-            RAISE EXCEPTION 'Source table "%" must have either a "%" column or a "%" column matching the target era.', source_table::text, v_valid_until_col, COALESCE(v_valid_to_col, 'valid_to');
+             v_until_expr := format('(source_table.%I + %s)::%s', v_valid_to_col, v_interval, v_range_subtype);
         END IF;
 
-        -- Build the per-row consistency check expression. This check is only performed
-        -- if BOTH columns are present in the source.
+        -- Must have a source for `_until` if there's no range column.
+        IF NOT v_source_has_range_col AND v_until_expr IS NULL THEN
+            RAISE EXCEPTION 'Source table "%" must have a "%", "%", or "%" column.', source_table::text, v_range_col, v_valid_until_col, v_valid_to_col;
+        END IF;
+
+        -- Combine expressions, prioritizing the range column but falling back to components.
+        IF v_source_has_range_col THEN
+            v_source_temporal_cols_expr := format('COALESCE(lower(source_table.%1$I), %2$s) as valid_from, COALESCE(upper(source_table.%1$I), %3$s) as valid_until',
+                v_range_col, COALESCE(v_from_expr, 'NULL'), COALESCE(v_until_expr, 'NULL'));
+        ELSE
+            v_source_temporal_cols_expr := format('%s as valid_from, %s as valid_until', v_from_expr, v_until_expr);
+        END IF;
+
+        -- Build consistency check.
         IF v_source_has_valid_until AND v_source_has_valid_to THEN
-            -- The check is only false if BOTH columns have a value and they are inconsistent.
-            -- If one is NULL, it's considered consistent for the purpose of the FOR PORTION OF trigger.
-            v_consistency_check_expr := format($$(
-                (source_table.%1$I IS NULL OR source_table.%2$I IS NULL)
-                OR
-                (((source_table.%1$I + %3$s)::%4$s) IS NOT DISTINCT FROM source_table.%2$I)
-            )$$, v_valid_to_col, v_valid_until_col, v_interval, v_range_subtype);
+            v_consistency_check_expr := format($$((source_table.%1$I IS NULL OR source_table.%2$I IS NULL) OR (((source_table.%1$I + %3$s)::%4$s) IS NOT DISTINCT FROM source_table.%2$I))$$, v_valid_to_col, v_valid_until_col, v_interval, v_range_subtype);
         ELSE
             v_consistency_check_expr := 'true';
         END IF;
-    END; -- END DECLARE
+    END;
 
     --
     IF v_log_vars THEN
@@ -1395,20 +1396,20 @@ BEGIN
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
                 SELECT
                     %1$s /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ -- (non-temporal identity columns)
-                    %2$I /* v_valid_from_col */ as valid_from, -- The temporal identity column (e.g., valid_from)
+                    lower(t.%2$I) as valid_from, -- The temporal identity column (e.g., valid_from)
                     NULL::%3$s /* v_causal_column_type */ as causal_id, -- Target rows do not originate from a source row, so causal_id is NULL. Type is introspected.
                     %4$s /* v_stable_pk_cols_jsonb_build_bare */ as stable_pk_payload,
-                    %5$I /* v_valid_until_col */ as valid_until,
+                    upper(t.%2$I) as valid_until,
                     %6$s /* v_target_data_cols_jsonb_build_bare */ AS data_payload,
                     %7$s /* v_target_ephemeral_cols_jsonb_build_bare */ AS ephemeral_payload,
                     %8$s /* v_target_nk_json_expr */ AS canonical_nk_json
                 FROM %9$s /* v_target_rows_filter */
             $SQL$,
                 v_non_temporal_lookup_cols_select_list_no_alias_prefix, /* %1$s */
-                v_valid_from_col,                                       /* %2$I */
+                v_range_col,                                            /* %2$I */
                 v_causal_column_type,                                   /* %3$s */
                 v_stable_pk_cols_jsonb_build_bare,                      /* %4$s */
-                v_valid_until_col,                                      /* %5$I */
+                NULL,                                                   /* %5$I -- placeholder */
                 v_target_data_cols_jsonb_build_bare,                    /* %6$s */
                 v_target_ephemeral_cols_jsonb_build_bare,               /* %7$s */
                 v_target_nk_json_expr,                                  /* %8$s */

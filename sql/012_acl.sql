@@ -30,9 +30,9 @@ CREATE VIEW show_owners AS
     WHERE p.pronamespace = 'public'::regnamespace
       AND p.proname = ANY (ARRAY['owner_test__as_of', 'owner_test__between', 'owner_test__between_symmetric', 'owner_test__from_to']);
 
-CREATE TABLE owner_test (col text, f date, u date, PRIMARY KEY (col, f));
+CREATE TABLE owner_test (col text, v daterange, f date, u date, PRIMARY KEY (col, v WITHOUT OVERLAPS));
 ALTER TABLE owner_test OWNER TO periods_acl_1;
-SELECT sql_saga.add_era('owner_test', 'f', 'u', 'p');
+SELECT sql_saga.add_era('owner_test', 'v', 'p');
 SELECT sql_saga.add_for_portion_of_view('owner_test', 'p');
 SELECT sql_saga.add_current_view('owner_test', 'p');
 TABLE show_owners ORDER BY object_name;
@@ -68,9 +68,9 @@ CREATE VIEW show_acls AS
         WHERE c.relname IN ('fpacl', 'fpacl__for_portion_of_p', 'fpacl__current_p')
     ) AS _;
 
-CREATE TABLE fpacl (col text, f date, u date, PRIMARY KEY (col, f));
+CREATE TABLE fpacl (col text, v daterange, f date, u date, PRIMARY KEY (col, v WITHOUT OVERLAPS));
 ALTER TABLE fpacl OWNER TO periods_acl_1;
-SELECT sql_saga.add_era('fpacl', 'f', 'u', 'p');
+SELECT sql_saga.add_era('fpacl', 'v', 'p');
 SELECT sql_saga.add_for_portion_of_view('fpacl', 'p');
 SELECT sql_saga.add_current_view('fpacl', 'p');
 TABLE show_acls ORDER BY sort_order;

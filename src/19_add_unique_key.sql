@@ -83,7 +83,9 @@ DECLARE
     partial_exclude_constraint_names name[];
     v_pk_consistency_constraint_names name[];
     v_enforce_consistency_original boolean := enforce_consistency_with_primary_key;
+    v_stable_cols_to_store name[];
 BEGIN
+    RAISE DEBUG 'add_unique_key entry: table_oid=%, column_names=%, era_name=%, key_type=%', table_oid, column_names, era_name, key_type;
     -- If the parameter is NULL (the default), set it to true for natural keys and false otherwise.
     IF enforce_consistency_with_primary_key IS NULL THEN
         enforce_consistency_with_primary_key := (key_type = 'natural');
@@ -110,11 +112,20 @@ BEGIN
         RAISE EXCEPTION 'era "%" does not exist', era_name;
     END IF;
 
-    /* For convenience, put the period's attnums in an array */
-    era_attnums := ARRAY[
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_from_column_name)),
-        (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_until_column_name))
-    ];
+    -- For metadata storage, we use the exact column list provided by the user,
+    -- as this is what symmetric drop functions will expect. The native unique
+    -- constraint will include the temporal column, but our metadata only tracks
+    -- the stable part of the key. An explicit check below ensures the user does
+    -- not include the range column here.
+    v_stable_cols_to_store := add_unique_key.column_names;
+
+    -- This is no longer used by native temporal keys, but is still needed for XOR key logic on predicated keys.
+    IF era_row.valid_from_column_name IS NOT NULL THEN
+        era_attnums := ARRAY[
+            (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_from_column_name)),
+            (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_until_column_name))
+        ];
+    END IF;
 
     /* Get attnums from column names */
     SELECT array_agg(a.attnum ORDER BY n.ordinality)
@@ -133,12 +144,9 @@ BEGIN
         RAISE EXCEPTION 'column "%" does not exist', column_names[idx];
     END IF;
 
-    /* Make sure the period columns aren't also in the normal columns */
-    IF era_row.valid_from_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.valid_from_column_name;
-    END IF;
-    IF era_row.valid_until_column_name = ANY (column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', era_row.valid_until_column_name;
+    /* Make sure the range column isn't also in the normal columns */
+    IF era_row.range_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'range column "%" cannot also be part of the key columns', era_row.range_column_name;
     END IF;
 
     /*
@@ -210,27 +218,21 @@ BEGIN
                     WHERE
                         c.conrelid = table_oid AND c.contype = 'p';
 
-                    IF pk_columns IS NOT NULL AND NOT (pk_columns @> ARRAY[era_row.valid_from_column_name] OR pk_columns @> ARRAY[era_row.valid_until_column_name]) THEN
-                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal columns; this is incompatible with SCD Type 2 history', table_oid;
+                    IF pk_columns IS NOT NULL AND NOT (pk_columns @> ARRAY[era_row.range_column_name]) THEN
+                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal range column ("%"); this is incompatible with SCD Type 2 history', table_oid, era_row.range_column_name;
                     END IF;
                 END;
             END;
         END IF;
         /* If we were given a unique constraint to use, look it up and make sure it matches */
-        -- For a primary key, the constraint must include the user columns and at least one of the era columns.
-        -- For a natural key, it must include both era columns.
-        SELECT format('%s (%s) DEFERRABLE',
+        -- For primary and natural keys, we now use a native temporal constraint.
+        SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
             CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
-            string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */
+            string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality), /* %s */
+            era_row.range_column_name /* %I */
         )
         INTO unique_sql
-        FROM unnest(
-            CASE WHEN key_type = 'primary' THEN
-                column_names || era_row.valid_from_column_name
-            ELSE
-                column_names || era_row.valid_from_column_name || era_row.valid_until_column_name
-            END
-        ) WITH ORDINALITY AS u (column_name, ordinality);
+        FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
 
         IF unique_constraint IS NULL AND key_type = 'primary' THEN
             -- If this is a primary key and no name was given, check if one already exists.
@@ -254,129 +256,72 @@ BEGIN
                     RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
                 END IF;
 
-                IF NOT constraint_record.condeferrable THEN
-                    /* For restore purposes, constraints may be deferred,
-                     * but everything must be valid at the end fo the transaction
-                     */
-                    RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', unique_constraint;
-                END IF;
-
-                IF constraint_record.condeferred THEN
-                    /* By default constraints are NOT deferred,
-                     * and the user receives a timely validation error.
-                     */
-                    RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', unique_constraint;
-                END IF;
-
-                -- For a primary key, we only require one of the era columns to be present.
-                -- For a natural key, both must be present.
-                IF key_type = 'primary' THEN
-                    -- Check that the constraint includes the user columns and at least one era column.
-                    -- The order does not matter here, just the set of columns.
-                    IF NOT (ARRAY(SELECT unnest(constraint_record.conkey) ORDER BY 1) @> ARRAY(SELECT unnest(column_attnums) ORDER BY 1)
-                        AND (constraint_record.conkey @> ARRAY[era_attnums[1]] OR constraint_record.conkey @> ARRAY[era_attnums[2]]))
-                    THEN
-                        RAISE EXCEPTION 'PRIMARY KEY constraint "%" must include the columns (%) and at least one of the temporal columns ("%" or "%")',
-                            unique_constraint,
-                            array_to_string(column_names, ', '),
-                            era_row.valid_from_column_name,
-                            era_row.valid_until_column_name;
-                    END IF;
-                ELSE -- For natural keys, the column order and set must be exact.
-                    IF NOT constraint_record.conkey = column_attnums || era_attnums THEN
-                        DECLARE
-                            v_expected_columns name[];
-                            v_actual_columns name[];
-                        BEGIN
-                            SELECT array_agg(a.attname ORDER BY u.ord)
-                            INTO v_expected_columns
-                            FROM unnest(column_attnums || era_attnums) WITH ORDINALITY AS u(attnum, ord)
-                            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = table_oid AND a.attnum = u.attnum;
-
-                            SELECT array_agg(a.attname ORDER BY u.ord)
-                            INTO v_actual_columns
-                            FROM unnest(constraint_record.conkey) WITH ORDINALITY AS u(attnum, ord)
-                            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = table_oid AND a.attnum = u.attnum;
-
-                            RAISE EXCEPTION 'constraint "%" does not match. Expected columns (%), but found columns (%).',
-                                unique_constraint,
-                                array_to_string(v_expected_columns, ', '),
-                                array_to_string(v_actual_columns, ', ');
-                        END;
-                    END IF;
+                -- Native temporal constraints are not deferrable, so we skip those checks.
+                -- We now validate by comparing the definition string for simplicity and robustness.
+                IF pg_catalog.pg_get_constraintdef(constraint_record.oid) <> unique_sql THEN
+                     RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
+                        unique_constraint,
+                        unique_sql,
+                        pg_catalog.pg_get_constraintdef(constraint_record.oid);
                 END IF;
 
                 /* Looks good, let's use it. */
             END IF;
         END IF;
     ELSIF key_type = 'predicated' THEN
-        -- When a predicate is provided, we use a unique index, not a unique constraint.
-        -- It's not supported to use an existing constraint/index in this case.
-        IF unique_constraint IS NOT NULL THEN
-            RAISE EXCEPTION 'cannot specify an existing unique constraint when a predicate is provided';
-        END IF;
+        -- For predicated keys, we don't create a UNIQUE constraint/index.
+        -- Uniqueness is enforced by the EXCLUDE constraint.
+        -- We can clear unique_sql as it's not applicable.
+        unique_sql := NULL;
     END IF;
 
-    /*
-     * If we were given an exclude constraint to use, look it up and make sure
-     * it matches.  We do that by generating the text that we expect
-     * pg_get_constraintdef() to output and compare against that instead of
-     * trying to deal with the internally stored components like we did for the
-     * UNIQUE constraint.
-     *
-     * We will use this same text to create the constraint if it doesn't exist.
-     */
-    DECLARE
-        withs text[];
-    BEGIN
-        SELECT array_agg(format('%I WITH =', column_name /* %I */) ORDER BY n.ordinality)
-        INTO withs
-        FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
+    -- Native temporal constraints (WITHOUT OVERLAPS) replace exclusion constraints
+    -- for primary and natural keys. Predicated keys still require an exclusion constraint.
+    IF key_type = 'predicated' THEN
+        DECLARE
+            withs text[];
+        BEGIN
+            SELECT array_agg(format('%I WITH =', column_name /* %I */) ORDER BY n.ordinality)
+            INTO withs
+            FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
 
-        withs := withs || format('%I(%I, %I) WITH &&',
-            era_row.range_type, /* %I */
-            era_row.valid_from_column_name, /* %I */
-            era_row.valid_until_column_name /* %I */
-        );
+            withs := withs || format('%I WITH &&',
+                era_row.range_column_name /* %I */
+            );
 
-        exclude_sql := format('EXCLUDE USING gist (%s)%s DEFERRABLE', array_to_string(withs, ', ') /* %s */, where_clause /* %s */);
-    END;
+            exclude_sql := format('EXCLUDE USING gist (%s)%s DEFERRABLE', array_to_string(withs, ', ') /* %s */, where_clause /* %s */);
+        END;
 
-    IF exclude_constraint IS NOT NULL THEN
-        SELECT c.oid, c.contype, c.condeferrable, c.condeferred, pg_catalog.pg_get_constraintdef(c.oid) AS definition
-        INTO constraint_record
-        FROM pg_catalog.pg_constraint AS c
-        WHERE (c.conrelid, c.conname) = (table_oid, exclude_constraint);
+        IF exclude_constraint IS NOT NULL THEN
+            SELECT c.oid, c.contype, c.condeferrable, c.condeferred, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+            INTO constraint_record
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (table_oid, exclude_constraint);
 
-        IF FOUND THEN
-            v_exclude_constraint_found := true;
+            IF FOUND THEN
+                v_exclude_constraint_found := true;
 
-            IF constraint_record.contype <> 'x' THEN
-                RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
+                IF constraint_record.contype <> 'x' THEN
+                    RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
+                END IF;
+
+                IF NOT constraint_record.condeferrable THEN
+                    RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
+                END IF;
+
+                IF constraint_record.condeferred THEN
+                    RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
+                END IF;
+
+                IF constraint_record.definition <> exclude_sql THEN
+                    RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
+                        exclude_constraint,
+                        exclude_sql,
+                        constraint_record.definition;
+                END IF;
+
+                /* Looks good, let's use it. */
             END IF;
-
-            IF NOT constraint_record.condeferrable THEN
-                /* For restore purposes, constraints may be deferred,
-                 * but everything must be valid at the end fo the transaction
-                 */
-                RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
-            END IF;
-
-            IF constraint_record.condeferred THEN
-                /* By default constraints are NOT deferred,
-                 * and the user receives a timely validation error.
-                 */
-                RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
-            END IF;
-
-            IF constraint_record.definition <> exclude_sql THEN
-                RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
-                    exclude_constraint,
-                    exclude_sql,
-                    constraint_record.definition;
-            END IF;
-
-            /* Looks good, let's use it. */
         END IF;
     END IF;
 
@@ -428,24 +373,14 @@ BEGIN
             END IF;
         END IF;
     ELSIF key_type = 'predicated' THEN
-        -- For predicates, we create a unique index instead of a unique constraint.
-        -- We generate a name for it and store it in the `unique_constraint` variable for metadata.
-        IF unique_constraint IS NULL THEN
-            unique_constraint := unique_key_name || '_idx';
-        END IF;
-        unique_sql := format('CREATE UNIQUE INDEX %I ON %I.%I (%s)%s',
-            unique_constraint, /* %I */
-            table_schema, /* %I */
-            table_name, /* %I */
-            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names || era_row.valid_from_column_name || era_row.valid_until_column_name) AS u(c)), /* %s */
-            where_clause /* %s */
-        );
-        EXECUTE unique_sql;
+        -- For predicated keys, uniqueness is handled by the EXCLUDE constraint, not a UNIQUE index.
+        -- No action needed here for unique_sql.
     END IF;
 
     -- For XOR keys, we create partial exclusion constraints instead of one broad one.
     IF mutually_exclusive_columns IS NULL THEN
-        IF NOT v_exclude_constraint_found THEN
+        -- Add the exclusion constraint only for predicated keys.
+        IF key_type = 'predicated' AND NOT v_exclude_constraint_found THEN
             IF exclude_constraint IS NULL THEN
                 exclude_constraint := unique_key_name || '_excl';
             END IF;
@@ -538,6 +473,11 @@ BEGIN
         END;
     END IF;
 
+    -- For native temporal keys, there is no separate exclusion constraint.
+    IF key_type IN ('primary', 'natural') THEN
+        exclude_constraint := NULL;
+    END IF;
+
     -- When adding a natural key, determine the state of PK consistency enforcement.
     IF key_type = 'natural' THEN
         IF enforce_consistency_with_primary_key THEN
@@ -556,7 +496,7 @@ BEGIN
                     -- Subtract temporal columns to find the stable part of the PK.
                     SELECT array_agg(c) INTO stable_pk_columns
                     FROM unnest(pk_column_names) as c
-                    WHERE c NOT IN (era_row.valid_from_column_name, era_row.valid_until_column_name);
+                    WHERE c <> era_row.range_column_name;
 
                     IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
                         IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
@@ -625,10 +565,12 @@ BEGIN
         LIMIT 1;
     END IF;
 
+    RAISE DEBUG 'add_unique_key: about to insert with v_stable_cols_to_store=%', v_stable_cols_to_store;
+
     RAISE DEBUG 'add_unique_key: Inserting into sql_saga.unique_keys: name=%, table=%.%, key_type=%, cols=%, era=%, u_constraint=%, ex_constraint=%, check_constraint=%, predicate=%, mut_ex_cols=%, partial_indices=%, partial_constraints=%, pk_consistency_constraints=%',
-        unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names;
+        unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names;
     INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, pk_consistency_constraint_names)
-    VALUES (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names);
+    VALUES (unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names);
 
     -- When adding a primary key, scan for any natural keys in a "pending" state.
     IF key_type = 'primary' THEN
@@ -643,7 +585,7 @@ BEGIN
                 -- Subtract temporal columns from the new PK to find its stable part.
                 SELECT array_agg(c) INTO stable_pk_columns
                 FROM unnest(column_names) as c
-                WHERE c NOT IN (era_row.valid_from_column_name, era_row.valid_until_column_name);
+                WHERE c <> era_row.range_column_name;
 
                 IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
                     IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN

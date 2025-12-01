@@ -7,71 +7,70 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE timestamp_shifts (
   job_id INTEGER,
   worker_id INTEGER,
-  valid_from TIMESTAMPTZ,
-  valid_until TIMESTAMPTZ
+  valid_range tstzrange
 );
 -- Add era and unique key via sql_saga
-SELECT sql_saga.add_era('timestamp_shifts', 'valid_from', 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era('timestamp_shifts', 'valid_range', add_bounds_check := false);
 SELECT sql_saga.add_unique_key('timestamp_shifts', ARRAY['job_id', 'worker_id']);
 
 TABLE sql_saga.era;
 TABLE sql_saga.unique_keys;
 
-INSERT INTO timestamp_shifts(job_id, worker_id, valid_from, valid_until) VALUES
-  (1, 1, '2017-11-27 06:00:00', '2017-11-27 12:00:00'),
-  (1, 2, '2017-11-27 12:00:00', '2017-11-27 17:00:00'),
-  (2, 3, '2017-11-27 06:00:00', '2017-11-27 12:00:00'),
-  (2, 4, '2017-11-27 13:00:00', '2017-11-27 17:00:00'),
-  (3, 5, '-infinity',           '2017-11-27 12:00:00'),
-  (3, 6, '2017-11-27 12:00:00', '2017-11-27 17:00:00'),
-  (4, 7, '2017-11-27 06:00:00', '2017-11-27 12:00:00'),
-  (4, 8, '2017-11-27 12:00:00', 'infinity')
+INSERT INTO timestamp_shifts(job_id, worker_id, valid_range) VALUES
+  (1, 1, '[2017-11-27 06:00:00,2017-11-27 12:00:00)'),
+  (1, 2, '[2017-11-27 12:00:00,2017-11-27 17:00:00)'),
+  (2, 3, '[2017-11-27 06:00:00,2017-11-27 12:00:00)'),
+  (2, 4, '[2017-11-27 13:00:00,2017-11-27 17:00:00)'),
+  (3, 5, '[-infinity,2017-11-27 12:00:00)'),
+  (3, 6, '[2017-11-27 12:00:00,2017-11-27 17:00:00)'),
+  (4, 7, '[2017-11-27 06:00:00,2017-11-27 12:00:00)'),
+  (4, 8, '[2017-11-27 12:00:00,infinity)')
 ;
 
 -- TRUE:
 
 -- it covers when the range matches one exactly:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 12:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 12:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it covers when the range matches two exactly:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it covers when the range has extra in front:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 08:00:00', '2017-11-27 17:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 08:00:00', '2017-11-27 17:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it covers when the range has extra behind:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 14:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 14:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it covers when the range has extra on both sides:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 08:00:00', '2017-11-27 14:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 08:00:00', '2017-11-27 14:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- an infinite start will cover a finite target:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 3;
 
 -- an infinite start will cover an infinite target:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('-infinity', '2017-11-27 17:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('-infinity', '2017-11-27 17:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 3;
 
 -- an infinite end will cover a finite target:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 4;
 
 -- an infinite end will cover an infinite target:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', 'infinity') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', 'infinity') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 4;
 
@@ -83,57 +82,57 @@ FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range misses completely:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-29 08:00:00', '2017-11-29 14:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-29 08:00:00', '2017-11-29 14:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range has something at the beginning:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 04:00:00', '2017-11-27 14:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 04:00:00', '2017-11-27 14:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range has something at the end:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 20:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 20:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range has something in the middle:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 17:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 2;
 
 -- it does not cover when the range is lower-unbounded:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('-infinity', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('-infinity', '2017-11-27 17:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range is upper-unbounded:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', 'infinity'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', 'infinity'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- it does not cover when the range is both-sides-unbounded:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('-infinity', 'infinity'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('-infinity', 'infinity'))
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
 -- an infinite start will not cover a finite target if there is uncovered time at the end:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 06:00:00', '2017-11-27 20:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 06:00:00', '2017-11-27 20:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 3;
 
 -- an infinite start will not cover an infinite target if there is uncovered time at the end:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('-infinity', '2017-11-27 20:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('-infinity', '2017-11-27 20:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 3;
 
 -- an infinite end will not cover a finite target if there is uncovered time at the beginning:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 03:00:00', '2017-11-27 17:00:00'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 03:00:00', '2017-11-27 17:00:00'))
 FROM    timestamp_shifts
 WHERE   job_id = 4;
 
 -- an infinite end will not cover an infinite target if there is uncovered time at the beginning:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 03:00:00', 'infinity'))
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 03:00:00', 'infinity'))
 FROM    timestamp_shifts
 WHERE   job_id = 4;
 
@@ -141,7 +140,7 @@ WHERE   job_id = 4;
 -- NULL:
 
 -- it is unknown when the target is null:
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), null)
+SELECT  sql_saga.covers_without_gaps(valid_range, null)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 
@@ -149,13 +148,13 @@ WHERE   job_id = 1;
 
 -- it fails if the input ranges go backwards:
 SAVEPOINT s;
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 13:00:00', '2017-11-27 20:00:00') ORDER BY worker_id DESC)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 13:00:00', '2017-11-27 20:00:00') ORDER BY worker_id DESC)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 ROLLBACK TO SAVEPOINT s;
 
 -- it handles an empty target range
-SELECT  sql_saga.covers_without_gaps(tstzrange(valid_from,valid_until), tstzrange('2017-11-27 10:00:00', '2017-11-27 10:00:00') ORDER BY valid_from)
+SELECT  sql_saga.covers_without_gaps(valid_range, tstzrange('2017-11-27 10:00:00', '2017-11-27 10:00:00') ORDER BY valid_range)
 FROM    timestamp_shifts
 WHERE   job_id = 1;
 

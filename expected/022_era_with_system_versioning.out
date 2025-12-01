@@ -28,18 +28,20 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 CREATE TABLE temporal_and_versioned (
     id int,
     name text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 -- 2. Add 'valid' era and a unique key
-SELECT sql_saga.add_era('temporal_and_versioned', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_and_versioned', 'valid_range');
+NOTICE:  sql_saga: Created trigger "temporal_and_versioned_synchronize_temporal_columns_trigger" on table temporal_and_versioned to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('temporal_and_versioned', '{id}');
-NOTICE:  sql_saga: altering table public.temporal_and_versioned to add constraints: ADD CONSTRAINT temporal_and_versioned_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT temporal_and_versioned_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.temporal_and_versioned to add constraints: ADD CONSTRAINT temporal_and_versioned_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  temporal_and_versioned_id_valid
@@ -54,26 +56,25 @@ SELECT sql_saga.add_system_versioning('temporal_and_versioned');
 
 -- Verify that all columns, constraints, and triggers are present
 \d temporal_and_versioned
-                                    Table "public.temporal_and_versioned"
-       Column       |           Type           | Collation | Nullable |               Default                
---------------------+--------------------------+-----------+----------+--------------------------------------
- id                 | integer                  |           |          | 
- name               | text                     |           |          | 
- valid_from         | date                     |           | not null | 
- valid_until        | date                     |           | not null | 'infinity'::date
- system_valid_from  | timestamp with time zone |           | not null | transaction_timestamp()
- system_valid_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+                                              Table "public.temporal_and_versioned"
+       Column       |   Type    | Collation | Nullable |                                 Default                                  
+--------------------+-----------+-----------+----------+--------------------------------------------------------------------------
+ id                 | integer   |           |          | 
+ name               | text      |           |          | 
+ valid_range        | daterange |           | not null | 
+ valid_from         | date      |           |          | 
+ valid_until        | date      |           |          | 
+ system_valid_range | tstzrange |           | not null | tstzrange(transaction_timestamp(), 'infinity'::timestamp with time zone)
 Indexes:
     "temporal_and_versioned_id_idx" btree (id)
-    "temporal_and_versioned_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "temporal_and_versioned_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "temporal_and_versioned_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
-    "temporal_and_versioned_system_time_check" CHECK (system_valid_from < system_valid_until)
-    "temporal_and_versioned_system_valid_until_infinity_check" CHECK (system_valid_until = 'infinity'::timestamp with time zone)
-    "temporal_and_versioned_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "temporal_and_versioned_system_valid_range_infinity_check" CHECK (upper(system_valid_range) = 'infinity'::timestamp with time zone)
+    "temporal_and_versioned_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    temporal_and_versioned_system_time_generated_always BEFORE INSERT OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end()
-    temporal_and_versioned_system_time_write_history AFTER INSERT OR DELETE OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history()
+    temporal_and_versioned_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    temporal_and_versioned_system_time_generated_always BEFORE INSERT OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end('system_valid_range')
+    temporal_and_versioned_system_time_write_history AFTER DELETE OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('system_valid_range')
     temporal_and_versioned_truncate AFTER TRUNCATE ON temporal_and_versioned FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning()
 
 -- 4. Perform some DML
@@ -91,7 +92,7 @@ SELECT id, name, valid_from, valid_until FROM temporal_and_versioned;
   1 | First Update | 2023-01-01 | infinity
 (1 row)
 
-SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_from;
+SELECT id, name, valid_from, valid_until FROM temporal_and_versioned_history ORDER BY system_valid_range;
  id |     name     | valid_from | valid_until 
 ----+--------------+------------+-------------
   1 | Initial Name | 2023-01-01 | infinity
@@ -105,19 +106,21 @@ SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true
 (1 row)
 
 \d temporal_and_versioned
-              Table "public.temporal_and_versioned"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- name        | text    |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+          Table "public.temporal_and_versioned"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ name        | text      |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Indexes:
     "temporal_and_versioned_id_idx" btree (id)
-    "temporal_and_versioned_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "temporal_and_versioned_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "temporal_and_versioned_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
-    "temporal_and_versioned_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "temporal_and_versioned_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    temporal_and_versioned_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
 
 -- 6. Drop the unique key and the era to return table to original state
 SELECT sql_saga.drop_unique_key('temporal_and_versioned', ARRAY['id'], 'valid', cleanup => true);

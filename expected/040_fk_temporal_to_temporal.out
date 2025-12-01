@@ -32,24 +32,27 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE shifts (
   job_id INTEGER,
   worker_id INTEGER,
+  valid_range DATERANGE,
   valid_from DATE,
   valid_until DATE
 );
 CREATE TABLE houses (
   id INTEGER,
   assessment FLOAT,
+  valid_range DATERANGE,
   valid_from DATE,
   valid_until DATE
 );
 CREATE TABLE rooms (
   id INTEGER,
   house_id INTEGER,
+  valid_range DATERANGE,
   valid_from DATE,
   valid_until DATE
 );
-INSERT INTO houses VALUES
-  (1, 150000, '2015-01-01'::DATE, '2016-01-01'::DATE),
-  (1, 200000, '2016-01-01'::DATE, '2017-01-01'::DATE)
+INSERT INTO houses(id,assessment,valid_range) VALUES
+  (1, 150000, '[2015-01-01,2016-01-01)'),
+  (1, 200000, '[2016-01-01,2017-01-01)')
 ;
 -- it works on an empty table
 SAVEPOINT s;
@@ -58,40 +61,43 @@ SAVEPOINT s;
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -103,7 +109,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid
@@ -112,46 +118,49 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible 
 ROLLBACK TO SAVEPOINT s;
 -- it works on a table with a NULL foreign key
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, NULL, '2015-01-01'::DATE, '2017-01-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, NULL, '[2015-01-01,2017-01-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -163,7 +172,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid
@@ -172,46 +181,49 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible 
 ROLLBACK TO SAVEPOINT s;
 -- it works on a table with a FK fulfilled by one row
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, 1, '2015-01-01'::DATE, '2016-01-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, 1, '[2015-01-01,2016-01-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -223,7 +235,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid
@@ -232,46 +244,49 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible 
 ROLLBACK TO SAVEPOINT s;
 -- it works on a table with a FK fulfilled by two rows
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, 1, '2015-01-01'::DATE, '2016-06-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, 1, '[2015-01-01,2016-06-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -283,7 +298,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid
@@ -292,46 +307,49 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible 
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a missing foreign key
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, 2, '2015-01-01'::DATE, '2016-01-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, 2, '[2015-01-01,2016-01-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -343,52 +361,62 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 371 at RAISE
+DETAIL:  Key (house_id, valid_range)=(2, [2015-01-01,2016-01-01)) is not present in table "houses".
+CONTEXT:  SQL statement "
+        ALTER TABLE rooms ADD CONSTRAINT rooms_house_id_valid
+        FOREIGN KEY (house_id, PERIOD valid_range) REFERENCES houses (id, PERIOD valid_range)
+        MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
+        DEFERRABLE
+        "
+PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 111 at EXECUTE
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a completely-uncovered foreign key
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, 1, '2010-01-01'::DATE, '2011-01-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, 1, '[2010-01-01,2011-01-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -400,52 +428,62 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 371 at RAISE
+DETAIL:  Key (house_id, valid_range)=(1, [2010-01-01,2011-01-01)) is not present in table "houses".
+CONTEXT:  SQL statement "
+        ALTER TABLE rooms ADD CONSTRAINT rooms_house_id_valid
+        FOREIGN KEY (house_id, PERIOD valid_range) REFERENCES houses (id, PERIOD valid_range)
+        MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
+        DEFERRABLE
+        "
+PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 111 at EXECUTE
 ROLLBACK TO SAVEPOINT s;
 -- it fails on a table with a partially-covered foreign key
 SAVEPOINT s;
-INSERT INTO rooms(id,house_id,valid_from,valid_until) VALUES (1, 1, '2015-01-01'::DATE, '2018-01-01'::DATE);
+INSERT INTO rooms(id,house_id,valid_range) VALUES (1, 1, '[2015-01-01,2018-01-01)');
 \i sql/support/shifts_houses_rooms_enable_saga.sql
 --
 -- Activates sql_saga for the shifts, houses, and rooms tables.
 -- This was formerly the enable_sql_saga_for_shifts_houses_and_rooms() function.
 --
-SELECT sql_saga.add_era(table_oid => 'shifts', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT shifts_job_id_worker_id_valid_excl EXCLUDE USING gist (job_id WITH =, worker_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'houses', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', era_name => 'valid', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT houses_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'rooms', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until', add_bounds_check := false);
+SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT rooms_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -457,9 +495,16 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, daterange(valid_from, valid_until))
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: ERROR:  insert or update on table "rooms" violates foreign key constraint "rooms_house_id_valid"
-CONTEXT:  PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 371 at RAISE
+DETAIL:  Key (house_id, valid_range)=(1, [2015-01-01,2018-01-01)) is not present in table "houses".
+CONTEXT:  SQL statement "
+        ALTER TABLE rooms ADD CONSTRAINT rooms_house_id_valid
+        FOREIGN KEY (house_id, PERIOD valid_range) REFERENCES houses (id, PERIOD valid_range)
+        MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION
+        DEFERRABLE
+        "
+PL/pgSQL function sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,name,name,boolean) line 111 at EXECUTE
 ROLLBACK TO SAVEPOINT s;
 ROLLBACK;
 \i sql/include/test_teardown.sql

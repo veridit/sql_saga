@@ -32,22 +32,22 @@ SET search_path TO fk_idx, sql_saga, public;
 --- Temporal to Temporal FKs ---
 \echo 'Scenario 1: Auto-create index (default behavior)'
 Scenario 1: Auto-create index (default behavior)
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
 (1 row)
 
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
@@ -58,7 +58,7 @@ SELECT add_foreign_key(
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
     foreign_key_name => 'child_parent_fk_1'
 );
-NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
   add_foreign_key  
 -------------------
  child_parent_fk_1
@@ -71,20 +71,18 @@ SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name 
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Indexes:
-    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, valid_range)
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    child_parent_fk_1_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_1', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    child_parent_fk_1_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_1', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
+Foreign-key constraints:
+    "child_parent_fk_1" FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES parent_t(id, PERIOD valid_range) DEFERRABLE
 
 \echo '-> Dropping FK should also drop the auto-created index'
 -> Dropping FK should also drop the auto-created index
@@ -96,35 +94,34 @@ NOTICE:  Dropping automatically created index "child_t_parent_id_valid_gist_idx"
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
 
 DROP TABLE parent_t, child_t CASCADE;
 \echo 'Scenario 2: Disable auto-creation of index'
 Scenario 2: Disable auto-creation of index
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
 (1 row)
 
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
@@ -136,7 +133,7 @@ SELECT add_foreign_key(
     foreign_key_name => 'child_parent_fk_2', create_index => false
 );
 WARNING:  No index found on table child_t for foreign key columns ({parent_id}). Performance may be poor.
-HINT:  Consider creating this index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+HINT:  Consider creating this index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
   add_foreign_key  
 -------------------
  child_parent_fk_2
@@ -149,18 +146,16 @@ SELECT foreign_key_name, fk_index_name FROM foreign_keys WHERE foreign_key_name 
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    child_parent_fk_2_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_2', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    child_parent_fk_2_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_2', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
+Foreign-key constraints:
+    "child_parent_fk_2" FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES parent_t(id, PERIOD valid_range) DEFERRABLE
 
 SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_2');
  drop_foreign_key_by_name 
@@ -171,28 +166,28 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_2');
 DROP TABLE parent_t, child_t CASCADE;
 \echo 'Scenario 3: Manually created index exists'
 Scenario 3: Manually created index exists
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
 (1 row)
 
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX manual_child_t_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until));
+CREATE INDEX manual_child_t_idx ON child_t USING GIST (parent_id, valid_range);
 SELECT add_foreign_key(
     fk_table_oid => 'child_t'::regclass, fk_column_names => ARRAY['parent_id'],
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
@@ -218,37 +213,36 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_3');
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Indexes:
-    "manual_child_t_idx" gist (parent_id, daterange(valid_from, valid_until))
+    "manual_child_t_idx" gist (parent_id, valid_range)
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
 
 DROP TABLE parent_t, child_t CASCADE;
 \echo 'Scenario 4: Auto-created index is not dropped when requested'
 Scenario 4: Auto-created index is not dropped when requested
-CREATE TABLE parent_t (id int, valid_from date, valid_until date);
-SELECT add_era('parent_t'::regclass);
+CREATE TABLE parent_t (id int, valid_range daterange);
+SELECT add_era('parent_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_t_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
 (1 row)
 
-CREATE TABLE child_t (id int, parent_id int, valid_from date, valid_until date);
-SELECT add_era('child_t'::regclass);
+CREATE TABLE child_t (id int, parent_id int, valid_range daterange);
+SELECT add_era('child_t'::regclass, 'valid_range');
  add_era 
 ---------
  t
@@ -259,27 +253,25 @@ SELECT add_foreign_key(
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
     foreign_key_name => 'child_parent_fk_4'
 );
-NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
   add_foreign_key  
 -------------------
  child_parent_fk_4
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Indexes:
-    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, valid_range)
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    child_parent_fk_4_fk_insert AFTER INSERT ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_insert_check_c('child_parent_fk_4', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    child_parent_fk_4_fk_update AFTER UPDATE OF parent_id, valid_from, valid_until ON child_t FROM parent_t DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION fk_update_check_c('child_parent_fk_4', 'fk_idx', 'child_t', '{parent_id}', 'valid', 'valid_from', 'valid_until', 'fk_idx', 'parent_t', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
+Foreign-key constraints:
+    "child_parent_fk_4" FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES parent_t(id, PERIOD valid_range) DEFERRABLE
 
 \echo '-> Dropping with drop_index=false should not drop the index'
 -> Dropping with drop_index=false should not drop the index
@@ -290,17 +282,16 @@ SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_4', drop_i
 (1 row)
 
 \d child_t
-                     Table "fk_idx.child_t"
-   Column    |  Type   | Collation | Nullable |     Default      
--------------+---------+-----------+----------+------------------
- id          | integer |           |          | 
- parent_id   | integer |           |          | 
- valid_from  | date    |           | not null | 
- valid_until | date    |           | not null | 'infinity'::date
+                  Table "fk_idx.child_t"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ parent_id   | integer   |           |          | 
+ valid_range | daterange |           | not null | 
 Indexes:
-    "child_t_parent_id_valid_gist_idx" gist (parent_id, daterange(valid_from, valid_until))
+    "child_t_parent_id_valid_gist_idx" gist (parent_id, valid_range)
 Check constraints:
-    "child_t_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "child_t_valid_check" CHECK (NOT isempty(valid_range))
 
 DROP TABLE parent_t, child_t CASCADE;
 -----------------------------------------
@@ -310,15 +301,15 @@ DROP TABLE parent_t, child_t CASCADE;
 --- Regular to Temporal FKs ---
 \echo 'Scenario 1: Auto-create index (default behavior)'
 Scenario 1: Auto-create index (default behavior)
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -372,15 +363,15 @@ NOTICE:  Dropping automatically created index "child_r_parent_id_idx" for foreig
 DROP TABLE parent_r, child_r CASCADE;
 \echo 'Scenario 2: Disable auto-creation of index'
 Scenario 2: Disable auto-creation of index
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -423,15 +414,15 @@ SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_2');
 DROP TABLE parent_r, child_r CASCADE;
 \echo 'Scenario 3: Manually created index exists'
 Scenario 3: Manually created index exists
-CREATE TABLE parent_r (id int, valid_from date, valid_until date);
-SELECT add_era('parent_r'::regclass);
+CREATE TABLE parent_r (id int, valid_range daterange);
+SELECT add_era('parent_r'::regclass, 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_r_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid

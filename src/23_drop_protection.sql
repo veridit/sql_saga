@@ -305,10 +305,12 @@ BEGIN
                 END;
             END IF;
         ELSIF r.predicate IS NOT NULL THEN
-            -- Predicated keys use a unique index, not a constraint.
-            IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
-                 RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
-                    r.unique_constraint, r.table_oid, r.unique_key_name;
+            IF r.unique_constraint IS NOT NULL THEN
+                -- Predicated keys use a unique index, not a constraint.
+                IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
+                    RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
+                        r.unique_constraint, r.table_oid, r.unique_key_name;
+                END IF;
             END IF;
         ELSE
             -- Standard keys use a unique constraint.

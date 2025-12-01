@@ -28,34 +28,36 @@ CREATE TABLE products (
     id int,
     name text,
     price numeric,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 -- Register era and unique key
-SELECT sql_saga.add_era('products', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('products', 'valid_range');
+NOTICE:  sql_saga: Created trigger "products_synchronize_temporal_columns_trigger" on table products to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('products', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.products to add constraints: ADD CONSTRAINT products_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT products_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.products to add constraints: ADD CONSTRAINT products_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  products_id_valid
 (1 row)
 
 -- Populate with some historical data
-INSERT INTO products VALUES
+INSERT INTO products(id,name,price,valid_from,valid_until) VALUES
 (1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
 (1, 'Laptop', 1150, '2024-01-01', 'infinity'),
 (2, 'Mouse', 25, '2023-05-01', 'infinity');
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test API Lifecycle
@@ -68,14 +70,15 @@ SELECT sql_saga.add_for_portion_of_view('products'::regclass);
 (1 row)
 
 \d products__for_portion_of_valid
-      View "public.products__for_portion_of_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- name        | text    |           |          | 
- price       | numeric |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
+       View "public.products__for_portion_of_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ name        | text      |           |          | 
+ price       | numeric   |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON products__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
@@ -92,11 +95,11 @@ TABLE sql_saga.updatable_view;
 CREATE VIEW products_view_select_for_portion_of AS
 TABLE products__for_portion_of_valid ORDER BY id, valid_from;
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test INSERT (should be disallowed)
@@ -108,19 +111,19 @@ CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 11 at RAISE
 ROLLBACK TO insert_should_fail;
 -- The table should be unchanged.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test simple UPDATE (no temporal bounds in SET clause)

@@ -46,24 +46,89 @@ BEGIN
     ---
 
     /*
-     * Start and end columns of an era can be found by the bounds check
-     * constraint.
+     * Follow renames for the era's temporal columns. This logic is broken into
+     * three parts to handle each type of temporal column independently.
+     *
+     * 1. The primary `range_column_name` is identified by its data type via
+     *    the synchronization trigger's metadata.
+     * 2. The optional `valid_from_column_name` and `valid_until_column_name`
+     *    are identified by inspecting the bounds check constraint.
+     * 3. The optional `valid_to_column_name` is identified as the "other"
+     *    column in the synchronization trigger's metadata.
      */
+
+    -- Follow rename of the primary range_column_name for synchronized eras.
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
-            sa.attname, /* %L */
-            ea.attname, /* %L */
-            e.table_schema, /* %L */
-            e.table_name, /* %L */
-            e.era_name /* %L */
+        SELECT format('UPDATE sql_saga.era SET range_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            a.attname, e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_trigger t ON t.tgrelid = pc.oid
+        JOIN LATERAL (
+            -- Find the single column attached to the trigger that has the era's range type.
+            SELECT att.attname
+            FROM unnest(t.tgattr) AS tg(attnum)
+            JOIN pg_attribute att ON (att.attrelid, att.attnum) = (pc.oid, tg.attnum)
+            WHERE att.atttypid = e.range_type
+            LIMIT 1
+        ) AS a ON true
+        WHERE e.trigger_applies_defaults -- This flag indicates a synchronization trigger exists.
+          AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+          AND e.range_column_name <> a.attname
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for valid_from and valid_until columns using the bounds check constraint.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            sa.attname, ea.attname,
+            e.table_schema, e.table_name, e.era_name
         )
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.bounds_check_constraint)
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
-        WHERE (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname /* %I */, ea.attname /* %I */)
+        WHERE e.bounds_check_constraint IS NOT NULL
+          AND (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for the optional valid_to_column_name for synchronized eras.
+    FOR sql IN
+        WITH new_valid_to AS (
+            SELECT
+                e.table_schema, e.table_name, e.era_name,
+                (
+                    -- The valid_to column is the one left in the sync trigger's metadata after
+                    -- excluding all other known temporal columns.
+                    SELECT a.attname
+                    FROM unnest(t.tgattr) AS att(num)
+                    JOIN pg_attribute a ON (a.attrelid, a.attnum) = (t.tgrelid, att.num)
+                    WHERE a.attname IS DISTINCT FROM e.range_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_from_column_name
+                      AND a.attname IS DISTINCT FROM e.valid_until_column_name
+                    LIMIT 1 -- There should be at most one left.
+                ) AS candidate_name
+            FROM sql_saga.era e
+            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+            JOIN pg_trigger t ON t.tgrelid = pc.oid
+            WHERE e.trigger_applies_defaults -- Sync trigger exists.
+              AND e.valid_to_column_name IS NOT NULL -- Only for eras that have a valid_to column.
+              AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc
+        )
+        SELECT format('UPDATE sql_saga.era SET valid_to_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            n.candidate_name,
+            e.table_schema, e.table_name, e.era_name
+        )
+        FROM sql_saga.era e
+        JOIN new_valid_to n ON (e.table_schema, e.table_name, e.era_name) = (n.table_schema, n.table_name, n.era_name)
+        WHERE e.valid_to_column_name IS DISTINCT FROM n.candidate_name
+          AND n.candidate_name IS NOT NULL
     LOOP
         EXECUTE sql;
     END LOOP;
@@ -73,7 +138,7 @@ BEGIN
      * and end columns.
      */
     FOR sql IN
-        SELECT pg_catalog.format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+        SELECT format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
             c.conname, /* %L */
             e.table_schema, /* %L */
             e.table_name, /* %L */
@@ -93,7 +158,7 @@ BEGIN
     END LOOP;
 
     --    FOR sql IN
-    --        SELECT pg_catalog.format('UPDATE sql_saga.system_time_periods SET infinity_check_constraint = %L WHERE table_name = %L::regclass',
+    --        SELECT format('UPDATE sql_saga.system_time_periods SET infinity_check_constraint = %L WHERE table_name = %L::regclass',
     --            c.conname, p.table_name)
     --        FROM sql_saga.era AS p
     --        JOIN sql_saga.system_time_periods AS stp ON (stp.table_name, stp.era_name) = (p.table_name, p.era_name)
@@ -108,7 +173,7 @@ BEGIN
     --    END LOOP;
     --
     --    FOR sql IN
-    --        SELECT pg_catalog.format('UPDATE sql_saga.system_time_periods SET generated_always_trigger = %L WHERE table_name = %L::regclass',
+    --        SELECT format('UPDATE sql_saga.system_time_periods SET generated_always_trigger = %L WHERE table_name = %L::regclass',
     --            t.tgname, stp.table_name)
     --        FROM sql_saga.system_time_periods AS stp
     --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
@@ -120,7 +185,7 @@ BEGIN
     --    END LOOP;
     --
     --    FOR sql IN
-    --        SELECT pg_catalog.format('UPDATE sql_saga.system_time_periods SET write_history_trigger = %L WHERE table_name = %L::regclass',
+    --        SELECT format('UPDATE sql_saga.system_time_periods SET write_history_trigger = %L WHERE table_name = %L::regclass',
     --            t.tgname, stp.table_name)
     --        FROM sql_saga.system_time_periods AS stp
     --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
@@ -132,7 +197,7 @@ BEGIN
     --    END LOOP;
     --
     --    FOR sql IN
-    --        SELECT pg_catalog.format('UPDATE sql_saga.system_time_periods SET truncate_trigger = %L WHERE table_name = %L::regclass',
+    --        SELECT format('UPDATE sql_saga.system_time_periods SET truncate_trigger = %L WHERE table_name = %L::regclass',
     --            t.tgname, stp.table_name)
     --        FROM sql_saga.system_time_periods AS stp
     --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
@@ -197,6 +262,7 @@ BEGIN
     ---
 
     FOR sql IN
+        -- Follow renames for columns in non-XOR unique keys
         SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
             a.column_names, /* %L */
             uk.unique_key_name /* %L */
@@ -209,15 +275,44 @@ BEGIN
             SELECT array_agg(a.attname ORDER BY u.ordinality) AS column_names
             FROM unnest(c.conkey) WITH ORDINALITY AS u (attnum, ordinality)
             JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attnum) = (pc.oid, u.attnum)
-            WHERE a.attname NOT IN (e.valid_from_column_name, e.valid_until_column_name)
+            WHERE a.attname NOT IN (e.range_column_name) -- The native constraint will include the range column
             ) AS a ON true
-        WHERE uk.column_names <> a.column_names
+        WHERE uk.mutually_exclusive_columns IS NULL
+          AND uk.unique_constraint IS NOT NULL
+          AND uk.column_names <> a.column_names
     LOOP
-        --RAISE DEBUG 'unique_keys sql:%', sql;
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for columns in XOR unique keys by inspecting partial indexes
+    FOR sql IN
+        WITH new_xor_cols AS (
+            SELECT
+                uk.unique_key_name,
+                array_agg(DISTINCT a.attname ORDER BY a.attname) AS new_column_names
+            FROM sql_saga.unique_keys uk
+            JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
+            CROSS JOIN unnest(uk.partial_index_names) AS pin(name)
+            JOIN pg_class i ON i.relname = pin.name AND i.relnamespace = pc.relnamespace
+            JOIN pg_index pi ON pi.indexrelid = i.oid
+            CROSS JOIN unnest(pi.indkey::smallint[]) WITH ORDINALITY AS u(attnum, ord)
+            JOIN pg_attribute a ON (a.attrelid, a.attnum) = (pi.indrelid, u.attnum)
+            WHERE uk.mutually_exclusive_columns IS NOT NULL
+            GROUP BY uk.unique_key_name
+        )
+        SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
+            nxc.new_column_names,
+            uk.unique_key_name
+        )
+        FROM sql_saga.unique_keys uk
+        JOIN new_xor_cols nxc ON uk.unique_key_name = nxc.unique_key_name
+        WHERE uk.column_names <> nxc.new_column_names
+    LOOP
         EXECUTE sql;
     END LOOP;
 
     FOR sql IN
+        -- Follow renames for unique_constraint (for native temporal keys)
         SELECT format('UPDATE sql_saga.unique_keys SET unique_constraint = %L WHERE unique_key_name = %L',
             c.conname, /* %L */
             uk.unique_key_name /* %L */
@@ -225,17 +320,23 @@ BEGIN
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
-        CROSS JOIN LATERAL unnest(uk.column_names || ARRAY[e.valid_from_column_name, e.valid_until_column_name]) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
-        WHERE NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
-        GROUP BY uk.unique_key_name, c.oid, c.conname
-        HAVING format('UNIQUE (%s) DEFERRABLE', string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality) /* %s */) = pg_catalog.pg_get_constraintdef(c.oid)
+        WHERE uk.unique_constraint IS NOT NULL AND uk.unique_constraint <> c.conname
+          AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
+          AND pg_get_constraintdef(c.oid) = (
+            SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+                CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END,
+                string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
+                e.range_column_name
+            )
+            FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
+          )
     LOOP
-        --RAISE DEBUG 'unique_constraint sql:%', sql;
         EXECUTE sql;
     END LOOP;
 
     FOR sql IN
+        -- Follow renames for exclude_constraint (for predicated keys)
         SELECT format('UPDATE sql_saga.unique_keys SET exclude_constraint = %L WHERE unique_key_name = %L',
             c.conname, /* %L */
             uk.unique_key_name /* %L */
@@ -243,18 +344,35 @@ BEGIN
         FROM sql_saga.unique_keys AS uk
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
-        CROSS JOIN LATERAL unnest(uk.column_names) WITH ORDINALITY AS u (column_name, ordinality)
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
-        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
-        GROUP BY uk.unique_key_name, c.oid, c.conname, e.range_type, e.valid_from_column_name, e.valid_until_column_name
-        HAVING format('EXCLUDE USING gist (%s, %I(%I, %I) WITH &&) DEFERRABLE',
-                      string_agg(quote_ident(u.column_name) || ' WITH =', ', ' ORDER BY u.ordinality), /* %s */
-                      e.range_type, /* %I */
-                      e.valid_from_column_name, /* %I */
-                      e.valid_until_column_name /* %I */
-        ) = pg_catalog.pg_get_constraintdef(c.oid)
+        WHERE uk.exclude_constraint IS NOT NULL AND uk.exclude_constraint <> c.conname
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.exclude_constraint))
+          AND pg_get_constraintdef(c.oid) = (
+            SELECT format('EXCLUDE USING gist (%s, %I WITH &&) WHERE (%s) DEFERRABLE',
+                string_agg(quote_ident(u.name) || ' WITH =', ', ' ORDER BY u.ordinality),
+                e.range_column_name,
+                uk.predicate
+            )
+            FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
+          )
     LOOP
-        --RAISE DEBUG 'exclude_constraint sql:%', sql;
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames for check_constraint (for XOR keys)
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.unique_keys SET check_constraint = %L WHERE unique_key_name = %L',
+            c.conname, uk.unique_key_name
+        )
+        FROM sql_saga.unique_keys uk
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
+        JOIN pg_constraint c ON c.conrelid = pc.oid
+        WHERE uk.check_constraint IS NOT NULL
+        AND uk.check_constraint <> c.conname
+        AND c.contype = 'c'
+        AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
+        AND pg_get_constraintdef(c.oid) = format('CHECK (((%s) = 1))', (SELECT string_agg(format('(CASE WHEN %I IS NOT NULL THEN 1 ELSE 0 END)', col), ' + ') FROM unnest(uk.mutually_exclusive_columns) as col))
+    LOOP
         EXECUTE sql;
     END LOOP;
 

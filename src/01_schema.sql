@@ -66,9 +66,9 @@ CREATE TABLE sql_saga.era (
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL DEFAULT 'valid',
-    valid_from_column_name name NOT NULL,
-    valid_until_column_name name NOT NULL,
-    -- active_column_name name NOT NULL,
+    range_column_name name NOT NULL,
+    valid_from_column_name name,
+    valid_until_column_name name,
     range_type regtype NOT NULL,
     range_subtype regtype NOT NULL,
     -- The category of the range's subtype (e.g., 'D' for DateTime, 'N' for Numeric).
@@ -76,8 +76,7 @@ CREATE TABLE sql_saga.era (
     -- See: https://www.postgresql.org/docs/current/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
     range_subtype_category char(1) NOT NULL,
     bounds_check_constraint name,
-    synchronize_valid_to_column name,
-    synchronize_range_column name,
+    valid_to_column_name name,
     trigger_applies_defaults boolean NOT NULL DEFAULT false,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
@@ -167,8 +166,8 @@ CREATE TABLE sql_saga.foreign_keys (
     fk_helper_function text, -- regprocedure signature
 
     -- These are always on the unique key's table
-    uk_update_trigger name NOT NULL,
-    uk_delete_trigger name NOT NULL,
+    uk_update_trigger name,
+    uk_delete_trigger name,
     fk_index_name name, -- Stores the name of an index created automatically on the FK table
 
     PRIMARY KEY (foreign_key_name),
@@ -183,7 +182,6 @@ CREATE TABLE sql_saga.foreign_keys (
         CASE type
             WHEN 'temporal_to_temporal' THEN
                 fk_era_name IS NOT NULL
-                AND fk_insert_trigger IS NOT NULL AND fk_update_trigger IS NOT NULL
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
             WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL

@@ -99,7 +99,7 @@ BEGIN
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
 
         /* Drop synchronization trigger */
-        IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
+        IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
              EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
         END IF;
 
@@ -108,13 +108,34 @@ BEGIN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
         END IF;
 
+        /* Drop column default if it was set */
+        IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+        END IF;
+
         /* Delete columns if purging */
         IF NOT is_dropped AND cleanup THEN
-            EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
-                table_oid, /* %s */
-                era_row.valid_from_column_name, /* %I */
-                era_row.valid_until_column_name /* %I */
-            );
+            DECLARE
+                drop_clauses text[] := '{}';
+            BEGIN
+                -- The range column is always present for an era.
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+                -- Drop from/until if they were part of the era.
+                IF era_row.valid_from_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+                END IF;
+
+                -- Drop to if it was part of the era.
+                IF era_row.valid_to_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+                END IF;
+
+                IF array_length(drop_clauses, 1) > 0 THEN
+                     EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                END IF;
+            END;
         END IF;
 
         RETURN true;
@@ -137,7 +158,7 @@ BEGIN
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
 
     /* Drop synchronization trigger */
-    IF NOT is_dropped AND (era_row.synchronize_valid_to_column IS NOT NULL OR era_row.synchronize_range_column IS NOT NULL) THEN
+    IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
          EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
     END IF;
 
@@ -146,13 +167,34 @@ BEGIN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
     END IF;
 
+    /* Drop column default if it was set */
+    IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+    END IF;
+
     /* Delete columns if purging */
     IF NOT is_dropped AND cleanup THEN
-        EXECUTE format('ALTER TABLE %s DROP COLUMN %I, DROP COLUMN %I',
-            table_oid, /* %s */
-            era_row.valid_from_column_name, /* %I */
-            era_row.valid_until_column_name /* %I */
-        );
+        DECLARE
+            drop_clauses text[] := '{}';
+        BEGIN
+            -- The range column is always present for an era.
+            drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+            -- Drop from/until if they were part of the era.
+            IF era_row.valid_from_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+            END IF;
+
+            -- Drop to if it was part of the era.
+            IF era_row.valid_to_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+            END IF;
+
+            IF array_length(drop_clauses, 1) > 0 THEN
+                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+            END IF;
+        END;
     END IF;
 
     RETURN true;

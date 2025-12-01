@@ -26,41 +26,49 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 SET ROLE TO sql_saga_unprivileged_user;
 BEGIN;
 -- Test that the overloaded drop_* functions work as expected.
-CREATE TABLE parent(id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('parent'::regclass, 'valid_from', 'valid_until', 'p');
+CREATE TABLE parent(id int, valid int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('parent'::regclass, 'valid', 'p');
+NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table parent to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
 (1 row)
 
-CREATE TABLE child(id int, parent_id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('child'::regclass, 'valid_from', 'valid_until', 'q');
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  |                    |                  |           |                            |                     |                                  | {}
+(1 row)
+
+CREATE TABLE child(id int, parent_id int, valid int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('child'::regclass, 'valid', 'q');
+NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table child to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
 (1 row)
 
--- Test overloaded drop_foreign_key for temporal-to-temporal
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |          fk_table_columns_snapshot          | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   |                     |                    |                   |                   | child_parent_id_q_gist_idx
 (1 row)
 
+-- Test overloaded drop_foreign_key for temporal-to-temporal
 SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q');
 NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key 
@@ -75,16 +83,16 @@ TABLE sql_saga.foreign_keys;
 
 -- Test original drop_foreign_key (with positional and named arguments)
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |          fk_table_columns_snapshot          | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   |                     |                    |                   |                   | child_parent_id_q_gist_idx
 (1 row)
 
 -- by name (positional)
@@ -102,16 +110,16 @@ TABLE sql_saga.foreign_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, int4range(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
 (1 row)
 
 TABLE sql_saga.foreign_keys;
- foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |       fk_table_columns_snapshot       | unique_key_name | match_type | update_action | delete_action |      fk_insert_trigger      |      fk_update_trigger      | fk_check_constraint | fk_helper_function |      uk_update_trigger      |      uk_delete_trigger      |       fk_index_name        
--------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------+-----------------+------------+---------------+---------------+-----------------------------+-----------------------------+---------------------+--------------------+-----------------------------+-----------------------------+----------------------------
- child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     | child_parent_id_q_fk_insert | child_parent_id_q_fk_update |                     |                    | child_parent_id_q_uk_update | child_parent_id_q_uk_delete | child_parent_id_q_gist_idx
+ foreign_key_name  |         type         | table_schema | table_name | column_names | fk_era_name |          fk_table_columns_snapshot          | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |       fk_index_name        
+-------------------+----------------------+--------------+------------+--------------+-------------+---------------------------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+----------------------------
+ child_parent_id_q | temporal_to_temporal | public       | child      | {parent_id}  | q           | {id,parent_id,valid,valid_from,valid_until} | parent_id_p     | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   |                     |                    |                   |                   | child_parent_id_q_gist_idx
 (1 row)
 
 -- by name (named)
@@ -159,7 +167,7 @@ DROP TABLE regular_child;
 TABLE sql_saga.unique_keys;
  unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
 -----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  |                    |                  |           |                            |                     |                                  | {}
 (1 row)
 
 SELECT sql_saga.drop_unique_key('parent'::regclass, ARRAY['id']::name[], 'p');
@@ -175,7 +183,7 @@ TABLE sql_saga.unique_keys;
 
 -- Test original drop_unique_key (with positional and named arguments)
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -184,7 +192,7 @@ NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAI
 TABLE sql_saga.unique_keys;
  unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
 -----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  |                    |                  |           |                            |                     |                                  | {}
 (1 row)
 
 -- by name (positional)
@@ -201,7 +209,7 @@ TABLE sql_saga.unique_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_id_p_excl EXCLUDE USING gist (id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -210,7 +218,7 @@ NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAI
 TABLE sql_saga.unique_keys;
  unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
 -----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  | parent_id_p_excl   |                  |           |                            |                     |                                  | {}
+ parent_id_p     | public       | parent     | natural  | {id}         | p        | parent_id_p_uniq  |                    |                  |           |                            |                     |                                  | {}
 (1 row)
 
 -- by name (named)
@@ -234,24 +242,23 @@ CREATE TABLE era_symmetry_test(id int);
  id     | integer |           |          | 
 
 -- 1. Create era and columns together
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v', create_columns => true);
+SELECT sql_saga.add_era(table_oid => 'era_symmetry_test'::regclass, range_column_name => 'v', create_columns => true, range_type => 'tstzrange'::regtype);
  add_era 
 ---------
  t
 (1 row)
 
 \d era_symmetry_test
-                                 Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable |               Default                
----------+--------------------------+-----------+----------+--------------------------------------
- id      | integer                  |           |          | 
- v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+          Table "public.era_symmetry_test"
+ Column |   Type    | Collation | Nullable | Default 
+--------+-----------+-----------+----------+---------
+ id     | integer   |           |          | 
+ v      | tstzrange |           | not null | 
 Check constraints:
-    "era_symmetry_test_v_check" CHECK (v_from < v_until AND v_from > '-infinity'::timestamp with time zone)
+    "era_symmetry_test_valid_check" CHECK (NOT isempty(v))
 
 -- 2. Drop era and columns together
-SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass, cleanup => true);
  drop_era 
 ----------
  t
@@ -265,42 +272,40 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v', cleanup => true);
 
 -- 3. Verify add_era fails without create_columns => true
 SAVEPOINT before_fail;
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
-ERROR:  column "v_from" not found in table "era_symmetry_test"
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean,boolean,boolean) line 149 at RAISE
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
+ERROR:  range column "v" not found in table "era_symmetry_test"
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name) line 165 at RAISE
 ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era
-ALTER TABLE era_symmetry_test ADD COLUMN v_from timestamptz, ADD COLUMN v_until timestamptz;
-SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v_from', 'v_until', 'v');
+ALTER TABLE era_symmetry_test ADD COLUMN v tstzrange;
+SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
  add_era 
 ---------
  t
 (1 row)
 
 \d era_symmetry_test
-                                 Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable |               Default                
----------+--------------------------+-----------+----------+--------------------------------------
- id      | integer                  |           |          | 
- v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+          Table "public.era_symmetry_test"
+ Column |   Type    | Collation | Nullable | Default 
+--------+-----------+-----------+----------+---------
+ id     | integer   |           |          | 
+ v      | tstzrange |           | not null | 
 Check constraints:
-    "era_symmetry_test_v_check" CHECK (v_from < v_until AND v_from > '-infinity'::timestamp with time zone)
+    "era_symmetry_test_valid_check" CHECK (NOT isempty(v))
 
 -- 5. Drop era but leave columns (default behavior)
-SELECT sql_saga.drop_era('era_symmetry_test'::regclass, 'v');
+SELECT sql_saga.drop_era('era_symmetry_test'::regclass);
  drop_era 
 ----------
  t
 (1 row)
 
 \d era_symmetry_test
-                                 Table "public.era_symmetry_test"
- Column  |           Type           | Collation | Nullable |               Default                
----------+--------------------------+-----------+----------+--------------------------------------
- id      | integer                  |           |          | 
- v_from  | timestamp with time zone |           | not null | 
- v_until | timestamp with time zone |           | not null | 'infinity'::timestamp with time zone
+          Table "public.era_symmetry_test"
+ Column |   Type    | Collation | Nullable | Default 
+--------+-----------+-----------+----------+---------
+ id     | integer   |           |          | 
+ v      | tstzrange |           | not null | 
 
 DROP TABLE era_symmetry_test;
 -- Note: The FK and UK were already dropped in the earlier parts of this test.
