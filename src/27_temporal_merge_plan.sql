@@ -636,11 +636,14 @@ BEGIN
             -- The lateral joins from atomic segments to source/target rows must use ALL identity columns
             -- to ensure the join is on a unique entity. This logic correctly maps original column names
             -- to their internal, aliased names, which are used in all relevant CTEs (sr, tr, seg).
+            --
+            -- PERFORMANCE: We use OR instead of CASE to allow the query optimizer to use index-based
+            -- access paths. The CASE expression prevents index usage because the optimizer can't
+            -- determine which branch will be taken at planning time.
             v_lateral_join_sr_to_seg := format($$
-                (CASE WHEN seg.is_new_entity
-                THEN source_row.grouping_key = seg.grouping_key
-                ELSE %s
-                END)
+                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
+                OR
+                (NOT seg.is_new_entity AND %s))
             $$, (
                 SELECT COALESCE(string_agg(format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND '), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col

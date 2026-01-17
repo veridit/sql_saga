@@ -684,10 +684,9 @@ NOTICE:  Explaining:
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
                                 WHERE 
-                (CASE WHEN seg.is_new_entity
-                THEN source_row.grouping_key = seg.grouping_key
-                ELSE (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))
-                END)
+                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
+                OR
+                (NOT seg.is_new_entity AND (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))))
              -- v_lateral_join_sr_to_seg
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
@@ -744,7 +743,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))) END AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: (((seg.is_new_entity AND (grouping_key = seg.grouping_key)) OR ((NOT seg.is_new_entity) AND ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -770,7 +769,7 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=51
+NOTICE:    Buffers: shared hit=54
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -1968,10 +1967,9 @@ NOTICE:  Explaining:
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
                                 WHERE 
-                (CASE WHEN seg.is_new_entity
-                THEN source_row.grouping_key = seg.grouping_key
-                ELSE (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
-                END)
+                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
+                OR
+                (NOT seg.is_new_entity AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))))
              -- v_lateral_join_sr_to_seg
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
@@ -2028,7 +2026,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE (((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL)))) END AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: (((seg.is_new_entity AND (grouping_key = seg.grouping_key)) OR ((NOT seg.is_new_entity) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -2054,7 +2052,7 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=53
+NOTICE:    Buffers: shared hit=56
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -3286,10 +3284,9 @@ NOTICE:  Explaining:
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
                                 WHERE 
-                (CASE WHEN seg.is_new_entity
-                THEN source_row.grouping_key = seg.grouping_key
-                ELSE (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
-                END)
+                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
+                OR
+                (NOT seg.is_new_entity AND (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))))
              -- v_lateral_join_sr_to_seg
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
@@ -3347,7 +3344,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=6
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=6)
-NOTICE:                              Filter: ((daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)) AND CASE WHEN seg.is_new_entity THEN (grouping_key = seg.grouping_key) ELSE (((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL)))) END)
+NOTICE:                              Filter: ((daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)) AND ((seg.is_new_entity AND (grouping_key = seg.grouping_key)) OR ((NOT seg.is_new_entity) AND ((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))))))
 NOTICE:                              Rows Removed by Filter: 2
 NOTICE:                              Buffers: local hit=6
 NOTICE:          CTE running_payload
@@ -3373,7 +3370,7 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=6
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=6
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=55
+NOTICE:    Buffers: shared hit=58
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
