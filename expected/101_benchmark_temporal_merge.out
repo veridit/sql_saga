@@ -26,43 +26,47 @@ GRANT CREATE ON SCHEMA public TO PUBLIC;
 \i sql/include/benchmark_setup.sql
 \set ECHO none
 SET ROLE TO sql_saga_unprivileged_user;
--- Enable detailed temporal_merge index logging for this benchmark session.
---SET sql_saga.temporal_merge.log_index_checks = true;
+--------------------------------------------------------------------------------
+-- BENCHMARK: temporal_merge Performance with Range-Only Tables
+--
+-- This benchmark measures temporal_merge performance using the recommended
+-- range-only table pattern with proper indexing via add_foreign_key(create_index => true).
+--
+-- For comparison of range-only vs synchronized columns, see tests 104 and 105.
+--------------------------------------------------------------------------------
 CREATE TABLE legal_unit_tm (
   id INTEGER,
-  valid_from date,
-  valid_until date,
+  valid_range daterange NOT NULL,
   name varchar NOT NULL
 );
 CREATE TABLE establishment_tm (
   id INTEGER,
-  valid_from date,
-  valid_until date,
+  valid_range daterange NOT NULL,
   legal_unit_id INTEGER NOT NULL,
   postal_place TEXT NOT NULL
 );
--- Enable sql_saga constraints
-SELECT sql_saga.add_era(table_oid => 'legal_unit_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+-- Enable sql_saga constraints (creates optimal GIST index for FK via create_index => true)
+SELECT sql_saga.add_era('legal_unit_tm'::regclass, 'valid_range', 'valid');
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era(table_oid => 'establishment_tm', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era('establishment_tm'::regclass, 'valid_range', 'valid');
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm', column_names => ARRAY['id'], era_name => 'valid', unique_key_name => 'legal_unit_tm_id_valid');
-NOTICE:  sql_saga: altering table public.legal_unit_tm to add constraints: ADD CONSTRAINT legal_unit_tm_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_tm_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.legal_unit_tm to add constraints: ADD CONSTRAINT legal_unit_tm_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  legal_unit_tm_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.establishment_tm to add constraints: ADD CONSTRAINT establishment_tm_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_tm_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.establishment_tm to add constraints: ADD CONSTRAINT establishment_tm_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  establishment_tm_id_valid
@@ -76,211 +80,105 @@ SELECT sql_saga.add_foreign_key(
     fk_era_name => 'valid',
     create_index => true
 );
-NOTICE:  No compatible index found for foreign key on table establishment_tm. Creating new index: CREATE INDEX establishment_tm_legal_unit_id_valid_gist_idx ON establishment_tm USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table establishment_tm. Creating new index: CREATE INDEX establishment_tm_legal_unit_id_valid_gist_idx ON establishment_tm USING GIST (legal_unit_id, valid_range)
            add_foreign_key            
 --------------------------------------
  establishment_tm_legal_unit_id_valid
 (1 row)
 
--- Indices according to warning from temporal_merge
+-- Additional indices recommended by temporal_merge for source/target lookup
 CREATE INDEX ON legal_unit_tm USING BTREE (id);
-CREATE INDEX ON legal_unit_tm USING GIST (daterange(valid_from, valid_until));
+CREATE INDEX ON legal_unit_tm USING GIST (valid_range);
 CREATE INDEX ON establishment_tm USING BTREE (id);
-CREATE INDEX ON establishment_tm USING GIST (daterange(valid_from, valid_until));
--- Seed 80% of the data.
+CREATE INDEX ON establishment_tm USING GIST (valid_range);
+-- Show indices for documentation
+\echo '--- Table Indices ---'
+--- Table Indices ---
+SELECT indexname, indexdef FROM pg_indexes WHERE tablename IN ('legal_unit_tm', 'establishment_tm') ORDER BY tablename, indexname;
+                   indexname                   |                                                           indexdef                                                            
+-----------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------
+ establishment_tm_id_idx                       | CREATE INDEX establishment_tm_id_idx ON public.establishment_tm USING btree (id)
+ establishment_tm_id_idx1                      | CREATE INDEX establishment_tm_id_idx1 ON public.establishment_tm USING btree (id)
+ establishment_tm_id_valid_uniq                | CREATE UNIQUE INDEX establishment_tm_id_valid_uniq ON public.establishment_tm USING gist (id, valid_range)
+ establishment_tm_legal_unit_id_valid_gist_idx | CREATE INDEX establishment_tm_legal_unit_id_valid_gist_idx ON public.establishment_tm USING gist (legal_unit_id, valid_range)
+ establishment_tm_valid_range_idx              | CREATE INDEX establishment_tm_valid_range_idx ON public.establishment_tm USING gist (valid_range)
+ legal_unit_tm_id_idx                          | CREATE INDEX legal_unit_tm_id_idx ON public.legal_unit_tm USING btree (id)
+ legal_unit_tm_id_idx1                         | CREATE INDEX legal_unit_tm_id_idx1 ON public.legal_unit_tm USING btree (id)
+ legal_unit_tm_id_valid_uniq                   | CREATE UNIQUE INDEX legal_unit_tm_id_valid_uniq ON public.legal_unit_tm USING gist (id, valid_range)
+ legal_unit_tm_valid_range_idx                 | CREATE INDEX legal_unit_tm_valid_range_idx ON public.legal_unit_tm USING gist (valid_range)
+(9 rows)
+
+--------------------------------------------------------------------------------
+\echo '--- Temporal Merge SEED (2000 rows) ---'
+--- Temporal Merge SEED (2000 rows) ---
+--------------------------------------------------------------------------------
 BEGIN;
-  CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_from date, valid_until date, name varchar);
-  CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-  INSERT INTO legal_unit_seed_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
-  INSERT INTO establishment_seed_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
-  -- Add indices suggested by temporal_merge warning.
+  CREATE TEMPORARY TABLE legal_unit_seed_source (row_id int, id int, valid_range daterange, name varchar);
+  CREATE TEMPORARY TABLE establishment_seed_source (row_id int, id int, valid_range daterange, legal_unit_id int, postal_place text);
+  INSERT INTO legal_unit_seed_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(1, 2000) AS i;
+  INSERT INTO establishment_seed_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(1, 2000) AS i;
   CREATE INDEX ON legal_unit_seed_source USING BTREE (id);
-  CREATE INDEX ON legal_unit_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON legal_unit_seed_source USING GIST (valid_range);
   CREATE INDEX ON establishment_seed_source USING BTREE (id);
-  CREATE INDEX ON establishment_seed_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_seed_source USING GIST (valid_range);
   ANALYZE legal_unit_seed_source;
   ANALYZE establishment_seed_source;
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers ON)', 0, false);
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_seed_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Parent (Triggers ON)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers ON) end', 8000, true);
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Parent');
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent end', 2000, true);
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_seed_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Child (Triggers ON)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers ON) end', 8000, true);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Child');
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child end', 2000, true);
 END;
+--------------------------------------------------------------------------------
+\echo '--- Temporal Merge 20% INSERT + 80% PATCH (2500 rows) ---'
+--- Temporal Merge 20% INSERT + 80% PATCH (2500 rows) ---
+--------------------------------------------------------------------------------
 BEGIN;
-  CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
-  CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-  -- Source data for 80% PATCH
-  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
-  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
-  -- Source data for 20% INSERT
-  INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
-  INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
-  -- Add indices suggested by temporal_merge performance hints.
-  -- The BTREE index on the lookup key (`id`) is critical for the initial filtering of target rows.
-  -- The GIST index on the temporal range is critical for the main timeline reconstruction logic.
+  CREATE TEMPORARY TABLE legal_unit_source (row_id int, id int, valid_range daterange, name varchar);
+  CREATE TEMPORARY TABLE establishment_source (row_id int, id int, valid_range daterange, legal_unit_id int, postal_place text);
+  -- Source data for 80% PATCH (update existing)
+  INSERT INTO legal_unit_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Updated Company ' || i FROM generate_series(1, 2000) AS i;
+  INSERT INTO establishment_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Updated Shop ' || i FROM generate_series(1, 2000) AS i;
+  -- Source data for 20% INSERT (new entities)
+  INSERT INTO legal_unit_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(2001, 2500) AS i;
+  INSERT INTO establishment_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(2001, 2500) AS i;
   CREATE INDEX ON legal_unit_source USING BTREE (id);
-  CREATE INDEX ON legal_unit_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON legal_unit_source USING GIST (valid_range);
   CREATE INDEX ON establishment_source USING BTREE (id);
-  CREATE INDEX ON establishment_source USING GIST (daterange(valid_from, valid_until, '[)'));
+  CREATE INDEX ON establishment_source USING GIST (valid_range);
   ANALYZE legal_unit_source;
   ANALYZE establishment_source;
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)', 0, false);
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm'::regclass, source_table => 'legal_unit_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON) end', 10000, true);
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)', 0, false);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent');
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent end', 2500, true);
+  \set benchmark_explain_log_filename expected/performance/101_benchmark_temporal_merge_explain.log
+  \set benchmark_source_table 'legal_unit_source'
+  \set benchmark_target_table 'legal_unit_tm'
+  \i sql/include/benchmark_explain_log.sql
+\set ECHO none
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON) end', 10000, true);
+  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Child');
+  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child end', 2500, true);
 END;
 SELECT 'legal_unit_tm' AS type, COUNT(*) AS count FROM legal_unit_tm
 UNION ALL
 SELECT 'establishment_tm' AS type, COUNT(*) AS count FROM establishment_tm;
        type       | count 
 ------------------+-------
- legal_unit_tm    | 10000
- establishment_tm | 10000
+ legal_unit_tm    |  2500
+ establishment_tm |  2500
 (2 rows)
 
---
--- Benchmark with temporal_merge (Triggers Disabled)
---
-CREATE TABLE legal_unit_tm_dt (
-  id INTEGER,
-  valid_from date,
-  valid_until date,
-  name varchar NOT NULL
-);
-CREATE TABLE establishment_tm_dt (
-  id INTEGER,
-  valid_from date,
-  valid_until date,
-  legal_unit_id INTEGER NOT NULL,
-  postal_place TEXT NOT NULL
-);
--- This is the critical index for FK performance on the parent table.
-CREATE INDEX ON establishment_tm_dt USING GIST (legal_unit_id, daterange(valid_from, valid_until));
--- Enable sql_saga constraints
-SELECT sql_saga.add_era(table_oid => 'legal_unit_tm_dt', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
- add_era 
----------
- t
-(1 row)
-
-SELECT sql_saga.add_era(table_oid => 'establishment_tm_dt', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
- add_era 
----------
- t
-(1 row)
-
-SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_dt', column_names => ARRAY['id'], era_name => 'valid', unique_key_name => 'legal_unit_tm_dt_id_valid');
-NOTICE:  sql_saga: altering table public.legal_unit_tm_dt to add constraints: ADD CONSTRAINT legal_unit_tm_dt_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_tm_dt_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-      add_unique_key       
----------------------------
- legal_unit_tm_dt_id_valid
-(1 row)
-
-SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_dt', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.establishment_tm_dt to add constraints: ADD CONSTRAINT establishment_tm_dt_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_tm_dt_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-        add_unique_key        
-------------------------------
- establishment_tm_dt_id_valid
-(1 row)
-
-SELECT sql_saga.add_foreign_key(
-    fk_table_oid => 'establishment_tm_dt',
-    fk_column_names => ARRAY['legal_unit_id'],
-    pk_table_oid => 'legal_unit_tm_dt',
-    pk_column_names => ARRAY['id'],
-    fk_era_name => 'valid'
-);
-             add_foreign_key             
------------------------------------------
- establishment_tm_dt_legal_unit_id_valid
-(1 row)
-
--- Seed 80% of the data.
-BEGIN;
-  CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
-  CREATE TEMPORARY TABLE legal_unit_seed_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
-  CREATE TEMPORARY TABLE establishment_seed_source_dt (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-  INSERT INTO legal_unit_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 8000) AS i;
-  INSERT INTO establishment_seed_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 8000) AS i;
-  -- Add indices suggested by temporal_merge warning.
-  CREATE INDEX ON legal_unit_seed_source_dt USING BTREE (id);
-  CREATE INDEX ON legal_unit_seed_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
-  CREATE INDEX ON establishment_seed_source_dt USING BTREE (id);
-  CREATE INDEX ON establishment_seed_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
-  ANALYZE legal_unit_seed_source_dt;
-  ANALYZE establishment_seed_source_dt;
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers OFF)', 0, false);
-  CALL sql_saga.benchmark_reset();
-  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_seed_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Parent (Triggers OFF)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Parent (Triggers OFF) end', 8000, true);
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers OFF)', 0, false);
-  CALL sql_saga.benchmark_reset();
-  CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_seed_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge SEED Child (Triggers OFF)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge SEED Child (Triggers OFF) end', 8000, true);
-  CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
-END;
-BEGIN;
-  CALL sql_saga.disable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
-  CREATE TEMPORARY TABLE legal_unit_source_dt (row_id int, id int, valid_from date, valid_until date, name varchar);
-  CREATE TEMPORARY TABLE establishment_source_dt (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-  -- Source data for 80% PATCH
-  INSERT INTO legal_unit_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Updated Company ' || i FROM generate_series(1, 8000) AS i;
-  INSERT INTO establishment_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Updated Shop ' || i FROM generate_series(1, 8000) AS i;
-  -- Source data for 20% INSERT
-  INSERT INTO legal_unit_source_dt SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(8001, 10000) AS i;
-  INSERT INTO establishment_source_dt SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(8001, 10000) AS i;
-  -- Add indices suggested by temporal_merge warning.
-  CREATE INDEX ON legal_unit_source_dt USING BTREE (id);
-  CREATE INDEX ON legal_unit_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
-  CREATE INDEX ON establishment_source_dt USING BTREE (id);
-  CREATE INDEX ON establishment_source_dt USING GIST (daterange(valid_from, valid_until, '[)'));
-  ANALYZE legal_unit_source_dt;
-  ANALYZE establishment_source_dt;
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)', 0, false);
-  CALL sql_saga.benchmark_reset();
-  CALL sql_saga.temporal_merge(target_table => 'legal_unit_tm_dt'::regclass, source_table => 'legal_unit_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) end', 10000, true);
-  \set benchmark_explain_log_filename expected/performance/101_benchmark_temporal_merge_explain.log
-  \set benchmark_source_table 'legal_unit_source_dt'
-  \set benchmark_target_table 'legal_unit_tm_dt'
-  \i sql/include/benchmark_explain_log.sql
-\set ECHO none
- check_for_seq_scan 
---------------------
- 
-(1 row)
-
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)', 0, false);
-  CALL sql_saga.benchmark_reset();
-  CALL sql_saga.temporal_merge(target_table => 'establishment_tm_dt'::regclass, source_table => 'establishment_source_dt'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);
-  CALL sql_saga.benchmark_log_and_reset('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)');
-  INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF) end', 10000, true);
-  CALL sql_saga.enable_temporal_triggers('legal_unit_tm_dt', 'establishment_tm_dt');
-END;
-SELECT 'legal_unit_tm_dt' AS type, COUNT(*) AS count FROM legal_unit_tm_dt
-UNION ALL
-SELECT 'establishment_tm_dt' AS type, COUNT(*) AS count FROM establishment_tm_dt;
-        type         | count 
----------------------+-------
- legal_unit_tm_dt    | 10000
- establishment_tm_dt | 10000
-(2 rows)
-
--- Teardown for temporal_merge tables
+-- Teardown
 SELECT sql_saga.drop_foreign_key('establishment_tm', ARRAY['legal_unit_id'], 'valid');
 NOTICE:  Dropping automatically created index "establishment_tm_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_legal_unit_id_valid"
  drop_foreign_key 
@@ -312,41 +210,8 @@ SELECT sql_saga.drop_era('legal_unit_tm', cleanup => true);
  t
 (1 row)
 
--- Teardown for temporal_merge tables with disabled triggers
-SELECT sql_saga.drop_foreign_key('establishment_tm_dt', ARRAY['legal_unit_id'], 'valid');
- drop_foreign_key 
-------------------
- 
-(1 row)
-
-SELECT sql_saga.drop_unique_key('establishment_tm_dt', ARRAY['id'], 'valid');
- drop_unique_key 
------------------
- 
-(1 row)
-
-SELECT sql_saga.drop_era('establishment_tm_dt', cleanup => true);
- drop_era 
-----------
- t
-(1 row)
-
-SELECT sql_saga.drop_unique_key('legal_unit_tm_dt', ARRAY['id'], 'valid');
- drop_unique_key 
------------------
- 
-(1 row)
-
-SELECT sql_saga.drop_era('legal_unit_tm_dt', cleanup => true);
- drop_era 
-----------
- t
-(1 row)
-
 DROP TABLE establishment_tm;
 DROP TABLE legal_unit_tm;
-DROP TABLE establishment_tm_dt;
-DROP TABLE legal_unit_tm_dt;
 \echo '-- Performance log from pg_stat_monitor --'
 -- Performance log from pg_stat_monitor --
 \set monitor_log_filename expected/performance/101_benchmark_temporal_merge_benchmark_monitor.csv
@@ -357,31 +222,22 @@ DROP TABLE legal_unit_tm_dt;
  t
 (1 row)
 
--- Verify the benchmark events and row counts, but exclude volatile timing data
--- from the regression test output to ensure stability.
+-- Verify the benchmark events and row counts
 SELECT event, row_count FROM benchmark ORDER BY seq_id;
-                             event                             | row_count 
----------------------------------------------------------------+-----------
- BEGIN                                                         |         0
- Temporal Merge SEED Parent (Triggers ON)                      |         0
- Temporal Merge SEED Parent (Triggers ON) end                  |      8000
- Temporal Merge SEED Child (Triggers ON)                       |         0
- Temporal Merge SEED Child (Triggers ON) end                   |      8000
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON)      |         0
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers ON) end  |     10000
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON)       |         0
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers ON) end   |     10000
- Temporal Merge SEED Parent (Triggers OFF)                     |         0
- Temporal Merge SEED Parent (Triggers OFF) end                 |      8000
- Temporal Merge SEED Child (Triggers OFF)                      |         0
- Temporal Merge SEED Child (Triggers OFF) end                  |      8000
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF)     |         0
- Temporal Merge 20% INSERT 80% PATCH Parent (Triggers OFF) end |     10000
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF)      |         0
- Temporal Merge 20% INSERT 80% PATCH Child (Triggers OFF) end  |     10000
-(17 rows)
+                     event                      | row_count 
+------------------------------------------------+-----------
+ BEGIN                                          |         0
+ Temporal Merge SEED Parent                     |         0
+ Temporal Merge SEED Parent end                 |      2000
+ Temporal Merge SEED Child                      |         0
+ Temporal Merge SEED Child end                  |      2000
+ Temporal Merge 20% INSERT 80% PATCH Parent     |         0
+ Temporal Merge 20% INSERT 80% PATCH Parent end |      2500
+ Temporal Merge 20% INSERT 80% PATCH Child      |         0
+ Temporal Merge 20% INSERT 80% PATCH Child end  |      2500
+(9 rows)
 
--- Capture performance metrics to a separate file for manual review.
+-- Capture performance metrics to a separate file for manual review
 \set benchmark_log_filename expected/performance/101_benchmark_temporal_merge_benchmark_report.log
 \i sql/include/benchmark_report_log.sql
 \set ECHO none

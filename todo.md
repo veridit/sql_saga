@@ -4,6 +4,45 @@ A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
+## Current Focus: valid_range API Transition & Performance
+
+### Phase 1: Benchmark Migration (COMPLETED)
+- [x] **Migrated all benchmark tests (100-107) to valid_range API**
+- [x] **Added new tests 104-107** comparing range-only vs synchronized columns
+- [x] **Simplified test 101** - removed misleading triggers on/off comparison
+- [x] **Fixed test 100** - added BTREE indices for temporal_merge
+- [x] **Verified** sql_saga's default index creation is already optimal
+- [x] **Updated README.md** - valid_range is now primary documented API
+
+**Sync Trigger Overhead (from tests 104 vs 105):**
+| Operation | Range-Only | Synchronized | Overhead |
+|-----------|------------|--------------|----------|
+| INSERT | ~45k rows/s | ~12k rows/s | 3.8x slower |
+| UPDATE Key | ~23-36k rows/s | ~10k rows/s | 2.4-3.5x slower |
+| UPDATE Non-Key | ~82k rows/s | ~75-80k rows/s | ~Same |
+| temporal_merge | ~76-167 rows/s | ~64-143 rows/s | 1.2x slower |
+
+### Phase 2: Performance Optimization
+- [ ] **Consider C-based sync trigger** - Current PL/pgSQL sync trigger causes 2.4-3.8x overhead
+  for INSERT/UPDATE on temporal keys. A C trigger could eliminate most of this overhead.
+- [ ] **Update sql/097_readme_usage.sql** - Must match README examples
+
+### Phase 3: temporal_merge Performance Investigation
+Performance analysis from benchmarks reveals critical issues:
+- Regular DML: ~24,000-45,000 rows/s
+- temporal_merge (no batching): ~75-155 rows/s (200-300x slower!)
+- temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
+
+Key bottlenecks identified from pg_stat_monitor:
+- Planning overhead: 480-538ms per call
+- UPDATE execution: 12+ seconds for 1000 rows
+- Complex temp table creation: 247-260ms for `resolved_atomic_segments_with_payloads`
+
+- [ ] **Investigate UPDATE bottleneck** - 12 seconds for 1000 rows is unacceptable
+- [ ] **Optimize planning overhead** - Half a second just for planning
+- [ ] **Review index usage** in temp table queries
+- [ ] **Document optimal batch size** (1000 rows based on benchmarks)
+
 ## High Priority - Bugs & Core Features
 - [ ] **Add test case for range-only tables (no component columns):** Create a test that uses ONLY the `valid_range` column without `valid_from`, `valid_until`, or `valid_to` columns. This validates that the system properly handles tables where temporal tracking is done exclusively through the range column, ensuring all dynamic detection works correctly when component columns don't exist. This should probably be added to the 06x series, each covering different aspects of temporal_merge, and to the for_portion_of view and the current view.
 - [ ] **Add era existence validation to `add_for_portion_of_view`:** Currently fails silently when specified era doesn't exist. Should raise error for fail-fast behavior.

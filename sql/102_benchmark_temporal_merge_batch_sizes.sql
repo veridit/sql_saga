@@ -23,10 +23,10 @@ GRANT EXECUTE ON FUNCTION mtt.get_trigger_status(regclass) TO sql_saga_unprivile
 
 SET ROLE TO sql_saga_unprivileged_user;
 
-CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL);
-CREATE TABLE establishment_tm_bs_on (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
-SELECT sql_saga.add_era(table_oid => 'legal_unit_tm_bs_on', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_era(table_oid => 'establishment_tm_bs_on', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_range daterange NOT NULL, name varchar NOT NULL);
+CREATE TABLE establishment_tm_bs_on (id INTEGER, valid_range daterange NOT NULL, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
+SELECT sql_saga.add_era('legal_unit_tm_bs_on'::regclass, 'valid_range', 'valid');
+SELECT sql_saga.add_era('establishment_tm_bs_on'::regclass, 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_bs_on', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_bs_on', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_foreign_key(
@@ -38,15 +38,15 @@ SELECT sql_saga.add_foreign_key(
     create_index => true
 );
 
-CREATE TABLE legal_unit_tm_bs_off (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL);
-CREATE TABLE establishment_tm_bs_off (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
+CREATE TABLE legal_unit_tm_bs_off (id INTEGER, valid_range daterange NOT NULL, name varchar NOT NULL);
+CREATE TABLE establishment_tm_bs_off (id INTEGER, valid_range daterange NOT NULL, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
 
 -- This is the critical index for temporal_merge performance on the target tables.
-CREATE INDEX ON legal_unit_tm_bs_off USING GIST (daterange(valid_from, valid_until));
-CREATE INDEX ON establishment_tm_bs_off USING GIST (daterange(valid_from, valid_until));
+CREATE INDEX ON legal_unit_tm_bs_off USING GIST (valid_range);
+CREATE INDEX ON establishment_tm_bs_off USING GIST (valid_range);
 
-SELECT sql_saga.add_era(table_oid => 'legal_unit_tm_bs_off', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_era(table_oid => 'establishment_tm_bs_off', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era('legal_unit_tm_bs_off'::regclass, 'valid_range', 'valid');
+SELECT sql_saga.add_era('establishment_tm_bs_off'::regclass, 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_bs_off', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_bs_off', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_foreign_key(
@@ -73,14 +73,14 @@ DECLARE
     v_end_id int;
     v_loop_iter int;
 BEGIN
-    CREATE TEMPORARY TABLE legal_unit_source_bs (row_id int, id int, valid_from date, valid_until date, name varchar);
-    CREATE INDEX ON legal_unit_source_bs USING GIST (id, daterange(valid_from, valid_until));
+    CREATE TEMPORARY TABLE legal_unit_source_bs (row_id int, id int, valid_range daterange, name varchar);
+    CREATE INDEX ON legal_unit_source_bs USING GIST (id, valid_range);
     CREATE INDEX ON legal_unit_source_bs USING BTREE (id);
-    CREATE INDEX ON legal_unit_source_bs USING GIST (daterange(valid_from, valid_until, '[)'));
-    CREATE TEMPORARY TABLE establishment_source_bs (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-    CREATE INDEX ON establishment_source_bs USING GIST (id, daterange(valid_from, valid_until)) ;
+    CREATE INDEX ON legal_unit_source_bs USING GIST (valid_range);
+    CREATE TEMPORARY TABLE establishment_source_bs (row_id int, id int, valid_range daterange, legal_unit_id int, postal_place text);
+    CREATE INDEX ON establishment_source_bs USING GIST (id, valid_range) ;
     CREATE INDEX ON establishment_source_bs USING BTREE (id) ;
-    CREATE INDEX ON establishment_source_bs USING GIST (daterange(valid_from, valid_until, '[)'));
+    CREATE INDEX ON establishment_source_bs USING GIST (valid_range);
 
     FOREACH v_batch_size IN ARRAY v_batch_sizes
     LOOP
@@ -108,8 +108,8 @@ BEGIN
             IF v_end_id > v_total_rows THEN v_end_id := v_total_rows; END IF;
 
             TRUNCATE legal_unit_source_bs, establishment_source_bs;
-            INSERT INTO legal_unit_source_bs SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
-            INSERT INTO establishment_source_bs SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+            INSERT INTO legal_unit_source_bs SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+            INSERT INTO establishment_source_bs SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
 
             ANALYZE legal_unit_source_bs;
             ANALYZE establishment_source_bs;
@@ -146,8 +146,8 @@ BEGIN
             IF v_end_id > v_total_rows THEN v_end_id := v_total_rows; END IF;
 
             TRUNCATE legal_unit_source_bs, establishment_source_bs;
-            INSERT INTO legal_unit_source_bs SELECT i, i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
-            INSERT INTO establishment_source_bs SELECT i, i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+            INSERT INTO legal_unit_source_bs SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(v_start_id, v_end_id) AS i;
+            INSERT INTO establishment_source_bs SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(v_start_id, v_end_id) AS i;
 
             ANALYZE legal_unit_source_bs;
             ANALYZE establishment_source_bs;

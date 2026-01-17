@@ -89,21 +89,21 @@ SELECT * FROM benchmark_explain_output;
 \pset tuples_only off
 \o
 
--- To check for regressions, we use a temporary function. This allows us to pass the psql variable
--- :'benchmark_target_table' as a parameter, avoiding the DO block variable substitution issue.
-CREATE FUNCTION pg_temp.check_for_seq_scan(p_table_name TEXT) RETURNS void AS $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM benchmark_explain_output
-        WHERE line LIKE '%Seq Scan on ' || p_table_name || ' %'
-    ) THEN
-        RAISE EXCEPTION 'Performance regression detected: EXPLAIN plan contains a "Seq Scan on %".', p_table_name;
-    END IF;
-END;
-$$ LANGUAGE plpgsql;
+-- Check for seq scans on the target table. While seq scans as part of Hash Joins
+-- can be optimal for small source tables, we flag them as potential regressions
+-- to be manually reviewed. If the seq scan is acceptable (e.g., part of an efficient
+-- hash join), update the expected output to include the error message.
+--
+-- We use \if with a query result instead of a function to avoid volatile pg_temp_XX
+-- function names appearing in error context messages.
+SELECT EXISTS (
+    SELECT 1 FROM benchmark_explain_output
+    WHERE line LIKE '%Seq Scan on ' || :'benchmark_target_table' || ' %'
+) AS has_seq_scan \gset
 
-SELECT pg_temp.check_for_seq_scan(:'benchmark_target_table'::text);
-DROP FUNCTION pg_temp.check_for_seq_scan;
+\if :has_seq_scan
+\warn Performance regression detected: EXPLAIN plan contains a Seq Scan on :benchmark_target_table
+\endif
 
 DROP PROCEDURE benchmark_explain_plan_run;
 
