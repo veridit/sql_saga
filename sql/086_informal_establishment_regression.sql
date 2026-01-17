@@ -17,11 +17,15 @@ CREATE TABLE repro.establishment (
     org_nr text,
     name text,
     edit_comment text,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date
 );
 
-SELECT sql_saga.add_era('repro.establishment');
+SELECT sql_saga.add_era('repro.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+ALTER TABLE repro.establishment ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['org_nr'], key_type => 'natural');
 

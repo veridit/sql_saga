@@ -31,22 +31,20 @@ CREATE TABLE public.my_temporal_table (
     id INT NOT NULL,
     name TEXT,
     death_date DATE,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE,
-    valid_to DATE
+    valid_to DATE,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
-NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_columns_trigger" on table my_temporal_table to synchronize columns: valid_to
+SELECT sql_saga.add_era('public.my_temporal_table', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_columns_trigger" on table my_temporal_table to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
-(1 row)
-
-SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id'], unique_key_name => 'my_temporal_table_id_valid');
-NOTICE:  sql_saga: altering table public.my_temporal_table to add constraints: ADD CONSTRAINT my_temporal_table_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_temporal_table_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-       add_unique_key       
-----------------------------
- my_temporal_table_id_valid
 (1 row)
 
 \echo '--- SOURCE DATA: Two rows for one entity, second represents a death ---'
@@ -96,10 +94,10 @@ CALL sql_saga.temporal_merge(
 --- VERIFICATION: Final state of my_temporal_table ---
 -- The target table should now contain two correct historical slices.
 TABLE public.my_temporal_table;
- id  |   name    | death_date | valid_from | valid_until |  valid_to  
------+-----------+------------+------------+-------------+------------
- 101 | Unit A v1 |            | 2010-01-01 | 2012-12-31  | 2012-12-30
- 101 | Unit A v1 | 2012-12-31 | 2012-12-31 | 2013-01-01  | 2012-12-31
+ id  |   name    | death_date |       valid_range       | valid_from | valid_until |  valid_to  
+-----+-----------+------------+-------------------------+------------+-------------+------------
+ 101 | Unit A v1 |            | [2010-01-01,2012-12-31) | 2010-01-01 | 2012-12-31  | 2012-12-30
+ 101 | Unit A v1 | 2012-12-31 | [2012-12-31,2013-01-01) | 2012-12-31 | 2013-01-01  | 2012-12-31
 (2 rows)
 
 ROLLBACK;
@@ -113,22 +111,20 @@ SET datestyle TO 'ISO, DMY';
 CREATE TABLE public.my_temporal_table (
     id INT NOT NULL,
     name TEXT,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE,
-    valid_to DATE
+    valid_to DATE,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
-NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_columns_trigger" on table my_temporal_table to synchronize columns: valid_to
+SELECT sql_saga.add_era('public.my_temporal_table', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "my_temporal_table_synchronize_temporal_columns_trigger" on table my_temporal_table to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
-(1 row)
-
-SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id']);
-NOTICE:  sql_saga: altering table public.my_temporal_table to add constraints: ADD CONSTRAINT my_temporal_table_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_temporal_table_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-       add_unique_key       
-----------------------------
- my_temporal_table_id_valid
 (1 row)
 
 -- Insert one long-lived entity.
@@ -137,9 +133,9 @@ VALUES (101, 'Unit A', '2010-01-01', '2020-01-01');
 \echo 'Initial target data:'
 Initial target data:
 TABLE public.my_temporal_table;
- id  |  name  | valid_from | valid_until |  valid_to  
------+--------+------------+-------------+------------
- 101 | Unit A | 2010-01-01 | 2020-01-01  | 2019-12-31
+ id  |  name  |       valid_range       | valid_from | valid_until |  valid_to  
+-----+--------+-------------------------+------------+-------------+------------
+ 101 | Unit A | [2010-01-01,2020-01-01) | 2010-01-01 | 2020-01-01  | 2019-12-31
 (1 row)
 
 \echo '--- SOURCE DATA: A single row to delete a portion from the middle ---'
@@ -176,10 +172,10 @@ CALL sql_saga.temporal_merge(
 -- with valid_to correctly calculated for both. The first slice is shortened,
 -- so its valid_to must be recalculated.
 TABLE public.my_temporal_table;
- id  |  name  | valid_from | valid_until |  valid_to  
------+--------+------------+-------------+------------
- 101 | Unit A | 2013-01-01 | 2020-01-01  | 2019-12-31
- 101 | Unit A | 2010-01-01 | 2012-01-01  | 2011-12-31
+ id  |  name  |       valid_range       | valid_from | valid_until |  valid_to  
+-----+--------+-------------------------+------------+-------------+------------
+ 101 | Unit A | [2010-01-01,2012-01-01) | 2010-01-01 | 2012-01-01  | 2011-12-31
+ 101 | Unit A | [2013-01-01,2020-01-01) | 2013-01-01 | 2020-01-01  | 2019-12-31
 (2 rows)
 
 ROLLBACK;

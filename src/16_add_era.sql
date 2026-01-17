@@ -26,6 +26,7 @@ DECLARE
 
     v_range_subtype regtype;
     v_range_subtype_category char(1);
+    v_multirange_type regtype;
     v_range_col_notnull boolean;
 
     valid_from_attnum smallint;
@@ -42,6 +43,7 @@ DECLARE
     sync_col_is_generated text;
     trigger_name name;
     v_trigger_applies_defaults boolean := add_era.add_defaults;
+    boundary_check_constraint name;
 BEGIN
     -- Parameter validation for explicit user input.
     IF (add_era.valid_from_column_name IS NOT NULL AND add_era.valid_until_column_name IS NULL) OR
@@ -197,8 +199,8 @@ BEGIN
         END IF;
 
         -- Get range subtype and category for later use
-        SELECT r.rngsubtype, t.typcategory
-        INTO v_range_subtype, v_range_subtype_category
+        SELECT r.rngsubtype, r.rngmultitypid, t.typcategory
+        INTO v_range_subtype, v_multirange_type, v_range_subtype_category
         FROM pg_catalog.pg_range r JOIN pg_catalog.pg_type t ON t.oid = r.rngsubtype
         WHERE r.rngtypid = range_type;
     END;
@@ -283,7 +285,7 @@ BEGIN
         END IF;
 
         IF add_bounds_check THEN
-            -- The primary check is on the range column to prevent empty ranges.
+            -- The bounds check ensures the range is not empty: CHECK (NOT isempty(range))
             condef := format('CHECK (NOT isempty(%I))', range_column_name);
 
             IF bounds_check_constraint IS NOT NULL THEN
@@ -308,20 +310,24 @@ BEGIN
                 END IF;
             END IF;
 
-            -- If from/until columns exist, add the legacy check for safety.
+            -- If from/until columns exist, add the boundary check constraint.
+            -- The boundary check ensures start < end for the boundary columns.
             IF valid_from_column_name IS NOT NULL THEN
-                -- This check is now secondary and we don't manage its name.
                 IF subtype_info.typcategory = 'D' OR subtype_info.typname IN ('numeric', 'float4', 'float8') THEN
                     condef := format('CHECK ((%I < %I) AND (%I > ''-infinity''))', valid_from_column_name, valid_until_column_name, valid_from_column_name);
                 ELSE
                     condef := format('CHECK ((%I < %I))', valid_from_column_name, valid_until_column_name);
                 END IF;
 
-                IF NOT EXISTS (
-                    SELECT 1 FROM pg_catalog.pg_constraint AS c
-                    WHERE c.conrelid = table_oid AND c.contype = 'c' AND pg_catalog.pg_get_constraintdef(c.oid) = condef
-                ) THEN
-                     alter_commands := alter_commands || format('ADD %s', condef);
+                -- Find existing constraint or create a new one
+                SELECT c.conname INTO boundary_check_constraint
+                FROM pg_catalog.pg_constraint AS c
+                WHERE c.conrelid = table_oid AND c.contype = 'c' AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
+
+                IF NOT FOUND THEN
+                    -- Generate a name for the boundary check constraint
+                    boundary_check_constraint := sql_saga.__internal_make_name(ARRAY[table_name], 'check');
+                    alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', boundary_check_constraint, condef);
                 END IF;
             END IF;
         END IF;
@@ -500,26 +506,35 @@ BEGIN
 
                 -- Finally, if there are any columns left to synchronize, create the trigger.
                 IF array_length(sync_cols, 1) > 0 THEN
-                    trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
-                    EXECUTE format(
-                        'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L, %L)',
-                        trigger_name,
-                        array_to_string(ARRAY[range_column_name] || sync_cols, ', '),
-                        table_oid::text,
-                        range_column_name,          -- authoritative range column
-                        v_from_col,                 -- synchronized from column
-                        v_until_col,                -- synchronized until column
-                        v_to_col,                   -- synchronized to column
-                        v_range_subtype,
-                        v_trigger_applies_defaults
-                    );
-                    RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
+                    DECLARE
+                        v_quoted_cols text;
+                    BEGIN
+                        -- Quote each column name for use in UPDATE OF clause
+                        SELECT string_agg(quote_ident(col), ', ')
+                        INTO v_quoted_cols
+                        FROM unnest(ARRAY[range_column_name] || sync_cols) AS col;
+                        
+                        trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
+                        EXECUTE format(
+                            'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L, %L)',
+                            trigger_name,
+                            v_quoted_cols,
+                            table_oid::text,
+                            range_column_name,          -- authoritative range column
+                            v_from_col,                 -- synchronized from column
+                            v_until_col,                -- synchronized until column
+                            v_to_col,                   -- synchronized to column
+                            v_range_subtype,
+                            v_trigger_applies_defaults
+                        );
+                        RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
+                    END;
                 END IF;
             END;
         END IF;
 
-        INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint, trigger_applies_defaults)
-        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, v_trigger_applies_defaults);
+        INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults)
+        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults);
     END;
 
     -- Code for creation of triggers, when extending the era api

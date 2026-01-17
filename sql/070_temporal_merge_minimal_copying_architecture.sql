@@ -90,8 +90,10 @@ CREATE TABLE etl.activity_type (id int primary key, code text unique);
 INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
 
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.legal_unit');
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
 
 -- External Identifiers table (not temporal)
@@ -110,8 +112,10 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.location');
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.location', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'location_id_valid');
 -- A legal unit can only have one 'physical' address at any given time.
 -- This is a predicated natural key.
@@ -124,8 +128,10 @@ SELECT sql_saga.add_foreign_key(
 );
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.stat_for_unit');
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.stat_for_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'stat_for_unit_id_valid');
 SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'etl.stat_for_unit'::regclass,
@@ -139,10 +145,13 @@ CREATE TABLE etl.activity (
     legal_unit_id int,
     activity_type_id int,
     comment text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('etl.activity');
+SELECT sql_saga.add_era('etl.activity', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 -- The "unique key" for a natural-key table is the set of natural key columns.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], key_type => 'primary', unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
 SELECT sql_saga.add_foreign_key(

@@ -5,15 +5,27 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
 ## High Priority - Bugs & Core Features
+- [ ] **Add test case for range-only tables (no component columns):** Create a test that uses ONLY the `valid_range` column without `valid_from`, `valid_until`, or `valid_to` columns. This validates that the system properly handles tables where temporal tracking is done exclusively through the range column, ensuring all dynamic detection works correctly when component columns don't exist. This should probably be added to the 06x series, each covering different aspects of temporal_merge, and to the for_portion_of view and the current view.
+- [ ] **Add era existence validation to `add_for_portion_of_view`:** Currently fails silently when specified era doesn't exist. Should raise error for fail-fast behavior.
+- [ ] **Add test coverage for views with ONLY range column:** Tests 051 and 052 currently include `valid_from`, `valid_until`, and `valid_to` columns in their views alongside `valid_range`. Add test scenarios where the view exposes ONLY the `valid_range` column (not the synchronized component columns). This will verify that `for_portion_of_trigger` and `current_view_trigger` correctly handle range-only views. Likely to fail without additional fixes.
+
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
+  - `fk_insert_trigger` - Always NULL (no longer needed with native FKs)
+  - `fk_update_trigger` - Always NULL (no longer needed with native FKs)
+  - `uk_update_trigger` - Always NULL (no longer needed with native FKs)
+  - `uk_delete_trigger` - Always NULL (no longer needed with native FKs)
+  - However, these are still used for `regular_to_temporal` FKs and kept for backward compatibility. Removal would complicate upgrades and lose historical schema documentation.
 - [ ] **Optimize `temporal_merge` planner join logic:** Restructure planner's lateral join to avoid `CASE` statements, allowing the query optimizer to use more efficient index-based access paths.
-- [ ] Review application time support in PostgreSQL 18, and use that, simplifying sql_saga.
-      PRIMARY KEY ... column_name WITHOUT OVERLAPS
-      REFERENCES ... PERIOD column_name
-      FOREIGN KEY ... PERIOD column_name
-      Ref. https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-PARMS-REFERENCES
+- [ ] **Adapt to PostgreSQL 18 native temporal features:**
+  - [x] **Phase 1 (Architecture Shift):** Refactor `sql_saga.add_era` to be centered around a single, authoritative `RANGE` column. The existing `_from` and `_until` columns are now optional, synchronized convenience columns. The synchronization trigger has been rewritten to be declarative and range-first. The API is now more ergonomic, with a single `synchronize_columns` boolean flag and auto-detection of conventional column names.
+  - [ ] **Phase 2 (Native Integration):**
+    - [x] Refactor `add_foreign_key` to use native temporal `FOREIGN KEY` constraints for temporal-to-temporal relationships. The trigger-based implementation is preserved for regular-to-temporal FKs.
+    - [x] Refactor `add_unique_key` to use native `... WITHOUT OVERLAPS` constraints when running on PostgreSQL 18+.
+  - See `doc/postgres-18-temporal-support.md` for the strategic plan.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
+- [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
 
 ## Low Priority - Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**
@@ -21,6 +33,26 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+- [x] **Added Era+History benchmark tests (106/107):** Created tests comparing range-only vs synchronized columns for tables with BOTH application-time eras AND system versioning:
+  - **Test 106 (Range-Only):** INSERTs ~19k rows/s, Update deferred ~23k rows/s, Update non-key ~25k rows/s
+  - **Test 107 (Synchronized):** INSERTs ~6k rows/s, Update deferred ~7k rows/s, Update non-key ~28k rows/s
+  - Range-only tables are **3x faster** for INSERTs and temporal key updates when system versioning is also enabled.
+- [x] **Added benchmark tests for range-only vs synchronized columns:** Created tests 104 (range-only tables) and 105 (synchronized columns) to isolate the performance impact of column synchronization triggers. Range-only tables are 2-3x faster for INSERT/UPDATE operations that touch temporal keys.
+- [x] **VERIFIED: Native PG18 temporal features provide MASSIVE performance improvement:** Contrary to earlier concerns, benchmarks confirm the new implementation with native `WITHOUT OVERLAPS` and temporal FKs is dramatically faster than the old trigger-based approach:
+  - **Test 100 (Basic DML):** Parent INSERT 21.6x faster, Parent UPDATE Key 231x faster, temporal_merge 89-177x faster
+  - **Test 103 (System Versioning):** History INSERTs 3.2x faster, Era+History INSERTs 8x faster, Era+History Update 2.4-4.2x faster
+  - The old C-based FK triggers and DEFERRABLE exclusion constraints were the bottleneck, not the native PostgreSQL features.
+- [x] **Implemented smart MOVE batching with multirange types:** Added `statement_seq` column to `temporal_merge_plan` to batch operations for safe execution. Added `multirange_type` to `sql_saga.era` table for conflict detection. The planner now uses a recursive CTE algorithm to detect when MOVE operations would conflict (new range overlaps old ranges in batch) and assigns them to separate batches. This enables `temporal_merge` to execute multiple non-conflicting UPDATEs in a single statement while respecting PostgreSQL 18's NOT DEFERRABLE `WITHOUT OVERLAPS` constraints. Updated all expected test outputs to include the new `multirange_type` column.
+- [x] **Fixed temporal_merge to support range-only tables:** Modified planner and executor to work with tables that have ONLY a range column (no synchronized boundary columns like valid_from/valid_until). Fixed DISTINCT ON clause to use range column when boundary columns are NULL, added range_subtype handling for type casting, fixed NULL-safe column filtering, and fixed incomplete INSERT path. Test 097 now passes.
+- [x] **Improved PG18 constraint validation error message:** Enhanced `src/19_add_unique_key.sql` to provide clear, informative error when WITHOUT OVERLAPS constraints are incorrectly marked DEFERRABLE. Error explains PG18 requirement: unique constraints must be NOT DEFERRABLE to be referenceable by native temporal FKs, while FKs themselves must be DEFERRABLE to tolerate temporary gaps in DELETE→UPDATE→INSERT execution.
+- [x] **Migrated test 062 and removed DEFERRABLE PK:** Test `062_temporal_merge_intra_step_dependencies` updated to use NOT DEFERRABLE PRIMARY KEY, aligning with PG18 native temporal FK requirements. The DELETE→UPDATE→INSERT execution strategy handles dependencies without needing deferrable PKs.
+- [x] **Fixed drop protection for native FKs:** Modified `src/23_drop_protection.sql` to skip trigger existence checks for native PostgreSQL 18 FKs (which have NULL trigger names). Added `IS NOT NULL` conditions to avoid false errors when dropping tables with native temporal FKs.
+- [x] **Migrated tests 060-070 to new API:** Updated temporal tables with `valid_range` column (various range types), new `add_era()` syntax with `era_name` parameter, and WITHOUT OVERLAPS constraints. Fixed INSERT statements to specify column names explicitly. Test 070 validates complex ETL architecture with multiple related temporal tables. Tests now show correct DELETE→UPDATE→INSERT operation ordering.
+- [x] **Fixed `current_view_trigger` temporal column handling:** Modified trigger to strip ALL temporal columns (range + components) before INSERT/UPDATE to follow "no priority" principle. Added `range_column_name` and `valid_to_column_name` to metadata query.
+- [x] **Made temporal column exclusion homogeneous in planner:** Changed from `NOT IN` to `<> ALL(v_temporal_cols)` for robust NULL handling. All temporal columns now excluded consistently from `data_payload`.
+- [x] **Fix `valid_to` handling regression in for_portion_of_trigger:** The view's INSTEAD OF trigger now properly detects changes to `valid_to` and converts it to `valid_until` (adds 1) before passing to temporal_merge. Fixed in `src/06_for_portion_of_trigger.sql` lines 76-131. Uses `sql_saga.era` metadata for column names (not hardcoded).
+- [x] **Fix coalescing regression for synchronized columns:** Restored automatic treatment of `valid_to` as ephemeral column so adjacent segments with identical data but different `valid_to` values are correctly coalesced. Fixed in `src/27_temporal_merge_plan.sql` lines 444-450.
+- [x] **Fix redundant PK consistency constraint generation:** Modified `add_unique_key` to skip generating `pk_consistency_excl` constraints when the natural key column is identical to the stable PK column. The constraint `(id WITH =, id WITH <>)` is logically redundant in this case. Fixed in `src/19_add_unique_key.sql` lines 520-541.
 - [x] **Fix `Makefile` test execution:** Resolved issues with `pg_regress` path, `installcheck` override warnings, and test database configuration to ensure tests run correctly, especially with non-standard PostgreSQL distributions like Postgres.app.
 - [x] **Fix benchmark EXPLAIN logging:** Corrected benchmark test harness to robustly handle `psql` variable substitution and temporary table scoping, ensuring `EXPLAIN` logs are generated correctly and performance regressions are reliably detected.
 - [x] **Add performance monitoring for `temporal_merge`:** Added optional performance logging using `pg_stat_monitor`. Logging is enabled declaratively by the caller creating a temporary table (`temporal_merge_performance_log`). The test harness is now solely responsible for resetting stats and logging results, keeping the core procedures free of instrumentation. Performance output files are stored in `expected/performance/`.

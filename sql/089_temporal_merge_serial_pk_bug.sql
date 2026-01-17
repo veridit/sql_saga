@@ -7,14 +7,18 @@ CREATE TABLE target_units (
     id SERIAL NOT NULL,
     unit_ident TEXT NOT NULL,
     name TEXT,
-    valid_from DATE NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from DATE,
     valid_until DATE
 );
 
-SELECT sql_saga.add_era('target_units');
--- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_from) and an exclusion constraint.
-SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], key_type => 'primary');
-SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], key_type => 'natural');
+SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+-- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_range WITHOUT OVERLAPS).
+ALTER TABLE target_units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], 'valid', key_type => 'primary');
+SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], 'valid', key_type => 'natural');
 
 INSERT INTO target_units (id, unit_ident, name, valid_from, valid_until) VALUES
 (1, 'U1', 'Existing Unit', '2023-01-01', 'infinity');
@@ -31,10 +35,10 @@ CREATE TABLE source_units (
     unit_ident TEXT,
     name TEXT,
     valid_from DATE,
-    valid_to DATE
+    valid_until DATE
 );
 
-INSERT INTO source_units (row_id, founding_row_id, id, unit_ident, name, valid_from, valid_to) VALUES
+INSERT INTO source_units (row_id, founding_row_id, id, unit_ident, name, valid_from, valid_until) VALUES
 (1, 1, NULL, 'U2', 'New Unit', '2024-01-01', 'infinity');
 
 \echo '## Initial state of target table'

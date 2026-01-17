@@ -80,7 +80,7 @@ BEGIN
         EXECUTE sql;
     END LOOP;
 
-    -- Follow renames for valid_from and valid_until columns using the bounds check constraint.
+    -- Follow renames for valid_from and valid_until columns using the boundary check constraint.
     FOR sql IN
         SELECT format('UPDATE sql_saga.era SET valid_from_column_name = %L, valid_until_column_name = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
             sa.attname, ea.attname,
@@ -88,13 +88,14 @@ BEGIN
         )
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
-        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.bounds_check_constraint)
+        JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, e.boundary_check_constraint)
         JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
         JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
-        WHERE e.bounds_check_constraint IS NOT NULL
+        WHERE e.boundary_check_constraint IS NOT NULL
           AND (e.valid_from_column_name, e.valid_until_column_name) <> (sa.attname, ea.attname)
           AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname, ea.attname)
     LOOP
+        RAISE DEBUG 'rename_following: Executing boundary column rename: %', sql;
         EXECUTE sql;
     END LOOP;
 
@@ -133,26 +134,43 @@ BEGIN
         EXECUTE sql;
     END LOOP;
 
-    /*
-     * Inversely, the bounds check constraint can be retrieved via the start
-     * and end columns.
-     */
+    -- Follow renames of the bounds check constraint (NOT isempty(range)).
     FOR sql IN
         SELECT format('UPDATE sql_saga.era SET bounds_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
-            c.conname, /* %L */
-            e.table_schema, /* %L */
-            e.table_name, /* %L */
-            e.era_name /* %L */
+            c.conname,
+            e.table_schema,
+            e.table_name,
+            e.era_name
         )
         FROM sql_saga.era AS e
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
-        JOIN pg_catalog.pg_attribute AS sa ON sa.attrelid = pc.oid
-        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
-        WHERE e.bounds_check_constraint <> c.conname
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', sa.attname /* %I */, ea.attname /* %I */)
-          AND (e.valid_from_column_name, e.valid_until_column_name) = (sa.attname, ea.attname)
+        WHERE e.bounds_check_constraint IS NOT NULL
+          AND e.bounds_check_constraint <> c.conname
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((NOT isempty(%I)))', e.range_column_name)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.bounds_check_constraint))
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames of the boundary check constraint (from < until).
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.era SET boundary_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            c.conname,
+            e.table_schema,
+            e.table_name,
+            e.era_name
+        )
+        FROM sql_saga.era AS e
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (e.table_name, (SELECT oid FROM pg_namespace WHERE nspname = e.table_schema))
+        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
+        WHERE e.boundary_check_constraint IS NOT NULL
+          AND e.boundary_check_constraint <> c.conname
+          AND e.valid_from_column_name IS NOT NULL
+          AND e.valid_until_column_name IS NOT NULL
+          AND (pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I))', e.valid_from_column_name, e.valid_until_column_name)
+               OR pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I < %I) AND (%I > ''-infinity''::integer))', e.valid_from_column_name, e.valid_until_column_name, e.valid_from_column_name))
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, e.boundary_check_constraint))
     LOOP
         EXECUTE sql;
     END LOOP;
@@ -517,33 +535,60 @@ BEGIN
         FOR r IN
             SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger AS trigger_name
             FROM sql_saga.foreign_keys AS fk
-            WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
+            WHERE fk.type = 'temporal_to_temporal'
+              AND fk.fk_insert_trigger IS NOT NULL
+              AND NOT EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
                 WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
             UNION ALL
             SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger AS trigger_name
             FROM sql_saga.foreign_keys AS fk
-            WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
+            WHERE fk.type = 'temporal_to_temporal'
+              AND fk.fk_update_trigger IS NOT NULL
+              AND NOT EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
                 WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
             UNION ALL
             SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger AS trigger_name
             FROM sql_saga.foreign_keys AS fk
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-            WHERE NOT EXISTS (
+            WHERE fk.uk_update_trigger IS NOT NULL
+              AND NOT EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
                 WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
             UNION ALL
             SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger AS trigger_name
             FROM sql_saga.foreign_keys AS fk
             JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-            WHERE NOT EXISTS (
+            WHERE fk.uk_delete_trigger IS NOT NULL
+              AND NOT EXISTS (
                 SELECT FROM pg_catalog.pg_trigger AS t
                 WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
         LOOP
             RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
                 r.trigger_name, r.table_oid, r.foreign_key_name;
         END LOOP;
+
+        -- Protect synchronize_temporal_columns_trigger from being renamed or dropped.
+        -- This trigger is essential for maintaining consistency between range and boundary columns.
+        -- Only check during explicit ALTER TRIGGER commands to avoid MVCC visibility issues
+        -- during other operations like ALTER TABLE OWNER or GRANT/REVOKE.
+        IF v_is_alter_trigger THEN
+            FOR r IN
+                SELECT e.era_name, to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid,
+                       format('%s_synchronize_temporal_columns_trigger', e.table_name) AS expected_trigger_name
+                FROM sql_saga.era AS e
+                WHERE e.trigger_applies_defaults  -- Only eras with synchronization triggers
+                  AND NOT EXISTS (
+                      SELECT FROM pg_catalog.pg_trigger AS t
+                      WHERE t.tgrelid = to_regclass(format('%I.%I', e.table_schema, e.table_name))
+                        AND t.tgname = format('%s_synchronize_temporal_columns_trigger', e.table_name)
+                        AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc)
+            LOOP
+                RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is managed by era "%"',
+                    r.expected_trigger_name, r.table_oid, r.era_name;
+            END LOOP;
+        END IF;
     END IF;
 
 END;

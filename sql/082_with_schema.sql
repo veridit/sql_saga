@@ -11,6 +11,7 @@ CREATE SCHEMA hidden;
 
 CREATE TABLE exposed.employees (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_to date,
   valid_until date,
@@ -20,6 +21,7 @@ CREATE TABLE exposed.employees (
 
 CREATE TABLE hidden.staff (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_to date,
   valid_until date,
@@ -32,8 +34,16 @@ CREATE TABLE hidden.staff (
 \d hidden.staff
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('exposed.employees', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+ALTER TABLE exposed.employees ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('hidden.staff', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+ALTER TABLE hidden.staff ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid', key_type => 'natural');

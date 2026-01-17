@@ -83,15 +83,18 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
@@ -1403,6 +1406,7 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1410,10 +1414,12 @@ CREATE TABLE temporal_merge_test.establishment (
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
@@ -1489,15 +1495,19 @@ CREATE SCHEMA temporal_merge_test_vt;
 -- Target table with valid_to and a trigger to sync valid_until
 CREATE TABLE temporal_merge_test_vt.test_target (
     id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_to DATE, -- Inclusive end date
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
 
-SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-CREATE INDEX ON temporal_merge_test_vt.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+CREATE INDEX ON temporal_merge_test_vt.test_target USING GIST (valid_range);
 
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_vt.reset_target() LANGUAGE plpgsql AS $$
@@ -1571,13 +1581,16 @@ CREATE SCHEMA temporal_merge_test_me;
 -- Target table
 CREATE TABLE temporal_merge_test_me.test_target (
     id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     status TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_me.test_target', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test_me.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test_me.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test_me.test_target USING GIST (valid_range);
 
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_me.reset_target() LANGUAGE plpgsql AS $$
@@ -1662,15 +1675,18 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
@@ -1752,13 +1768,16 @@ CREATE SCHEMA temporal_merge_test_serial;
 -- Target table with SERIAL surrogate key
 CREATE TABLE temporal_merge_test_serial.test_target (
     id SERIAL NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test_serial.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test_serial.test_target USING GIST (valid_range);
 
 -- psql variables for the test
 \set target_schema 'temporal_merge_test_serial'
@@ -1824,12 +1843,15 @@ CREATE SCHEMA temporal_merge_test_multi_insert;
 CREATE TABLE temporal_merge_test_multi_insert.test_target (
     id SERIAL NOT NULL,
     name TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_from', 'valid_until');
-CREATE INDEX ON temporal_merge_test_multi_insert.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON temporal_merge_test_multi_insert.test_target USING GIST (valid_range);
 
 \set target_schema 'temporal_merge_test_multi_insert'
 \set target_table 'temporal_merge_test_multi_insert.test_target'
@@ -1900,11 +1922,14 @@ CREATE TABLE tm_44_not_null_test.test_unit (
     id int,
     name text NOT NULL,
     value int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_44_not_null_test.test_unit'::regclass);
-CREATE INDEX ON tm_44_not_null_test.test_unit USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('tm_44_not_null_test.test_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON tm_44_not_null_test.test_unit USING GIST (valid_range);
 SELECT sql_saga.add_unique_key('tm_44_not_null_test.test_unit'::regclass, ARRAY['id']);
 
 -- Insert an initial record
@@ -1964,11 +1989,14 @@ CREATE TABLE tm_47_surgical_patch.test_target (
     id int,
     name text,
     employees int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_47_surgical_patch.test_target'::regclass);
-CREATE INDEX ON tm_47_surgical_patch.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+SELECT sql_saga.add_era('tm_47_surgical_patch.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+CREATE INDEX ON tm_47_surgical_patch.test_target USING GIST (valid_range);
 SELECT sql_saga.add_unique_key('tm_47_surgical_patch.test_target'::regclass, ARRAY['id']);
 
 -- Insert an initial record

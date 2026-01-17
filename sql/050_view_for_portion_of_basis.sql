@@ -56,6 +56,7 @@ TABLE products_view_select_for_portion_of;
 -- It will update the price on ALL historical records for entity 1.
 SAVEPOINT simple_update_should_succeed;
 UPDATE products__for_portion_of_valid SET price = 1250 WHERE id = 1;
+
 -- Verify both rows for product 1 are updated.
 TABLE products ORDER BY id, valid_from;
 ROLLBACK TO simple_update_should_succeed;

@@ -13,6 +13,7 @@ CREATE SCHEMA saga_repro;
 CREATE TABLE saga_repro.target_units_template (
     unit_ident text NOT NULL,
     name text,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_to date,
     valid_until date
@@ -47,11 +48,23 @@ CREATE TABLE saga_repro.target_units_a (LIKE saga_repro.target_units_template);
 CREATE TABLE saga_repro.target_units_b (LIKE saga_repro.target_units_template);
 CREATE TABLE saga_repro.target_units_c (LIKE saga_repro.target_units_template);
 
-SELECT sql_saga.add_era('saga_repro.target_units_a', synchronize_valid_to_column := 'valid_to');
+ALTER TABLE saga_repro.target_units_a ADD PRIMARY KEY (unit_ident, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('saga_repro.target_units_a', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_a', ARRAY['unit_ident'], key_type => 'natural');
-SELECT sql_saga.add_era('saga_repro.target_units_b', synchronize_valid_to_column := 'valid_to');
+ALTER TABLE saga_repro.target_units_b ADD PRIMARY KEY (unit_ident, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('saga_repro.target_units_b', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_b', ARRAY['unit_ident'], key_type => 'natural');
-SELECT sql_saga.add_era('saga_repro.target_units_c', synchronize_valid_to_column := 'valid_to');
+ALTER TABLE saga_repro.target_units_c ADD PRIMARY KEY (unit_ident, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('saga_repro.target_units_c', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_c', ARRAY['unit_ident'], key_type => 'natural');
 
 CREATE TABLE saga_repro.source_units_ordering (LIKE saga_repro.source_units_template INCLUDING ALL);
@@ -164,8 +177,12 @@ CREATE TABLE saga_repro.target_units_coalesce (
     LIKE saga_repro.target_units_template,
     notes text -- Add a nullable column that does not exist in the source table
 );
+ALTER TABLE saga_repro.target_units_coalesce ADD PRIMARY KEY (unit_ident, valid_range WITHOUT OVERLAPS);
 CREATE TABLE saga_repro.source_units_coalesce (LIKE saga_repro.source_units_template INCLUDING ALL);
-SELECT sql_saga.add_era('saga_repro.target_units_coalesce', synchronize_valid_to_column := 'valid_to');
+SELECT sql_saga.add_era('saga_repro.target_units_coalesce', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_coalesce', ARRAY['unit_ident'], key_type => 'natural');
 GRANT ALL ON saga_repro.target_units_coalesce TO sql_saga_unprivileged_user;
 GRANT ALL ON saga_repro.source_units_coalesce TO sql_saga_unprivileged_user;
@@ -210,6 +227,7 @@ CREATE TABLE saga_repro.target_units_ephemeral (
     unit_ident text NOT NULL,
     name text NOT NULL,
     notes text,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_to date,
     valid_until date,
@@ -224,7 +242,11 @@ CREATE TABLE saga_repro.source_units_ephemeral (
     valid_from date, valid_to date,
     edit_at timestamptz, edit_comment text
 );
-SELECT sql_saga.add_era('saga_repro.target_units_ephemeral', synchronize_valid_to_column := 'valid_to');
+ALTER TABLE saga_repro.target_units_ephemeral ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('saga_repro.target_units_ephemeral', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_ephemeral', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_unique_key('saga_repro.target_units_ephemeral', ARRAY['unit_ident'], key_type => 'natural');
 GRANT ALL ON saga_repro.target_units_ephemeral TO sql_saga_unprivileged_user;
@@ -329,6 +351,7 @@ CREATE TABLE saga_repro.target_not_null_default (
     unit_ident text NOT NULL,
     name text NOT NULL,
     status text NOT NULL DEFAULT 'active',
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_to date,
     valid_until date
@@ -339,14 +362,18 @@ CREATE TABLE saga_repro.source_not_null_default (
     valid_from date, valid_to date
 );
 
-SELECT sql_saga.add_era('saga_repro.target_not_null_default', synchronize_valid_to_column := 'valid_to');
+ALTER TABLE saga_repro.target_not_null_default ADD PRIMARY KEY (unit_ident, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('saga_repro.target_not_null_default', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key('saga_repro.target_not_null_default', ARRAY['unit_ident'], key_type => 'natural');
 GRANT ALL ON saga_repro.target_not_null_default TO sql_saga_unprivileged_user;
 GRANT ALL ON saga_repro.source_not_null_default TO sql_saga_unprivileged_user;
 
 -- Initial state: one record with default status
-INSERT INTO saga_repro.target_not_null_default (unit_ident, name, valid_from, valid_to)
-VALUES ('unit1', 'Unit A', '2023-01-01', '2023-12-31');
+INSERT INTO saga_repro.target_not_null_default (unit_ident, name, valid_from, valid_until)
+VALUES ('unit1', 'Unit A', '2023-01-01', '2024-01-01');
 
 \echo '\n--- Initial State ---'
 TABLE saga_repro.target_not_null_default;

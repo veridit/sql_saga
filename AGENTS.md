@@ -2,6 +2,12 @@
 
 This PostgreSQL extension provides temporal table management. This document provides quick-reference guidelines for AI coding agents working on this codebase.
 
+## Quick Reference
+
+- **API Documentation:** See `doc/api.md` for complete function signatures without implementation details
+- **Conventions:** See `CONVENTIONS.md` for detailed code style and architecture patterns
+- **Tasks:** See `todo.md` for current project status and pending work
+
 ## Build, Test, and Lint Commands
 
 ### Building
@@ -12,6 +18,16 @@ make clean                              # Clean build artifacts
 ```
 
 ### Testing
+
+**CRITICAL: ALWAYS run tests immediately after making changes to test files!**
+```bash
+# After editing a test file, ALWAYS run this immediately:
+make test TESTS="001_install YOUR_TEST"; make diff-fail-first | head -n 30
+
+# DO NOT just edit and assume it works. Test first, then iterate.
+```
+
+**Full test suite:**
 ```bash
 make install && make test; make diff-fail-all              # Run all tests
 make install && make test fast; make diff-fail-all         # Run fast tests (exclude benchmarks)
@@ -24,7 +40,8 @@ make diff-fail-all vim                  # Review failures interactively with vim
 make diff-fail-first vim                # Review first failure only
 
 # Accept new test output
-make expected                           # Update expected/*.out from results/
+make expected                           # Update expected/*.out from results/ (all tests from last run)
+make expected TESTS="test1 test2"      # Update specific tests only
 ```
 
 ### Running Single Test
@@ -192,6 +209,107 @@ Use `tmp/journal.md` for complex tasks:
 - **Never** remove `trace` column from temporal_merge output (zero overhead when disabled)
 - **Never** suggest multi-line shell commands (environment splits on newlines)
 - **Always** run `make install` before tests
+
+## PostgreSQL 18 Temporal Constraints and Foreign Keys
+
+### Execution Strategy: `with_temporary_temporal_gaps`
+
+**Architectural Decision** (proven by test 073):
+sql_saga uses DELETE→UPDATE→INSERT execution order to enable native PostgreSQL 18 temporal foreign keys.
+
+**Why This Strategy:**
+- Creates temporary **gaps** (tolerated by DEFERRABLE FKs)
+- Avoids temporary **overlaps** (would violate NOT DEFERRABLE unique)
+- Enables native `FOREIGN KEY ... PERIOD` syntax
+- Preserves optimizer awareness of FK relationships
+
+```sql
+-- Example: Timeline split with DELETE-first strategy
+SET CONSTRAINTS ALL DEFERRED;  -- Defer FK checks
+
+DELETE FROM parent WHERE id = 1;                    -- Creates gap
+INSERT INTO parent VALUES 
+    (1, '[2024-01-01,2024-05-01)'),                 -- Closes gap (partial)
+    (1, '[2024-05-01,infinity)');                   -- Closes gap (complete)
+
+SET CONSTRAINTS ALL IMMEDIATE;  -- FK check passes (no gaps remain)
+```
+
+### PostgreSQL 18 Constraint Requirements
+
+**Unique Constraints:** NOT DEFERRABLE
+- Temporal unique constraints use `WITHOUT OVERLAPS`
+- Must be NOT DEFERRABLE (immediate checking prevents overlaps)
+- Can be referenced by native temporal FKs
+
+**Foreign Key Constraints:** DEFERRABLE
+- Native temporal FKs use `FOREIGN KEY ... PERIOD` syntax  
+- Must be DEFERRABLE to tolerate temporary gaps
+- Checked at transaction end (gaps must be closed by then)
+
+```sql
+-- Parent table
+CREATE TABLE parent (
+    id int,
+    valid daterange,
+    UNIQUE (id, valid WITHOUT OVERLAPS)  -- NOT DEFERRABLE (default)
+);
+
+-- Child table with native temporal FK
+CREATE TABLE child (
+    parent_id int,
+    valid daterange,
+    FOREIGN KEY (parent_id, PERIOD valid) 
+        REFERENCES parent (id, PERIOD valid)
+        DEFERRABLE  -- Required for gap tolerance
+);
+```
+
+### Execution Order Details
+
+**Operation Order:** DELETE → UPDATE → INSERT
+- Defined by enum order in `sql_saga.temporal_merge_plan_action`
+- Planner generates `plan_op_seq` based on this ordering
+- Executor processes operations sequentially by `plan_op_seq`
+
+**UPDATE Effect Order:** NONE → SHRINK → MOVE → GROW
+- Defined by enum order in `sql_saga.temporal_merge_update_effect`  
+- NONE first: data-only updates, no timeline impact
+- SHRINK before GROW: contract before expanding (minimizes gap duration)
+- Within each operation type, sorted by this effect order
+
+### Implementation Details
+
+**Schema** (`src/01_schema.sql`):
+- Documents `with_temporary_temporal_gaps` strategy
+- Enum orders define execution sequence
+- Comments explain rationale and constraints
+
+**Planner** (`src/27_temporal_merge_plan.sql`):
+- Generates `plan_op_seq` using operation and effect ordering
+- Automatically uses DELETE-first based on enum order
+
+**Executor** (`src/28_temporal_merge_execute.sql`):
+- Processes plan by `plan_op_seq` (respects DELETE-first order)
+- Sets `CONSTRAINTS ALL DEFERRED` during execution
+- Validates constraints at transaction end
+
+**Constraints** (`src/19_add_unique_key.sql`, `src/20_add_foreign_key.sql`):
+- Unique: NOT DEFERRABLE (prevents overlaps immediately)
+- FK: DEFERRABLE (tolerates gaps temporarily)
+
+### Trade-offs and Benefits
+
+✅ **Benefits:**
+- Native FK syntax with optimizer awareness
+- Declarative constraint definitions
+- Proven PostgreSQL 18 compatibility
+- Simpler than trigger-based FKs
+
+⚠️ **Requirements:**
+- Operations must close gaps by transaction end
+- FK checks deferred (not immediate feedback)
+- Must use DELETE-first order (not INSERT-first)
 
 ## Common Pitfalls
 

@@ -44,17 +44,22 @@ CREATE TABLE tm_portion_of.target(
     id int,
     payload TEXT,
     edit_comment TEXT,
+    valid_range daterange,
     valid_from DATE,
     valid_until DATE
 );
-SELECT sql_saga.add_era('tm_portion_of.target'::regclass, 'valid_from', 'valid_until', 'valid');
+SELECT sql_saga.add_era('tm_portion_of.target'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    era_name => 'valid');
+NOTICE:  sql_saga: Created trigger "target_synchronize_temporal_columns_trigger" on table tm_portion_of.target to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_portion_of.target'::regclass, '{id}', 'valid');
-NOTICE:  sql_saga: altering table tm_portion_of.target to add constraints: ADD CONSTRAINT target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tm_portion_of.target to add constraints: ADD CONSTRAINT target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  target_id_valid
@@ -84,11 +89,11 @@ INSERT INTO source_1 (row_id, id, payload, edit_comment, valid_from, valid_until
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id | payload | edit_comment | valid_from | valid_until 
-----+---------+--------------+------------+-------------
-  1 | A-1     | Adjacent 1   | 2021-01-01 | 2022-01-01
-  1 | A-2     | Adjacent 2   | 2022-01-01 | 2023-01-01
-  1 | B-1     | After Gap    | 2024-01-01 | 2025-01-01
+ id | payload | edit_comment |       valid_range       | valid_from | valid_until 
+----+---------+--------------+-------------------------+------------+-------------
+  1 | A-1     | Adjacent 1   | [2021-01-01,2022-01-01) | 2021-01-01 | 2022-01-01
+  1 | A-2     | Adjacent 2   | [2022-01-01,2023-01-01) | 2022-01-01 | 2023-01-01
+  1 | B-1     | After Gap    | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (3 rows)
 
 \echo '--- Source: Data to merge ---'
@@ -103,11 +108,11 @@ CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, s
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                     data                                     | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {101}   | INSERT    |               | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | overlaps     | 2021-01-01     | 2022-01-01      | 2021-07-01     | 2022-07-01      | {"payload": "Patched-Straddle", "edit_comment": "Surgical Patch Straddling"} |          |       | existing_entity__1
-           2 | {101}   | UPDATE    | SHRINK        | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                             |          |       | existing_entity__1
-           3 | {101}   | UPDATE    | SHRINK        | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                             |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                     data                                     | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {101}   | UPDATE    | SHRINK        | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                             |          |       | existing_entity__1
+           2 |             1 | {101}   | UPDATE    | SHRINK        | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                             |          |       | existing_entity__1
+           3 |             2 | {101}   | INSERT    |               | 101       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | overlaps     | 2021-01-01     | 2022-01-01      | 2021-07-01     | 2022-07-01      | {"payload": "Patched-Straddle", "edit_comment": "Surgical Patch Straddling"} |          |       | existing_entity__1
 (3 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -137,12 +142,12 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id |     payload      |       edit_comment        | valid_from | valid_until 
-----+------------------+---------------------------+------------+-------------
-  1 | A-1              | Adjacent 1                | 2021-01-01 | 2021-07-01
-  1 | Patched-Straddle | Surgical Patch Straddling | 2021-07-01 | 2022-07-01
-  1 | A-2              | Adjacent 2                | 2022-07-01 | 2023-01-01
-  1 | B-1              | After Gap                 | 2024-01-01 | 2025-01-01
+ id |     payload      |       edit_comment        |       valid_range       | valid_from | valid_until 
+----+------------------+---------------------------+-------------------------+------------+-------------
+  1 | A-1              | Adjacent 1                | [2021-01-01,2021-07-01) | 2021-01-01 | 2021-07-01
+  1 | Patched-Straddle | Surgical Patch Straddling | [2021-07-01,2022-07-01) | 2021-07-01 | 2022-07-01
+  1 | A-2              | Adjacent 2                | [2022-07-01,2023-01-01) | 2022-07-01 | 2023-01-01
+  1 | B-1              | After Gap                 | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (4 rows)
 
 ROLLBACK TO SAVEPOINT s1;
@@ -159,11 +164,11 @@ INSERT INTO source_2 (row_id, id, payload, edit_comment, valid_from, valid_until
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id | payload | edit_comment | valid_from | valid_until 
-----+---------+--------------+------------+-------------
-  1 | A-1     | Adjacent 1   | 2021-01-01 | 2022-01-01
-  1 | A-2     | Adjacent 2   | 2022-01-01 | 2023-01-01
-  1 | B-1     | After Gap    | 2024-01-01 | 2025-01-01
+ id | payload | edit_comment |       valid_range       | valid_from | valid_until 
+----+---------+--------------+-------------------------+------------+-------------
+  1 | A-1     | Adjacent 1   | [2021-01-01,2022-01-01) | 2021-01-01 | 2022-01-01
+  1 | A-2     | Adjacent 2   | [2022-01-01,2023-01-01) | 2022-01-01 | 2023-01-01
+  1 | B-1     | After Gap    | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (3 rows)
 
 \echo '--- Source: Data to merge ---'
@@ -178,11 +183,11 @@ CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, s
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {201}   | INSERT    |               | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | overlaps     | 2021-01-01     | 2022-01-01      | 2021-07-01     | 2022-07-01      | {"payload": "Replaced-Straddle", "edit_comment": "Surgical Replace Straddling"} |          |       | existing_entity__1
-           2 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                                |          |       | existing_entity__1
-           3 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                                |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                      data                                       | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"}                                |          |       | existing_entity__1
+           2 |             1 | {201}   | UPDATE    | SHRINK        | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"}                                |          |       | existing_entity__1
+           3 |             2 | {201}   | INSERT    |               | 201       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | overlaps     | 2021-01-01     | 2022-01-01      | 2021-07-01     | 2022-07-01      | {"payload": "Replaced-Straddle", "edit_comment": "Surgical Replace Straddling"} |          |       | existing_entity__1
 (3 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -212,12 +217,12 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id |      payload      |        edit_comment         | valid_from | valid_until 
-----+-------------------+-----------------------------+------------+-------------
-  1 | A-1               | Adjacent 1                  | 2021-01-01 | 2021-07-01
-  1 | Replaced-Straddle | Surgical Replace Straddling | 2021-07-01 | 2022-07-01
-  1 | A-2               | Adjacent 2                  | 2022-07-01 | 2023-01-01
-  1 | B-1               | After Gap                   | 2024-01-01 | 2025-01-01
+ id |      payload      |        edit_comment         |       valid_range       | valid_from | valid_until 
+----+-------------------+-----------------------------+-------------------------+------------+-------------
+  1 | A-1               | Adjacent 1                  | [2021-01-01,2021-07-01) | 2021-01-01 | 2021-07-01
+  1 | Replaced-Straddle | Surgical Replace Straddling | [2021-07-01,2022-07-01) | 2021-07-01 | 2022-07-01
+  1 | A-2               | Adjacent 2                  | [2022-07-01,2023-01-01) | 2022-07-01 | 2023-01-01
+  1 | B-1               | After Gap                   | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (4 rows)
 
 ROLLBACK TO SAVEPOINT s2;
@@ -234,11 +239,11 @@ INSERT INTO source_3 (row_id, id, payload, edit_comment, valid_from, valid_until
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id | payload | edit_comment | valid_from | valid_until 
-----+---------+--------------+------------+-------------
-  1 | A-1     | Adjacent 1   | 2021-01-01 | 2022-01-01
-  1 | A-2     | Adjacent 2   | 2022-01-01 | 2023-01-01
-  1 | B-1     | After Gap    | 2024-01-01 | 2025-01-01
+ id | payload | edit_comment |       valid_range       | valid_from | valid_until 
+----+---------+--------------+-------------------------+------------+-------------
+  1 | A-1     | Adjacent 1   | [2021-01-01,2022-01-01) | 2021-01-01 | 2022-01-01
+  1 | A-2     | Adjacent 2   | [2022-01-01,2023-01-01) | 2022-01-01 | 2023-01-01
+  1 | B-1     | After Gap    | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (3 rows)
 
 \echo '--- Source: Data to merge ---'
@@ -253,10 +258,10 @@ CALL sql_saga.temporal_merge(target_table => 'tm_portion_of.target'::regclass, s
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                       data                       | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------+----------+-------+--------------------
-           1 | {301}   | UPDATE    | SHRINK        | 301       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"} |          |       | existing_entity__1
-           2 | {301}   | UPDATE    | SHRINK        | 301       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                       data                       | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {301}   | UPDATE    | SHRINK        | 301       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlapped_by | started_by   | 2021-01-01     | 2022-01-01      | 2021-01-01     | 2021-07-01      | {"payload": "A-1", "edit_comment": "Adjacent 1"} |          |       | existing_entity__1
+           2 |             1 | {301}   | UPDATE    | SHRINK        | 301       | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | overlaps      | finished_by  | 2022-01-01     | 2023-01-01      | 2022-07-01     | 2023-01-01      | {"payload": "A-2", "edit_comment": "Adjacent 2"} |          |       | existing_entity__1
 (2 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -284,11 +289,11 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_portion_of.target ORDER BY id, valid_from;
- id | payload | edit_comment | valid_from | valid_until 
-----+---------+--------------+------------+-------------
-  1 | A-1     | Adjacent 1   | 2021-01-01 | 2021-07-01
-  1 | A-2     | Adjacent 2   | 2022-07-01 | 2023-01-01
-  1 | B-1     | After Gap    | 2024-01-01 | 2025-01-01
+ id | payload | edit_comment |       valid_range       | valid_from | valid_until 
+----+---------+--------------+-------------------------+------------+-------------
+  1 | A-1     | Adjacent 1   | [2021-01-01,2021-07-01) | 2021-01-01 | 2021-07-01
+  1 | A-2     | Adjacent 2   | [2022-07-01,2023-01-01) | 2022-07-01 | 2023-01-01
+  1 | B-1     | After Gap    | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT s3;
@@ -302,17 +307,21 @@ CREATE TABLE tm_portion_of.test_unit_not_null (
     id int,
     name text NOT NULL,
     value int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_portion_of.test_unit_not_null'::regclass);
+SELECT sql_saga.add_era('tm_portion_of.test_unit_not_null'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_unit_not_null_synchronize_temporal_columns_trigger" on table tm_portion_of.test_unit_not_null to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_portion_of.test_unit_not_null'::regclass, ARRAY['id']);
-NOTICE:  sql_saga: altering table tm_portion_of.test_unit_not_null to add constraints: ADD CONSTRAINT test_unit_not_null_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT test_unit_not_null_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tm_portion_of.test_unit_not_null to add constraints: ADD CONSTRAINT test_unit_not_null_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key        
 -----------------------------
  test_unit_not_null_id_valid
@@ -335,9 +344,9 @@ INSERT INTO source_4 (id, value, valid_from, valid_until) VALUES (1, 200, '2024-
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_portion_of.test_unit_not_null;
- id |     name     | value | valid_from | valid_until 
-----+--------------+-------+------------+-------------
-  1 | Initial Name |   100 | 2024-01-01 | infinity
+ id |     name     | value |      valid_range      | valid_from | valid_until 
+----+--------------+-------+-----------------------+------------+-------------
+  1 | Initial Name |   100 | [2024-01-01,infinity) | 2024-01-01 | infinity
 (1 row)
 
 \echo '--- Source: Data to merge (missing "name" column) ---'
@@ -359,10 +368,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | finished_by  | 2024-01-01     | infinity        | 2024-06-01     | infinity        | {"name": "Initial Name", "value": 200} |          |       | existing_entity__1
-           2 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2024-06-01      | {"name": "Initial Name", "value": 100} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2024-06-01      | {"name": "Initial Name", "value": 100} |          |       | existing_entity__1
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | finished_by  | 2024-01-01     | infinity        | 2024-06-01     | infinity        | {"name": "Initial Name", "value": 200} |          |       | existing_entity__1
 (2 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -388,10 +397,10 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_portion_of.test_unit_not_null ORDER BY id, valid_from;
- id |     name     | value | valid_from | valid_until 
-----+--------------+-------+------------+-------------
-  1 | Initial Name |   100 | 2024-01-01 | 2024-06-01
-  1 | Initial Name |   200 | 2024-06-01 | infinity
+ id |     name     | value |       valid_range       | valid_from | valid_until 
+----+--------------+-------+-------------------------+------------+-------------
+  1 | Initial Name |   100 | [2024-01-01,2024-06-01) | 2024-01-01 | 2024-06-01
+  1 | Initial Name |   200 | [2024-06-01,infinity)   | 2024-06-01 | infinity
 (2 rows)
 
 ROLLBACK TO SAVEPOINT s4;

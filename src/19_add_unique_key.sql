@@ -226,6 +226,9 @@ BEGIN
         END IF;
         /* If we were given a unique constraint to use, look it up and make sure it matches */
         -- For primary and natural keys, we now use a native temporal constraint.
+        -- These constraints must be NOT DEFERRABLE (the default) to be referenceable by
+        -- native temporal foreign keys. The with_temporary_temporal_gaps execution strategy
+        -- (DELETE->UPDATE->INSERT) avoids creating overlaps that would violate this constraint.
         SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
             CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
             string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality), /* %s */
@@ -256,10 +259,13 @@ BEGIN
                     RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
                 END IF;
 
-                -- Native temporal constraints are not deferrable, so we skip those checks.
-                -- We now validate by comparing the definition string for simplicity and robustness.
+                -- PostgreSQL 18 requirement: WITHOUT OVERLAPS constraints must be NOT DEFERRABLE
+                -- to be referenceable by native temporal FKs (FOREIGN KEY ... PERIOD).
+                -- Users migrating from trigger-based FKs may have DEFERRABLE PKs which must be changed.
+                -- The with_temporary_temporal_gaps strategy (DELETE→UPDATE→INSERT) creates temporary
+                -- gaps (tolerated by DEFERRABLE FKs) rather than overlaps (which would violate this constraint).
                 IF pg_catalog.pg_get_constraintdef(constraint_record.oid) <> unique_sql THEN
-                     RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
+                     RAISE EXCEPTION E'constraint "%" does not match.\nExpected: "%"\nFound: "%"\n\nPostgreSQL 18 Temporal FK Requirement:\nUnique constraints with WITHOUT OVERLAPS must be NOT DEFERRABLE to be referenceable by native temporal foreign keys. The DELETE→UPDATE→INSERT execution strategy avoids overlaps while tolerating temporary gaps through DEFERRABLE FK checks.\n\nSee AGENTS.md section "PostgreSQL 18 Temporal Constraints and Foreign Keys" for details.',
                         unique_constraint,
                         unique_sql,
                         pg_catalog.pg_get_constraintdef(constraint_record.oid);
@@ -520,14 +526,20 @@ BEGIN
                             pk_column_name name := stable_pk_columns[1];
                             consistency_result jsonb;
                         BEGIN
-                            consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
-                                p_unique_key_name => unique_key_name,
-                                p_natural_key_columns => column_names,
-                                p_mutually_exclusive_columns => mutually_exclusive_columns,
-                                p_primary_key_column => pk_column_name
-                            );
-                            alter_cmds := alter_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
-                            v_pk_consistency_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
+                            -- Skip consistency constraint when natural key IS the PK column (single column case)
+                            IF array_length(column_names, 1) = 1 AND column_names[1] = pk_column_name THEN
+                                -- Natural key is identical to PK column, no consistency check needed
+                                v_pk_consistency_constraint_names := '{}';
+                            ELSE
+                                consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
+                                    p_unique_key_name => unique_key_name,
+                                    p_natural_key_columns => column_names,
+                                    p_mutually_exclusive_columns => mutually_exclusive_columns,
+                                    p_primary_key_column => pk_column_name
+                                );
+                                alter_cmds := alter_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
+                                v_pk_consistency_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
+                            END IF;
                         END;
                     ELSE
                         -- Incompatible PK, silently opt-out.

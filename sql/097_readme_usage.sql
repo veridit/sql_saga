@@ -17,59 +17,67 @@ CREATE SCHEMA readme;
 --------------------------------------------------------------------------------
 
 \echo '--- Creating tables: legal_unit, establishment, projects ---'
+-- Basic case: Only the range column (native PostgreSQL 18 temporal support)
 CREATE TABLE readme.legal_unit (
   id SERIAL NOT NULL,
   legal_ident VARCHAR NOT NULL,
   name VARCHAR NOT NULL,
   status TEXT, -- e.g., 'active', 'inactive'
-  valid_from DATE,
-  valid_to DATE, -- Optional: for human-readable inclusive end dates
-  valid_until DATE
+  valid_range daterange NOT NULL
 );
 
+-- Advanced case: Range column with synchronized boundary columns
 CREATE TABLE readme.establishment (
   id SERIAL NOT NULL,
   name VARCHAR NOT NULL,
   address TEXT NOT NULL,
   legal_unit_id INTEGER, -- Note: Nullable for initial insert before back-filling
+  valid_range daterange NOT NULL,
   valid_from DATE,
   valid_until DATE
 );
 
 CREATE TABLE readme.projects (id serial primary key, name text, legal_unit_id int);
 
+-- Advanced case: Integer range with synchronized boundary columns
 CREATE TABLE readme.unit_with_range (
   id SERIAL NOT NULL,
   name TEXT,
+  num_range INT4RANGE NOT NULL,
   start_num INT,
-  until_num INT,
-  num_range INT4RANGE
+  until_num INT
 );
 
 \echo '--- Activating sql_saga ---'
--- Register the table as a temporal table (an "era") using default column names.
--- Explicitly enable synchronization for the 'valid_to' column.
-SELECT sql_saga.add_era('readme.legal_unit'::regclass, synchronize_valid_to_column := 'valid_to');
+-- Basic case: Register a temporal table with ONLY the range column (simplest, native PG18)
+SELECT sql_saga.add_era('readme.legal_unit'::regclass, 'valid_range', 'valid',
+    synchronize_columns => false);
+ALTER TABLE readme.legal_unit ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 -- Add temporal unique keys. A name is generated if the last argument is omitted.
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural', unique_key_name => 'legal_unit_id_valid');
+SELECT sql_saga.add_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], era_name => 'valid', key_type => 'natural', unique_key_name => 'legal_unit_legal_ident_valid');
 -- Add a predicated unique key (e.g., only active units must have a unique name).
 SELECT sql_saga.add_unique_key(
     table_oid => 'readme.legal_unit'::regclass,
     column_names => ARRAY['name'],
+    era_name => 'valid',
     key_type => 'predicated',
     predicate => 'status = ''active''',
     unique_key_name => 'legal_unit_active_name_valid'
 );
 
-SELECT sql_saga.add_era(table_oid => 'readme.establishment'::regclass, valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'establishment_id_valid');
+-- Advanced case: Register with synchronized boundary columns for convenience
+SELECT sql_saga.add_era('readme.establishment'::regclass, 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+ALTER TABLE readme.establishment ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key(table_oid => 'readme.establishment'::regclass, column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural', unique_key_name => 'establishment_id_valid');
 -- Add a temporal foreign key.
-SELECT sql_saga.add_foreign_key(
+SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'readme.establishment'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
-    pk_table_oid => 'readme.legal_unit'::regclass,
-    pk_column_names => ARRAY['id']
+    fk_era_name => 'valid',
+    unique_key_name => 'legal_unit_id_valid'
 );
 
 -- Add a foreign key from a regular table to a temporal table.
@@ -77,11 +85,16 @@ SELECT sql_saga.add_foreign_key(
     fk_table_oid => 'readme.projects'::regclass,
     fk_column_names => ARRAY['legal_unit_id'],
     pk_table_oid => 'readme.legal_unit'::regclass,
-    pk_column_names => ARRAY['id']
+    pk_column_names => ARRAY['id'],
+    fk_era_name => NULL
 );
 
-SELECT sql_saga.add_era(table_oid => 'readme.unit_with_range'::regclass, valid_from_column_name => 'start_num', valid_until_column_name => 'until_num', synchronize_range_column := 'num_range');
-SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
+-- Advanced case: Integer range with synchronized boundary columns
+SELECT sql_saga.add_era('readme.unit_with_range'::regclass, 'num_range', 'valid',
+    valid_from_column_name => 'start_num',
+    valid_until_column_name => 'until_num');
+ALTER TABLE readme.unit_with_range ADD PRIMARY KEY (id, num_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural', unique_key_name => 'unit_with_range_id_valid');
 
 \echo '--- Verification: Check metadata tables ---'
 SELECT table_schema, table_name, era_name FROM sql_saga.era WHERE table_schema = 'readme' ORDER BY table_name;
@@ -120,7 +133,7 @@ INSERT INTO source_data VALUES
 SELECT * FROM source_data ORDER BY row_id;
 
 \echo '\n--- Step 2a: Merge legal_unit data ---'
-CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_correlation_id, legal_unit_id AS id, legal_ident, name, status, valid_from, valid_until FROM source_data WHERE entity_type = 'legal_unit';
+CREATE TEMP TABLE source_legal_unit ON COMMIT DROP AS SELECT row_id, identity_correlation_id, legal_unit_id AS id, legal_ident, name, status, daterange(valid_from, valid_until) AS valid_range FROM source_data WHERE entity_type = 'legal_unit';
 
 
 CALL sql_saga.temporal_merge(
@@ -139,7 +152,7 @@ SELECT * FROM pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
 SELECT * FROM pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 \echo '--- Verification: Final state of legal_unit table ---'
-SELECT id, legal_ident, name, status, valid_from, valid_until FROM readme.legal_unit ORDER BY id, valid_from;
+SELECT id, legal_ident, name, status, valid_range FROM readme.legal_unit ORDER BY id, valid_range;
 
 \echo '--- Verification: Check if IDs were back-filled into the source temp table ---'
 SELECT row_id, identity_correlation_id, id AS legal_unit_id FROM source_legal_unit ORDER BY row_id;
@@ -194,12 +207,11 @@ SELECT sql_saga.add_for_portion_of_view('readme.unit_with_range'::regclass);
 UPDATE readme.legal_unit__for_portion_of_valid
 SET
     status = 'inactive',
-    valid_from = '2023-09-01',
-    valid_until = '2023-11-01'
+    valid_range = '[2023-09-01,2023-11-01)'
 WHERE id = 1;
 
 \echo '--- Verification: legal_unit history after split ---'
-SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+SELECT id, status, valid_range FROM readme.legal_unit WHERE id = 1 ORDER BY valid_range;
 
 \echo '\n--- Using the for_portion_of view (Historical Correction) ---'
 \echo 'Correct the name of legal_unit 1 across its entire history'
@@ -210,7 +222,7 @@ SET name = 'Corrected SpareParts'
 WHERE id = 1;
 
 \echo '--- Verification: legal_unit history after correction ---'
-SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE id = 1 ORDER BY valid_from;
+SELECT id, name, valid_range FROM readme.legal_unit WHERE id = 1 ORDER BY valid_range;
 
 
 \echo '\n--- Using the current view ---'
@@ -224,7 +236,7 @@ TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
 CREATE OR REPLACE FUNCTION readme.test_now() RETURNS date AS $$ SELECT '2024-07-01'::date $$ LANGUAGE sql;
 UPDATE readme.legal_unit__current_valid SET name = 'New Ventures LLC' WHERE legal_ident = 'LU003';
 \echo '--- Verification: Full history of the renamed unit ---'
-SELECT id, name, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
+SELECT id, name, valid_range FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_range;
 
 \echo '\n--- DELETE (Soft-Delete): Archive the new unit ---'
 -- Simulate the passage of time for the soft-delete
@@ -233,7 +245,7 @@ DELETE FROM readme.legal_unit__current_valid WHERE legal_ident = 'LU003';
 \echo '--- Verification: The new unit is no longer current ---'
 TABLE readme.legal_unit__current_valid ORDER BY legal_ident;
 \echo '--- Verification: The historical record shows the unit''s timeline has ended ---'
-SELECT id, status, valid_from, valid_until FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_from;
+SELECT id, status, valid_range FROM readme.legal_unit WHERE legal_ident = 'LU003' ORDER BY valid_range;
 
 --------------------------------------------------------------------------------
 \echo '\n--- 3. Deactivation (from README) ---'
@@ -260,10 +272,11 @@ SELECT sql_saga.drop_unique_key(table_oid => 'readme.establishment'::regclass, c
 SELECT sql_saga.drop_era('readme.establishment'::regclass);
 
 
-SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], era_name => 'valid');
+-- Drop unique keys in reverse order of creation (dependent keys first)
+-- Predicated keys must be dropped by name
+SELECT sql_saga.drop_unique_key_by_name(table_oid => 'readme.legal_unit'::regclass, key_name => 'legal_unit_active_name_valid');
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['legal_ident'], era_name => 'valid');
--- For predicated unique keys, the predicate is not needed for dropping.
-SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['name'], era_name => 'valid');
+SELECT sql_saga.drop_unique_key(table_oid => 'readme.legal_unit'::regclass, column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.drop_era('readme.legal_unit'::regclass);
 
 SELECT sql_saga.drop_unique_key(table_oid => 'readme.unit_with_range'::regclass, column_names => ARRAY['id'], era_name => 'valid');

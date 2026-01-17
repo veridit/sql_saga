@@ -12,14 +12,16 @@ SET client_min_messages TO NOTICE;
 CREATE SCHEMA tmd; -- Temporal Merge Delete
 
 -- Target table for all scenarios
-CREATE TABLE tmd.target (id int, value text, edit_comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tmd.target', 'valid_from', 'valid_until');
+CREATE TABLE tmd.target (id int, value text, edit_comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tmd.target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 
 -- Helper to reset state to a rich timeline
 CREATE PROCEDURE tmd.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
     TRUNCATE tmd.target;
-    INSERT INTO tmd.target VALUES
+    INSERT INTO tmd.target (id, value, edit_comment, valid_from, valid_until) VALUES
         -- Entity 1 has adjacent slices and a gap
         (1, 'A1', 'Slice 1',           '2024-01-01', '2024-02-01'),
         (1, 'A2', 'Slice 2 (Adjacent)','2024-02-01', '2024-03-01'),

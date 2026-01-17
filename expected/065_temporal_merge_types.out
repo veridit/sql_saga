@@ -42,14 +42,17 @@ CREATE SCHEMA tmt; -- Temporal Merge Types
 \echo 'Test Type: INTEGER'
 Test Type: INTEGER
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_int (id int, valid_from int, valid_until int, value text);
-SELECT sql_saga.add_era('tmt.target_int', 'valid_from', 'valid_until');
+CREATE TABLE tmt.target_int (id int, valid_range int4range, valid_from int, valid_until int, value text);
+SELECT sql_saga.add_era('tmt.target_int', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_int_synchronize_temporal_columns_trigger" on table tmt.target_int to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-INSERT INTO tmt.target_int VALUES (1, 10, 20, 'Original');
+INSERT INTO tmt.target_int (id, valid_from, valid_until, value) VALUES (1, 10, 20, 'Original');
 CREATE TEMP TABLE source_int (row_id int, id int, valid_from int, valid_until int, value text);
 INSERT INTO source_int VALUES
     (101, 1, 15, 18, 'Patched'), -- Update
@@ -78,26 +81,29 @@ SELECT * FROM (VALUES
 \echo '--- Actual Final State ---'
 --- Actual Final State ---
 SELECT * FROM tmt.target_int ORDER BY id, valid_from;
- id | valid_from | valid_until |  value   
-----+------------+-------------+----------
-  1 |         10 |          15 | Original
-  1 |         15 |          18 | Patched
-  1 |         18 |          20 | Original
-  2 |         10 |          20 | New
+ id | valid_range | valid_from | valid_until |  value   
+----+-------------+------------+-------------+----------
+  1 | [10,15)     |         10 |          15 | Original
+  1 | [15,18)     |         15 |          18 | Patched
+  1 | [18,20)     |         18 |          20 | Original
+  2 | [10,20)     |         10 |          20 | New
 (4 rows)
 
 --------------------------------------------------------------------------------
 \echo 'Test Type: BIGINT'
 Test Type: BIGINT
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_bigint (id int, valid_from bigint, valid_until bigint, value text);
-SELECT sql_saga.add_era('tmt.target_bigint', 'valid_from', 'valid_until');
+CREATE TABLE tmt.target_bigint (id int, valid_range int8range, valid_from bigint, valid_until bigint, value text);
+SELECT sql_saga.add_era('tmt.target_bigint', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_bigint_synchronize_temporal_columns_trigger" on table tmt.target_bigint to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-INSERT INTO tmt.target_bigint VALUES (1, 10, 20, 'Original');
+INSERT INTO tmt.target_bigint (id, valid_from, valid_until, value) VALUES (1, 10, 20, 'Original');
 CREATE TEMP TABLE source_bigint (row_id int, id int, valid_from bigint, valid_until bigint, value text);
 INSERT INTO source_bigint VALUES
     (101, 1, 15, 18, 'Patched'), -- Update
@@ -126,26 +132,29 @@ SELECT * FROM (VALUES
 \echo '--- Actual Final State ---'
 --- Actual Final State ---
 SELECT * FROM tmt.target_bigint ORDER BY id, valid_from;
- id | valid_from | valid_until |  value   
-----+------------+-------------+----------
-  1 |         10 |          15 | Original
-  1 |         15 |          18 | Patched
-  1 |         18 |          20 | Original
-  2 |         10 |          20 | New
+ id | valid_range | valid_from | valid_until |  value   
+----+-------------+------------+-------------+----------
+  1 | [10,15)     |         10 |          15 | Original
+  1 | [15,18)     |         15 |          18 | Patched
+  1 | [18,20)     |         18 |          20 | Original
+  2 | [10,20)     |         10 |          20 | New
 (4 rows)
 
 --------------------------------------------------------------------------------
 \echo 'Test Type: NUMERIC'
 Test Type: NUMERIC
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_numeric (id int, valid_from numeric, valid_until numeric, value text);
-SELECT sql_saga.add_era('tmt.target_numeric', 'valid_from', 'valid_until');
+CREATE TABLE tmt.target_numeric (id int, valid_range numrange, valid_from numeric, valid_until numeric, value text);
+SELECT sql_saga.add_era('tmt.target_numeric', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_numeric_synchronize_temporal_columns_trigger" on table tmt.target_numeric to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-INSERT INTO tmt.target_numeric VALUES (1, 10.0, 20.0, 'Original');
+INSERT INTO tmt.target_numeric (id, valid_from, valid_until, value) VALUES (1, 10.0, 20.0, 'Original');
 CREATE TEMP TABLE source_numeric (row_id int, id int, valid_from numeric, valid_until numeric, value text);
 INSERT INTO source_numeric VALUES
     (101, 1, 15.5, 18.5, 'Patched'), -- Update
@@ -174,26 +183,29 @@ SELECT * FROM (VALUES
 \echo '--- Actual Final State ---'
 --- Actual Final State ---
 SELECT * FROM tmt.target_numeric ORDER BY id, valid_from;
- id | valid_from | valid_until |  value   
-----+------------+-------------+----------
-  1 |       10.0 |        15.5 | Original
-  1 |       15.5 |        18.5 | Patched
-  1 |       18.5 |        20.0 | Original
-  2 |       10.0 |        20.0 | New
+ id | valid_range | valid_from | valid_until |  value   
+----+-------------+------------+-------------+----------
+  1 | [10.0,15.5) |       10.0 |        15.5 | Original
+  1 | [15.5,18.5) |       15.5 |        18.5 | Patched
+  1 | [18.5,20.0) |       18.5 |        20.0 | Original
+  2 | [10.0,20.0) |       10.0 |        20.0 | New
 (4 rows)
 
 --------------------------------------------------------------------------------
 \echo 'Test Type: TIMESTAMP'
 Test Type: TIMESTAMP
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_timestamp (id int, valid_from timestamp, valid_until timestamp, value text);
-SELECT sql_saga.add_era('tmt.target_timestamp', 'valid_from', 'valid_until');
+CREATE TABLE tmt.target_timestamp (id int, valid_range tsrange, valid_from timestamp, valid_until timestamp, value text);
+SELECT sql_saga.add_era('tmt.target_timestamp', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_timestamp_synchronize_temporal_columns_trigger" on table tmt.target_timestamp to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-INSERT INTO tmt.target_timestamp VALUES (1, '2024-01-01 10:00', '2024-01-01 20:00', 'Original');
+INSERT INTO tmt.target_timestamp (id, valid_from, valid_until, value) VALUES (1, '2024-01-01 10:00', '2024-01-01 20:00', 'Original');
 CREATE TEMP TABLE source_timestamp (row_id int, id int, valid_from timestamp, valid_until timestamp, value text);
 INSERT INTO source_timestamp VALUES
     (101, 1, '2024-01-01 15:00', '2024-01-01 18:00', 'Patched'), -- Update
@@ -222,26 +234,29 @@ SELECT * FROM (VALUES
 \echo '--- Actual Final State ---'
 --- Actual Final State ---
 SELECT * FROM tmt.target_timestamp ORDER BY id, valid_from;
- id |     valid_from      |     valid_until     |  value   
-----+---------------------+---------------------+----------
-  1 | 2024-01-01 10:00:00 | 2024-01-01 15:00:00 | Original
-  1 | 2024-01-01 15:00:00 | 2024-01-01 18:00:00 | Patched
-  1 | 2024-01-01 18:00:00 | 2024-01-01 20:00:00 | Original
-  2 | 2024-01-01 10:00:00 | 2024-01-01 20:00:00 | New
+ id |                  valid_range                  |     valid_from      |     valid_until     |  value   
+----+-----------------------------------------------+---------------------+---------------------+----------
+  1 | ["2024-01-01 10:00:00","2024-01-01 15:00:00") | 2024-01-01 10:00:00 | 2024-01-01 15:00:00 | Original
+  1 | ["2024-01-01 15:00:00","2024-01-01 18:00:00") | 2024-01-01 15:00:00 | 2024-01-01 18:00:00 | Patched
+  1 | ["2024-01-01 18:00:00","2024-01-01 20:00:00") | 2024-01-01 18:00:00 | 2024-01-01 20:00:00 | Original
+  2 | ["2024-01-01 10:00:00","2024-01-01 20:00:00") | 2024-01-01 10:00:00 | 2024-01-01 20:00:00 | New
 (4 rows)
 
 --------------------------------------------------------------------------------
 \echo 'Test Type: TIMESTAMPTZ'
 Test Type: TIMESTAMPTZ
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_timestamptz (id int, valid_from timestamptz, valid_until timestamptz, value text);
-SELECT sql_saga.add_era('tmt.target_timestamptz', 'valid_from', 'valid_until');
+CREATE TABLE tmt.target_timestamptz (id int, valid_range tstzrange, valid_from timestamptz, valid_until timestamptz, value text);
+SELECT sql_saga.add_era('tmt.target_timestamptz', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_timestamptz_synchronize_temporal_columns_trigger" on table tmt.target_timestamptz to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-INSERT INTO tmt.target_timestamptz VALUES (1, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'Original');
+INSERT INTO tmt.target_timestamptz (id, valid_from, valid_until, value) VALUES (1, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'Original');
 CREATE TEMP TABLE source_timestamptz (row_id int, id int, valid_from timestamptz, valid_until timestamptz, value text);
 INSERT INTO source_timestamptz VALUES
     (101, 1, '2024-01-01 15:00Z', '2024-01-01 18:00Z', 'Patched'), -- Update
@@ -270,12 +285,12 @@ SELECT * FROM (VALUES
 \echo '--- Actual Final State ---'
 --- Actual Final State ---
 SELECT * FROM tmt.target_timestamptz ORDER BY id, valid_from;
- id |       valid_from       |      valid_until       |  value   
-----+------------------------+------------------------+----------
-  1 | 2024-01-01 02:00:00-08 | 2024-01-01 07:00:00-08 | Original
-  1 | 2024-01-01 07:00:00-08 | 2024-01-01 10:00:00-08 | Patched
-  1 | 2024-01-01 10:00:00-08 | 2024-01-01 12:00:00-08 | Original
-  2 | 2024-01-01 02:00:00-08 | 2024-01-01 12:00:00-08 | New
+ id |                     valid_range                     |       valid_from       |      valid_until       |  value   
+----+-----------------------------------------------------+------------------------+------------------------+----------
+  1 | ["2024-01-01 02:00:00-08","2024-01-01 07:00:00-08") | 2024-01-01 02:00:00-08 | 2024-01-01 07:00:00-08 | Original
+  1 | ["2024-01-01 07:00:00-08","2024-01-01 10:00:00-08") | 2024-01-01 07:00:00-08 | 2024-01-01 10:00:00-08 | Patched
+  1 | ["2024-01-01 10:00:00-08","2024-01-01 12:00:00-08") | 2024-01-01 10:00:00-08 | 2024-01-01 12:00:00-08 | Original
+  2 | ["2024-01-01 02:00:00-08","2024-01-01 12:00:00-08") | 2024-01-01 02:00:00-08 | 2024-01-01 12:00:00-08 | New
 (4 rows)
 
 ROLLBACK;

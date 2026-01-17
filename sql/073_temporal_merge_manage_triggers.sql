@@ -7,24 +7,41 @@ CREATE SCHEMA mtt;
 
 -- Setup: Parent and child tables with a temporal foreign key.
 -- The child also has a synchronized column to ensure its trigger is NOT affected.
-CREATE TABLE mtt.parent (id int, name text, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('mtt.parent', synchronize_valid_to_column := 'valid_to');
+CREATE TABLE mtt.parent (
+    id int, 
+    name text, 
+    valid_range daterange NOT NULL,
+    valid_from date, 
+    valid_until date, 
+    valid_to date
+);
+SELECT sql_saga.add_era('mtt.parent', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key(
     'mtt.parent',
     '{id}',
-    unique_key_name => 'parent_id_valid',
-    unique_constraint => 'parent_id_valid_uniq',
-    exclude_constraint => 'parent_id_valid_excl'
+    unique_key_name => 'parent_id_valid'
 );
 
-CREATE TABLE mtt.child (id int, parent_id int, name text, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('mtt.child', synchronize_valid_to_column := 'valid_to');
+CREATE TABLE mtt.child (
+    id int, 
+    parent_id int, 
+    name text, 
+    valid_range daterange NOT NULL,
+    valid_from date, 
+    valid_until date, 
+    valid_to date
+);
+SELECT sql_saga.add_era('mtt.child', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 SELECT sql_saga.add_unique_key(
     'mtt.child',
     '{id}',
-    unique_key_name => 'child_id_valid',
-    unique_constraint => 'child_id_valid_uniq',
-    exclude_constraint => 'child_id_valid_excl'
+    unique_key_name => 'child_id_valid'
 );
 SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => 'mtt.child'::regclass,

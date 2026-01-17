@@ -9,13 +9,16 @@ CREATE TABLE public.my_temporal_table (
     id INT NOT NULL,
     name TEXT,
     death_date DATE,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE,
-    valid_to DATE
+    valid_to DATE,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
-SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id'], unique_key_name => 'my_temporal_table_id_valid');
-
+SELECT sql_saga.add_era('public.my_temporal_table', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 
 \echo '--- SOURCE DATA: Two rows for one entity, second represents a death ---'
 CREATE TEMP TABLE source_data (
@@ -74,12 +77,16 @@ SET datestyle TO 'ISO, DMY';
 CREATE TABLE public.my_temporal_table (
     id INT NOT NULL,
     name TEXT,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE,
-    valid_to DATE
+    valid_to DATE,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('public.my_temporal_table', synchronize_valid_to_column => 'valid_to');
-SELECT sql_saga.add_unique_key(table_oid => 'public.my_temporal_table'::regclass, column_names => ARRAY['id']);
+SELECT sql_saga.add_era('public.my_temporal_table', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 
 -- Insert one long-lived entity.
 INSERT INTO public.my_temporal_table (id, name, valid_from, valid_until)

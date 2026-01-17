@@ -184,15 +184,18 @@ INSERT INTO etl.ident_type VALUES (1, 'tax'), (2, 'ssn');
 CREATE TABLE etl.activity_type (id int primary key, code text unique);
 INSERT INTO etl.activity_type VALUES (10, 'manufacturing'), (20, 'retail');
 -- Legal Unit table
-CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.legal_unit');
+CREATE TABLE etl.legal_unit (id serial, name text, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table etl.legal_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
-NOTICE:  sql_saga: altering table etl.legal_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT legal_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table etl.legal_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  legal_unit_id_valid
@@ -218,15 +221,18 @@ SELECT sql_saga.add_foreign_key(
 (1 row)
 
 -- Location table
-CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.location');
+CREATE TABLE etl.location (id serial, legal_unit_id int, type text, address text, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.location', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table etl.location to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'location_id_valid');
-NOTICE:  sql_saga: altering table etl.location to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT location_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table etl.location to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  location_id_valid
@@ -235,7 +241,7 @@ NOTICE:  sql_saga: altering table etl.location to add constraints: ALTER COLUMN 
 -- A legal unit can only have one 'physical' address at any given time.
 -- This is a predicated natural key.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], key_type => 'predicated', predicate => 'type = ''physical''', unique_key_name => 'location_legal_unit_id_type_valid');
-NOTICE:  sql_saga: altering table etl.location to add constraints: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (type = 'physical') DEFERRABLE
+NOTICE:  sql_saga: altering table etl.location to add constraints: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, valid_range WITH &&) WHERE (type = 'physical') DEFERRABLE
           add_unique_key           
 -----------------------------------
  location_legal_unit_id_type_valid
@@ -253,15 +259,18 @@ SELECT sql_saga.add_foreign_key(
 (1 row)
 
 -- Stat For Unit table
-CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('etl.stat_for_unit');
+CREATE TABLE etl.stat_for_unit (id serial, legal_unit_id int, stat_definition_id int, value int, comment text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('etl.stat_for_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_trigger" on table etl.stat_for_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'stat_for_unit_id_valid');
-NOTICE:  sql_saga: altering table etl.stat_for_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT stat_for_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table etl.stat_for_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  stat_for_unit_id_valid
@@ -273,7 +282,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'etl.legal_unit'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  No compatible index found for foreign key on table etl.stat_for_unit. Creating new index: CREATE INDEX stat_for_unit_legal_unit_id_valid_gist_idx ON etl.stat_for_unit USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table etl.stat_for_unit. Creating new index: CREATE INDEX stat_for_unit_legal_unit_id_valid_gist_idx ON etl.stat_for_unit USING GIST (legal_unit_id, valid_range)
           add_foreign_key          
 -----------------------------------
  stat_for_unit_legal_unit_id_valid
@@ -284,10 +293,14 @@ CREATE TABLE etl.activity (
     legal_unit_id int,
     activity_type_id int,
     comment text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('etl.activity');
+SELECT sql_saga.add_era('etl.activity', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "activity_synchronize_temporal_columns_trigger" on table etl.activity to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -295,7 +308,7 @@ SELECT sql_saga.add_era('etl.activity');
 
 -- The "unique key" for a natural-key table is the set of natural key columns.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], key_type => 'primary', unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
-NOTICE:  sql_saga: altering table etl.activity to add constraints: ALTER COLUMN legal_unit_id SET NOT NULL, ALTER COLUMN activity_type_id SET NOT NULL, ADD PRIMARY KEY (legal_unit_id, activity_type_id, valid_from) DEFERRABLE, ADD CONSTRAINT activity_legal_unit_id_activity_type_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, activity_type_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table etl.activity to add constraints: ALTER COLUMN legal_unit_id SET NOT NULL, ALTER COLUMN activity_type_id SET NOT NULL, ADD PRIMARY KEY (legal_unit_id, activity_type_id, valid_range WITHOUT OVERLAPS)
                 add_unique_key                 
 -----------------------------------------------
  activity_legal_unit_id_activity_type_id_valid
@@ -894,10 +907,10 @@ NOTICE:  Processing activity type: retail for batch 4
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE plan_lu_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+---------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2024-05-01      | {"name": "NewCo AS", "comment": "Initial load"}       |          |       | new_entity__1
-           2 | {1,3}   | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-05-01     | infinity        | {"name": "RenamedCo AS", "comment": "Company rename"} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2024-05-01      | {"name": "NewCo AS", "comment": "Initial load"}       |          |       | new_entity__1
+           2 |             1 | {1,3}   | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-05-01     | infinity        | {"name": "RenamedCo AS", "comment": "Company rename"} |          |       | new_entity__1
 (2 rows)
 
 TABLE feedback_lu_batch_1 ORDER BY source_row_id;
@@ -910,9 +923,9 @@ TABLE feedback_lu_batch_1 ORDER BY source_row_id;
 \echo '--- physical_location ---'
 --- physical_location ---
 TABLE plan_loc_phys_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                            | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------+----------+-------+---------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": null}  | {"type": "physical", "legal_unit_id": 1} |              |              |                |                 | 2024-01-01     | infinity        | {"address": "123 Business Rd", "comment": "Initial load"} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                            | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": null}  | {"type": "physical", "legal_unit_id": 1} |              |              |                |                 | 2024-01-01     | infinity        | {"address": "123 Business Rd", "comment": "Initial load"} |          |       | new_entity__1
 (1 row)
 
 TABLE feedback_loc_phys_batch_1 ORDER BY source_row_id;
@@ -924,10 +937,10 @@ TABLE feedback_loc_phys_batch_1 ORDER BY source_row_id;
 \echo '--- postal_location ---'
 --- postal_location ---
 TABLE plan_loc_post_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                 | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {2}     | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-03-01     | 2024-07-01      | {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}   |          |       | new_entity__1
-           2 | {2,4}   | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-07-01     | infinity        | {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                 | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {2}     | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-03-01     | 2024-07-01      | {"type": "postal", "address": "PO Box 456", "comment": "Postal address added", "legal_unit_id": 1}   |          |       | new_entity__1
+           2 |             1 | {2,4}   | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-07-01     | infinity        | {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1} |          |       | new_entity__1
 (2 rows)
 
 TABLE feedback_loc_post_batch_1 ORDER BY source_row_id;
@@ -940,10 +953,10 @@ TABLE feedback_loc_post_batch_1 ORDER BY source_row_id;
 \echo '--- stat_employees ---'
 --- stat_employees ---
 TABLE plan_stat_employees_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                data                                                | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {2}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-03-01     | 2024-09-01      | {"value": 10, "comment": "Postal address added", "legal_unit_id": 1, "stat_definition_id": 1}      |          |       | new_entity__1
-           2 | {2,5}   | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | infinity        | {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                data                                                | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {2}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-03-01     | 2024-09-01      | {"value": 10, "comment": "Postal address added", "legal_unit_id": 1, "stat_definition_id": 1}      |          |       | new_entity__1
+           2 |             1 | {2,5}   | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | infinity        | {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | new_entity__1
 (2 rows)
 
 TABLE feedback_stat_employees_batch_1 ORDER BY source_row_id;
@@ -956,11 +969,11 @@ TABLE feedback_stat_employees_batch_1 ORDER BY source_row_id;
 \echo '--- stat_turnover ---'
 --- stat_turnover ---
 TABLE plan_stat_turnover_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                  | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {3}     | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-05-01     | 2024-07-01      | {"value": 50000, "comment": "Company rename", "legal_unit_id": 1, "stat_definition_id": 2}            |          |       | new_entity__1
-           2 | {3,4}   | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-07-01     | 2024-09-01      | {"value": 55000, "comment": "Updated postal address", "legal_unit_id": 1, "stat_definition_id": 2}    |          |       | new_entity__1
-           3 | {3,4,5} | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | infinity        | {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                  | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {3}     | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-05-01     | 2024-07-01      | {"value": 50000, "comment": "Company rename", "legal_unit_id": 1, "stat_definition_id": 2}            |          |       | new_entity__1
+           2 |             1 | {3,4}   | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-07-01     | 2024-09-01      | {"value": 55000, "comment": "Updated postal address", "legal_unit_id": 1, "stat_definition_id": 2}    |          |       | new_entity__1
+           3 |             1 | {3,4,5} | INSERT    |               | 1         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | infinity        | {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | new_entity__1
 (3 rows)
 
 TABLE feedback_stat_turnover_batch_1 ORDER BY source_row_id;
@@ -974,9 +987,9 @@ TABLE feedback_stat_turnover_batch_1 ORDER BY source_row_id;
 \echo '--- activity_manufacturing ---'
 --- activity_manufacturing ---
 TABLE plan_activity_manufacturing_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |   grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+-------------------
-           1 | {1,5}   | INSERT    |               | 1         | t             | {"legal_unit_id": 1, "activity_type_id": 10} | {"legal_unit_id": 1, "activity_type_id": 10} | {}          |              |              |                |                 | 2024-01-01     | infinity        | {"comment": "Staff and turnover update"} |          |       | new_entity__1__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |   grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+-------------------
+           1 |             1 | {1,5}   | INSERT    |               | 1         | t             | {"legal_unit_id": 1, "activity_type_id": 10} | {"legal_unit_id": 1, "activity_type_id": 10} | {}          |              |              |                |                 | 2024-01-01     | infinity        | {"comment": "Staff and turnover update"} |          |       | new_entity__1__10
 (1 row)
 
 TABLE feedback_activity_manufacturing_batch_1 ORDER BY source_row_id;
@@ -989,9 +1002,9 @@ TABLE feedback_activity_manufacturing_batch_1 ORDER BY source_row_id;
 \echo '--- activity_retail ---'
 --- activity_retail ---
 TABLE plan_activity_retail_batch_1 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |             data              | feedback | trace |   grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------+----------+-------+-------------------
-           1 | {3}     | INSERT    |               | 3         | t             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          |              |              |                |                 | 2024-05-01     | infinity        | {"comment": "Company rename"} |          |       | new_entity__1__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |             data              | feedback | trace |   grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------+----------+-------+-------------------
+           1 |             1 | {3}     | INSERT    |               | 3         | t             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          |              |              |                |                 | 2024-05-01     | infinity        | {"comment": "Company rename"} |          |       | new_entity__1__20
 (1 row)
 
 TABLE feedback_activity_retail_batch_1 ORDER BY source_row_id;
@@ -1005,9 +1018,9 @@ TABLE feedback_activity_retail_batch_1 ORDER BY source_row_id;
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE plan_lu_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                         | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------+----------+-------+---------------
-           1 | {6,8}   | INSERT    |               | 2         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | infinity        | {"name": "SecondBiz Inc", "comment": "Staff update"} |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                         | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {6,8}   | INSERT    |               | 2         | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | infinity        | {"name": "SecondBiz Inc", "comment": "Staff update"} |          |       | new_entity__2
 (1 row)
 
 TABLE feedback_lu_batch_2 ORDER BY source_row_id;
@@ -1020,10 +1033,10 @@ TABLE feedback_lu_batch_2 ORDER BY source_row_id;
 \echo '--- physical_location ---'
 --- physical_location ---
 TABLE plan_loc_phys_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                            data                             | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------+----------+-------+---------------
-           1 | {6}     | INSERT    |               | 2         | t             | {"id": 3, "type": "physical", "legal_unit_id": 2} | {"id": null}  | {"type": "physical", "legal_unit_id": 2} |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"address": "456 Innovation Dr", "comment": "Initial load"} |          |       | new_entity__2
-           2 | {6,7}   | INSERT    |               | 2         | t             | {"id": 3, "type": "physical", "legal_unit_id": 2} | {"id": null}  | {"type": "physical", "legal_unit_id": 2} |              |              |                |                 | 2024-08-01     | infinity        | {"address": "789 Tech Pkwy", "comment": "Address update"}   |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                            data                             | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {6}     | INSERT    |               | 2         | t             | {"id": 3, "type": "physical", "legal_unit_id": 2} | {"id": null}  | {"type": "physical", "legal_unit_id": 2} |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"address": "456 Innovation Dr", "comment": "Initial load"} |          |       | new_entity__2
+           2 |             1 | {6,7}   | INSERT    |               | 2         | t             | {"id": 3, "type": "physical", "legal_unit_id": 2} | {"id": null}  | {"type": "physical", "legal_unit_id": 2} |              |              |                |                 | 2024-08-01     | infinity        | {"address": "789 Tech Pkwy", "comment": "Address update"}   |          |       | new_entity__2
 (2 rows)
 
 TABLE feedback_loc_phys_batch_2 ORDER BY source_row_id;
@@ -1036,9 +1049,9 @@ TABLE feedback_loc_phys_batch_2 ORDER BY source_row_id;
 \echo '--- postal_location ---'
 --- postal_location ---
 TABLE plan_loc_post_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {7}     | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | infinity        | {"type": "postal", "address": "PO Box 999", "comment": "Address update", "legal_unit_id": 2} |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {7}     | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | infinity        | {"type": "postal", "address": "PO Box 999", "comment": "Address update", "legal_unit_id": 2} |          |       | new_entity__2
 (1 row)
 
 TABLE feedback_loc_post_batch_2 ORDER BY source_row_id;
@@ -1050,11 +1063,11 @@ TABLE feedback_loc_post_batch_2 ORDER BY source_row_id;
 \echo '--- stat_employees ---'
 --- stat_employees ---
 TABLE plan_stat_employees_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                           | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {6}     | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"value": 50, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 1}   |          |       | new_entity__2
-           2 | {6,7}   | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | 2024-11-01      | {"value": 55, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 1} |          |       | new_entity__2
-           3 | {6,7,8} | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-11-01     | infinity        | {"value": 60, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 1}   |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                           | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {6}     | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"value": 50, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 1}   |          |       | new_entity__2
+           2 |             1 | {6,7}   | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | 2024-11-01      | {"value": 55, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 1} |          |       | new_entity__2
+           3 |             1 | {6,7,8} | INSERT    |               | 2         | t             | {"id": 3}   | {"id": null}  | {}          |              |              |                |                 | 2024-11-01     | infinity        | {"value": 60, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 1}   |          |       | new_entity__2
 (3 rows)
 
 TABLE feedback_stat_employees_batch_2 ORDER BY source_row_id;
@@ -1068,11 +1081,11 @@ TABLE feedback_stat_employees_batch_2 ORDER BY source_row_id;
 \echo '--- stat_turnover ---'
 --- stat_turnover ---
 TABLE plan_stat_turnover_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {6}     | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"value": 250000, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 2}   |          |       | new_entity__2
-           2 | {6,7}   | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | 2024-11-01      | {"value": 300000, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 2} |          |       | new_entity__2
-           3 | {6,7,8} | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-11-01     | infinity        | {"value": 320000, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 2}   |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {6}     | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-02-15     | 2024-08-01      | {"value": 250000, "comment": "Initial load", "legal_unit_id": 2, "stat_definition_id": 2}   |          |       | new_entity__2
+           2 |             1 | {6,7}   | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-08-01     | 2024-11-01      | {"value": 300000, "comment": "Address update", "legal_unit_id": 2, "stat_definition_id": 2} |          |       | new_entity__2
+           3 |             1 | {6,7,8} | INSERT    |               | 2         | t             | {"id": 4}   | {"id": null}  | {}          |              |              |                |                 | 2024-11-01     | infinity        | {"value": 320000, "comment": "Staff update", "legal_unit_id": 2, "stat_definition_id": 2}   |          |       | new_entity__2
 (3 rows)
 
 TABLE feedback_stat_turnover_batch_2 ORDER BY source_row_id;
@@ -1086,9 +1099,9 @@ TABLE feedback_stat_turnover_batch_2 ORDER BY source_row_id;
 \echo '--- activity_retail ---'
 --- activity_retail ---
 TABLE plan_activity_retail_batch_2 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |            data             | feedback | trace |   grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------+----------+-------+-------------------
-           1 | {6}     | INSERT    |               | 6         | t             | {"legal_unit_id": 2, "activity_type_id": 20} | {"legal_unit_id": 2, "activity_type_id": 20} | {}          |              |              |                |                 | 2024-02-15     | infinity        | {"comment": "Initial load"} |          |       | new_entity__2__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |            data             | feedback | trace |   grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------+----------+-------+-------------------
+           1 |             1 | {6}     | INSERT    |               | 6         | t             | {"legal_unit_id": 2, "activity_type_id": 20} | {"legal_unit_id": 2, "activity_type_id": 20} | {}          |              |              |                |                 | 2024-02-15     | infinity        | {"comment": "Initial load"} |          |       | new_entity__2__20
 (1 row)
 
 TABLE feedback_activity_retail_batch_2 ORDER BY source_row_id;
@@ -1102,10 +1115,10 @@ TABLE feedback_activity_retail_batch_2 ORDER BY source_row_id;
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE plan_lu_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
-           1 | {10}    | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | finished_by  | 2024-05-01     | infinity        | 2025-03-01     | infinity        | {"name": "FinalCo AS", "comment": "Final rename"}     |          |       | existing_entity__1
-           2 | {10}    | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | started_by   | 2024-05-01     | infinity        | 2024-05-01     | 2025-03-01      | {"name": "RenamedCo AS", "comment": "Company rename"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {10}    | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | started_by   | 2024-05-01     | infinity        | 2024-05-01     | 2025-03-01      | {"name": "RenamedCo AS", "comment": "Company rename"} |          |       | existing_entity__1
+           2 |             2 | {10}    | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | finished_by  | 2024-05-01     | infinity        | 2025-03-01     | infinity        | {"name": "FinalCo AS", "comment": "Final rename"}     |          |       | existing_entity__1
 (2 rows)
 
 TABLE feedback_lu_batch_3 ORDER BY source_row_id;
@@ -1117,10 +1130,10 @@ TABLE feedback_lu_batch_3 ORDER BY source_row_id;
 \echo '--- physical_location ---'
 --- physical_location ---
 TABLE plan_loc_phys_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+--------------------
-           1 | {11}    | INSERT    |               | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | finished_by  | 2024-01-01     | infinity        | 2025-05-01     | infinity        | {"address": "1 New Street", "comment": "New physical address"} |          |       | existing_entity__1
-           2 | {11}    | UPDATE    | SHRINK        | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2025-05-01      | {"address": "123 Business Rd", "comment": "Initial load"}      |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {11}    | UPDATE    | SHRINK        | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2025-05-01      | {"address": "123 Business Rd", "comment": "Initial load"}      |          |       | existing_entity__1
+           2 |             2 | {11}    | INSERT    |               | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | finished_by  | 2024-01-01     | infinity        | 2025-05-01     | infinity        | {"address": "1 New Street", "comment": "New physical address"} |          |       | existing_entity__1
 (2 rows)
 
 TABLE feedback_loc_phys_batch_3 ORDER BY source_row_id;
@@ -1132,10 +1145,10 @@ TABLE feedback_loc_phys_batch_3 ORDER BY source_row_id;
 \echo '--- postal_location ---'
 --- postal_location ---
 TABLE plan_loc_post_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                 | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {12}    | INSERT    |               | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | finished_by  | 2024-07-01     | infinity        | 2025-07-01     | infinity        | {"type": "postal", "address": "PO Box 111", "comment": "New postal address", "legal_unit_id": 1}     |          |       | existing_entity__2
-           2 | {12}    | UPDATE    | SHRINK        | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | started_by   | 2024-07-01     | infinity        | 2024-07-01     | 2025-07-01      | {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1} |          |       | existing_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                 | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {12}    | UPDATE    | SHRINK        | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | started_by   | 2024-07-01     | infinity        | 2024-07-01     | 2025-07-01      | {"type": "postal", "address": "PO Box 789", "comment": "Updated postal address", "legal_unit_id": 1} |          |       | existing_entity__2
+           2 |             2 | {12}    | INSERT    |               | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | finished_by  | 2024-07-01     | infinity        | 2025-07-01     | infinity        | {"type": "postal", "address": "PO Box 111", "comment": "New postal address", "legal_unit_id": 1}     |          |       | existing_entity__2
 (2 rows)
 
 TABLE feedback_loc_post_batch_3 ORDER BY source_row_id;
@@ -1147,10 +1160,10 @@ TABLE feedback_loc_post_batch_3 ORDER BY source_row_id;
 \echo '--- stat_employees ---'
 --- stat_employees ---
 TABLE plan_stat_employees_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                data                                                | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {9}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | finished_by  | 2024-09-01     | infinity        | 2025-01-01     | infinity        | {"value": 15, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 1}       |          |       | existing_entity__1
-           2 | {9}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | started_by   | 2024-09-01     | infinity        | 2024-09-01     | 2025-01-01      | {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                data                                                | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {9}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | started_by   | 2024-09-01     | infinity        | 2024-09-01     | 2025-01-01      | {"value": 12, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | existing_entity__1
+           2 |             2 | {9}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | finished_by  | 2024-09-01     | infinity        | 2025-01-01     | infinity        | {"value": 15, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 1}       |          |       | existing_entity__1
 (2 rows)
 
 TABLE feedback_stat_employees_batch_3 ORDER BY source_row_id;
@@ -1162,10 +1175,10 @@ TABLE feedback_stat_employees_batch_3 ORDER BY source_row_id;
 \echo '--- stat_turnover ---'
 --- stat_turnover ---
 TABLE plan_stat_turnover_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                  | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {9}     | INSERT    |               | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | finished_by  | 2024-09-01     | infinity        | 2025-01-01     | infinity        | {"value": 75000, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 2}       |          |       | existing_entity__2
-           2 | {9}     | UPDATE    | SHRINK        | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | started_by   | 2024-09-01     | infinity        | 2024-09-01     | 2025-01-01      | {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | existing_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                                 data                                                  | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {9}     | UPDATE    | SHRINK        | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | started_by   | 2024-09-01     | infinity        | 2024-09-01     | 2025-01-01      | {"value": 60000, "comment": "Staff and turnover update", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | existing_entity__2
+           2 |             2 | {9}     | INSERT    |               | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | finished_by  | 2024-09-01     | infinity        | 2025-01-01     | infinity        | {"value": 75000, "comment": "Annual staff update", "legal_unit_id": 1, "stat_definition_id": 2}       |          |       | existing_entity__2
 (2 rows)
 
 TABLE feedback_stat_turnover_batch_3 ORDER BY source_row_id;
@@ -1177,9 +1190,9 @@ TABLE feedback_stat_turnover_batch_3 ORDER BY source_row_id;
 \echo '--- activity_retail ---'
 --- activity_retail ---
 TABLE plan_activity_retail_batch_3 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                data                 | feedback | trace |      grouping_key      
--------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------+----------+-------+------------------------
-           1 | {11}    | UPDATE    | NONE          | 11        | f             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          | finishes     | equals       | 2024-05-01     | infinity        | 2024-05-01     | infinity        | {"comment": "New physical address"} |          |       | existing_entity__1__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                data                 | feedback | trace |      grouping_key      
+-------------+---------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------+----------+-------+------------------------
+           1 |             1 | {11}    | UPDATE    | NONE          | 11        | f             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          | finishes     | equals       | 2024-05-01     | infinity        | 2024-05-01     | infinity        | {"comment": "New physical address"} |          |       | existing_entity__1__20
 (1 row)
 
 TABLE feedback_activity_retail_batch_3 ORDER BY source_row_id;
@@ -1193,9 +1206,9 @@ TABLE feedback_activity_retail_batch_3 ORDER BY source_row_id;
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE plan_lu_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
-           1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | equals       | 2025-03-01     | infinity        | 2025-03-01     | infinity        | {"name": "FinalCo AS", "comment": "No-op, identical"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                         data                          | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | equals       | 2025-03-01     | infinity        | 2025-03-01     | infinity        | {"name": "FinalCo AS", "comment": "No-op, identical"} |          |       | existing_entity__1
 (1 row)
 
 TABLE feedback_lu_batch_4 ORDER BY source_row_id;
@@ -1207,9 +1220,9 @@ TABLE feedback_lu_batch_4 ORDER BY source_row_id;
 \echo '--- physical_location ---'
 --- physical_location ---
 TABLE plan_loc_phys_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                            data                            | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------+----------+-------+--------------------
-           1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | equals       | 2025-05-01     | infinity        | 2025-05-01     | infinity        | {"address": "1 New Street", "comment": "No-op, identical"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                    entity_keys                    | identity_keys |               lookup_keys                | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                            data                            | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+---------------------------------------------------+---------------+------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1, "type": "physical", "legal_unit_id": 1} | {"id": 1}     | {"type": "physical", "legal_unit_id": 1} | finishes     | equals       | 2025-05-01     | infinity        | 2025-05-01     | infinity        | {"address": "1 New Street", "comment": "No-op, identical"} |          |       | existing_entity__1
 (1 row)
 
 TABLE feedback_loc_phys_batch_4 ORDER BY source_row_id;
@@ -1221,9 +1234,9 @@ TABLE feedback_loc_phys_batch_4 ORDER BY source_row_id;
 \echo '--- postal_location ---'
 --- postal_location ---
 TABLE plan_loc_post_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                              | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | equals       | equals       | 2025-07-01     | infinity        | 2025-07-01     | infinity        | {"type": "postal", "address": "PO Box 111", "comment": "No-op, identical", "legal_unit_id": 1} |          |       | existing_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                              | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | equals       | equals       | 2025-07-01     | infinity        | 2025-07-01     | infinity        | {"type": "postal", "address": "PO Box 111", "comment": "No-op, identical", "legal_unit_id": 1} |          |       | existing_entity__2
 (1 row)
 
 TABLE feedback_loc_post_batch_4 ORDER BY source_row_id;
@@ -1235,9 +1248,9 @@ TABLE feedback_loc_post_batch_4 ORDER BY source_row_id;
 \echo '--- stat_employees ---'
 --- stat_employees ---
 TABLE plan_stat_employees_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                            | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | equals       | 2025-01-01     | infinity        | 2025-01-01     | infinity        | {"value": 15, "comment": "No-op, identical", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                            | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | finishes     | equals       | 2025-01-01     | infinity        | 2025-01-01     | infinity        | {"value": 15, "comment": "No-op, identical", "legal_unit_id": 1, "stat_definition_id": 1} |          |       | existing_entity__1
 (1 row)
 
 TABLE feedback_stat_employees_batch_4 ORDER BY source_row_id;
@@ -1249,9 +1262,9 @@ TABLE feedback_stat_employees_batch_4 ORDER BY source_row_id;
 \echo '--- stat_turnover ---'
 --- stat_turnover ---
 TABLE plan_stat_turnover_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | equals       | 2025-01-01     | infinity        | 2025-01-01     | infinity        | {"value": 75000, "comment": "No-op, identical", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | existing_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 1         | f             | {"id": 2}   | {"id": 2}     | {}          | finishes     | equals       | 2025-01-01     | infinity        | 2025-01-01     | infinity        | {"value": 75000, "comment": "No-op, identical", "legal_unit_id": 1, "stat_definition_id": 2} |          |       | existing_entity__2
 (1 row)
 
 TABLE feedback_stat_turnover_batch_4 ORDER BY source_row_id;
@@ -1263,9 +1276,9 @@ TABLE feedback_stat_turnover_batch_4 ORDER BY source_row_id;
 \echo '--- activity_retail ---'
 --- activity_retail ---
 TABLE plan_activity_retail_batch_4 ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |              data               | feedback | trace |      grouping_key      
--------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------+----------+-------+------------------------
-           1 | {14}    | UPDATE    | NONE          | 14        | f             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          | finishes     | equals       | 2024-05-01     | infinity        | 2024-05-01     | infinity        | {"comment": "No-op, identical"} |          |       | existing_entity__1__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                 entity_keys                  |                identity_keys                 | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |              data               | feedback | trace |      grouping_key      
+-------------+---------------+---------+-----------+---------------+-----------+---------------+----------------------------------------------+----------------------------------------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------+----------+-------+------------------------
+           1 |             1 | {14}    | UPDATE    | NONE          | 14        | f             | {"legal_unit_id": 1, "activity_type_id": 20} | {"legal_unit_id": 1, "activity_type_id": 20} | {}          | finishes     | equals       | 2024-05-01     | infinity        | 2024-05-01     | infinity        | {"comment": "No-op, identical"} |          |       | existing_entity__1__20
 (1 row)
 
 TABLE feedback_activity_retail_batch_4 ORDER BY source_row_id;
@@ -1300,47 +1313,47 @@ TABLE etl.data_table ORDER BY identity_correlation, row_id;
 \echo '--- legal_unit ---'
 --- legal_unit ---
 TABLE etl.legal_unit ORDER BY id, valid_from;
- id |     name      |     comment      | valid_from | valid_until 
-----+---------------+------------------+------------+-------------
-  1 | NewCo AS      | Initial load     | 2024-01-01 | 2024-05-01
-  1 | RenamedCo AS  | Company rename   | 2024-05-01 | 2025-03-01
-  1 | FinalCo AS    | No-op, identical | 2025-03-01 | infinity
-  2 | SecondBiz Inc | Staff update     | 2024-02-15 | infinity
+ id |     name      |     comment      |       valid_range       | valid_from | valid_until 
+----+---------------+------------------+-------------------------+------------+-------------
+  1 | NewCo AS      | Initial load     | [2024-01-01,2024-05-01) | 2024-01-01 | 2024-05-01
+  1 | RenamedCo AS  | Company rename   | [2024-05-01,2025-03-01) | 2024-05-01 | 2025-03-01
+  1 | FinalCo AS    | No-op, identical | [2025-03-01,infinity)   | 2025-03-01 | infinity
+  2 | SecondBiz Inc | Staff update     | [2024-02-15,infinity)   | 2024-02-15 | infinity
 (4 rows)
 
 \echo '--- location ---'
 --- location ---
 TABLE etl.location ORDER BY id, valid_from;
- id | legal_unit_id |   type   |      address      |        comment         | valid_from | valid_until 
-----+---------------+----------+-------------------+------------------------+------------+-------------
-  1 |             1 | physical | 123 Business Rd   | Initial load           | 2024-01-01 | 2025-05-01
-  1 |             1 | physical | 1 New Street      | No-op, identical       | 2025-05-01 | infinity
-  2 |             1 | postal   | PO Box 456        | Postal address added   | 2024-03-01 | 2024-07-01
-  2 |             1 | postal   | PO Box 789        | Updated postal address | 2024-07-01 | 2025-07-01
-  2 |             1 | postal   | PO Box 111        | No-op, identical       | 2025-07-01 | infinity
-  3 |             2 | physical | 456 Innovation Dr | Initial load           | 2024-02-15 | 2024-08-01
-  3 |             2 | physical | 789 Tech Pkwy     | Address update         | 2024-08-01 | infinity
-  4 |             2 | postal   | PO Box 999        | Address update         | 2024-08-01 | infinity
+ id | legal_unit_id |   type   |      address      |        comment         |       valid_range       | valid_from | valid_until 
+----+---------------+----------+-------------------+------------------------+-------------------------+------------+-------------
+  1 |             1 | physical | 123 Business Rd   | Initial load           | [2024-01-01,2025-05-01) | 2024-01-01 | 2025-05-01
+  1 |             1 | physical | 1 New Street      | No-op, identical       | [2025-05-01,infinity)   | 2025-05-01 | infinity
+  2 |             1 | postal   | PO Box 456        | Postal address added   | [2024-03-01,2024-07-01) | 2024-03-01 | 2024-07-01
+  2 |             1 | postal   | PO Box 789        | Updated postal address | [2024-07-01,2025-07-01) | 2024-07-01 | 2025-07-01
+  2 |             1 | postal   | PO Box 111        | No-op, identical       | [2025-07-01,infinity)   | 2025-07-01 | infinity
+  3 |             2 | physical | 456 Innovation Dr | Initial load           | [2024-02-15,2024-08-01) | 2024-02-15 | 2024-08-01
+  3 |             2 | physical | 789 Tech Pkwy     | Address update         | [2024-08-01,infinity)   | 2024-08-01 | infinity
+  4 |             2 | postal   | PO Box 999        | Address update         | [2024-08-01,infinity)   | 2024-08-01 | infinity
 (8 rows)
 
 \echo '--- stat_for_unit ---'
 --- stat_for_unit ---
 TABLE etl.stat_for_unit ORDER BY id, valid_from;
- id | legal_unit_id | stat_definition_id | value  |          comment          | valid_from | valid_until 
-----+---------------+--------------------+--------+---------------------------+------------+-------------
-  1 |             1 |                  1 |     10 | Postal address added      | 2024-03-01 | 2024-09-01
-  1 |             1 |                  1 |     12 | Staff and turnover update | 2024-09-01 | 2025-01-01
-  1 |             1 |                  1 |     15 | No-op, identical          | 2025-01-01 | infinity
-  2 |             1 |                  2 |  50000 | Company rename            | 2024-05-01 | 2024-07-01
-  2 |             1 |                  2 |  55000 | Updated postal address    | 2024-07-01 | 2024-09-01
-  2 |             1 |                  2 |  60000 | Staff and turnover update | 2024-09-01 | 2025-01-01
-  2 |             1 |                  2 |  75000 | No-op, identical          | 2025-01-01 | infinity
-  3 |             2 |                  1 |     50 | Initial load              | 2024-02-15 | 2024-08-01
-  3 |             2 |                  1 |     55 | Address update            | 2024-08-01 | 2024-11-01
-  3 |             2 |                  1 |     60 | Staff update              | 2024-11-01 | infinity
-  4 |             2 |                  2 | 250000 | Initial load              | 2024-02-15 | 2024-08-01
-  4 |             2 |                  2 | 300000 | Address update            | 2024-08-01 | 2024-11-01
-  4 |             2 |                  2 | 320000 | Staff update              | 2024-11-01 | infinity
+ id | legal_unit_id | stat_definition_id | value  |          comment          |       valid_range       | valid_from | valid_until 
+----+---------------+--------------------+--------+---------------------------+-------------------------+------------+-------------
+  1 |             1 |                  1 |     10 | Postal address added      | [2024-03-01,2024-09-01) | 2024-03-01 | 2024-09-01
+  1 |             1 |                  1 |     12 | Staff and turnover update | [2024-09-01,2025-01-01) | 2024-09-01 | 2025-01-01
+  1 |             1 |                  1 |     15 | No-op, identical          | [2025-01-01,infinity)   | 2025-01-01 | infinity
+  2 |             1 |                  2 |  50000 | Company rename            | [2024-05-01,2024-07-01) | 2024-05-01 | 2024-07-01
+  2 |             1 |                  2 |  55000 | Updated postal address    | [2024-07-01,2024-09-01) | 2024-07-01 | 2024-09-01
+  2 |             1 |                  2 |  60000 | Staff and turnover update | [2024-09-01,2025-01-01) | 2024-09-01 | 2025-01-01
+  2 |             1 |                  2 |  75000 | No-op, identical          | [2025-01-01,infinity)   | 2025-01-01 | infinity
+  3 |             2 |                  1 |     50 | Initial load              | [2024-02-15,2024-08-01) | 2024-02-15 | 2024-08-01
+  3 |             2 |                  1 |     55 | Address update            | [2024-08-01,2024-11-01) | 2024-08-01 | 2024-11-01
+  3 |             2 |                  1 |     60 | Staff update              | [2024-11-01,infinity)   | 2024-11-01 | infinity
+  4 |             2 |                  2 | 250000 | Initial load              | [2024-02-15,2024-08-01) | 2024-02-15 | 2024-08-01
+  4 |             2 |                  2 | 300000 | Address update            | [2024-08-01,2024-11-01) | 2024-08-01 | 2024-11-01
+  4 |             2 |                  2 | 320000 | Staff update              | [2024-11-01,infinity)   | 2024-11-01 | infinity
 (13 rows)
 
 \echo '--- ident (non-temporal) ---'
@@ -1355,11 +1368,11 @@ TABLE etl.ident ORDER BY id;
 \echo '--- activity (temporal, natural key) ---'
 --- activity (temporal, natural key) ---
 TABLE etl.activity ORDER BY legal_unit_id, activity_type_id, valid_from;
- legal_unit_id | activity_type_id |          comment          | valid_from | valid_until 
----------------+------------------+---------------------------+------------+-------------
-             1 |               10 | Staff and turnover update | 2024-01-01 | infinity
-             1 |               20 | No-op, identical          | 2024-05-01 | infinity
-             2 |               20 | Initial load              | 2024-02-15 | infinity
+ legal_unit_id | activity_type_id |          comment          |      valid_range      | valid_from | valid_until 
+---------------+------------------+---------------------------+-----------------------+------------+-------------
+             1 |               10 | Staff and turnover update | [2024-01-01,infinity) | 2024-01-01 | infinity
+             1 |               20 | No-op, identical          | [2024-05-01,infinity) | 2024-05-01 | infinity
+             2 |               20 | Initial load              | [2024-02-15,infinity) | 2024-02-15 | infinity
 (3 rows)
 
 ROLLBACK;

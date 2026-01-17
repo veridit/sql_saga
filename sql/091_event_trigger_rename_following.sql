@@ -16,8 +16,8 @@ DROP TABLE unrelated;
  */
 
 /* era */
-CREATE TABLE rename_test(col1 text, col2 bigint, col3 time, s integer, e integer);
-SELECT sql_saga.add_era('rename_test', 's', 'e', 'p');
+CREATE TABLE rename_test(col1 text, col2 bigint, col3 time, valid_range int4range NOT NULL, s integer, e integer);
+SELECT sql_saga.add_era('rename_test', 'valid_range', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 TABLE sql_saga.era;
 ALTER TABLE rename_test RENAME s TO start;
 ALTER TABLE rename_test RENAME e TO "end";
@@ -44,12 +44,11 @@ SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p'
 TABLE sql_saga.unique_keys;
 ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_uniq TO unconst;
-ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_excl TO exconst;
 TABLE sql_saga.unique_keys;
 
 /* foreign_keys */
 CREATE TABLE rename_test_ref (LIKE rename_test);
-SELECT sql_saga.add_era('rename_test_ref', 's < e', 'embedded " symbols', 'q');
+SELECT sql_saga.add_era('rename_test_ref', 'valid_range', 'q', valid_from_column_name => 's < e', valid_until_column_name => 'embedded " symbols');
 TABLE sql_saga.era;
 SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
 TABLE sql_saga.foreign_keys;
@@ -57,14 +56,13 @@ SAVEPOINT pristine;
 ALTER TABLE rename_test_ref RENAME COLUMN "COLUMN1" TO col1;
 TABLE sql_saga.foreign_keys; -- The column name should be updated here
 ROLLBACK TO SAVEPOINT pristine;
-ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_insert" ON rename_test_ref RENAME TO fk_insert;
+
+/* Test protection of synchronize_temporal_columns_trigger */
+ALTER TRIGGER rename_test_synchronize_temporal_columns_trigger ON rename_test RENAME TO my_trigger;
 ROLLBACK TO SAVEPOINT pristine;
-ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_fk_update" ON rename_test_ref RENAME TO fk_update;
+ALTER TRIGGER rename_test_ref_synchronize_temporal_columns_trigger ON rename_test_ref RENAME TO another_trigger;
 ROLLBACK TO SAVEPOINT pristine;
-ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_update" ON rename_test RENAME TO uk_update;
-ROLLBACK TO SAVEPOINT pristine;
-ALTER TRIGGER "rename_test_ref_col2_COLUMN1_col3_q_uk_delete" ON rename_test RENAME TO uk_delete;
-ROLLBACK TO SAVEPOINT pristine;
+
 TABLE sql_saga.foreign_keys;
 
 SELECT sql_saga.drop_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q');

@@ -65,20 +65,25 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE """quoted"" table" (
     """id""" BIGINT,
     """product "" code""" TEXT,
+    """valid range""" int4range NOT NULL,
     """valid from""" INTEGER,
     """valid until""" INTEGER
 );
 -- 2. Add era with quoted columns
-SELECT sql_saga.add_era('"""quoted"" table"', '"valid from"', '"valid until"');
+SELECT sql_saga.add_era('"""quoted"" table"', '"valid range"',
+    valid_from_column_name => '"valid from"',
+    valid_until_column_name => '"valid until"');
+NOTICE:  sql_saga: Created trigger ""quoted" table_synchronize_temporal_columns_trigger" on table """quoted"" table" to synchronize columns: "valid from", "valid until"
  add_era 
 ---------
  t
 (1 row)
 
+ALTER TABLE """quoted"" table" ADD PRIMARY KEY ("""id""", """valid range""" WITHOUT OVERLAPS);
 TABLE sql_saga.era;
- table_schema |   table_name   | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category |  bounds_check_constraint   | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+----------------+----------+------------------------+-------------------------+------------+---------------+------------------------+----------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
- public       | "quoted" table | valid    | "valid from"           | "valid until"           | int4range  | integer       | N                      | "quoted" table_valid_check |                             |                          | f                        |                   | 
+ table_schema |   table_name   | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |  bounds_check_constraint   | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+----------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+----------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ public       | "quoted" table | valid    | "valid range"     | "valid from"           | "valid until"           | int4range  | int4multirange  | integer       | N                      | "quoted" table_valid_check | "quoted" table_check      |                      | t                        |                   | 
 (1 row)
 
 -- 3. Add unique key with quoted columns and constraint name
@@ -89,31 +94,36 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  sql_saga: altering table public."quoted" table to add constraints: ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid from""", """valid until""") DEFERRABLE, ADD CONSTRAINT """my "" uk""_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, int4range("""valid from""", """valid until""") WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public."quoted" table to add constraints: ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS), ADD CONSTRAINT """my "" uk""_pk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, """id""" WITH <>)
  add_unique_key 
 ----------------
  "my " uk"
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
------------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    | "my " uk"_excl     |                  |           |                            |                     |                                  | {}
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names |   pk_consistency_constraint_names    
+-----------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+--------------------------------------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    |                    |                  |           |                            |                     |                                  | {"\"my \" uk\"_pk_consistency_excl"}
 (1 row)
 
 -- 4. Create referencing table with quoted names
 CREATE TABLE """fk "" test""" (
     """ref "" id""" BIGINT,
     """product""" TEXT,
+    """range""" int4range NOT NULL,
     """from""" INTEGER,
     """until""" INTEGER
 );
-SELECT sql_saga.add_era('"""fk "" test"""', '"from"', '"until"');
+SELECT sql_saga.add_era('"""fk "" test"""', '"range"',
+    valid_from_column_name => '"from"',
+    valid_until_column_name => '"until"');
+NOTICE:  sql_saga: Created trigger ""fk " test"_synchronize_temporal_columns_trigger" on table """fk "" test""" to synchronize columns: "from", "until"
  add_era 
 ---------
  t
 (1 row)
 
+ALTER TABLE """fk "" test""" ADD PRIMARY KEY ("""ref "" id""", """range""" WITHOUT OVERLAPS);
 -- 5. Add foreign key referencing the complex unique key
 SELECT sql_saga.add_temporal_foreign_key(
     fk_table_oid => '"""fk "" test"""',
@@ -121,39 +131,40 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  No compatible index found for foreign key on table """fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON """fk "" test""" USING GIST ("""ref "" id""", """product""", int4range("""from""", """until"""))
+NOTICE:  No compatible index found for foreign key on table """fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON """fk "" test""" USING GIST ("""ref "" id""", """product""", """range""")
         add_temporal_foreign_key        
 ----------------------------------------
  "fk " test"_"ref " id"_"product"_valid
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-            foreign_key_name            |         type         | table_schema | table_name  |          column_names           | fk_era_name |               fk_table_columns_snapshot                | unique_key_name | match_type | update_action | delete_action |                fk_insert_trigger                 |                fk_update_trigger                 | fk_check_constraint | fk_helper_function |                uk_update_trigger                 |                uk_delete_trigger                 |                  fk_index_name                  
-----------------------------------------+----------------------+--------------+-------------+---------------------------------+-------------+--------------------------------------------------------+-----------------+------------+---------------+---------------+--------------------------------------------------+--------------------------------------------------+---------------------+--------------------+--------------------------------------------------+--------------------------------------------------+-------------------------------------------------
- "fk " test"_"ref " id"_"product"_valid | temporal_to_temporal | public       | "fk " test" | {"\"ref \" id\"","\"product\""} | valid       | {"\"ref \" id\"","\"product\"","\"from\"","\"until\""} | "my " uk"       | SIMPLE     | NO ACTION     | NO ACTION     | "fk " test"_"ref " id"_"product"_valid_fk_insert | "fk " test"_"ref " id"_"product"_valid_fk_update |                     |                    | "fk " test"_"ref " id"_"product"_valid_uk_update | "fk " test"_"ref " id"_"product"_valid_uk_delete | "fk " test"_"ref " id"_"product"_valid_gist_idx
+            foreign_key_name            |         type         | table_schema | table_name  |          column_names           | fk_era_name |                     fk_table_columns_snapshot                      | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |                  fk_index_name                  
+----------------------------------------+----------------------+--------------+-------------+---------------------------------+-------------+--------------------------------------------------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+-------------------------------------------------
+ "fk " test"_"ref " id"_"product"_valid | temporal_to_temporal | public       | "fk " test" | {"\"ref \" id\"","\"product\""} | valid       | {"\"ref \" id\"","\"product\"","\"range\"","\"from\"","\"until\""} | "my " uk"       | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   |                     |                    |                   |                   | "fk " test"_"ref " id"_"product"_valid_gist_idx
 (1 row)
 
 -- 6. Test data insertion
 -- This should succeed
-INSERT INTO """quoted"" table" VALUES (1, 'A', 10, 20);
-INSERT INTO """fk "" test""" VALUES (1, 'A', 12, 18);
+INSERT INTO """quoted"" table" ("""id""", """product "" code""", """valid from""", """valid until""") VALUES (1, 'A', 10, 20);
+INSERT INTO """fk "" test""" ("""ref "" id""", """product""", """from""", """until""") VALUES (1, 'A', 12, 18);
 -- Show table contents before the expected failure
 TABLE """quoted"" table";
- "id" | "product " code" | "valid from" | "valid until" 
-------+------------------+--------------+---------------
-    1 | A                |           10 |            20
+ "id" | "product " code" | "valid range" | "valid from" | "valid until" 
+------+------------------+---------------+--------------+---------------
+    1 | A                | [10,20)       |           10 |            20
 (1 row)
 
 TABLE """fk "" test""";
- "ref " id" | "product" | "from" | "until" 
-------------+-----------+--------+---------
-          1 | A         |     12 |      18
+ "ref " id" | "product" | "range" | "from" | "until" 
+------------+-----------+---------+--------+---------
+          1 | A         | [12,18) |     12 |      18
 (1 row)
 
 -- This should fail (FK violation). Use a savepoint to contain the error.
 SAVEPOINT expect_fail;
-INSERT INTO """fk "" test""" VALUES (2, 'B', 15, 25);
-ERROR:  insert or update on table "public."fk " test"" violates foreign key constraint ""fk " test"_"ref " id"_"product"_valid"
+INSERT INTO """fk "" test""" ("""ref "" id""", """product""", """from""", """until""") VALUES (2, 'B', 15, 25);
+ERROR:  insert or update on table ""fk " test"" violates foreign key constraint ""fk " test"_"ref " id"_"product"_valid"
+DETAIL:  Key ("ref " id", "product", "range")=(2, B, [15,25)) is not present in table ""quoted" table".
 ROLLBACK TO SAVEPOINT expect_fail;
 ROLLBACK;
 \i sql/include/test_teardown.sql

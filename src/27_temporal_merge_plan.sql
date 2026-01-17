@@ -75,6 +75,7 @@ DECLARE
     v_target_schema_name name;
     v_target_table_name_only name;
     v_range_constructor regtype;
+    v_multirange_type regtype;
     v_range_subtype regtype;
     v_range_subtype_category char(1);
     v_valid_from_col name;
@@ -115,18 +116,24 @@ BEGIN
     INTO v_target_schema_name, v_target_table_name_only
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.oid = target_table;
 
-    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type, e.range_subtype, e.range_subtype_category
-    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_range_subtype, v_range_subtype_category
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type, e.multirange_type, e.range_subtype, e.range_subtype_category
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_multirange_type, v_range_subtype, v_range_subtype_category
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
     IF v_range_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
 
-    v_temporal_cols := ARRAY[v_valid_from_col, v_valid_until_col];
+    v_temporal_cols := ARRAY[v_range_col];
+    IF v_valid_from_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_from_col; END IF;
     IF v_valid_to_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_to_col; END IF;
-    IF v_range_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_range_col; END IF;
+    IF v_valid_until_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_until_col; END IF;
 
-    -- 1.2: Introspect and sanitize all key types.
+    -- 1.2: Introspect the primary key (must happen after v_temporal_cols is defined).
+    SELECT COALESCE(array_agg(a.attname), '{}'::name[]) INTO v_pk_cols
+    FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = target_table AND c.contype = 'p' AND a.attname <> ALL(v_temporal_cols);
+
+    -- 1.3: Introspect and sanitize all key types.
     IF jsonb_typeof(lookup_keys) = 'array' THEN
         SELECT jsonb_agg(k) INTO lookup_keys FROM jsonb_array_elements(lookup_keys) k WHERE jsonb_typeof(k) = 'array';
     END IF;
@@ -143,11 +150,6 @@ BEGIN
     IF (v_identity_columns IS NULL OR cardinality(v_identity_columns) = 0) AND (v_representative_lookup_key IS NOT NULL AND cardinality(v_representative_lookup_key) > 0) THEN
         v_identity_columns := v_representative_lookup_key;
     END IF;
-
-    -- 1.3: Introspect the primary key.
-    SELECT COALESCE(array_agg(a.attname), '{}'::name[]) INTO v_pk_cols
-    FROM pg_constraint c JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-    WHERE c.conrelid = target_table AND c.contype = 'p';
 
     -- 1.4: Introspect causal column type.
     SELECT atttypid INTO v_causal_column_type
@@ -249,13 +251,6 @@ BEGIN
     END;
 
     -- 1.6: Sanitize and normalize ephemeral columns list.
-    -- Automatically treat synchronized columns as ephemeral for change detection.
-    IF v_valid_to_col IS NOT NULL THEN
-        v_ephemeral_columns := v_ephemeral_columns || v_valid_to_col;
-    END IF;
-    IF v_range_col IS NOT NULL THEN
-        v_ephemeral_columns := v_ephemeral_columns || v_range_col;
-    END IF;
     -- Normalize ephemeral columns for stable cache key and better reuse.
     SELECT ARRAY(SELECT DISTINCT e FROM unnest(v_ephemeral_columns) AS e ORDER BY e)
     INTO v_ephemeral_columns;
@@ -778,7 +773,8 @@ BEGIN
             source_data_cols AS (
                 SELECT s.attname
                 FROM source_cols s JOIN target_cols t ON s.attname = t.attname
-                WHERE s.attname NOT IN (row_id_column, v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+                WHERE s.attname NOT IN (row_id_column, 'era_id', 'era_name')
+                AND s.attname <> ALL(v_temporal_cols) -- Exclude all temporal columns (range, from, until, to)
                 AND s.attname <> ALL(v_original_entity_segment_key_cols)
                 AND s.attname <> ALL(v_ephemeral_columns)
             ),
@@ -790,7 +786,8 @@ BEGIN
             target_data_cols AS (
                 SELECT t.attname
                 FROM target_cols t
-                WHERE t.attname NOT IN (v_valid_from_col, v_valid_until_col, 'era_id', 'era_name')
+                WHERE t.attname NOT IN ('era_id', 'era_name')
+                AND t.attname <> ALL(v_temporal_cols) -- Exclude all temporal columns (range, from, until, to)
                 AND t.attname <> ALL(v_original_entity_segment_key_cols)
                 AND t.attname <> ALL(v_ephemeral_columns)
                 AND t.attgenerated = '' -- Exclude generated columns
@@ -887,7 +884,8 @@ BEGIN
                     -- `SELECT DISTINCT *` can fail. We must fall back to `SELECT DISTINCT ON (...) *`.
                     -- The key for DISTINCT ON must uniquely identify rows in the target table. For a temporal table,
                     -- this is the combination of its stable entity identifier and the temporal start column.
-                    v_distinct_on_cols := v_identity_columns || v_valid_from_col;
+                    -- For range-only tables (no boundary columns), use the range column itself.
+                    v_distinct_on_cols := v_identity_columns || COALESCE(v_valid_from_col, v_range_col);
                     v_distinct_on_cols_list := (SELECT string_agg(format('u.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col);
     
                     FOR v_key IN SELECT * FROM jsonb_array_elements(v_keys_for_filtering)
@@ -2064,15 +2062,111 @@ BEGIN
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
             -- Final SELECT
+            -- Execution strategy: with_temporary_temporal_gaps
+            -- Operations are ordered DELETE→UPDATE→INSERT to avoid temporary overlaps (would violate NOT DEFERRABLE unique constraints)
+            -- while tolerating temporary gaps (allowed by DEFERRABLE foreign key constraints). This enables native PostgreSQL 18
+            -- temporal foreign keys. Within UPDATE operations, the update_effect enum order (NONE→SHRINK→MOVE→GROW) further
+            -- minimizes gap duration by contracting timelines before expanding them.
+            --
+            -- CRITICAL: MOVE operations must be ordered by old_valid_from DESC (later ranges first) to avoid temporal conflicts.
+            -- When multiple MOVE operations affect the same entity, processing later ranges first ensures that
+            -- the target range doesn't conflict with existing rows that haven't been moved yet.
+            --
+            -- statement_seq groups operations that can safely execute in a single SQL statement:
+            -- - DELETE: all in one statement (deletions don't conflict)
+            -- - UPDATE NONE/SHRINK: all in one statement (only contract ranges)
+            -- - UPDATE MOVE: each gets its own statement (can create temporary overlaps)
+            -- - UPDATE GROW: all in one statement (only expand into gaps)
+            -- - INSERT: all in one statement (new ranges don't overlap by design)
             v_sql := format($SQL$
+                WITH RECURSIVE ordered_plan AS (
+                    SELECT
+                        row_number() OVER ( ORDER BY p.grouping_key, %1$s, CASE p.operation WHEN 'DELETE' THEN 1 WHEN 'UPDATE' THEN 2 WHEN 'INSERT' THEN 3 ELSE 4 END, p.update_effect NULLS FIRST, CASE WHEN p.update_effect = 'MOVE' THEN 1 ELSE 0 END, CASE WHEN p.update_effect = 'MOVE' THEN COALESCE(p.old_valid_from, p.new_valid_from) END DESC NULLS LAST, COALESCE(p.old_valid_from, p.new_valid_from), (p.row_ids[1]) )::BIGINT as plan_op_seq,
+                        p.*
+                    FROM plan p
+                ),
+                -- For MOVE operations, group into the largest possible batches that can execute together.
+                -- Within a single UPDATE statement, all rows see the pre-update state (MVCC snapshot).
+                -- So if MOVE A's new_range overlaps MOVE B's old_range, they cannot be in the same statement.
+                --
+                -- Algorithm: Process MOVEs in plan_op_seq order (which is old_valid_from DESC).
+                -- Track a multirange of old_ranges in the current batch. For each MOVE:
+                -- - If new_range overlaps the batch's multirange, start a new batch
+                -- - Add this MOVE's old_range to the batch's multirange
+                --
+                -- We use a recursive CTE to accumulate the multirange with reset-on-conflict logic.
+                moves_ordered AS (
+                    SELECT
+                        o.plan_op_seq,
+                        o.grouping_key,
+                        o.old_valid_from,
+                        o.old_valid_until,
+                        o.new_valid_from,
+                        o.new_valid_until,
+                        row_number() OVER (PARTITION BY o.grouping_key ORDER BY o.plan_op_seq) AS move_seq
+                    FROM ordered_plan o
+                    WHERE o.operation = 'UPDATE' AND o.update_effect = 'MOVE'
+                ),
+                moves_with_batch AS (
+                    -- Base case: first MOVE in each entity starts batch 0
+                    SELECT 
+                        plan_op_seq, grouping_key, old_valid_from, old_valid_until, 
+                        new_valid_from, new_valid_until, move_seq,
+                        0::bigint AS move_batch,
+                        %2$s(%3$s(old_valid_from, old_valid_until, '[)')) AS batch_old_ranges
+                    FROM moves_ordered
+                    WHERE move_seq = 1
+                    
+                    UNION ALL
+                    
+                    -- Recursive case: check if new MOVE conflicts with batch's multirange
+                    SELECT
+                        m.plan_op_seq, m.grouping_key, m.old_valid_from, m.old_valid_until,
+                        m.new_valid_from, m.new_valid_until, m.move_seq,
+                        CASE 
+                            WHEN %3$s(m.new_valid_from, m.new_valid_until, '[)') && prev.batch_old_ranges
+                            THEN prev.move_batch + 1  -- Conflict: start new batch
+                            ELSE prev.move_batch      -- No conflict: same batch
+                        END AS move_batch,
+                        CASE 
+                            WHEN %3$s(m.new_valid_from, m.new_valid_until, '[)') && prev.batch_old_ranges
+                            THEN %2$s(%3$s(m.old_valid_from, m.old_valid_until, '[)'))  -- Reset multirange
+                            ELSE prev.batch_old_ranges + %2$s(%3$s(m.old_valid_from, m.old_valid_until, '[)'))  -- Add to multirange
+                        END AS batch_old_ranges
+                    FROM moves_ordered m
+                    JOIN moves_with_batch prev 
+                      ON prev.grouping_key = m.grouping_key 
+                     AND prev.move_seq = m.move_seq - 1
+                ),
+                with_statement_seq AS (
+                    SELECT
+                        o.plan_op_seq,
+                        CASE
+                            WHEN o.operation = 'DELETE' THEN 1
+                            WHEN o.operation = 'UPDATE' AND o.update_effect IN ('NONE', 'SHRINK') THEN 2
+                            WHEN o.operation = 'UPDATE' AND o.update_effect = 'MOVE' THEN
+                                -- Base of 3 for first MOVE batch, +1 for each subsequent batch
+                                3 + COALESCE(mb.move_batch, 0)
+                            WHEN o.operation = 'UPDATE' AND o.update_effect = 'GROW' THEN 1000000  -- Will be renumbered
+                            WHEN o.operation = 'INSERT' THEN 2000000  -- Will be renumbered
+                            ELSE 3000000
+                        END::INT as raw_statement_seq,
+                        o.row_ids, o.operation, o.update_effect, o.causal_id::TEXT, o.is_new_entity, o.entity_keys, o.identity_keys, o.lookup_keys, o.s_t_relation, o.b_a_relation, o.old_valid_from::TEXT,
+                        o.old_valid_until::TEXT, o.new_valid_from::TEXT, o.new_valid_until::TEXT, o.data, o.feedback, CASE WHEN o.trace IS NOT NULL THEN o.trace || jsonb_build_object('final_grouping_key', o.grouping_key) ELSE NULL END as trace, o.grouping_key
+                    FROM ordered_plan o
+                    LEFT JOIN moves_with_batch mb ON mb.plan_op_seq = o.plan_op_seq
+                )
                 SELECT
-                    row_number() OVER ( ORDER BY p.grouping_key, %1$s, CASE p.operation WHEN 'INSERT' THEN 1 WHEN 'UPDATE' THEN 2 WHEN 'DELETE' THEN 3 ELSE 4 END, p.update_effect NULLS FIRST, COALESCE(p.old_valid_from, p.new_valid_from), COALESCE(p.new_valid_from, p.old_valid_from), (p.row_ids[1]) )::BIGINT as plan_op_seq,
-                    p.row_ids, p.operation, p.update_effect, p.causal_id::TEXT, p.is_new_entity, p.entity_keys, p.identity_keys, p.lookup_keys, p.s_t_relation, p.b_a_relation, p.old_valid_from::TEXT,
-                    p.old_valid_until::TEXT, p.new_valid_from::TEXT, p.new_valid_until::TEXT, p.data, p.feedback, CASE WHEN p.trace IS NOT NULL THEN p.trace || jsonb_build_object('final_grouping_key', p.grouping_key) ELSE NULL END, p.grouping_key
-                FROM plan p
+                    plan_op_seq,
+                    dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
+                    row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
+                    old_valid_until, new_valid_from, new_valid_until, data, feedback, trace, grouping_key
+                FROM with_statement_seq
                 ORDER BY plan_op_seq;
             $SQL$,
-                v_final_order_by_expr /* %1$s */
+                v_final_order_by_expr, /* %1$s */
+                v_multirange_type, /* %2$s - multirange type */
+                v_range_constructor /* %3$s - range type */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'query', 'sql', v_sql);
     

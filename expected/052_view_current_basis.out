@@ -28,36 +28,38 @@ BEGIN;
 CREATE FUNCTION test_now() RETURNS date AS $$ SELECT '2024-02-29'::date $$ LANGUAGE sql;
 CREATE TABLE employees (
     id int,
+    valid_range daterange,
     valid_from date,
     valid_until date,
     name text,
     department text
 );
 -- Register era and unique key
-SELECT sql_saga.add_era('employees', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('employees', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table employees to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('employees', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.employees to add constraints: ADD CONSTRAINT employees_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT employees_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.employees to add constraints: ADD CONSTRAINT employees_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  employees_id_valid
 (1 row)
 
 -- Populate with some data
-INSERT INTO employees VALUES
+INSERT INTO employees (id, valid_from, valid_until, name, department) VALUES
 (1, '2023-01-01', '2024-01-01', 'Alice', 'Engineering'),
 (1, '2024-01-01', 'infinity', 'Alice', 'R&D'),
 (2, '2023-05-01', 'infinity', 'Bob', 'Sales');
 TABLE employees ORDER BY id, valid_from;
- id | valid_from | valid_until | name  | department  
-----+------------+-------------+-------+-------------
-  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2023-05-01 | infinity    | Bob   | Sales
+ id |       valid_range       | valid_from | valid_until | name  | department  
+----+-------------------------+------------+-------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | [2024-01-01,infinity)   | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2023-05-01,infinity)   | 2023-05-01 | infinity    | Bob   | Sales
 (3 rows)
 
 -- Test API Lifecycle
@@ -70,14 +72,15 @@ SELECT sql_saga.add_current_view('employees'::regclass, current_func_name := 'te
 (1 row)
 
 \d employees__current_valid
-         View "public.employees__current_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
- name        | text    |           |          | 
- department  | text    |           |          | 
+          View "public.employees__current_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
+ name        | text      |           |          | 
+ department  | text      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
 
@@ -89,8 +92,9 @@ TABLE sql_saga.updatable_view;
 
 -- Test Error Handling for non-time-based eras
 SAVEPOINT before_failure_setup;
-CREATE TABLE widgets (id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('widgets', 'valid_from', 'valid_until');
+CREATE TABLE widgets (id int, valid_range int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('widgets', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "widgets_synchronize_temporal_columns_trigger" on table widgets to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -111,10 +115,10 @@ ROLLBACK TO before_failure_setup;
 CREATE VIEW employees_current_view_select AS
 TABLE employees__current_valid ORDER BY id;
 TABLE employees_current_view_select;
- id | valid_from | valid_until | name  | department 
-----+------------+-------------+-------+------------
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2023-05-01 | infinity    | Bob   | Sales
+ id |      valid_range      | valid_from | valid_until | name  | department 
+----+-----------------------+------------+-------------+-------+------------
+  1 | [2024-01-01,infinity) | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2023-05-01,infinity) | 2023-05-01 | infinity    | Bob   | Sales
 (2 rows)
 
 -- Test INSERT (SCD Type 2)
@@ -124,20 +128,20 @@ VALUES (3, 'Carol', 'Marketing');
 -- The new record should be visible in the base table with a recent timestamp,
 -- and the view should now show Carol.
 TABLE employees ORDER BY id, valid_from;
- id | valid_from | valid_until | name  | department  
-----+------------+-------------+-------+-------------
-  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2023-05-01 | infinity    | Bob   | Sales
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |       valid_range       | valid_from | valid_until | name  | department  
+----+-------------------------+------------+-------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | [2024-01-01,infinity)   | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2023-05-01,infinity)   | 2023-05-01 | infinity    | Bob   | Sales
+  3 | [2024-02-29,infinity)   | 2024-02-29 | infinity    | Carol | Marketing
 (4 rows)
 
 TABLE employees_current_view_select;
- id | valid_from | valid_until | name  | department 
-----+------------+-------------+-------+------------
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2023-05-01 | infinity    | Bob   | Sales
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |      valid_range      | valid_from | valid_until | name  | department 
+----+-----------------------+------------+-------------+-------+------------
+  1 | [2024-01-01,infinity) | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2023-05-01,infinity) | 2023-05-01 | infinity    | Bob   | Sales
+  3 | [2024-02-29,infinity) | 2024-02-29 | infinity    | Carol | Marketing
 (3 rows)
 
 -- Test UPDATE (SCD Type 2)
@@ -146,21 +150,21 @@ UPDATE employees__current_valid SET department = 'Management' WHERE id = 2;
 -- The old record for Bob should be closed out, and a new one created.
 -- The view should show Bob in Management.
 TABLE employees ORDER BY id, valid_from;
- id | valid_from | valid_until | name  | department  
-----+------------+-------------+-------+-------------
-  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2023-05-01 | 2024-02-29  | Bob   | Sales
-  2 | 2024-02-29 | infinity    | Bob   | Management
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |       valid_range       | valid_from | valid_until | name  | department  
+----+-------------------------+------------+-------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | [2024-01-01,infinity)   | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2023-05-01,2024-02-29) | 2023-05-01 | 2024-02-29  | Bob   | Sales
+  2 | [2024-02-29,infinity)   | 2024-02-29 | infinity    | Bob   | Management
+  3 | [2024-02-29,infinity)   | 2024-02-29 | infinity    | Carol | Marketing
 (5 rows)
 
 TABLE employees_current_view_select;
- id | valid_from | valid_until | name  | department 
-----+------------+-------------+-------+------------
-  1 | 2024-01-01 | infinity    | Alice | R&D
-  2 | 2024-02-29 | infinity    | Bob   | Management
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |      valid_range      | valid_from | valid_until | name  | department 
+----+-----------------------+------------+-------------+-------+------------
+  1 | [2024-01-01,infinity) | 2024-01-01 | infinity    | Alice | R&D
+  2 | [2024-02-29,infinity) | 2024-02-29 | infinity    | Bob   | Management
+  3 | [2024-02-29,infinity) | 2024-02-29 | infinity    | Carol | Marketing
 (3 rows)
 
 -- Test DELETE (Soft delete)
@@ -169,20 +173,20 @@ TABLE employees_current_view_select;
 DELETE FROM employees__current_valid WHERE id = 1;
 -- Alice's current record should be closed out. She should no longer be in the current view.
 TABLE employees ORDER BY id, valid_from;
- id | valid_from | valid_until | name  | department  
-----+------------+-------------+-------+-------------
-  1 | 2023-01-01 | 2024-01-01  | Alice | Engineering
-  1 | 2024-01-01 | 2024-02-29  | Alice | R&D
-  2 | 2023-05-01 | 2024-02-29  | Bob   | Sales
-  2 | 2024-02-29 | infinity    | Bob   | Management
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |       valid_range       | valid_from | valid_until | name  | department  
+----+-------------------------+------------+-------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01  | Alice | Engineering
+  1 | [2024-01-01,2024-02-29) | 2024-01-01 | 2024-02-29  | Alice | R&D
+  2 | [2023-05-01,2024-02-29) | 2023-05-01 | 2024-02-29  | Bob   | Sales
+  2 | [2024-02-29,infinity)   | 2024-02-29 | infinity    | Bob   | Management
+  3 | [2024-02-29,infinity)   | 2024-02-29 | infinity    | Carol | Marketing
 (5 rows)
 
 TABLE employees_current_view_select;
- id | valid_from | valid_until | name  | department 
-----+------------+-------------+-------+------------
-  2 | 2024-02-29 | infinity    | Bob   | Management
-  3 | 2024-02-29 | infinity    | Carol | Marketing
+ id |      valid_range      | valid_from | valid_until | name  | department 
+----+-----------------------+------------+-------------+-------+------------
+  2 | [2024-02-29,infinity) | 2024-02-29 | infinity    | Bob   | Management
+  3 | [2024-02-29,infinity) | 2024-02-29 | infinity    | Carol | Marketing
 (2 rows)
 
 -- Drop the dependent view first

@@ -102,8 +102,8 @@ BEGIN
     truncate_trigger := coalesce(truncate_trigger, sql_saga.__internal_make_name(ARRAY[table_name], 'truncate'));
     EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_system_versioning()', truncate_trigger /* %I */, table_oid /* %s */);
 
-    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, range_subtype, range_subtype_category, bounds_check_constraint)
-    VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'timestamptz', 'D', NULL);
+    INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint)
+    VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'tstzmultirange', 'timestamptz', 'D', NULL);
 
     INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
     VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);

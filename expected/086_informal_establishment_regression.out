@@ -36,24 +36,29 @@ CREATE TABLE repro.establishment (
     org_nr text,
     name text,
     edit_comment text,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date
 );
-SELECT sql_saga.add_era('repro.establishment');
+SELECT sql_saga.add_era('repro.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table repro.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
+ALTER TABLE repro.establishment ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table repro.establishment to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT establishment_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table repro.establishment to add constraints: ALTER COLUMN id SET NOT NULL
      add_unique_key     
 ------------------------
  establishment_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.establishment', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: altering table repro.establishment to add constraints: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_org_nr_valid_excl EXCLUDE USING gist (org_nr WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT establishment_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table repro.establishment to add constraints: ADD CONSTRAINT establishment_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT establishment_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  establishment_org_nr_valid

@@ -15,11 +15,15 @@ CREATE TABLE tm_portion_of.target(
     id int,
     payload TEXT,
     edit_comment TEXT,
+    valid_range daterange,
     valid_from DATE,
     valid_until DATE
 );
 
-SELECT sql_saga.add_era('tm_portion_of.target'::regclass, 'valid_from', 'valid_until', 'valid');
+SELECT sql_saga.add_era('tm_portion_of.target'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    era_name => 'valid');
 SELECT sql_saga.add_unique_key('tm_portion_of.target'::regclass, '{id}', 'valid');
 
 -- Helper function to reset target state
@@ -138,10 +142,13 @@ CREATE TABLE tm_portion_of.test_unit_not_null (
     id int,
     name text NOT NULL,
     value int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_portion_of.test_unit_not_null'::regclass);
+SELECT sql_saga.add_era('tm_portion_of.test_unit_not_null'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_portion_of.test_unit_not_null'::regclass, ARRAY['id']);
 
 -- 2. Insert an initial record

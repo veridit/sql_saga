@@ -29,9 +29,19 @@ NOTICE:  extension "sql_saga" already exists, skipping
 CREATE SCHEMA mtt;
 -- Setup: Parent and child tables with a temporal foreign key.
 -- The child also has a synchronized column to ensure its trigger is NOT affected.
-CREATE TABLE mtt.parent (id int, name text, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('mtt.parent', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table mtt.parent to synchronize columns: valid_to
+CREATE TABLE mtt.parent (
+    id int, 
+    name text, 
+    valid_range daterange NOT NULL,
+    valid_from date, 
+    valid_until date, 
+    valid_to date
+);
+SELECT sql_saga.add_era('mtt.parent', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table mtt.parent to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
@@ -40,19 +50,28 @@ NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger"
 SELECT sql_saga.add_unique_key(
     'mtt.parent',
     '{id}',
-    unique_key_name => 'parent_id_valid',
-    unique_constraint => 'parent_id_valid_uniq',
-    exclude_constraint => 'parent_id_valid_excl'
+    unique_key_name => 'parent_id_valid'
 );
-NOTICE:  sql_saga: altering table mtt.parent to add constraints: ADD CONSTRAINT parent_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT parent_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table mtt.parent to add constraints: ADD CONSTRAINT parent_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  parent_id_valid
 (1 row)
 
-CREATE TABLE mtt.child (id int, parent_id int, name text, valid_from date, valid_until date, valid_to date);
-SELECT sql_saga.add_era('mtt.child', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table mtt.child to synchronize columns: valid_to
+CREATE TABLE mtt.child (
+    id int, 
+    parent_id int, 
+    name text, 
+    valid_range daterange NOT NULL,
+    valid_from date, 
+    valid_until date, 
+    valid_to date
+);
+SELECT sql_saga.add_era('mtt.child', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table mtt.child to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
@@ -61,11 +80,9 @@ NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" 
 SELECT sql_saga.add_unique_key(
     'mtt.child',
     '{id}',
-    unique_key_name => 'child_id_valid',
-    unique_constraint => 'child_id_valid_uniq',
-    exclude_constraint => 'child_id_valid_excl'
+    unique_key_name => 'child_id_valid'
 );
-NOTICE:  sql_saga: altering table mtt.child to add constraints: ADD CONSTRAINT child_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT child_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table mtt.child to add constraints: ADD CONSTRAINT child_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  child_id_valid
@@ -77,7 +94,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'parent_id_valid'
 );
-NOTICE:  No compatible index found for foreign key on table mtt.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON mtt.child USING GIST (parent_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table mtt.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON mtt.child USING GIST (parent_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_valid
@@ -105,20 +122,16 @@ $$ LANGUAGE sql;
 SELECT * FROM mtt.get_trigger_status('mtt.child');
                 trigger_name                | is_enabled 
 --------------------------------------------+------------
- child_parent_id_valid_fk_insert            | enabled
- child_parent_id_valid_fk_update            | enabled
  child_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
                 trigger_name                 | is_enabled 
 ---------------------------------------------+------------
- child_parent_id_valid_uk_delete             | enabled
- child_parent_id_valid_uk_update             | enabled
  parent_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 \echo '--- Disabling triggers for both tables ---'
 --- Disabling triggers for both tables ---
@@ -130,20 +143,16 @@ CALL sql_saga.disable_temporal_triggers('mtt.parent', 'mtt.child');
 SELECT * FROM mtt.get_trigger_status('mtt.child');
                 trigger_name                | is_enabled 
 --------------------------------------------+------------
- child_parent_id_valid_fk_insert            | disabled
- child_parent_id_valid_fk_update            | disabled
  child_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
                 trigger_name                 | is_enabled 
 ---------------------------------------------+------------
- child_parent_id_valid_uk_delete             | disabled
- child_parent_id_valid_uk_update             | disabled
  parent_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 \echo '--- Enabling triggers for both tables ---'
 --- Enabling triggers for both tables ---
@@ -155,20 +164,16 @@ CALL sql_saga.enable_temporal_triggers('mtt.parent', 'mtt.child');
 SELECT * FROM mtt.get_trigger_status('mtt.child');
                 trigger_name                | is_enabled 
 --------------------------------------------+------------
- child_parent_id_valid_fk_insert            | enabled
- child_parent_id_valid_fk_update            | enabled
  child_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
                 trigger_name                 | is_enabled 
 ---------------------------------------------+------------
- child_parent_id_valid_uk_delete             | enabled
- child_parent_id_valid_uk_update             | enabled
  parent_synchronize_temporal_columns_trigger | enabled
-(3 rows)
+(1 row)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

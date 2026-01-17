@@ -133,20 +133,20 @@ SAVEPOINT simple_update_should_succeed;
 UPDATE products__for_portion_of_valid SET price = 1250 WHERE id = 1;
 -- Verify both rows for product 1 are updated.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1250 | 2023-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |      valid_range      | valid_from | valid_until 
+----+--------+-------+-----------------------+------------+-------------
+  1 | Laptop |  1250 | [2023-01-01,infinity) | 2023-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity) | 2023-05-01 | infinity
 (2 rows)
 
 ROLLBACK TO simple_update_should_succeed;
 -- The table should be unchanged.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test exact match UPDATE (data correction on a specific historical slice)
@@ -162,9 +162,9 @@ WHERE id = 1
   AND valid_until <= '2024-01-01';
 -- Verify there is not DELETE in the plan
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |               data                | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------+----------+-------+--------------------
-           1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |               data                | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -175,29 +175,29 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify price is updated on just that one row.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1250 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1250 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 ROLLBACK TO exact_match_update_with_where_should_succeed;
 -- Verify state is restored
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test exact match UPDATE (data correction on a specific historical slice)
@@ -211,9 +211,9 @@ SET
 WHERE id = 1;
 -- Verify there is not DELETE in the plan
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |               data                | feedback | trace |    grouping_key    
--------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------+----------+-------+--------------------
-           1 | {1}     | SKIP_IDENTICAL |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |               data                | feedback | trace |    grouping_key    
+-------------+---------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | SKIP_IDENTICAL |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -224,29 +224,29 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify price is updated on just that one row.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1250 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1250 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 ROLLBACK TO exact_temporal_match_without_where_should_succeed;
 -- Verify state is restored
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 -- Test UPDATE (applying a change to a portion of the timeline)
@@ -260,38 +260,38 @@ SET
 WHERE id = 1;
 -- The timeline for Laptop should now have 4 distinct periods.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | 2024-03-01
-  1 | Laptop |  1175 | 2024-03-01 | 2024-06-01
-  1 | Laptop |  1150 | 2024-06-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,2024-03-01) | 2024-01-01 | 2024-03-01
+  1 | Laptop |  1175 | [2024-03-01,2024-06-01) | 2024-03-01 | 2024-06-01
+  1 | Laptop |  1150 | [2024-06-01,infinity)   | 2024-06-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (5 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | 2024-03-01
-  1 | Laptop |  1175 | 2024-03-01 | 2024-06-01
-  1 | Laptop |  1150 | 2024-06-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,2024-03-01) | 2024-01-01 | 2024-03-01
+  1 | Laptop |  1175 | [2024-03-01,2024-06-01) | 2024-03-01 | 2024-06-01
+  1 | Laptop |  1150 | [2024-06-01,infinity)   | 2024-06-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (5 rows)
 
 -- Test UPDATE (spanning multiple historical records)
 -- This should shorten two records and insert a new one in the middle.
 -- To get a clean state, we delete and re-insert product 1's history.
 DELETE FROM products WHERE id = 1;
-INSERT INTO products VALUES
+INSERT INTO products(id,name,price,valid_from,valid_until) VALUES
 (1, 'Laptop', 1200, '2023-01-01', '2024-01-01'),
 (1, 'Laptop', 1150, '2024-01-01', 'infinity');
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2024-01-01
-  1 | Laptop |  1150 | 2024-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
+  1 | Laptop |  1150 | [2024-01-01,infinity)   | 2024-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (3 rows)
 
 UPDATE products__for_portion_of_valid
@@ -302,21 +302,21 @@ SET
 WHERE id = 1;
 -- This should now result in a single coalesced record for the 1180 price.
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2023-10-01
-  1 | Laptop |  1180 | 2023-10-01 | 2024-04-01
-  1 | Laptop |  1150 | 2024-04-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2023-10-01) | 2023-01-01 | 2023-10-01
+  1 | Laptop |  1180 | [2023-10-01,2024-04-01) | 2023-10-01 | 2024-04-01
+  1 | Laptop |  1150 | [2024-04-01,infinity)   | 2024-04-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (4 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1200 | 2023-01-01 | 2023-10-01
-  1 | Laptop |  1180 | 2023-10-01 | 2024-04-01
-  1 | Laptop |  1150 | 2024-04-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |       valid_range       | valid_from | valid_until 
+----+--------+-------+-------------------------+------------+-------------
+  1 | Laptop |  1200 | [2023-01-01,2023-10-01) | 2023-01-01 | 2023-10-01
+  1 | Laptop |  1180 | [2023-10-01,2024-04-01) | 2023-10-01 | 2024-04-01
+  1 | Laptop |  1150 | [2024-04-01,infinity)   | 2024-04-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity)   | 2023-05-01 | infinity
 (4 rows)
 
 -- Test UPDATE (fully surrounding all existing records for an entity)
@@ -329,17 +329,17 @@ SET
     valid_until = 'infinity'
 WHERE id = 1;
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1300 | 2023-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |      valid_range      | valid_from | valid_until 
+----+--------+-------+-----------------------+------------+-------------
+  1 | Laptop |  1300 | [2023-01-01,infinity) | 2023-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity) | 2023-05-01 | infinity
 (2 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1300 | 2023-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |      valid_range      | valid_from | valid_until 
+----+--------+-------+-----------------------+------------+-------------
+  1 | Laptop |  1300 | [2023-01-01,infinity) | 2023-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity) | 2023-05-01 | infinity
 (2 rows)
 
 -- Test DELETE (should be disallowed)
@@ -351,17 +351,17 @@ CONTEXT:  PL/pgSQL function sql_saga.for_portion_of_trigger() line 11 at RAISE
 ROLLBACK TO delete_should_fail;
 -- The record for the mouse should still be present
 TABLE products ORDER BY id, valid_from;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1300 | 2023-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |      valid_range      | valid_from | valid_until 
+----+--------+-------+-----------------------+------------+-------------
+  1 | Laptop |  1300 | [2023-01-01,infinity) | 2023-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity) | 2023-05-01 | infinity
 (2 rows)
 
 TABLE products_view_select_for_portion_of;
- id |  name  | price | valid_from | valid_until 
-----+--------+-------+------------+-------------
-  1 | Laptop |  1300 | 2023-01-01 | infinity
-  2 | Mouse  |    25 | 2023-05-01 | infinity
+ id |  name  | price |      valid_range      | valid_from | valid_until 
+----+--------+-------+-----------------------+------------+-------------
+  1 | Laptop |  1300 | [2023-01-01,infinity) | 2023-01-01 | infinity
+  2 | Mouse  |    25 | [2023-05-01,infinity) | 2023-05-01 | infinity
 (2 rows)
 
 -- Drop the dependent view first

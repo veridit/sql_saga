@@ -45,9 +45,9 @@ NOTICE:  sql_saga: altering table public.date_shifts to add constraints: ADD CON
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+----------------------+--------------------------+-------------------+------------------
- public       | date_shifts | valid    | valid_range       |                        |                         | daterange  | date          | D                      |                         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ public       | date_shifts | valid    | valid_range       |                        |                         | daterange  | datemultirange  | date          | D                      |                         |                           |                      | t                        |                   | 
 (1 row)
 
 TABLE sql_saga.unique_keys;

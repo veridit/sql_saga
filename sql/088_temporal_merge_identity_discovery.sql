@@ -15,14 +15,18 @@ CREATE TABLE identity_discovery.person (
     employee_nr text,
     email text,
     full_name text,
-    valid_from date NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from date,
     valid_until date
 );
 
-SELECT sql_saga.add_era('identity_discovery.person');
-SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['id'], key_type => 'primary');
-SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['employee_nr'], key_type => 'natural');
-SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['ssn'], key_type => 'natural');
+SELECT sql_saga.add_era('identity_discovery.person', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+ALTER TABLE identity_discovery.person ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['id'], 'valid', key_type => 'primary');
+SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['employee_nr'], 'valid', key_type => 'natural');
+SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['ssn'], 'valid', key_type => 'natural');
 
 \d identity_discovery.person
 
@@ -171,7 +175,7 @@ ROLLBACK TO SAVEPOINT s9;
 \echo
 \echo '--- Case 9b: Multi-row update with explicit stable key and natural key for lookup ---'
 SAVEPOINT s9;
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 TABLE source_data;
 
 CALL sql_saga.temporal_merge(
@@ -284,7 +288,7 @@ CREATE TEMP TABLE source_step1_b AS SELECT * FROM source_data WHERE row_id = 1;
 CREATE TEMP TABLE source_step2_b AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b', mode => 'MERGE_ENTITY_PATCH');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b', mode => 'MERGE_ENTITY_PATCH');
 \echo '--- State after two-batch merge (PATCH mode) ---'
@@ -298,7 +302,7 @@ CREATE TEMP TABLE source_step1_c AS SELECT * FROM source_data WHERE row_id = 1;
 CREATE TEMP TABLE source_step2_c AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c', mode => 'MERGE_ENTITY_PATCH');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows with PATCH_FOR_PORTION_OF ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c', mode => 'PATCH_FOR_PORTION_OF');
 \echo '--- State after two-batch merge (PORTION_OF mode) ---'
@@ -339,7 +343,7 @@ CREATE TEMP TABLE source_step1_b_12 AS SELECT * FROM source_data WHERE row_id = 
 CREATE TEMP TABLE source_step2_b_12 AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b_12', mode => 'MERGE_ENTITY_UPSERT');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b_12', mode => 'MERGE_ENTITY_UPSERT');
 \echo '--- State after two-batch merge (UPSERT mode) ---'
@@ -353,7 +357,7 @@ CREATE TEMP TABLE source_step1_c_12 AS SELECT * FROM source_data WHERE row_id = 
 CREATE TEMP TABLE source_step2_c_12 AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c_12', mode => 'MERGE_ENTITY_UPSERT');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows with UPDATE_FOR_PORTION_OF ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c_12', mode => 'UPDATE_FOR_PORTION_OF');
 \echo '--- State after two-batch merge (PORTION_OF mode) ---'
@@ -395,7 +399,7 @@ CREATE TEMP TABLE source_step1_b_13 AS SELECT * FROM source_data WHERE row_id = 
 CREATE TEMP TABLE source_step2_b_13 AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_b_13', mode => 'MERGE_ENTITY_REPLACE');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_b_13', mode => 'MERGE_ENTITY_REPLACE');
 \echo '--- State after two-batch merge (REPLACE mode) ---'
@@ -409,7 +413,7 @@ CREATE TEMP TABLE source_step1_c_13 AS SELECT * FROM source_data WHERE row_id = 
 CREATE TEMP TABLE source_step2_c_13 AS SELECT * FROM source_data WHERE row_id > 1;
 \echo '--- Step 1: Seeding target with first row ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step1_c_13', mode => 'MERGE_ENTITY_REPLACE');
-TABLE identity_discovery.person;
+TABLE identity_discovery.person ORDER BY id,ssn,valid_range;
 \echo '--- Step 2: Merging remaining rows with REPLACE_FOR_PORTION_OF ---'
 CALL sql_saga.temporal_merge('identity_discovery.person', 'source_step2_c_13', mode => 'REPLACE_FOR_PORTION_OF');
 \echo '--- State after two-batch merge (PORTION_OF mode) ---'

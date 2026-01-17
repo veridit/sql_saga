@@ -30,20 +30,25 @@ SAVEPOINT scenario_1;
 CREATE TABLE target_units (
     id SERIAL NOT NULL,
     name TEXT,
-    valid_from DATE NOT NULL,
-    valid_until DATE,
-    valid_to DATE
+    valid_range daterange NOT NULL,
+    valid_from DATE,
+    valid_to DATE,
+    valid_until DATE
 );
 -- Note: we add a synchronized 'valid_to' column to make the expected error clear.
-SELECT sql_saga.add_era('target_units', synchronize_valid_to_column => 'valid_to');
-NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_to
+SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_units_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+ALTER TABLE target_units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], 'valid', key_type => 'primary');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL
     add_unique_key     
 -----------------------
  target_units_id_valid
@@ -66,8 +71,8 @@ CALL sql_saga.temporal_merge(
     source_table => 'source_units',
     row_id_column => 'row_id'
 );
-ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 302 at RAISE
+ERROR:  Source table "source_units" must have a "valid_range", "valid_until", or "valid_to" column.
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 297 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,
@@ -96,25 +101,30 @@ CREATE TABLE target_units (
     id SERIAL NOT NULL,
     unit_ident TEXT NOT NULL,
     name TEXT,
-    valid_from DATE NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from DATE,
     valid_until DATE
 );
-SELECT sql_saga.add_era('target_units');
+SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
--- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_from) and an exclusion constraint.
-SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT target_units_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+-- Note: key_type=>'primary' adds a temporal PRIMARY KEY (id, valid_range WITHOUT OVERLAPS).
+ALTER TABLE target_units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key('target_units', ARRAY['id'], 'valid', key_type => 'primary');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ALTER COLUMN id SET NOT NULL
     add_unique_key     
 -----------------------
  target_units_id_valid
 (1 row)
 
-SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], key_type => 'natural');
-NOTICE:  sql_saga: altering table public.target_units to add constraints: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_excl EXCLUDE USING gist (unit_ident WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
+SELECT sql_saga.add_unique_key('target_units', ARRAY['unit_ident'], 'valid', key_type => 'natural');
+NOTICE:  sql_saga: altering table public.target_units to add constraints: ADD CONSTRAINT target_units_unit_ident_valid_uniq UNIQUE (unit_ident, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT target_units_unit_ident_valid_pk_consistency_excl EXCLUDE USING gist (unit_ident WITH =, id WITH <>)
         add_unique_key         
 -------------------------------
  target_units_unit_ident_valid
@@ -136,9 +146,9 @@ INSERT INTO source_units (row_id, founding_row_id, id, unit_ident, name, valid_f
 \echo '## Initial state of target table'
 ## Initial state of target table
 TABLE target_units;
- id | unit_ident |     name      | valid_from | valid_until 
-----+------------+---------------+------------+-------------
-  1 | U1         | Existing Unit | 2023-01-01 | infinity
+ id | unit_ident |     name      |      valid_range      | valid_from | valid_until 
+----+------------+---------------+-----------------------+------------+-------------
+  1 | U1         | Existing Unit | [2023-01-01,infinity) | 2023-01-01 | infinity
 (1 row)
 
 SET client_min_messages TO NOTICE;
@@ -154,8 +164,8 @@ CALL sql_saga.temporal_merge(
     update_source_with_identity => true,
     mode => 'MERGE_ENTITY_UPSERT'
 );
-ERROR:  Source table "source_units" must have either a "valid_until" column or a "valid_to" column matching the target era.
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 302 at RAISE
+ERROR:  Source table "source_units" must have a "valid_range", "valid_until", or "<NULL>" column.
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 297 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
     SELECT * FROM sql_saga.temporal_merge_plan(
         target_table => temporal_merge.target_table,

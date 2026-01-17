@@ -38,12 +38,12 @@ CREATE EXTENSION IF NOT EXISTS btree_gist;
 
 CREATE SCHEMA mvcc_test;
 CREATE TABLE mvcc_test.t (
-    id int primary key,
-    group_id int not null,
+    row_id int GENERATED ALWAYS AS IDENTITY,
+    id int not null,
     value text,
-    valid_from int,
-    valid_until int,
-    EXCLUDE USING gist (group_id WITH =, int4range(valid_from, valid_until) WITH &&) DEFERRABLE
+    valid_range int4range NOT NULL,
+    PRIMARY KEY (row_id),
+    UNIQUE (id, valid_range WITHOUT OVERLAPS)
 );
 
 CREATE FUNCTION mvcc_test.log_trigger()
@@ -63,7 +63,7 @@ BEGIN
     END IF;
 
     RAISE NOTICE '  Visible Table State (SELECT * FROM mvcc_test.t):';
-    FOR v_row IN SELECT * FROM mvcc_test.t ORDER BY id LOOP
+    FOR v_row IN SELECT * FROM mvcc_test.t ORDER BY row_id LOOP
         RAISE NOTICE '    %', v_row;
     END LOOP;
 
@@ -84,23 +84,25 @@ AFTER INSERT OR UPDATE OR DELETE ON mvcc_test.t
 FOR EACH ROW EXECUTE FUNCTION mvcc_test.log_trigger();
 
 \echo '\n--- Initial State ---'
--- group_id=1 has a continuous timeline. group_id=2 is a separate entity.
-INSERT INTO mvcc_test.t VALUES (1, 1, 'initial', 10, 20), (2, 1, 'untouched', 20, 30);
-TABLE mvcc_test.t ORDER BY id;
+-- id=1 has a continuous timeline. id=2 is a separate entity.
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (1, 'initial', '[10,20)'), (1, 'untouched', '[20,30)');
+TABLE mvcc_test.t ORDER BY row_id;
 
 \echo '\n\n--- Scenario 1: INSERT a new row ---'
 BEGIN;
-INSERT INTO mvcc_test.t VALUES (3, 2, 'inserted', 100, 110);
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (2, 'inserted', '[100,110)');
 COMMIT;
 
 \echo '\n\n--- Scenario 2: UPDATE an existing row ---'
 BEGIN;
-UPDATE mvcc_test.t SET value = 'updated' WHERE id = 1;
+UPDATE mvcc_test.t SET value = 'updated' WHERE row_id = 1;
 COMMIT;
 
 \echo '\n\n--- Scenario 3: DELETE an existing row ---'
 BEGIN;
-DELETE FROM mvcc_test.t WHERE id = 1;
+DELETE FROM mvcc_test.t WHERE row_id = 1;
 COMMIT;
 
 \echo '\n\n--- Scenario 4: Multi-row UPDATE ---'
@@ -108,8 +110,9 @@ COMMIT;
 \echo 'The snapshot for the second row''s triggers includes the update from the first row.'
 BEGIN;
 -- Add a row to update
-INSERT INTO mvcc_test.t VALUES (4, 2, 'another', 110, 120);
-UPDATE mvcc_test.t SET value = 'multi-updated' WHERE id IN (2, 4);
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (2, 'another', '[110,120)');
+UPDATE mvcc_test.t SET value = 'multi-updated' WHERE row_id IN (2, 4);
 COMMIT;
 
 
@@ -118,66 +121,63 @@ COMMIT;
 \echo 'that includes the completed update from the first statement.'
 BEGIN;
 \echo '-- First statement in transaction --'
-UPDATE mvcc_test.t SET value = 'tx-update-1' WHERE id = 2;
+UPDATE mvcc_test.t SET value = 'tx-update-1' WHERE row_id = 2;
 \echo '-- Second statement in transaction --'
-UPDATE mvcc_test.t SET value = 'tx-update-2' WHERE id = 3;
+UPDATE mvcc_test.t SET value = 'tx-update-2' WHERE row_id = 3;
 COMMIT;
 
 
 \echo '\n\n--- Scenario 6: Adjusting Adjacent Timelines (SCD Type 2 simulation) ---'
 \echo 'Observation: This scenario demonstrates why the order of operations is critical'
-\echo 'for temporal data. A "grow" operation (extending a period) must happen before a'
-\echo '"shrink" operation to avoid creating a transient gap that would cause a temporal'
-\echo 'foreign key check to fail.'
+\echo 'for temporal data. A "shrink" operation must happen before a "grow" operation'
+\echo 'to avoid creating a transient overlap that would violate NOT DEFERRABLE unique.'
+\echo 'With DELETE→UPDATE→INSERT strategy, we minimize gaps instead of overlaps.'
 BEGIN;
 SET CONSTRAINTS ALL DEFERRED;
--- Setup: two adjacent timeline segments for group_id=3
-INSERT INTO mvcc_test.t VALUES (5, 3, 'a', 100, 200), (6, 3, 'b', 200, 300);
+-- Setup: two adjacent timeline segments for id=3
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (3, 'a', '[100,200)'), (3, 'b', '[200,300)');
 
-\echo '\n-- 6a: Shrink then Grow (Incorrect Order) --'
-\echo '-- We update id=5 to end at 150. The AFTER trigger for this statement sees a'
-\echo '-- gap from 150 to 200. A temporal FK check would fail here.'
-SAVEPOINT shrink_grow;
-UPDATE mvcc_test.t SET valid_until = 150 WHERE id = 5;
-\echo '\n-- We update id=6 to start at 150, closing the gap.'
-UPDATE mvcc_test.t SET valid_from = 150 WHERE id = 6;
-ROLLBACK TO SAVEPOINT shrink_grow;
+\echo '\n-- 6a: Grow then Shrink (Incorrect Order with NOT DEFERRABLE unique) --'
+\echo '-- We update row_id=6 to start at 150. This creates a temporary overlap from 150 to 200.'
+\echo '-- The NOT DEFERRABLE unique constraint rejects this immediately.'
+SAVEPOINT grow_shrink;
+UPDATE mvcc_test.t SET valid_range = '[150,300)' WHERE row_id = 6;
+SELECT 'UNEXPECTED: Overlap was allowed!' AS error;
+ROLLBACK TO SAVEPOINT grow_shrink;
 
-\echo '\n-- 6b: Grow then Shrink (Correct Order) --'
-\echo '-- We update id=6 to start at 150. This creates a temporary overlap from 150 to 200.'
-\echo '-- The deferred EXCLUDE constraint allows this. An FK check here would pass.'
+\echo '\n-- 6b: Shrink then Grow (Correct Order with NOT DEFERRABLE unique) --'
+\echo '-- We update row_id=5 to end at 150. The AFTER trigger for this statement sees a'
+\echo '-- gap from 150 to 200. A DEFERRABLE temporal FK check tolerates this.'
 SAVEPOINT pre_6b_and_6c;
-UPDATE mvcc_test.t SET valid_from = 150 WHERE id = 6;
-\echo '\n-- We update id=5 to end at 150, resolving the overlap. The AFTER trigger'
+UPDATE mvcc_test.t SET valid_range = '[100,150)' WHERE row_id = 5;
+\echo '\n-- We update row_id=6 to start at 150, closing the gap. The AFTER trigger'
 \echo '-- for this statement sees a continuous, valid timeline.'
-UPDATE mvcc_test.t SET valid_until = 150 WHERE id = 5;
+UPDATE mvcc_test.t SET valid_range = '[150,300)' WHERE row_id = 6;
 ROLLBACK TO pre_6b_and_6c;
 
 \echo '\n-- 6c: Ordered Multi-row UPDATE (Correct Order) --'
 \echo '-- We perform both updates in a single statement, using a FROM clause'
-\echo '-- with ORDER BY to force the "grow" operation to happen first.'
+\echo '-- with ORDER BY to force the "shrink" operation to happen first.'
 UPDATE mvcc_test.t
-SET
-    valid_from = u.new_valid_from,
-    valid_until = u.new_valid_until
+SET valid_range = u.new_valid_range
 FROM (
     SELECT
-        id,
-        CASE id WHEN 6 THEN 150 ELSE valid_from END AS new_valid_from,
-        CASE id WHEN 5 THEN 150 ELSE valid_until END AS new_valid_until,
-        -- Order growths (1) before shrinks (2)
-        CASE id WHEN 6 THEN 1 ELSE 2 END AS op_order
+        row_id,
+        CASE row_id WHEN 5 THEN '[100,150)'::int4range WHEN 6 THEN '[150,300)'::int4range END AS new_valid_range,
+        -- Order shrinks (1) before growths (2) to avoid overlaps
+        CASE row_id WHEN 5 THEN 1 ELSE 2 END AS op_order
     FROM mvcc_test.t
-    WHERE id IN (5, 6)
+    WHERE row_id IN (5, 6)
     ORDER BY op_order
 ) AS u
-WHERE mvcc_test.t.id = u.id;
+WHERE mvcc_test.t.row_id = u.row_id;
 
 COMMIT;
 
 
 \echo '\n--- Final State ---'
-TABLE mvcc_test.t ORDER BY id;
+TABLE mvcc_test.t ORDER BY row_id;
 
 DROP SCHEMA mvcc_test CASCADE;
 

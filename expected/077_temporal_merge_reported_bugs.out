@@ -44,25 +44,29 @@ CREATE TABLE tmrb.my_stat_for_unit (
     id SERIAL,
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmrb.my_stat_for_unit'::regclass);
+SELECT sql_saga.add_era('tmrb.my_stat_for_unit'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "my_stat_for_unit_synchronize_temporal_columns_trigger" on table tmrb.my_stat_for_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  my_stat_for_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
             add_unique_key            
 --------------------------------------
  my_stat_for_unit_legal_unit_id_valid
@@ -186,12 +190,16 @@ CREATE TABLE tmrb.my_stat_for_unit_bad_pk (
     id SERIAL PRIMARY KEY, -- Incorrect: PK should include a temporal column
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date
 );
-SELECT sql_saga.add_era('tmrb.my_stat_for_unit_bad_pk'::regclass);
+SELECT sql_saga.add_era('tmrb.my_stat_for_unit_bad_pk'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 WARNING:  Table "tmrb.my_stat_for_unit_bad_pk" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
-HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, valid_from)).
+HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
+NOTICE:  sql_saga: Created trigger "my_stat_for_unit_bad_pk_synchronize_temporal_columns_trigger" on table tmrb.my_stat_for_unit_bad_pk to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -211,9 +219,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target after first import ---'
 --- Target after first import ---
 TABLE tmrb.my_stat_for_unit_bad_pk;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
 (1 row)
 
 \echo '--- Source after ID back-fill ---'
@@ -262,11 +270,15 @@ CREATE TABLE tmrb.my_stat_for_unit_good_pk (
     id SERIAL NOT NULL,
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date,
-    PRIMARY KEY (id, valid_from) -- Correct: Composite PK
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS) -- Correct: Composite PK
 );
-SELECT sql_saga.add_era('tmrb.my_stat_for_unit_good_pk'::regclass);
+SELECT sql_saga.add_era('tmrb.my_stat_for_unit_good_pk'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "my_stat_for_unit_good_pk_synchronize_temporal_columns_trigger" on table tmrb.my_stat_for_unit_good_pk to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -297,9 +309,9 @@ TABLE source_data_2;
 \echo '--- Target for second import ---'
 --- Target for second import ---
 TABLE tmrb.my_stat_for_unit_good_pk;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
 (1 row)
 
 CALL sql_saga.temporal_merge(
@@ -312,18 +324,18 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner output for Case 2b ---'
 --- Planner output for Case 2b ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
-           1 | {2}     | INSERT    |               | 2         | f             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
+           1 |             1 | {2}     | INSERT    |               | 2         | f             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} |          |       | existing_entity__1
 (1 row)
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 --- Target after second import (CORRECT: 2 historical rows for id=1) ---
 SELECT * FROM tmrb.my_stat_for_unit_good_pk ORDER BY id, valid_from;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
-  1 |           100 |         5 | 2023-04-01 | 2023-07-01
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
+  1 |           100 |         5 | [2023-04-01,2023-07-01) | 2023-04-01 | 2023-07-01
 (2 rows)
 
 \echo '--------------------------------------------------------------------------------'
@@ -347,14 +359,18 @@ CREATE TABLE tmrb.my_stat_for_unit_gen_always (
     id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date
 );
-SELECT sql_saga.add_era('tmrb.my_stat_for_unit_gen_always'::regclass);
+SELECT sql_saga.add_era('tmrb.my_stat_for_unit_gen_always'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 WARNING:  Table "tmrb.my_stat_for_unit_gen_always" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
-HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, valid_from)).
+HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
 WARNING:  Table "tmrb.my_stat_for_unit_gen_always" has a GENERATED ALWAYS AS IDENTITY column ("id"). This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, the identity column must be GENERATED BY DEFAULT AS IDENTITY to allow inserting historical records.
+NOTICE:  sql_saga: Created trigger "my_stat_for_unit_gen_always_synchronize_temporal_columns_trigge" on table tmrb.my_stat_for_unit_gen_always to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -395,11 +411,15 @@ CREATE TABLE tmrb.my_stat_for_unit_gen_default (
     id int GENERATED BY DEFAULT AS IDENTITY NOT NULL,
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmrb.my_stat_for_unit_gen_default'::regclass);
+SELECT sql_saga.add_era('tmrb.my_stat_for_unit_gen_default'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "my_stat_for_unit_gen_default_synchronize_temporal_columns_trigg" on table tmrb.my_stat_for_unit_gen_default to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -419,9 +439,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target after first import ---'
 --- Target after first import ---
 TABLE tmrb.my_stat_for_unit_gen_default;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
 (1 row)
 
 -- 5. Import an update for the same entity, which also succeeds
@@ -445,10 +465,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 --- Target after second import (CORRECT: 2 historical rows for id=1) ---
 SELECT * FROM tmrb.my_stat_for_unit_gen_default ORDER BY id, valid_from;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
-  1 |           100 |         5 | 2023-04-01 | 2023-07-01
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
+  1 |           100 |         5 | [2023-04-01,2023-07-01) | 2023-04-01 | 2023-07-01
 (2 rows)
 
 \echo '--------------------------------------------------------------------------------'
@@ -463,19 +483,23 @@ CREATE TABLE tmrb.bug_repro_1 (
     id SERIAL NOT NULL,
     legal_unit_id int NOT NULL,
     value_int int,
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date,
     -- The PK does NOT include the stable identifier `id`, which is what causes the bug.
-    PRIMARY KEY (legal_unit_id, valid_from)
+    PRIMARY KEY (legal_unit_id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmrb.bug_repro_1'::regclass);
+SELECT sql_saga.add_era('tmrb.bug_repro_1'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "bug_repro_1_synchronize_temporal_columns_trigger" on table tmrb.bug_repro_1 to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, legal_unit_id WITH <>)
+NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  bug_repro_1_legal_unit_id_valid
@@ -494,9 +518,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target after initial import ---'
 --- Target after initial import ---
 TABLE tmrb.bug_repro_1;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | infinity
+ id | legal_unit_id | value_int |      valid_range      | valid_from | valid_until 
+----+---------------+-----------+-----------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,infinity) | 2023-01-01 | infinity
 (1 row)
 
 -- This source data will cause an UPDATE on the existing id=1
@@ -522,10 +546,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
 --- Target after second import (CORRECT: 2 historical rows for id=1) ---
 SELECT * FROM tmrb.bug_repro_1 ORDER BY id, valid_from;
- id | legal_unit_id | value_int | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 |           100 |         4 | 2023-01-01 | 2023-04-01
-  1 |           100 |         5 | 2023-04-01 | infinity
+ id | legal_unit_id | value_int |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 |           100 |         4 | [2023-01-01,2023-04-01) | 2023-01-01 | 2023-04-01
+  1 |           100 |         5 | [2023-04-01,infinity)   | 2023-04-01 | infinity
 (2 rows)
 
 \echo '--------------------------------------------------------------------------------'
@@ -583,19 +607,23 @@ SAVEPOINT kranloft_bug_coalesce;
 CREATE TABLE tmrb.legal_unit_kranloft (
     id int,
     name text,
+    valid_range daterange NOT NULL,
     valid_from date,
     valid_until date,
-    valid_to date -- Synchronized column
+    valid_to date
 );
-SELECT sql_saga.add_era('tmrb.legal_unit_kranloft'::regclass, synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "legal_unit_kranloft_synchronize_temporal_columns_trigger" on table tmrb.legal_unit_kranloft to synchronize columns: valid_to
+SELECT sql_saga.add_era('tmrb.legal_unit_kranloft'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "legal_unit_kranloft_synchronize_temporal_columns_trigger" on table tmrb.legal_unit_kranloft to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_kranloft'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.legal_unit_kranloft to add constraints: ADD CONSTRAINT legal_unit_kranloft_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_kranloft_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.legal_unit_kranloft to add constraints: ADD CONSTRAINT legal_unit_kranloft_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key        
 ------------------------------
  legal_unit_kranloft_id_valid
@@ -625,9 +653,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Result: CORRECT - Creates 1 coalesced row ---'
 --- Result: CORRECT - Creates 1 coalesced row ---
 SELECT * FROM tmrb.legal_unit_kranloft ORDER BY valid_from;
- id  |       name        | valid_from | valid_until | valid_to 
------+-------------------+------------+-------------+----------
- 741 | Kranløft Vestland | 2010-01-01 | infinity    | infinity
+ id  |       name        |      valid_range      | valid_from | valid_until | valid_to 
+-----+-------------------+-----------------------+------------+-------------+----------
+ 741 | Kranløft Vestland | [2010-01-01,infinity) | 2010-01-01 | infinity    | infinity
 (1 row)
 
 ROLLBACK TO SAVEPOINT kranloft_bug_coalesce;
@@ -644,17 +672,20 @@ are manually specified in ephemeral_columns.
 SAVEPOINT ephemeral_validation;
 -- Use the same setup as the kranloft bug
 CREATE TABLE tmrb.ephemeral_validation (
-    id int, name text, valid_from date, valid_until date, valid_to date
+    id int, name text, valid_range daterange NOT NULL, valid_from date, valid_until date, valid_to date
 );
-SELECT sql_saga.add_era('tmrb.ephemeral_validation'::regclass, synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "ephemeral_validation_synchronize_temporal_columns_trigger" on table tmrb.ephemeral_validation to synchronize columns: valid_to
+SELECT sql_saga.add_era('tmrb.ephemeral_validation'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "ephemeral_validation_synchronize_temporal_columns_trigger" on table tmrb.ephemeral_validation to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.ephemeral_validation'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.ephemeral_validation to add constraints: ADD CONSTRAINT ephemeral_validation_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT ephemeral_validation_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.ephemeral_validation to add constraints: ADD CONSTRAINT ephemeral_validation_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  ephemeral_validation_id_valid
@@ -709,32 +740,38 @@ foreign key violation if the parent has existing child records.
 SAVEPOINT fk_violation_on_replace;
 -- Setup: Parent and child temporal tables with a temporal foreign key.
 CREATE TABLE tmrb.legal_unit_fk_bug (
-    id int, name text, valid_from date, valid_until date
+    id int, name text, valid_range daterange NOT NULL, valid_from date, valid_until date
 );
-SELECT sql_saga.add_era('tmrb.legal_unit_fk_bug'::regclass);
+SELECT sql_saga.add_era('tmrb.legal_unit_fk_bug'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "legal_unit_fk_bug_synchronize_temporal_columns_trigger" on table tmrb.legal_unit_fk_bug to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_fk_bug'::regclass, '{id}', unique_key_name => 'legal_unit_fk_bug_id_valid');
-NOTICE:  sql_saga: altering table tmrb.legal_unit_fk_bug to add constraints: ADD CONSTRAINT legal_unit_fk_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT legal_unit_fk_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.legal_unit_fk_bug to add constraints: ADD CONSTRAINT legal_unit_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  legal_unit_fk_bug_id_valid
 (1 row)
 
 CREATE TABLE tmrb.activity_fk_bug (
-    id int, legal_unit_id int, activity_code text, valid_from date, valid_until date
+    id int, legal_unit_id int, activity_code text, valid_range daterange NOT NULL, valid_from date, valid_until date
 );
-SELECT sql_saga.add_era('tmrb.activity_fk_bug'::regclass);
+SELECT sql_saga.add_era('tmrb.activity_fk_bug'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "activity_fk_bug_synchronize_temporal_columns_trigger" on table tmrb.activity_fk_bug to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.activity_fk_bug'::regclass, '{id}', unique_key_name => 'activity_fk_bug_id_valid');
-NOTICE:  sql_saga: altering table tmrb.activity_fk_bug to add constraints: ADD CONSTRAINT activity_fk_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT activity_fk_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.activity_fk_bug to add constraints: ADD CONSTRAINT activity_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key      
 --------------------------
  activity_fk_bug_id_valid
@@ -746,7 +783,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_fk_bug_id_valid'
 );
-NOTICE:  No compatible index found for foreign key on table tmrb.activity_fk_bug. Creating new index: CREATE INDEX activity_fk_bug_legal_unit_id_valid_gist_idx ON tmrb.activity_fk_bug USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table tmrb.activity_fk_bug. Creating new index: CREATE INDEX activity_fk_bug_legal_unit_id_valid_gist_idx ON tmrb.activity_fk_bug USING GIST (legal_unit_id, valid_range)
       add_temporal_foreign_key       
 -------------------------------------
  activity_fk_bug_legal_unit_id_valid
@@ -776,9 +813,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Final state of parent table (CORRECT: timeline replaced) ---'
 --- Final state of parent table (CORRECT: timeline replaced) ---
 TABLE tmrb.legal_unit_fk_bug;
- id  |      name       | valid_from | valid_until 
------+-----------------+------------+-------------
- 101 | Updated Company | 2023-01-01 | 2024-01-01
+ id  |      name       |       valid_range       | valid_from | valid_until 
+-----+-----------------+-------------------------+------------+-------------
+ 101 | Updated Company | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT fk_violation_on_replace;
@@ -795,16 +832,19 @@ NOT NULL DEFAULT constraint in the target.
 SAVEPOINT not_null_default_bug;
 -- Setup
 CREATE TABLE tmrb.unit_default_bug (
-    id int, name text, is_active boolean NOT NULL DEFAULT true, valid_from date, valid_until date, PRIMARY KEY (id, valid_from)
+    id int, name text, is_active boolean NOT NULL DEFAULT true, valid_range daterange NOT NULL, valid_from date, valid_until date, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass);
+SELECT sql_saga.add_era('tmrb.unit_default_bug'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "unit_default_bug_synchronize_temporal_columns_trigger" on table tmrb.unit_default_bug to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.unit_default_bug'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT unit_default_bug_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  unit_default_bug_id_valid
@@ -832,9 +872,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Final state of target table (CORRECT: is_active preserved its default) ---'
 --- Final state of target table (CORRECT: is_active preserved its default) ---
 TABLE tmrb.unit_default_bug;
- id |     name     | is_active | valid_from | valid_until 
-----+--------------+-----------+------------+-------------
-  1 | Updated Name | t         | 2023-01-01 | 2024-01-01
+ id |     name     | is_active |       valid_range       | valid_from | valid_until 
+----+--------------+-----------+-------------------------+------------+-------------
+  1 | Updated Name | t         | [2023-01-01,2024-01-01) | 2023-01-01 | 2024-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT not_null_default_bug;
@@ -857,24 +897,28 @@ CREATE TABLE tmrb.coalesce_bug (
     id int,
     value int,
     edit_comment text,
+    valid_range daterange NOT NULL,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tmrb.coalesce_bug'::regclass);
+SELECT sql_saga.add_era('tmrb.coalesce_bug'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "coalesce_bug_synchronize_temporal_columns_trigger" on table tmrb.coalesce_bug to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.coalesce_bug'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.coalesce_bug to add constraints: ADD CONSTRAINT coalesce_bug_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT coalesce_bug_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmrb.coalesce_bug to add constraints: ADD CONSTRAINT coalesce_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key     
 -----------------------
  coalesce_bug_id_valid
 (1 row)
 
 -- 2. Initial State
-INSERT INTO tmrb.coalesce_bug VALUES (1, 100, 'Old Comment', '2023-01-01', '2023-02-01');
+INSERT INTO tmrb.coalesce_bug(id, value, edit_comment, valid_from, valid_until) VALUES (1, 100, 'Old Comment', '2023-01-01', '2023-02-01');
 -- 3. Source Data
 CREATE TEMP TABLE source_coalesce_bug (
     row_id int, id int, value int, edit_comment text, valid_from date, valid_until date
@@ -884,9 +928,9 @@ INSERT INTO source_coalesce_bug VALUES
 \echo '--- Target state BEFORE merge ---'
 --- Target state BEFORE merge ---
 TABLE tmrb.coalesce_bug;
- id | value | edit_comment | valid_from | valid_until 
-----+-------+--------------+------------+-------------
-  1 |   100 | Old Comment  | 2023-01-01 | 2023-02-01
+ id | value | edit_comment |       valid_range       | valid_from | valid_until 
+----+-------+--------------+-------------------------+------------+-------------
+  1 |   100 | Old Comment  | [2023-01-01,2023-02-01) | 2023-01-01 | 2023-02-01
 (1 row)
 
 \echo '--- Source data FOR merge ---'
@@ -908,9 +952,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Target state AFTER merge (CORRECT: edit_comment is "New Comment") ---'
 --- Target state AFTER merge (CORRECT: edit_comment is "New Comment") ---
 SELECT * FROM tmrb.coalesce_bug;
- id | value | edit_comment | valid_from | valid_until 
-----+-------+--------------+------------+-------------
-  1 |   100 | New Comment  | 2023-01-01 | 2023-03-01
+ id | value | edit_comment |       valid_range       | valid_from | valid_until 
+----+-------+--------------+-------------------------+------------+-------------
+  1 |   100 | New Comment  | [2023-01-01,2023-03-01) | 2023-01-01 | 2023-03-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT coalesce_uses_latest_data;

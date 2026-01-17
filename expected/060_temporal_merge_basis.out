@@ -101,20 +101,24 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
@@ -178,9 +182,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                            | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {101}   | INSERT    |               | 101       | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "New EST", "employees": 10, "edit_comment": "Initial Insert", "legal_unit_id": 1} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                            | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {101}   | INSERT    |               | 101       | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "New EST", "employees": 10, "edit_comment": "Initial Insert", "legal_unit_id": 1} |          |       | new_entity__1
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -247,10 +251,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {102}   | INSERT    |               | 102       | f             | {"id": 2}   | {"id": 2}     | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__2
-           2 | {102}   | UPDATE    | SHRINK        | 102       | f             | {"id": 2}   | {"id": 2}     | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 25, "edit_comment": "Starts patch", "legal_unit_id": 1}    |          |       | existing_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {102}   | UPDATE    | SHRINK        | 102       | f             | {"id": 2}   | {"id": 2}     | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 25, "edit_comment": "Starts patch", "legal_unit_id": 1}    |          |       | existing_entity__2
+           2 |             2 | {102}   | INSERT    |               | 102       | f             | {"id": 2}   | {"id": 2}     | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__2
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -320,10 +324,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {103}   | INSERT    |               | 103       | f             | {"id": 3}   | {"id": 3}     | {}          | finishes     | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 35, "edit_comment": "Finishes patch", "legal_unit_id": 1}  |          |       | existing_entity__3
-           2 | {103}   | UPDATE    | SHRINK        | 103       | f             | {"id": 3}   | {"id": 3}     | {}          | finishes     | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__3
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {103}   | UPDATE    | SHRINK        | 103       | f             | {"id": 3}   | {"id": 3}     | {}          | finishes     | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__3
+           2 |             2 | {103}   | INSERT    |               | 103       | f             | {"id": 3}   | {"id": 3}     | {}          | finishes     | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 35, "edit_comment": "Finishes patch", "legal_unit_id": 1}  |          |       | existing_entity__3
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -393,11 +397,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {104}   | INSERT    |               | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | contains     | 2024-01-01     | 2026-01-01      | 2024-07-01     | 2025-01-01      | {"name": "Patched", "employees": 45, "edit_comment": "During patch", "legal_unit_id": 1}    |          |       | existing_entity__4
-           2 | {104}   | INSERT    |               | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__4
-           3 | {104}   | UPDATE    | SHRINK        | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__4
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {104}   | UPDATE    | SHRINK        | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__4
+           2 |             2 | {104}   | INSERT    |               | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | contains     | 2024-01-01     | 2026-01-01      | 2024-07-01     | 2025-01-01      | {"name": "Patched", "employees": 45, "edit_comment": "During patch", "legal_unit_id": 1}    |          |       | existing_entity__4
+           3 |             2 | {104}   | INSERT    |               | 104       | f             | {"id": 4}   | {"id": 4}     | {}          | during       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__4
 (3 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -470,10 +474,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {105}   | INSERT    |               | 105       | f             | {"id": 5}   | {"id": 5}     | {}          | overlapped_by | overlaps     | 2024-01-01     | 2025-01-01      | 2024-07-01     | 2025-07-01      | {"name": "Patched", "employees": 55, "edit_comment": "Overlaps patch", "legal_unit_id": 1}  |          |       | existing_entity__5
-           2 | {105}   | UPDATE    | SHRINK        | 105       | f             | {"id": 5}   | {"id": 5}     | {}          | overlapped_by | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__5
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {105}   | UPDATE    | SHRINK        | 105       | f             | {"id": 5}   | {"id": 5}     | {}          | overlapped_by | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__5
+           2 |             2 | {105}   | INSERT    |               | 105       | f             | {"id": 5}   | {"id": 5}     | {}          | overlapped_by | overlaps     | 2024-01-01     | 2025-01-01      | 2024-07-01     | 2025-07-01      | {"name": "Patched", "employees": 55, "edit_comment": "Overlaps patch", "legal_unit_id": 1}  |          |       | existing_entity__5
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -543,10 +547,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation  | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                               | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+---------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {106}   | INSERT    |               | 106       | f             | {"id": 6}   | {"id": 6}     | {}          | overlaps     | overlapped_by | 2024-07-01     | 2025-07-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 65, "edit_comment": "Overlapped by patch", "legal_unit_id": 1} |          |       | existing_entity__6
-           2 | {106}   | UPDATE    | SHRINK        | 106       | f             | {"id": 6}   | {"id": 6}     | {}          | overlaps     | finished_by   | 2024-07-01     | 2025-07-01      | 2025-01-01     | 2025-07-01      | {"name": "Original", "employees": 60, "edit_comment": "Original slice", "legal_unit_id": 1}     |          |       | existing_entity__6
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation  | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                               | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+---------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {106}   | UPDATE    | SHRINK        | 106       | f             | {"id": 6}   | {"id": 6}     | {}          | overlaps     | finished_by   | 2024-07-01     | 2025-07-01      | 2025-01-01     | 2025-07-01      | {"name": "Original", "employees": 60, "edit_comment": "Original slice", "legal_unit_id": 1}     |          |       | existing_entity__6
+           2 |             2 | {106}   | INSERT    |               | 106       | f             | {"id": 6}   | {"id": 6}     | {}          | overlaps     | overlapped_by | 2024-07-01     | 2025-07-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 65, "edit_comment": "Overlapped by patch", "legal_unit_id": 1} |          |       | existing_entity__6
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -616,9 +620,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                           | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {107}   | INSERT    |               | 107       | f             | {"id": 7}   | {"id": 7}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 75, "edit_comment": "Meets patch", "legal_unit_id": 1} |          |       | existing_entity__7
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                           | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {107}   | INSERT    |               | 107       | f             | {"id": 7}   | {"id": 7}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 75, "edit_comment": "Meets patch", "legal_unit_id": 1} |          |       | existing_entity__7
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -688,9 +692,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {108}   | INSERT    |               | 108       | f             | {"id": 8}   | {"id": 8}     | {}          |              |              |                |                 | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 85, "edit_comment": "Met by patch", "legal_unit_id": 1} |          |       | existing_entity__8
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {108}   | INSERT    |               | 108       | f             | {"id": 8}   | {"id": 8}     | {}          |              |              |                |                 | 2025-01-01     | 2026-01-01      | {"name": "Patched", "employees": 85, "edit_comment": "Met by patch", "legal_unit_id": 1} |          |       | existing_entity__8
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -760,9 +764,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+--------------------
-           1 | {109}   | INSERT    |               | 109       | f             | {"id": 9}   | {"id": 9}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 95, "edit_comment": "Before patch", "legal_unit_id": 1} |          |       | existing_entity__9
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {109}   | INSERT    |               | 109       | f             | {"id": 9}   | {"id": 9}     | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 95, "edit_comment": "Before patch", "legal_unit_id": 1} |          |       | existing_entity__9
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -832,9 +836,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {110}   | INSERT    |               | 110       | f             | {"id": 10}  | {"id": 10}    | {}          |              |              |                |                 | 2025-01-02     | 2026-01-01      | {"name": "Patched", "employees": 105, "edit_comment": "After patch", "legal_unit_id": 1} |          |       | existing_entity__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                           | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {110}   | INSERT    |               | 110       | f             | {"id": 10}  | {"id": 10}    | {}          |              |              |                |                 | 2025-01-02     | 2026-01-01      | {"name": "Patched", "employees": 105, "edit_comment": "After patch", "legal_unit_id": 1} |          |       | existing_entity__10
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -904,9 +908,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                            | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {111}   | UPDATE    | NONE          | 111       | f             | {"id": 11}  | {"id": 11}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 115, "edit_comment": "Equals patch", "legal_unit_id": 1} |          |       | existing_entity__11
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                           data                                            | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {111}   | UPDATE    | NONE          | 111       | f             | {"id": 11}  | {"id": 11}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "employees": 115, "edit_comment": "Equals patch", "legal_unit_id": 1} |          |       | existing_entity__11
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -984,10 +988,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {112}   | INSERT    |               | 112       | f             | {"id": 12}  | {"id": 12}    | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__12
-           2 | {112}   | UPDATE    | SHRINK        | 112       | f             | {"id": 12}  | {"id": 12}    | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 25, "edit_comment": "Starts replace", "legal_unit_id": 1} |          |       | existing_entity__12
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {112}   | UPDATE    | SHRINK        | 112       | f             | {"id": 12}  | {"id": 12}    | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 25, "edit_comment": "Starts replace", "legal_unit_id": 1} |          |       | existing_entity__12
+           2 |             2 | {112}   | INSERT    |               | 112       | f             | {"id": 12}  | {"id": 12}    | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 20, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__12
 (2 rows)
 
 -- Verify feedback
@@ -1063,10 +1067,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                              | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {113}   | INSERT    |               | 113       | f             | {"id": 13}  | {"id": 13}    | {}          | finishes     | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Replaced", "employees": 35, "edit_comment": "Finishes replace", "legal_unit_id": 1} |          |       | existing_entity__13
-           2 | {113}   | UPDATE    | SHRINK        | 113       | f             | {"id": 13}  | {"id": 13}    | {}          | finishes     | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1}   |          |       | existing_entity__13
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                              | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {113}   | UPDATE    | SHRINK        | 113       | f             | {"id": 13}  | {"id": 13}    | {}          | finishes     | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 30, "edit_comment": "Original slice", "legal_unit_id": 1}   |          |       | existing_entity__13
+           2 |             2 | {113}   | INSERT    |               | 113       | f             | {"id": 13}  | {"id": 13}    | {}          | finishes     | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Replaced", "employees": 35, "edit_comment": "Finishes replace", "legal_unit_id": 1} |          |       | existing_entity__13
 (2 rows)
 
 -- Verify feedback
@@ -1142,11 +1146,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {114}   | INSERT    |               | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | contains     | 2024-01-01     | 2026-01-01      | 2024-07-01     | 2025-01-01      | {"name": "Replaced", "employees": 45, "edit_comment": "During replace", "legal_unit_id": 1} |          |       | existing_entity__14
-           2 | {114}   | INSERT    |               | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__14
-           3 | {114}   | UPDATE    | SHRINK        | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__14
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {114}   | UPDATE    | SHRINK        | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__14
+           2 |             2 | {114}   | INSERT    |               | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | contains     | 2024-01-01     | 2026-01-01      | 2024-07-01     | 2025-01-01      | {"name": "Replaced", "employees": 45, "edit_comment": "During replace", "legal_unit_id": 1} |          |       | existing_entity__14
+           3 |             2 | {114}   | INSERT    |               | 114       | f             | {"id": 14}  | {"id": 14}    | {}          | during       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "employees": 40, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__14
 (3 rows)
 
 -- Verify feedback
@@ -1225,10 +1229,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                              | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {115}   | INSERT    |               | 115       | f             | {"id": 15}  | {"id": 15}    | {}          | overlapped_by | overlaps     | 2024-01-01     | 2025-01-01      | 2024-07-01     | 2025-07-01      | {"name": "Replaced", "employees": 55, "edit_comment": "Overlaps replace", "legal_unit_id": 1} |          |       | existing_entity__15
-           2 | {115}   | UPDATE    | SHRINK        | 115       | f             | {"id": 15}  | {"id": 15}    | {}          | overlapped_by | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1}   |          |       | existing_entity__15
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation  | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                              | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+---------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {115}   | UPDATE    | SHRINK        | 115       | f             | {"id": 15}  | {"id": 15}    | {}          | overlapped_by | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-07-01      | {"name": "Original", "employees": 50, "edit_comment": "Original slice", "legal_unit_id": 1}   |          |       | existing_entity__15
+           2 |             2 | {115}   | INSERT    |               | 115       | f             | {"id": 15}  | {"id": 15}    | {}          | overlapped_by | overlaps     | 2024-01-01     | 2025-01-01      | 2024-07-01     | 2025-07-01      | {"name": "Replaced", "employees": 55, "edit_comment": "Overlaps replace", "legal_unit_id": 1} |          |       | existing_entity__15
 (2 rows)
 
 -- Verify feedback
@@ -1304,9 +1308,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {116}   | UPDATE    | NONE          | 116       | f             | {"id": 16}  | {"id": 16}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 115, "edit_comment": "Equals replace", "legal_unit_id": 1} |          |       | existing_entity__16
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                             data                                             | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {116}   | UPDATE    | NONE          | 116       | f             | {"id": 16}  | {"id": 16}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Replaced", "employees": 115, "edit_comment": "Equals replace", "legal_unit_id": 1} |          |       | existing_entity__16
 (1 row)
 
 -- Verify feedback
@@ -1375,9 +1379,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {117}   | UPDATE    | NONE          | 117       | f             | {"id": 17}  | {"id": 17}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": null, "employees": null, "edit_comment": "Replaced with NULL", "legal_unit_id": 1} |          |       | existing_entity__17
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {117}   | UPDATE    | NONE          | 117       | f             | {"id": 17}  | {"id": 17}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": null, "employees": null, "edit_comment": "Replaced with NULL", "legal_unit_id": 1} |          |       | existing_entity__17
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -1450,9 +1454,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                 feedback                                                 | trace |  grouping_key   
--------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------+-------+-----------------
-           1 | {118}   | SKIP_NO_TARGET |               | 118       | t             | {"id": 18}  | {"id": 18}    | {}          |              |              |                |                 |                |                 |      | {"info": "Source row was correctly filtered by the mode's logic and did not result in a DML operation."} |       | new_entity__118
+ plan_op_seq | statement_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                 feedback                                                 | trace |  grouping_key   
+-------------+---------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------+-------+-----------------
+           1 |             1 | {118}   | SKIP_NO_TARGET |               | 118       | t             | {"id": 18}  | {"id": 18}    | {}          |              |              |                |                 |                |                 |      | {"info": "Source row was correctly filtered by the mode's logic and did not result in a DML operation."} |       | new_entity__118
 (1 row)
 
 -- Verify feedback
@@ -1515,9 +1519,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                 feedback                                                 | trace |  grouping_key   
--------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------+-------+-----------------
-           1 | {119}   | SKIP_NO_TARGET |               | 119       | t             | {"id": 19}  | {"id": 19}    | {}          |              |              |                |                 |                |                 |      | {"info": "Source row was correctly filtered by the mode's logic and did not result in a DML operation."} |       | new_entity__119
+ plan_op_seq | statement_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | data |                                                 feedback                                                 | trace |  grouping_key   
+-------------+---------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------+----------------------------------------------------------------------------------------------------------+-------+-----------------
+           1 |             1 | {119}   | SKIP_NO_TARGET |               | 119       | t             | {"id": 19}  | {"id": 19}    | {}          |              |              |                |                 |                |                 |      | {"info": "Source row was correctly filtered by the mode's logic and did not result in a DML operation."} |       | new_entity__119
 (1 row)
 
 -- Verify feedback
@@ -1585,9 +1589,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                               data                                                | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {120}   | UPDATE    | NONE          | 120       | f             | {"id": 20}  | {"id": 20}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} |          |       | existing_entity__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                               data                                                | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {120}   | UPDATE    | NONE          | 120       | f             | {"id": 20}  | {"id": 20}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} |          |       | existing_entity__20
 (1 row)
 
 -- Verify feedback
@@ -1661,9 +1665,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                               data                                                | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {121}   | UPDATE    | NONE          | 121       | f             | {"id": 21}  | {"id": 21}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} |          |       | existing_entity__21
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                               data                                                | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {121}   | UPDATE    | NONE          | 121       | f             | {"id": 21}  | {"id": 21}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original Name", "employees": 15, "edit_comment": "Patch with NULL", "legal_unit_id": 1} |          |       | existing_entity__21
 (1 row)
 
 -- Verify feedback
@@ -1740,9 +1744,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                         data                                         | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {122}   | UPDATE    | NONE          | 122       | f             | {"id": 22}  | {"id": 22}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} |          |       | existing_entity__22
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                         data                                         | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {122}   | UPDATE    | NONE          | 122       | f             | {"id": 22}  | {"id": 22}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "New Comment", "legal_unit_id": 1} |          |       | existing_entity__22
 (1 row)
 
 -- Verify feedback
@@ -1816,9 +1820,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                         data                                          | feedback | trace |    grouping_key     
--------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {123}   | SKIP_IDENTICAL |               | 123       | f             | {"id": 23}  | {"id": 23}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "Same Comment", "legal_unit_id": 1} |          |       | existing_entity__23
+ plan_op_seq | statement_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                         data                                          | feedback | trace |    grouping_key     
+-------------+---------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {123}   | SKIP_IDENTICAL |               | 123       | f             | {"id": 23}  | {"id": 23}    | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Same", "employees": 10, "edit_comment": "Same Comment", "legal_unit_id": 1} |          |       | existing_entity__23
 (1 row)
 
 -- Verify feedback
@@ -1898,12 +1902,12 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
-           1 | {124}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | contains     | 2024-01-01     | 2028-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Patch 1", "employees": 15, "edit_comment": "First patch", "legal_unit_id": 1}     |          |       | existing_entity__24
-           2 | {124}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | contains     | 2024-01-01     | 2028-01-01      | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__24
-           3 | {125}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | finishes     | finished_by  | 2024-01-01     | 2028-01-01      | 2027-01-01     | 2028-01-01      | {"name": "Patch 2", "employees": 20, "edit_comment": "Second patch", "legal_unit_id": 1}    |          |       | existing_entity__24
-           4 | {124}   | UPDATE    | SHRINK        | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | started_by   | 2024-01-01     | 2028-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__24
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                            data                                             | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {124}   | UPDATE    | SHRINK        | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | started_by   | 2024-01-01     | 2028-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__24
+           2 |             2 | {124}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | contains     | 2024-01-01     | 2028-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Patch 1", "employees": 15, "edit_comment": "First patch", "legal_unit_id": 1}     |          |       | existing_entity__24
+           3 |             2 | {124}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | during       | contains     | 2024-01-01     | 2028-01-01      | 2026-01-01     | 2027-01-01      | {"name": "Original", "employees": 10, "edit_comment": "Original slice", "legal_unit_id": 1} |          |       | existing_entity__24
+           4 |             2 | {125}   | INSERT    |               | 124       | f             | {"id": 24}  | {"id": 24}    | {}          | finishes     | finished_by  | 2024-01-01     | 2028-01-01      | 2027-01-01     | 2028-01-01      | {"name": "Patch 2", "employees": 20, "edit_comment": "Second patch", "legal_unit_id": 1}    |          |       | existing_entity__24
 (4 rows)
 
 -- Verify feedback
@@ -2171,9 +2175,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq |  row_ids  | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace | grouping_key  
--------------+-----------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+---------------
-           1 | {401,402} | INSERT    |               | 401       | t             | {"id": 4}   | {"id": 4}     | {}          |              |              |                |                 | 2023-01-02     | 2024-01-01      | {"name": "Continuous Op", "employees": 20, "legal_unit_id": 1} |          |       | new_entity__4
+ plan_op_seq | statement_seq |  row_ids  | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace | grouping_key  
+-------------+---------------+-----------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {401,402} | INSERT    |               | 401       | t             | {"id": 4}   | {"id": 4}     | {}          |              |              |                |                 | 2023-01-02     | 2024-01-01      | {"name": "Continuous Op", "employees": 20, "legal_unit_id": 1} |          |       | new_entity__4
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2245,9 +2249,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq |    row_ids    | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace | grouping_key  
--------------+---------------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+---------------
-           1 | {501,502,503} | INSERT    |               | 501       | t             | {"id": 5}   | {"id": 5}     | {}          |              |              |                |                 | 2023-01-02     | 2023-10-01      | {"name": "Three-part Op", "employees": 30, "legal_unit_id": 1} |          |       | new_entity__5
+ plan_op_seq | statement_seq |    row_ids    | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                              data                              | feedback | trace | grouping_key  
+-------------+---------------+---------------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {501,502,503} | INSERT    |               | 501       | t             | {"id": 5}   | {"id": 5}     | {}          |              |              |                |                 | 2023-01-02     | 2023-10-01      | {"name": "Three-part Op", "employees": 30, "legal_unit_id": 1} |          |       | new_entity__5
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2318,10 +2322,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                             | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------+----------+-------+---------------
-           1 | {601}   | INSERT    |               | 601       | t             | {"id": 6}   | {"id": 6}     | {}          |              |              |                |                 | 2023-01-02     | 2023-07-01      | {"name": "First Part", "employees": 40, "legal_unit_id": 1}  |          |       | new_entity__6
-           2 | {602}   | INSERT    |               | 602       | t             | {"id": 6}   | {"id": 6}     | {}          |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"name": "Second Part", "employees": 50, "legal_unit_id": 1} |          |       | new_entity__6
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                             | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {601}   | INSERT    |               | 601       | t             | {"id": 6}   | {"id": 6}     | {}          |              |              |                |                 | 2023-01-02     | 2023-07-01      | {"name": "First Part", "employees": 40, "legal_unit_id": 1}  |          |       | new_entity__6
+           2 |             1 | {602}   | INSERT    |               | 602       | t             | {"id": 6}   | {"id": 6}     | {}          |              |              |                |                 | 2023-07-01     | 2024-01-01      | {"name": "Second Part", "employees": 50, "legal_unit_id": 1} |          |       | new_entity__6
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2394,9 +2398,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                             | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------+----------+-------+--------------------
-           1 | {701}   | UPDATE    | GROW          | 701       | f             | {"id": 7}   | {"id": 7}     | {}          |              | starts       | 2023-01-01     | 2023-07-01      | 2023-01-01     | 2024-01-01      | {"name": "Existing Op", "employees": 60, "legal_unit_id": 1} |          |       | existing_entity__7
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                             | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {701}   | UPDATE    | GROW          | 701       | f             | {"id": 7}   | {"id": 7}     | {}          |              | starts       | 2023-01-01     | 2023-07-01      | 2023-01-01     | 2024-01-01      | {"name": "Existing Op", "employees": 60, "legal_unit_id": 1} |          |       | existing_entity__7
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2450,6 +2454,7 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2457,15 +2462,18 @@ CREATE TABLE temporal_merge_test.establishment (
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
@@ -2518,9 +2526,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                               | feedback | trace |  grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------+-------+----------------
-           1 | {801}   | INSERT    |               | 801       | t             | {"id": 40}  | {"id": 40}    | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Default Test", "employees": 10, "edit_comment": "Default Insert", "legal_unit_id": 1} |          |       | new_entity__40
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                              data                                               | feedback | trace |  grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------------------------------------------------------+----------+-------+----------------
+           1 |             1 | {801}   | INSERT    |               | 801       | t             | {"id": 40}  | {"id": 40}    | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Default Test", "employees": 10, "edit_comment": "Default Insert", "legal_unit_id": 1} |          |       | new_entity__40
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2562,20 +2570,24 @@ CREATE SCHEMA temporal_merge_test_vt;
 -- Target table with valid_to and a trigger to sync valid_until
 CREATE TABLE temporal_merge_test_vt.test_target (
     id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_to DATE, -- Inclusive end date
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_vt.test_target to synchronize columns: valid_to
+SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_vt.test_target to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test_vt.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test_vt.test_target USING GIST (valid_range);
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_vt.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
@@ -2628,10 +2640,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+--------------------
-           1 | {901}   | INSERT    |               | 901       | f             | {"id": 1}   | {"id": 1}     | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "valid_to": "2025-12-31"} |          |       | existing_entity__1
-           2 | {901}   | UPDATE    | SHRINK        | 901       | f             | {"id": 1}   | {"id": 1}     | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "valid_to": "2024-12-31"}  |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+--------------------
+           1 |             1 | {901}   | UPDATE    | SHRINK        | 901       | f             | {"id": 1}   | {"id": 1}     | {}          | starts       | started_by   | 2024-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"name": "Patched", "valid_to": "2024-12-31"}  |          |       | existing_entity__1
+           2 |             2 | {901}   | INSERT    |               | 901       | f             | {"id": 1}   | {"id": 1}     | {}          | starts       | finished_by  | 2024-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"name": "Original", "valid_to": "2025-12-31"} |          |       | existing_entity__1
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2675,18 +2687,22 @@ CREATE SCHEMA temporal_merge_test_me;
 -- Target table
 CREATE TABLE temporal_merge_test_me.test_target (
     id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     status TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_me.test_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test_me.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_me.test_target to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test_me.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test_me.test_target USING GIST (valid_range);
 -- Helper procedure
 CREATE PROCEDURE temporal_merge_test_me.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
@@ -2741,11 +2757,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY (entity_keys->>'id')::INT, new_valid_from;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data          | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------+----------+-------+---------------
-           1 | {101}   | INSERT    |               | 101       | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2010-01-01     | infinity        | {"status": "active"}  |          |       | new_entity__1
-           2 | {102}   | INSERT    |               | 102       | t             | {"id": 2}   | {"id": 2}     | {}          |              |              |                |                 | 2010-01-01     | 2011-01-01      | {"status": "active"}  |          |       | new_entity__2
-           3 | {103}   | INSERT    |               | 103       | t             | {"id": 2}   | {"id": 2}     | {}          |              |              |                |                 | 2011-01-01     | infinity        | {"status": "passive"} |          |       | new_entity__2
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |         data          | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------+----------+-------+---------------
+           1 |             1 | {101}   | INSERT    |               | 101       | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2010-01-01     | infinity        | {"status": "active"}  |          |       | new_entity__1
+           2 |             1 | {102}   | INSERT    |               | 102       | t             | {"id": 2}   | {"id": 2}     | {}          |              |              |                |                 | 2010-01-01     | 2011-01-01      | {"status": "active"}  |          |       | new_entity__2
+           3 |             1 | {103}   | INSERT    |               | 103       | t             | {"id": 2}   | {"id": 2}     | {}          |              |              |                |                 | 2011-01-01     | infinity        | {"status": "passive"} |          |       | new_entity__2
 (3 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2801,20 +2817,24 @@ CREATE TABLE temporal_merge_test.legal_unit (
 CREATE TABLE temporal_merge_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
     employees INT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test.establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test.establishment USING GIST (valid_range);
 -- Helper procedure to reset target table state between scenarios
 CREATE PROCEDURE temporal_merge_test.reset_target() LANGUAGE plpgsql AS $$
 BEGIN
@@ -2873,11 +2893,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY (entity_keys->>'id')::INT, new_valid_from;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                          | feedback | trace |  grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------+----------+-------+----------------
-           1 | {1001}  | INSERT    |               | 1001      | t             | {"id": 10}  | {"id": 10}    | {}          |              |              |                |                 | 2010-01-01     | infinity        | {"name": "Continuous", "employees": 50, "edit_comment": "comment", "legal_unit_id": 1} |          |       | new_entity__10
-           2 | {1002}  | INSERT    |               | 1002      | t             | {"id": 20}  | {"id": 20}    | {}          |              |              |                |                 | 2010-01-01     | 2011-01-01      | {"name": "Changes", "employees": 100, "edit_comment": "comment", "legal_unit_id": 1}   |          |       | new_entity__20
-           3 | {1003}  | INSERT    |               | 1003      | t             | {"id": 20}  | {"id": 20}    | {}          |              |              |                |                 | 2011-01-01     | infinity        | {"name": "Changes", "employees": 150, "edit_comment": "comment", "legal_unit_id": 1}   |          |       | new_entity__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                          data                                          | feedback | trace |  grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------------------------------------+----------+-------+----------------
+           1 |             1 | {1001}  | INSERT    |               | 1001      | t             | {"id": 10}  | {"id": 10}    | {}          |              |              |                |                 | 2010-01-01     | infinity        | {"name": "Continuous", "employees": 50, "edit_comment": "comment", "legal_unit_id": 1} |          |       | new_entity__10
+           2 |             1 | {1002}  | INSERT    |               | 1002      | t             | {"id": 20}  | {"id": 20}    | {}          |              |              |                |                 | 2010-01-01     | 2011-01-01      | {"name": "Changes", "employees": 100, "edit_comment": "comment", "legal_unit_id": 1}   |          |       | new_entity__20
+           3 |             1 | {1003}  | INSERT    |               | 1003      | t             | {"id": 20}  | {"id": 20}    | {}          |              |              |                |                 | 2011-01-01     | infinity        | {"name": "Changes", "employees": 150, "edit_comment": "comment", "legal_unit_id": 1}   |          |       | new_entity__20
 (3 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -2929,18 +2949,22 @@ CREATE SCHEMA temporal_merge_test_serial;
 -- Target table with SERIAL surrogate key
 CREATE TABLE temporal_merge_test_serial.test_target (
     id SERIAL NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_serial.test_target to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test_serial.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test_serial.test_target USING GIST (valid_range);
 -- psql variables for the test
 \set target_schema 'temporal_merge_test_serial'
 \set target_table 'temporal_merge_test_serial.test_target'
@@ -2984,9 +3008,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |           data            | feedback | trace |   grouping_key   
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------+----------+-------+------------------
-           1 | {1001}  | INSERT    |               | 1001      | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Serial Widget"} |          |       | new_entity__1001
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |           data            | feedback | trace |   grouping_key   
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------+----------+-------+------------------
+           1 |             1 | {1001}  | INSERT    |               | 1001      | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Serial Widget"} |          |       | new_entity__1001
 (1 row)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -3042,17 +3066,21 @@ CREATE SCHEMA temporal_merge_test_multi_insert;
 CREATE TABLE temporal_merge_test_multi_insert.test_target (
     id SERIAL NOT NULL,
     name TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_multi_insert.test_target to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON temporal_merge_test_multi_insert.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON temporal_merge_test_multi_insert.test_target USING GIST (valid_range);
 \set target_schema 'temporal_merge_test_multi_insert'
 \set target_table 'temporal_merge_test_multi_insert.test_target'
 \set source_schema 'pg_temp'
@@ -3097,10 +3125,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |          data          | feedback | trace |   grouping_key   
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------+----------+-------+------------------
-           1 | {2001}  | INSERT    |               | 2001      | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Entity One"} |          |       | new_entity__2001
-           2 | {2002}  | INSERT    |               | 2002      | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Entity Two"} |          |       | new_entity__2002
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |          data          | feedback | trace |   grouping_key   
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------+----------+-------+------------------
+           1 |             1 | {2001}  | INSERT    |               | 2001      | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Entity One"} |          |       | new_entity__2001
+           2 |             1 | {2002}  | INSERT    |               | 2002      | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"name": "Entity Two"} |          |       | new_entity__2002
 (2 rows)
 
 \echo '--- Orchestrator: Actual Feedback ---'
@@ -3170,18 +3198,22 @@ CREATE TABLE tm_44_not_null_test.test_unit (
     id int,
     name text NOT NULL,
     value int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_44_not_null_test.test_unit'::regclass);
+SELECT sql_saga.add_era('tm_44_not_null_test.test_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_unit_synchronize_temporal_columns_trigger" on table tm_44_not_null_test.test_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON tm_44_not_null_test.test_unit USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON tm_44_not_null_test.test_unit USING GIST (valid_range);
 SELECT sql_saga.add_unique_key('tm_44_not_null_test.test_unit'::regclass, ARRAY['id']);
-NOTICE:  sql_saga: altering table tm_44_not_null_test.test_unit to add constraints: ADD CONSTRAINT test_unit_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT test_unit_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tm_44_not_null_test.test_unit to add constraints: ADD CONSTRAINT test_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  test_unit_id_valid
@@ -3202,9 +3234,9 @@ INSERT INTO source_46 (id, value, valid_from, valid_until) VALUES (1, 200, '2024
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_44_not_null_test.test_unit;
- id |     name     | value | valid_from | valid_until 
-----+--------------+-------+------------+-------------
-  1 | Initial Name |   100 | 2024-01-01 | infinity
+ id |     name     | value |      valid_range      | valid_from | valid_until 
+----+--------------+-------+-----------------------+------------+-------------
+  1 | Initial Name |   100 | [2024-01-01,infinity) | 2024-01-01 | infinity
 (1 row)
 
 \echo '--- Source: Data to merge (missing "name" column) ---'
@@ -3226,10 +3258,10 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | finished_by  | 2024-01-01     | infinity        | 2024-06-01     | infinity        | {"name": "Initial Name", "value": 200} |          |       | existing_entity__1
-           2 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2024-06-01      | {"name": "Initial Name", "value": 100} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | started_by   | 2024-01-01     | infinity        | 2024-01-01     | 2024-06-01      | {"name": "Initial Name", "value": 100} |          |       | existing_entity__1
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | finishes     | finished_by  | 2024-01-01     | infinity        | 2024-06-01     | infinity        | {"name": "Initial Name", "value": 200} |          |       | existing_entity__1
 (2 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -3255,10 +3287,10 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_44_not_null_test.test_unit ORDER BY id, valid_from;
- id |     name     | value | valid_from | valid_until 
-----+--------------+-------+------------+-------------
-  1 | Initial Name |   100 | 2024-01-01 | 2024-06-01
-  1 | Initial Name |   200 | 2024-06-01 | infinity
+ id |     name     | value |       valid_range       | valid_from | valid_until 
+----+--------------+-------+-------------------------+------------+-------------
+  1 | Initial Name |   100 | [2024-01-01,2024-06-01) | 2024-01-01 | 2024-06-01
+  1 | Initial Name |   200 | [2024-06-01,infinity)   | 2024-06-01 | infinity
 (2 rows)
 
 ROLLBACK TO SAVEPOINT s46;
@@ -3278,18 +3310,22 @@ CREATE TABLE tm_47_surgical_patch.test_target (
     id int,
     name text,
     employees int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_47_surgical_patch.test_target'::regclass);
+SELECT sql_saga.add_era('tm_47_surgical_patch.test_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table tm_47_surgical_patch.test_target to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-CREATE INDEX ON tm_47_surgical_patch.test_target USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON tm_47_surgical_patch.test_target USING GIST (valid_range);
 SELECT sql_saga.add_unique_key('tm_47_surgical_patch.test_target'::regclass, ARRAY['id']);
-NOTICE:  sql_saga: altering table tm_47_surgical_patch.test_target to add constraints: ADD CONSTRAINT test_target_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT test_target_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tm_47_surgical_patch.test_target to add constraints: ADD CONSTRAINT test_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  test_target_id_valid
@@ -3311,9 +3347,9 @@ INSERT INTO source_47 (row_id, id, name, employees, valid_from, valid_until) VAL
 \echo '--- Target: Initial State ---'
 --- Target: Initial State ---
 TABLE tm_47_surgical_patch.test_target;
- id |     name      | employees | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 | Surgical Inc. |        10 | 2024-01-01 | 2025-01-01
+ id |     name      | employees |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 | Surgical Inc. |        10 | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
 (1 row)
 
 \echo '--- Source: Data to merge (only updates employees for a portion of time) ---'
@@ -3334,11 +3370,11 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner: Actual Plan ---'
 --- Planner: Actual Plan ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                    data                    | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------+----------+-------+--------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-06-01     | 2024-09-01      | {"name": "Surgical Inc.", "employees": 15} |          |       | existing_entity__1
-           2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"name": "Surgical Inc.", "employees": 10} |          |       | existing_entity__1
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-06-01      | {"name": "Surgical Inc.", "employees": 10} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                    data                    | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-06-01      | {"name": "Surgical Inc.", "employees": 10} |          |       | existing_entity__1
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-06-01     | 2024-09-01      | {"name": "Surgical Inc.", "employees": 15} |          |       | existing_entity__1
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"name": "Surgical Inc.", "employees": 10} |          |       | existing_entity__1
 (3 rows)
 
 \echo '--- Executor: Actual Feedback ---'
@@ -3366,11 +3402,11 @@ SELECT * FROM (VALUES
 \echo '--- Target: Final State ---'
 --- Target: Final State ---
 TABLE tm_47_surgical_patch.test_target ORDER BY id, valid_from;
- id |     name      | employees | valid_from | valid_until 
-----+---------------+-----------+------------+-------------
-  1 | Surgical Inc. |        10 | 2024-01-01 | 2024-06-01
-  1 | Surgical Inc. |        15 | 2024-06-01 | 2024-09-01
-  1 | Surgical Inc. |        10 | 2024-09-01 | 2025-01-01
+ id |     name      | employees |       valid_range       | valid_from | valid_until 
+----+---------------+-----------+-------------------------+------------+-------------
+  1 | Surgical Inc. |        10 | [2024-01-01,2024-06-01) | 2024-01-01 | 2024-06-01
+  1 | Surgical Inc. |        15 | [2024-06-01,2024-09-01) | 2024-06-01 | 2024-09-01
+  1 | Surgical Inc. |        10 | [2024-09-01,2025-01-01) | 2024-09-01 | 2025-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT s47;

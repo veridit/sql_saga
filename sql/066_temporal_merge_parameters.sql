@@ -26,10 +26,13 @@ CREATE TABLE tm_gen_col_target (
     id int,
     value int,
     value_x2 int GENERATED ALWAYS AS (value * 2) STORED,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_gen_col_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tm_gen_col_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_gen_col_target', ARRAY['id']);
 
 CREATE TEMP TABLE tm_gen_col_source (
@@ -59,10 +62,12 @@ ROLLBACK TO SAVEPOINT scenario_6;
 SAVEPOINT scenario_8;
 -- Scenario 8: Test `temporal_merge` with existing target data and a new source entity.
 -- This reproduces the bug where the planner incorrectly mixes entities.
-CREATE TABLE tm_mix_bug_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_mix_bug_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_mix_bug_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_mix_bug_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_mix_bug_target', ARRAY['id']);
-INSERT INTO tm_mix_bug_target VALUES (1, 'existing', '2023-01-01', 'infinity');
+INSERT INTO tm_mix_bug_target (id, value, valid_from, valid_until) VALUES (1, 'existing', '2023-01-01', 'infinity');
 
 CREATE TEMP TABLE tm_mix_bug_source (row_id int, id int, value text, valid_from date, valid_until date);
 INSERT INTO tm_mix_bug_source VALUES (1, 2, 'new', '2024-01-01', 'infinity');
@@ -96,8 +101,10 @@ ROLLBACK TO SAVEPOINT scenario_8;
 
 SAVEPOINT scenario_9;
 -- Scenario 9: Test that `temporal_merge` fails gracefully if identity_columns is empty or NULL.
-CREATE TABLE tm_bad_params_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_bad_params_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_bad_params_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_bad_params_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 CREATE TEMP TABLE tm_bad_params_source (row_id int, id int, value text, valid_from date, valid_until date);
 
 -- Test with NULL identity_columns
@@ -133,8 +140,10 @@ ROLLBACK TO SAVEPOINT scenario_9;
 
 SAVEPOINT scenario_10;
 -- Scenario 10: Test that `temporal_merge` fails if non-existent column names are provided.
-CREATE TABLE tm_bad_cols_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_bad_cols_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_bad_cols_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_bad_cols_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 CREATE TEMP TABLE tm_bad_cols_source (real_row_id int, id int, value text, valid_from date, valid_until date, real_founding_id int);
 
 -- Test with non-existent row_id_column
@@ -171,8 +180,10 @@ ROLLBACK TO SAVEPOINT scenario_10;
 
 SAVEPOINT scenario_11;
 -- Scenario 11: Test using a non-default row_id_column name.
-CREATE TABLE tm_custom_rowid_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_custom_rowid_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_custom_rowid_target', ARRAY['id']);
 
 CREATE TEMP TABLE tm_custom_rowid_source (
@@ -206,8 +217,10 @@ ROLLBACK TO SAVEPOINT scenario_11;
 
 SAVEPOINT scenario_12;
 -- Scenario 12: Test that `temporal_merge` fails if the default row_id_column ('row_id') does not exist.
-CREATE TABLE tm_no_rowid_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_no_rowid_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 CREATE TEMP TABLE tm_no_rowid_sources (some_other_pk int, id int, value text, valid_from date, valid_until date);
 
 DO $$
@@ -230,10 +243,14 @@ SAVEPOINT scenario_13;
 CREATE TABLE tm_weird_names (
     unit_pk int,
     some_value text,
+    period_range daterange,
     period_begins date,
     period_ends date
 );
-SELECT sql_saga.add_era('tm_weird_names', 'period_begins', 'period_ends', 'timeline');
+SELECT sql_saga.add_era('tm_weird_names', 'period_range',
+    valid_from_column_name => 'period_begins',
+    valid_until_column_name => 'period_ends',
+    era_name => 'timeline');
 SELECT sql_saga.add_unique_key('tm_weird_names', ARRAY['unit_pk'], 'timeline');
 
 CREATE TEMP TABLE tm_weird_names_source (
@@ -270,10 +287,13 @@ SAVEPOINT scenario_14;
 -- Scenario 14: Test `temporal_merge` with a target table that has no data columns.
 CREATE TABLE tm_no_data_cols_target (
     id int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('tm_no_data_cols_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tm_no_data_cols_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_no_data_cols_target', ARRAY['id']);
 
 CREATE TEMP TABLE tm_no_data_cols_source (
@@ -307,8 +327,10 @@ ROLLBACK TO SAVEPOINT scenario_14;
 SAVEPOINT scenario_15;
 -- Scenario 15: Test `temporal_merge` with extra columns in the source table.
 -- These columns should be ignored by the procedure.
-CREATE TABLE tm_extra_cols_target (id int, value text, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tm_extra_cols_target', 'valid_from', 'valid_until');
+CREATE TABLE tm_extra_cols_target (id int, value text, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tm_extra_cols_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_extra_cols_target', ARRAY['id']);
 
 CREATE TEMP TABLE tm_extra_cols_source (
@@ -342,11 +364,14 @@ CREATE TABLE tm_founding_target (
     id int generated by default as identity,
     entity_ident text,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tm_founding_target', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tm_founding_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('tm_founding_target', ARRAY['entity_ident']);
 
 CREATE TEMP TABLE tm_founding_source (

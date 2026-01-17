@@ -11,13 +11,17 @@ CREATE TABLE repro.units (
     name text,
     activity_code text,
     edit_comment text, -- This is an ephemeral column
+    valid_range daterange NOT NULL,
     valid_from date NOT NULL,
     valid_until date
 );
 
-SELECT sql_saga.add_era('repro.units');
+SELECT sql_saga.add_era('repro.units', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 -- A composite primary key is required for SCD Type 2 history. The temporal columns
 -- are added automatically by the function.
+ALTER TABLE repro.units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['org_nr'], key_type => 'natural');
 

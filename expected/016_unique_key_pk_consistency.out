@@ -347,7 +347,7 @@ SAVEPOINT expect_error;
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_b', ARRAY['org_id', 'unit_id'], key_type => 'primary'); -- fails
 NOTICE:  sql_saga: altering table pk_consistency.composite_pk_b to add constraints: ALTER COLUMN org_id SET NOT NULL, ALTER COLUMN unit_id SET NOT NULL, ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
 ERROR:  cannot add primary key (org_id, unit_id) to table "pk_consistency.composite_pk_b" because its stable part (org_id, unit_id) is composite, which is not supported for consistency enforcement required by existing natural keys
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 534 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 546 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4b;
 -- Scenario 5: API Symmetry (Drop Key)

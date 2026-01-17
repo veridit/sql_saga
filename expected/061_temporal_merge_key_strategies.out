@@ -62,32 +62,38 @@ CREATE TYPE tmtc.location_type AS ENUM ('visiting', 'postal', 'physical');
 -- Parent tables
 CREATE TABLE tmtc.stat_definition (id INT PRIMARY KEY, name TEXT);
 CREATE TABLE tmtc.legal_unit (
-    id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
+    id INT NOT NULL, valid_range daterange NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table tmtc.legal_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', unique_key_name => 'tm_legal_unit_uk');
-NOTICE:  sql_saga: altering table tmtc.legal_unit to add constraints: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_legal_unit_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_legal_unit_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmtc.legal_unit to add constraints: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  tm_legal_unit_uk
 (1 row)
 
 CREATE TABLE tmtc.establishment (
-    id INT NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_from)
+    id INT NOT NULL, valid_range daterange NOT NULL, valid_from DATE NOT NULL, valid_until DATE NOT NULL, name TEXT, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table tmtc.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', unique_key_name => 'tm_establishment_uk');
-NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_establishment_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  tm_establishment_uk
@@ -97,19 +103,23 @@ NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CON
 CREATE TABLE tmtc.stat_for_unit (
     stat_definition_id INT NOT NULL,
     establishment_id INT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     value BIGINT,
     edit_comment TEXT
 );
-SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', key_type => 'primary', unique_key_name => 'tm_sfu_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit to add constraints: ALTER COLUMN stat_definition_id SET NOT NULL, ALTER COLUMN establishment_id SET NOT NULL, ADD PRIMARY KEY (stat_definition_id, establishment_id, valid_from) DEFERRABLE, ADD CONSTRAINT tm_sfu_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit to add constraints: ALTER COLUMN stat_definition_id SET NOT NULL, ALTER COLUMN establishment_id SET NOT NULL, ADD PRIMARY KEY (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  tm_sfu_uk
@@ -120,20 +130,24 @@ CREATE TABLE tmtc.stat_for_unit_id_pk (
     id SERIAL NOT NULL,
     stat_definition_id INT NOT NULL,
     establishment_id INT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     value BIGINT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_id_pk_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_id_pk to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_id_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_pk to add constraints: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_id_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_sfu_id_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_pk to add constraints: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_sfu_id_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
  add_unique_key 
 ----------------
  tm_sfu_id_uk
@@ -144,20 +158,24 @@ CREATE TABLE tmtc.stat_for_unit_id_gen (
     id INT GENERATED BY DEFAULT AS IDENTITY NOT NULL,
     stat_definition_id INT NOT NULL,
     establishment_id INT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     value BIGINT,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_id_gen_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_id_gen to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_identity_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
    add_unique_key   
 --------------------
  tm_sfu_identity_uk
@@ -169,20 +187,24 @@ CREATE TABLE tmtc.stat_for_unit_no_pk (
     id INT NOT NULL DEFAULT nextval('tmtc.stat_for_unit_no_pk_id_seq'),
     stat_definition_id INT NOT NULL,
     establishment_id INT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     value BIGINT,
     edit_comment TEXT,
-    UNIQUE (id, valid_from)
+    UNIQUE (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_no_pk_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_no_pk to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_no_pk_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_no_pk to add constraints: ADD CONSTRAINT tm_sfu_no_pk_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT tm_sfu_no_pk_uk_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.stat_for_unit_no_pk to add constraints: ADD CONSTRAINT tm_sfu_no_pk_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  tm_sfu_no_pk_uk
@@ -196,43 +218,47 @@ CREATE TABLE tmtc.location_multi_key (
     establishment_id INT,
     address TEXT,
     edit_comment TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     CONSTRAINT location_multi_key_xor CHECK (
         (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
         (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
     ),
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmtc.location_multi_key');
+SELECT sql_saga.add_era('tmtc.location_multi_key', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "location_multi_key_synchronize_temporal_columns_trigger" on table tmtc.location_multi_key to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_lu_uk_excl EXCLUDE USING gist (type WITH =, legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (legal_unit_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_lu_uk_excl EXCLUDE USING gist (type WITH =, legal_unit_id WITH =, valid_range WITH &&) WHERE (legal_unit_id IS NOT NULL) DEFERRABLE
  add_unique_key 
 ----------------
  loc_mk_lu_uk
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
-NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_est_uk_excl EXCLUDE USING gist (type WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (establishment_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_est_uk_excl EXCLUDE USING gist (type WITH =, establishment_id WITH =, valid_range WITH &&) WHERE (establishment_id IS NOT NULL) DEFERRABLE
  add_unique_key 
 ----------------
  loc_mk_est_uk
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (legal_unit_id, valid_range)
         add_temporal_foreign_key        
 ----------------------------------------
  location_multi_key_legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_establishment_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (establishment_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_establishment_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (establishment_id, valid_range)
          add_temporal_foreign_key          
 -------------------------------------------
  location_multi_key_establishment_id_valid
@@ -245,10 +271,14 @@ CREATE TABLE tmtc.location_multi_key_no_id (
     establishment_id INT,
     address TEXT,
     edit_comment TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL
 );
-SELECT sql_saga.add_era('tmtc.location_multi_key_no_id');
+SELECT sql_saga.add_era('tmtc.location_multi_key_no_id', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "location_multi_key_no_id_synchronize_temporal_columns_trigger" on table tmtc.location_multi_key_no_id to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -271,14 +301,14 @@ NOTICE:  sql_saga: altering table tmtc.location_multi_key_no_id to add constrain
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (legal_unit_id, valid_range)
            add_temporal_foreign_key           
 ----------------------------------------------
  location_multi_key_no_id_legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_establishment_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (establishment_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_establishment_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (establishment_id, valid_range)
             add_temporal_foreign_key             
 -------------------------------------------------
  location_multi_key_no_id_establishment_id_valid
@@ -351,11 +381,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | feedback | trace |       grouping_key       
--------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+----------+-------+--------------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
-           2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | feedback | trace |       grouping_key       
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+----------+-------+--------------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -455,11 +485,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |       grouping_key       
--------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+--------------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
-           2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |       grouping_key       
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+--------------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -559,11 +589,11 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | feedback | trace |       grouping_key       
--------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+----------+-------+--------------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
-           2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                             data                              | feedback | trace |       grouping_key       
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+---------------------------------------------------------------+----------+-------+--------------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
 (3 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -655,9 +685,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -759,9 +789,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -863,9 +893,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+---------------------
-           1 | {104}   | INSERT    |               | 104       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {104}   | INSERT    |               | 104       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -967,9 +997,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+---------------------
-           1 | {105}   | INSERT    |               | 105       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                      | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {105}   | INSERT    |               | 105       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -1071,9 +1101,9 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
--------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                      data                       | feedback | trace |    grouping_key     
+-------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------------------------------+----------+-------+---------------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
 (1 row)
 
 \echo '--- Orchestrator: Expected Feedback ---'

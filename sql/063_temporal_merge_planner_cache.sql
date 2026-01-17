@@ -19,8 +19,10 @@ CREATE SCHEMA tmpc;
 SAVEPOINT s1;
 \echo '\n--- Scenario 1: Simple Surrogate Primary Key (id int NOT NULL) ---'
 
-CREATE TABLE tmpc.target (id int NOT NULL, valid_from date, valid_until date, value text);
-SELECT sql_saga.add_era('tmpc.target', 'valid_from', 'valid_until');
+CREATE TABLE tmpc.target (id int NOT NULL, valid_range daterange, valid_from date, valid_until date, value text);
+SELECT sql_saga.add_era('tmpc.target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 
 CREATE TABLE tmpc.source1 (row_id int, id int NOT NULL, valid_from date, valid_until date, value text);
 
@@ -104,8 +106,10 @@ ROLLBACK TO SAVEPOINT s1;
 SAVEPOINT s2;
 \echo '\n--- Scenario 2: Composite Natural Key (NOT NULL columns) ---'
 
-CREATE TABLE tmpc.target_nk_not_null (type TEXT NOT NULL, lu_id INT NOT NULL, value TEXT, valid_from date, valid_until date);
-SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_from', 'valid_until');
+CREATE TABLE tmpc.target_nk_not_null (type TEXT NOT NULL, lu_id INT NOT NULL, value TEXT, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 CREATE TABLE tmpc.source_nk_not_null (row_id int, type text NOT NULL, lu_id int NOT NULL, value text, valid_from date, valid_until date);
 
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
@@ -183,10 +187,12 @@ ROLLBACK TO SAVEPOINT s2;
 SAVEPOINT s3;
 \echo '\n--- Scenario 3: Composite Natural Key with NULLable XOR columns ---'
 
-CREATE TABLE tmpc.target_nk (type TEXT NOT NULL, lu_id INT, es_id INT, value TEXT, valid_from date, valid_until date,
+CREATE TABLE tmpc.target_nk (type TEXT NOT NULL, lu_id INT, es_id INT, value TEXT, valid_range daterange, valid_from date, valid_until date,
     CONSTRAINT lu_or_es_id_check CHECK ((lu_id IS NOT NULL AND es_id IS NULL) OR (lu_id IS NULL AND es_id IS NOT NULL))
 );
-SELECT sql_saga.add_era('tmpc.target_nk', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmpc.target_nk', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 CREATE TABLE tmpc.source_nk (row_id int, type text NOT NULL, lu_id int, es_id int, value text, valid_from date, valid_until date,
     CONSTRAINT source_lu_or_es_id_check CHECK ((lu_id IS NOT NULL AND es_id IS NULL) OR (lu_id IS NULL AND es_id IS NOT NULL))
 );

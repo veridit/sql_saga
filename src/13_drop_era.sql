@@ -103,9 +103,14 @@ BEGIN
              EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
         END IF;
 
-        /* Delete bounds check constraint. */
+        /* Delete bounds check constraint (NOT isempty(range)). */
         IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+        END IF;
+
+        /* Delete boundary check constraint (from < until). */
+        IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
         END IF;
 
         /* Drop column default if it was set */
@@ -162,9 +167,14 @@ BEGIN
          EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
     END IF;
 
-    /* Delete bounds check constraint. */
+    /* Delete bounds check constraint (NOT isempty(range)). */
     IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
         EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+    END IF;
+
+    /* Delete boundary check constraint (from < until). */
+    IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
     END IF;
 
     /* Drop column default if it was set */

@@ -12,11 +12,12 @@ GRANT EXECUTE ON FUNCTION test_now() TO PUBLIC;
 CREATE SCHEMA test_schema;
 CREATE TABLE test_schema.schema_test (
     id int,
+    value text,
+    valid_range daterange,
     valid_from date,
-    valid_until date,
-    value text
+    valid_until date
 );
-SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('test_schema.schema_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mode := 'delete_as_cutoff', current_func_name := 'test_now()');
 
@@ -34,9 +35,9 @@ DROP TABLE pg_temp.temporal_merge_feedback;
 SELECT sql_saga.drop_current_view('test_schema.schema_test'::regclass);
 
 -- Scenario 2: ACL and Ownership tests
-CREATE TABLE acl_test (id int, valid_from date, valid_until date, value text, status text, comment text);
+CREATE TABLE acl_test (id int, value text, status text, comment text, valid_range daterange, valid_from date, valid_until date);
 ALTER TABLE acl_test OWNER to view_test_role;
-SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('acl_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
 
 SET ROLE view_test_role;
@@ -82,7 +83,7 @@ SAVEPOINT can_insert;
 GRANT SELECT, INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
 
 -- Insert a record with an old start date to test non-empty range soft-delete
-INSERT INTO acl_test VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
+INSERT INTO acl_test (id, valid_from, valid_until, value, status, comment) VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
 
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;

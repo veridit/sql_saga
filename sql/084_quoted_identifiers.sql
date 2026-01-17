@@ -44,12 +44,16 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE """quoted"" table" (
     """id""" BIGINT,
     """product "" code""" TEXT,
+    """valid range""" int4range NOT NULL,
     """valid from""" INTEGER,
     """valid until""" INTEGER
 );
 
 -- 2. Add era with quoted columns
-SELECT sql_saga.add_era('"""quoted"" table"', '"valid from"', '"valid until"');
+SELECT sql_saga.add_era('"""quoted"" table"', '"valid range"',
+    valid_from_column_name => '"valid from"',
+    valid_until_column_name => '"valid until"');
+ALTER TABLE """quoted"" table" ADD PRIMARY KEY ("""id""", """valid range""" WITHOUT OVERLAPS);
 TABLE sql_saga.era;
 
 -- 3. Add unique key with quoted columns and constraint name
@@ -66,11 +70,15 @@ TABLE sql_saga.unique_keys;
 CREATE TABLE """fk "" test""" (
     """ref "" id""" BIGINT,
     """product""" TEXT,
+    """range""" int4range NOT NULL,
     """from""" INTEGER,
     """until""" INTEGER
 );
 
-SELECT sql_saga.add_era('"""fk "" test"""', '"from"', '"until"');
+SELECT sql_saga.add_era('"""fk "" test"""', '"range"',
+    valid_from_column_name => '"from"',
+    valid_until_column_name => '"until"');
+ALTER TABLE """fk "" test""" ADD PRIMARY KEY ("""ref "" id""", """range""" WITHOUT OVERLAPS);
 
 -- 5. Add foreign key referencing the complex unique key
 SELECT sql_saga.add_temporal_foreign_key(
@@ -83,8 +91,8 @@ TABLE sql_saga.foreign_keys;
 
 -- 6. Test data insertion
 -- This should succeed
-INSERT INTO """quoted"" table" VALUES (1, 'A', 10, 20);
-INSERT INTO """fk "" test""" VALUES (1, 'A', 12, 18);
+INSERT INTO """quoted"" table" ("""id""", """product "" code""", """valid from""", """valid until""") VALUES (1, 'A', 10, 20);
+INSERT INTO """fk "" test""" ("""ref "" id""", """product""", """from""", """until""") VALUES (1, 'A', 12, 18);
 
 -- Show table contents before the expected failure
 TABLE """quoted"" table";
@@ -92,7 +100,7 @@ TABLE """fk "" test""";
 
 -- This should fail (FK violation). Use a savepoint to contain the error.
 SAVEPOINT expect_fail;
-INSERT INTO """fk "" test""" VALUES (2, 'B', 15, 25);
+INSERT INTO """fk "" test""" ("""ref "" id""", """product""", """from""", """until""") VALUES (2, 'B', 15, 25);
 ROLLBACK TO SAVEPOINT expect_fail;
 
 ROLLBACK;

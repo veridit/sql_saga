@@ -13,12 +13,20 @@ CREATE TABLE repro.auth_user (id int primary key);
 INSERT INTO repro.auth_user VALUES (1);
 
 CREATE TABLE repro.legal_unit (
-    id int primary key,
+    id int NOT NULL,
+    valid_range daterange NOT NULL,
     valid_from date,
     valid_until date,
-    valid_to date
+    valid_to date,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-INSERT INTO repro.legal_unit VALUES (123, '2020-01-01', 'infinity', 'infinity');
+SELECT sql_saga.add_era('repro.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+
+INSERT INTO repro.legal_unit (id, valid_from, valid_until, valid_to) 
+VALUES (123, '2020-01-01', 'infinity', 'infinity');
 
 CREATE TABLE repro.stat_definition (
     id int primary key,
@@ -33,12 +41,13 @@ INSERT INTO repro.stat_definition VALUES (1, 'employees', 'int', 'Employees');
 CREATE TABLE repro.stat_for_unit (
     id                 SERIAL NOT NULL,
     stat_definition_id INT NOT NULL REFERENCES repro.stat_definition(id),
-    legal_unit_id      INT REFERENCES repro.legal_unit(id),
+    legal_unit_id      INT,
     establishment_id   INT,
     value_int          INT,
     value_float        DOUBLE PRECISION,
     value_string       VARCHAR,
     value_bool         BOOLEAN,
+    valid_range        daterange NOT NULL,
     valid_from         DATE NOT NULL,
     valid_to           DATE NOT NULL,
     valid_until        DATE NOT NULL,
@@ -47,12 +56,15 @@ CREATE TABLE repro.stat_for_unit (
     edit_by_user_id    INT NOT NULL REFERENCES repro.auth_user(id),
     edit_at            TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
     edit_comment       VARCHAR(512),
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS),
+    FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES repro.legal_unit (id, PERIOD valid_range)
 );
 
 -- Enable sql_saga on the target table
-SELECT sql_saga.add_era('repro.stat_for_unit'::regclass, synchronize_valid_to_column := 'valid_to');
-SELECT sql_saga.add_unique_key('repro.stat_for_unit'::regclass, ARRAY['id']);
+SELECT sql_saga.add_era('repro.stat_for_unit'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
 
 
 -- 2. Create the source table, which is missing the `created_at` column.

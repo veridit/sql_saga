@@ -14,9 +14,11 @@ CREATE SCHEMA tmt; -- Temporal Merge Types
 --------------------------------------------------------------------------------
 \echo 'Test Type: INTEGER'
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_int (id int, valid_from int, valid_until int, value text);
-SELECT sql_saga.add_era('tmt.target_int', 'valid_from', 'valid_until');
-INSERT INTO tmt.target_int VALUES (1, 10, 20, 'Original');
+CREATE TABLE tmt.target_int (id int, valid_range int4range, valid_from int, valid_until int, value text);
+SELECT sql_saga.add_era('tmt.target_int', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+INSERT INTO tmt.target_int (id, valid_from, valid_until, value) VALUES (1, 10, 20, 'Original');
 
 CREATE TEMP TABLE source_int (row_id int, id int, valid_from int, valid_until int, value text);
 INSERT INTO source_int VALUES
@@ -42,9 +44,11 @@ SELECT * FROM tmt.target_int ORDER BY id, valid_from;
 --------------------------------------------------------------------------------
 \echo 'Test Type: BIGINT'
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_bigint (id int, valid_from bigint, valid_until bigint, value text);
-SELECT sql_saga.add_era('tmt.target_bigint', 'valid_from', 'valid_until');
-INSERT INTO tmt.target_bigint VALUES (1, 10, 20, 'Original');
+CREATE TABLE tmt.target_bigint (id int, valid_range int8range, valid_from bigint, valid_until bigint, value text);
+SELECT sql_saga.add_era('tmt.target_bigint', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+INSERT INTO tmt.target_bigint (id, valid_from, valid_until, value) VALUES (1, 10, 20, 'Original');
 
 CREATE TEMP TABLE source_bigint (row_id int, id int, valid_from bigint, valid_until bigint, value text);
 INSERT INTO source_bigint VALUES
@@ -70,9 +74,11 @@ SELECT * FROM tmt.target_bigint ORDER BY id, valid_from;
 --------------------------------------------------------------------------------
 \echo 'Test Type: NUMERIC'
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_numeric (id int, valid_from numeric, valid_until numeric, value text);
-SELECT sql_saga.add_era('tmt.target_numeric', 'valid_from', 'valid_until');
-INSERT INTO tmt.target_numeric VALUES (1, 10.0, 20.0, 'Original');
+CREATE TABLE tmt.target_numeric (id int, valid_range numrange, valid_from numeric, valid_until numeric, value text);
+SELECT sql_saga.add_era('tmt.target_numeric', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+INSERT INTO tmt.target_numeric (id, valid_from, valid_until, value) VALUES (1, 10.0, 20.0, 'Original');
 
 CREATE TEMP TABLE source_numeric (row_id int, id int, valid_from numeric, valid_until numeric, value text);
 INSERT INTO source_numeric VALUES
@@ -98,9 +104,11 @@ SELECT * FROM tmt.target_numeric ORDER BY id, valid_from;
 --------------------------------------------------------------------------------
 \echo 'Test Type: TIMESTAMP'
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_timestamp (id int, valid_from timestamp, valid_until timestamp, value text);
-SELECT sql_saga.add_era('tmt.target_timestamp', 'valid_from', 'valid_until');
-INSERT INTO tmt.target_timestamp VALUES (1, '2024-01-01 10:00', '2024-01-01 20:00', 'Original');
+CREATE TABLE tmt.target_timestamp (id int, valid_range tsrange, valid_from timestamp, valid_until timestamp, value text);
+SELECT sql_saga.add_era('tmt.target_timestamp', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+INSERT INTO tmt.target_timestamp (id, valid_from, valid_until, value) VALUES (1, '2024-01-01 10:00', '2024-01-01 20:00', 'Original');
 
 CREATE TEMP TABLE source_timestamp (row_id int, id int, valid_from timestamp, valid_until timestamp, value text);
 INSERT INTO source_timestamp VALUES
@@ -126,9 +134,11 @@ SELECT * FROM tmt.target_timestamp ORDER BY id, valid_from;
 --------------------------------------------------------------------------------
 \echo 'Test Type: TIMESTAMPTZ'
 --------------------------------------------------------------------------------
-CREATE TABLE tmt.target_timestamptz (id int, valid_from timestamptz, valid_until timestamptz, value text);
-SELECT sql_saga.add_era('tmt.target_timestamptz', 'valid_from', 'valid_until');
-INSERT INTO tmt.target_timestamptz VALUES (1, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'Original');
+CREATE TABLE tmt.target_timestamptz (id int, valid_range tstzrange, valid_from timestamptz, valid_until timestamptz, value text);
+SELECT sql_saga.add_era('tmt.target_timestamptz', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+INSERT INTO tmt.target_timestamptz (id, valid_from, valid_until, value) VALUES (1, '2024-01-01 10:00Z', '2024-01-01 20:00Z', 'Original');
 
 CREATE TEMP TABLE source_timestamptz (row_id int, id int, valid_from timestamptz, valid_until timestamptz, value text);
 INSERT INTO source_timestamptz VALUES

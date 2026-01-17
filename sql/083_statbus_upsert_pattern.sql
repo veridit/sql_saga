@@ -4,6 +4,7 @@ SET ROLE TO sql_saga_unprivileged_user;
 
 CREATE TABLE legal_unit (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_until date,
   name varchar NOT NULL
@@ -11,6 +12,7 @@ CREATE TABLE legal_unit (
 
 CREATE TABLE location (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_until date,
   legal_unit_id INTEGER NOT NULL,
@@ -22,8 +24,14 @@ CREATE TABLE location (
 \d location
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('legal_unit', 'valid_from', 'valid_until');
-SELECT sql_saga.add_era('location', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+ALTER TABLE legal_unit ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('location', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+ALTER TABLE location ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 TABLE sql_saga.era;
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');

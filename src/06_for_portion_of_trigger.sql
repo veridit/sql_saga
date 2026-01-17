@@ -74,13 +74,15 @@ BEGIN
     EXECUTE format('DELETE FROM %I WHERE true;', temp_source_table_name);
 
     -- The `for_portion_of` view allows specifying a time slice using either the authoritative range
-    -- column, or the convenient component columns (`valid_from`, `valid_until`). This trigger must
+    -- column, or the convenient component columns (`valid_from`, `valid_until`, `valid_to`). This trigger must
     -- determine the definitive time slice for the operation and pass it to temporal_merge.
     DECLARE
         v_final_range_val jsonb;
         v_range_changed BOOLEAN := false;
         v_from_changed BOOLEAN := false;
         v_until_changed BOOLEAN := false;
+        v_to_changed BOOLEAN := false;
+        v_until_via_to text;
     BEGIN
         IF info.range_column_name IS NOT NULL THEN
             EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.range_column_name, info.range_column_name) INTO v_range_changed USING NEW, OLD;
@@ -91,19 +93,36 @@ BEGIN
         IF info.valid_until_column_name IS NOT NULL THEN
             EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_until_column_name, info.valid_until_column_name) INTO v_until_changed USING NEW, OLD;
         END IF;
+        IF info.valid_to_column_name IS NOT NULL THEN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_to_column_name, info.valid_to_column_name) INTO v_to_changed USING NEW, OLD;
+        END IF;
 
         -- If any temporal column was changed, derive the new range for the operation.
-        IF v_range_changed OR v_from_changed OR v_until_changed THEN
+        IF v_range_changed OR v_from_changed OR v_until_changed OR v_to_changed THEN
             -- If the user set the range column directly, it takes precedence.
             IF v_range_changed THEN
                 v_final_range_val := jnew->info.range_column_name;
-            -- Otherwise, derive the range from the component from/until columns.
+            -- Otherwise, derive the range from the component from/until/to columns.
             ELSE
-                EXECUTE format('SELECT to_jsonb( %I(($1->>%L)::%s, ($1->>%L)::%s, ''[)'') )',
+                -- If valid_to was changed, convert it to valid_until (add 1 to make it exclusive)
+                IF v_to_changed THEN
+                    DECLARE
+                        v_new_to text;
+                    BEGIN
+                        v_new_to := (jnew ->> info.valid_to_column_name);
+                        IF v_new_to IS NOT NULL THEN
+                            EXECUTE format('SELECT ($1::%s + 1)::text', info.range_subtype)
+                            INTO v_until_via_to USING v_new_to;
+                        END IF;
+                    END;
+                END IF;
+
+                -- Build the range using from and until (preferring converted valid_to if available)
+                EXECUTE format('SELECT to_jsonb( %I(($1->>%L)::%s, COALESCE($2, ($1->>%L))::%s, ''[)'') )',
                     info.range_type,
                     info.valid_from_column_name, info.range_subtype,
                     info.valid_until_column_name, info.range_subtype
-                ) INTO v_final_range_val USING jnew;
+                ) INTO v_final_range_val USING jnew, v_until_via_to;
             END IF;
         ELSE
             -- No temporal columns were changed, so this is a data-only update. The portion

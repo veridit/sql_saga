@@ -36,6 +36,7 @@ CREATE SCHEMA exposed;
 CREATE SCHEMA hidden;
 CREATE TABLE exposed.employees (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_to date,
   valid_until date,
@@ -44,6 +45,7 @@ CREATE TABLE exposed.employees (
 );
 CREATE TABLE hidden.staff (
   id INTEGER,
+  valid_range daterange NOT NULL,
   valid_from date,
   valid_to date,
   valid_until date,
@@ -56,6 +58,7 @@ CREATE TABLE hidden.staff (
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
  id          | integer           |           |          | 
+ valid_range | daterange         |           | not null | 
  valid_from  | date              |           |          | 
  valid_to    | date              |           |          | 
  valid_until | date              |           |          | 
@@ -67,6 +70,7 @@ CREATE TABLE hidden.staff (
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
  id          | integer          |           |          | 
+ valid_range | daterange        |           | not null | 
  valid_from  | date             |           |          | 
  valid_to    | date             |           |          | 
  valid_until | date             |           |          | 
@@ -74,59 +78,67 @@ CREATE TABLE hidden.staff (
  employee_id | integer          |           |          | 
 
 -- Verify that enable and disable each work correctly.
-SELECT sql_saga.add_era('exposed.employees', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table exposed.employees to synchronize columns: valid_to
+SELECT sql_saga.add_era('exposed.employees', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table exposed.employees to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-SELECT sql_saga.add_era('hidden.staff', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "staff_synchronize_temporal_columns_trigger" on table hidden.staff to synchronize columns: valid_to
+ALTER TABLE exposed.employees ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('hidden.staff', 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "staff_synchronize_temporal_columns_trigger" on table hidden.staff to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
+ALTER TABLE hidden.staff ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
- exposed      | employees  | valid    | valid_from             | valid_until             | daterange  | date          | D                      | employees_valid_check   | valid_to                    |                          | t                        |                   | 
- hidden       | staff      | valid    | valid_from             | valid_until             | daterange  | date          | D                      | staff_valid_check       | valid_to                    |                          | t                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ exposed      | employees  | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | employees_valid_check   | employees_check           | valid_to             | t                        |                   | 
+ hidden       | staff      | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | staff_valid_check       | staff_check               | valid_to             | t                        |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: altering table exposed.employees to add constraints: ADD CONSTRAINT employees_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT employees_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table exposed.employees to add constraints: ADD CONSTRAINT employees_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  employees_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('hidden.staff', ARRAY['id'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: altering table hidden.staff to add constraints: ADD CONSTRAINT staff_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT staff_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table hidden.staff to add constraints: ADD CONSTRAINT staff_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  staff_id_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint    |   exclude_constraint    | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
---------------------+--------------+------------+----------+--------------+----------+-------------------------+-------------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_uniq | employees_id_valid_excl |                  |           |                            |                     |                                  | {}
- staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_uniq     | staff_id_valid_excl     |                  |           |                            |                     |                                  | {}
+  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint    | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+--------------------+--------------+------------+----------+--------------+----------+-------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_uniq |                    |                  |           |                            |                     |                                  | {}
+ staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_uniq     |                    |                  |           |                            |                     |                                  | {}
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
-NOTICE:  No compatible index found for foreign key on table hidden.staff. Creating new index: CREATE INDEX staff_employee_id_valid_gist_idx ON hidden.staff USING GIST (employee_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table hidden.staff. Creating new index: CREATE INDEX staff_employee_id_valid_gist_idx ON hidden.staff USING GIST (employee_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  staff_employee_id_valid
 (1 row)
 
 TABLE sql_saga.foreign_keys;
-    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |                fk_table_columns_snapshot                |  unique_key_name   | match_type | update_action | delete_action |         fk_insert_trigger         |         fk_update_trigger         | fk_check_constraint | fk_helper_function |         uk_update_trigger         |         uk_delete_trigger         |          fk_index_name           
--------------------------+----------------------+--------------+------------+---------------+-------------+---------------------------------------------------------+--------------------+------------+---------------+---------------+-----------------------------------+-----------------------------------+---------------------+--------------------+-----------------------------------+-----------------------------------+----------------------------------
- staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | {id,valid_from,valid_to,valid_until,salary,employee_id} | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     | staff_employee_id_valid_fk_insert | staff_employee_id_valid_fk_update |                     |                    | staff_employee_id_valid_uk_update | staff_employee_id_valid_uk_delete | staff_employee_id_valid_gist_idx
+    foreign_key_name     |         type         | table_schema | table_name | column_names  | fk_era_name |                      fk_table_columns_snapshot                      |  unique_key_name   | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |          fk_index_name           
+-------------------------+----------------------+--------------+------------+---------------+-------------+---------------------------------------------------------------------+--------------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+----------------------------------
+ staff_employee_id_valid | temporal_to_temporal | hidden       | staff      | {employee_id} | valid       | {id,valid_range,valid_from,valid_to,valid_until,salary,employee_id} | employees_id_valid | SIMPLE     | NO ACTION     | NO ACTION     |                   |                   |                     |                    |                   |                   | staff_employee_id_valid_gist_idx
 (1 row)
 
 -- While sql_saga is active
@@ -134,44 +146,48 @@ TABLE sql_saga.foreign_keys;
                     Table "exposed.employees"
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
- id          | integer           |           |          | 
+ id          | integer           |           | not null | 
+ valid_range | daterange         |           | not null | 
  valid_from  | date              |           | not null | 
  valid_to    | date              |           |          | 
  valid_until | date              |           |          | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Indexes:
+    "employees_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "employees_id_idx" btree (id)
-    "employees_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "employees_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "employees_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "employees_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "employees_valid_check" CHECK (NOT isempty(valid_range))
+Referenced by:
+    TABLE "hidden.staff" CONSTRAINT "staff_employee_id_valid" FOREIGN KEY (employee_id, PERIOD valid_range) REFERENCES exposed.employees(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
-    staff_employee_id_valid_uk_delete AFTER DELETE ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_delete_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
-    staff_employee_id_valid_uk_update AFTER UPDATE OF id, valid_from, valid_until ON exposed.employees FROM hidden.staff DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.uk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION', 'temporal_to_temporal')
+    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
- id          | integer          |           |          | 
+ id          | integer          |           | not null | 
+ valid_range | daterange        |           | not null | 
  valid_from  | date             |           | not null | 
  valid_to    | date             |           |          | 
  valid_until | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
-    "staff_employee_id_valid_gist_idx" gist (employee_id, daterange(valid_from, valid_until))
+    "staff_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+    "staff_employee_id_valid_gist_idx" gist (employee_id, valid_range)
     "staff_id_idx" btree (id)
-    "staff_id_valid_excl" EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
-    "staff_id_valid_uniq" UNIQUE CONSTRAINT, btree (id, valid_from, valid_until) DEFERRABLE
+    "staff_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
-    "staff_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "staff_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "staff_valid_check" CHECK (NOT isempty(valid_range))
+Foreign-key constraints:
+    "staff_employee_id_valid" FOREIGN KEY (employee_id, PERIOD valid_range) REFERENCES exposed.employees(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    staff_employee_id_valid_fk_insert AFTER INSERT ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_insert_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_employee_id_valid_fk_update AFTER UPDATE OF employee_id, valid_from, valid_until, valid_to ON hidden.staff FROM exposed.employees DEFERRABLE INITIALLY IMMEDIATE FOR EACH ROW EXECUTE FUNCTION sql_saga.fk_update_check_c('staff_employee_id_valid', 'hidden', 'staff', '{employee_id}', 'valid', 'valid_from', 'valid_until', 'exposed', 'employees', '{id}', 'valid', 'valid_from', 'valid_until', 'SIMPLE', 'NO ACTION', 'NO ACTION')
-    staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'null', 'date', 't')
+    staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
 
 -- Test data.
 -- We only insert valid_from and valid_to, the trigger will set valid_after.
@@ -194,7 +210,8 @@ INSERT INTO hidden.staff (id, valid_from, valid_to, employee_id, salary) VALUES
 -- Fail
 SAVEPOINT expect_delete_fail;
 DELETE FROM exposed.employees WHERE id = 101;
-ERROR:  update or delete on table "exposed.employees" violates foreign key constraint "staff_employee_id_valid" on table "hidden.staff"
+ERROR:  update or delete on table "employees" violates foreign key constraint "staff_employee_id_valid" on table "staff"
+DETAIL:  Key (id, valid_range)=(101, [2022-01-01,2022-07-01)) is still referenced from table "staff".
 ROLLBACK TO SAVEPOINT expect_delete_fail;
 -- Success
 DELETE FROM hidden.staff WHERE employee_id = 101;
@@ -202,12 +219,14 @@ DELETE FROM exposed.employees WHERE id = 101;
 -- Fail
 SAVEPOINT expect_update_fail;
 UPDATE hidden.staff SET valid_until = 'infinity' WHERE employee_id = 103;
-ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
+ERROR:  insert or update on table "staff" violates foreign key constraint "staff_employee_id_valid"
+DETAIL:  Key (employee_id, valid_range)=(103, [2022-01-01,infinity)) is not present in table "employees".
 ROLLBACK TO SAVEPOINT expect_update_fail;
 -- Regression test: This should fail, same as the test above it.
 SAVEPOINT regression;
 UPDATE hidden.staff SET valid_to = 'infinity' WHERE employee_id = 103;
-ERROR:  insert or update on table "hidden.staff" violates foreign key constraint "staff_employee_id_valid"
+ERROR:  insert or update on table "staff" violates foreign key constraint "staff_employee_id_valid"
+DETAIL:  Key (employee_id, valid_range)=(103, [2022-01-01,infinity)) is not present in table "employees".
 ROLLBACK TO SAVEPOINT regression;
 -- Success
 UPDATE exposed.employees SET valid_to = 'infinity' WHERE id = 103;
@@ -255,8 +274,8 @@ SELECT sql_saga.drop_era('hidden.staff');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | valid_from_column_name | valid_until_column_name | range_type | range_subtype | range_subtype_category | bounds_check_constraint | synchronize_valid_to_column | synchronize_range_column | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+------------------------+-------------------------+------------+---------------+------------------------+-------------------------+-----------------------------+--------------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.
@@ -264,26 +283,30 @@ TABLE sql_saga.era;
                     Table "exposed.employees"
    Column    |       Type        | Collation | Nullable | Default 
 -------------+-------------------+-----------+----------+---------
- id          | integer           |           |          | 
+ id          | integer           |           | not null | 
+ valid_range | daterange         |           | not null | 
  valid_from  | date              |           | not null | 
  valid_to    | date              |           |          | 
  valid_until | date              |           |          | 
  name        | character varying |           | not null | 
  role        | character varying |           | not null | 
 Indexes:
+    "employees_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "employees_id_idx" btree (id)
 
 \d hidden.staff
                       Table "hidden.staff"
    Column    |       Type       | Collation | Nullable | Default 
 -------------+------------------+-----------+----------+---------
- id          | integer          |           |          | 
+ id          | integer          |           | not null | 
+ valid_range | daterange        |           | not null | 
  valid_from  | date             |           | not null | 
  valid_to    | date             |           |          | 
  valid_until | date             |           |          | 
  salary      | double precision |           |          | 
  employee_id | integer          |           |          | 
 Indexes:
+    "staff_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "staff_id_idx" btree (id)
 
 ROLLBACK;

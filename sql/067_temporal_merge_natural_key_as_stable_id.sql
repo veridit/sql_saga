@@ -13,26 +13,32 @@ BEGIN;
 CREATE TABLE nk_legal_unit (
     legal_unit_id int,
     name text,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (legal_unit_id, valid_from)
+    PRIMARY KEY (legal_unit_id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('nk_legal_unit'::regclass, 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('nk_legal_unit'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('nk_legal_unit'::regclass, ARRAY['legal_unit_id']);
-INSERT INTO nk_legal_unit VALUES (1, 'Global Corp', '2020-01-01', 'infinity');
+INSERT INTO nk_legal_unit (legal_unit_id, name, valid_from, valid_until) VALUES (1, 'Global Corp', '2020-01-01', 'infinity');
 
 -- Parent table 2: establishment
 CREATE TABLE nk_establishment (
     establishment_id int,
     address text,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (establishment_id, valid_from)
+    PRIMARY KEY (establishment_id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('nk_establishment'::regclass, 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('nk_establishment'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('nk_establishment'::regclass, ARRAY['establishment_id']);
-INSERT INTO nk_establishment VALUES (101, 'Main St Office', '2020-01-01', 'infinity');
-INSERT INTO nk_establishment VALUES (102, 'Side St Office', '2022-01-01', 'infinity');
+INSERT INTO nk_establishment (establishment_id, address, valid_from, valid_until) VALUES (101, 'Main St Office', '2020-01-01', 'infinity');
+INSERT INTO nk_establishment (establishment_id, address, valid_from, valid_until) VALUES (102, 'Side St Office', '2022-01-01', 'infinity');
 
 -- Child table with a surrogate key (`employment_id`) but which will be managed
 -- using its composite natural key (`legal_unit_id`, `establishment_id`).
@@ -41,11 +47,14 @@ CREATE TABLE nk_unit_employment (
     legal_unit_id int,
     establishment_id int,
     num_employees int,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (employment_id, valid_from)
+    PRIMARY KEY (employment_id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 -- The unique key on the natural key is what allows `temporal_merge` to
 -- identify a unique entity over time using these columns.
 SELECT sql_saga.add_unique_key('nk_unit_employment'::regclass, ARRAY['legal_unit_id', 'establishment_id']);

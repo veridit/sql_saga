@@ -13,13 +13,14 @@ DROP TABLE unrelated;
 CREATE TYPE integerrange AS RANGE (SUBTYPE = integer);
 CREATE TABLE dp (
     id bigint,
+    v integerrange NOT NULL,
     s integer,
     e integer,
     x boolean
 );
 
 /* era */
-SELECT sql_saga.add_era('dp', 's', 'e', 'p', 'integerrange');
+SELECT sql_saga.add_era('dp', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 SAVEPOINT s1;
 ALTER TABLE dp DROP COLUMN s; -- fails
 ROLLBACK TO SAVEPOINT s1;
@@ -47,11 +48,12 @@ ALTER TABLE dp DROP CONSTRAINT dp_pkey;
 
 CREATE TABLE dp_current (
     id bigint,
+    v daterange NOT NULL,
     s date NOT NULL,
     e date NOT NULL
 );
-ALTER TABLE dp_current ADD CONSTRAINT dp_current_pkey PRIMARY KEY (id, s);
-SELECT sql_saga.add_era('dp_current', 's', 'e', 'p');
+ALTER TABLE dp_current ADD CONSTRAINT dp_current_pkey PRIMARY KEY (id, v WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('dp_current', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 SELECT sql_saga.add_current_view('dp_current', 'p');
 SAVEPOINT s_current_view;
 DROP VIEW dp_current__current_p; -- fails
@@ -69,24 +71,19 @@ DROP TABLE dp_current;
 
 /* unique_keys */
 ALTER TABLE dp
-    ADD CONSTRAINT u UNIQUE (id, s, e) DEFERRABLE,
-    ADD CONSTRAINT x EXCLUDE USING gist (id WITH =, integerrange(s, e) WITH &&)  DEFERRABLE;
+    ADD CONSTRAINT u UNIQUE (id, v WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key(
     table_oid => 'dp'::regclass,
     column_names => ARRAY['id'],
     era_name => 'p',
     unique_key_name => 'k',
-    unique_constraint => 'u',
-    exclude_constraint => 'x'
+    unique_constraint => 'u'
 );
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ROLLBACK TO SAVEPOINT s7;
-SAVEPOINT s8;
-ALTER TABLE dp DROP CONSTRAINT x; -- fails
-ROLLBACK TO SAVEPOINT s8;
 SAVEPOINT s9;
-ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails
+ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails (bounds check constraint)
 ROLLBACK TO SAVEPOINT s9;
 
 SAVEPOINT s10;
@@ -94,10 +91,11 @@ SAVEPOINT s10;
 CREATE TABLE dp_pk_consistency (
     id int,
     nk text,
+    v daterange NOT NULL,
     s date,
     e date
 );
-SELECT sql_saga.add_era('dp_pk_consistency', 's', 'e', 'p');
+SELECT sql_saga.add_era('dp_pk_consistency', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 ALTER TABLE dp_pk_consistency ADD PRIMARY KEY (id);
 SELECT sql_saga.add_unique_key(
     table_oid => 'dp_pk_consistency',
@@ -119,20 +117,9 @@ ROLLBACK TO SAVEPOINT s10;
 SAVEPOINT s11;
 /* foreign_keys */
 CREATE TABLE dp_ref (LIKE dp);
-SELECT sql_saga.add_era('dp_ref', 's', 'e', 'p', 'integerrange');
+SELECT sql_saga.add_era('dp_ref', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 SELECT sql_saga.add_temporal_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
-SAVEPOINT s10;
-DROP TRIGGER f_fk_insert ON dp_ref; -- fails
-ROLLBACK TO SAVEPOINT s10;
-SAVEPOINT s11;
-DROP TRIGGER f_fk_update ON dp_ref; -- fails
-ROLLBACK TO SAVEPOINT s11;
-SAVEPOINT s12;
-DROP TRIGGER f_uk_update ON dp; -- fails
-ROLLBACK TO SAVEPOINT s12;
-SAVEPOINT s13;
-DROP TRIGGER f_uk_delete ON dp; -- fails
-ROLLBACK TO SAVEPOINT s13;
+-- Note: In the new API with native PostgreSQL 18 temporal FKs, there are no FK triggers to test dropping.
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
 DROP TABLE dp_ref;
 
