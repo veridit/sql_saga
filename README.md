@@ -20,7 +20,7 @@ In the context of this extension, a **Saga** represents the complete history of 
 - Built upon the robust and reliable PostgreSQL database system.
 - Supports change tracking and delete in accordance with NSO requirements.
 - Supports using pg_stat_monitor for stats.
-  On macOs use `brew install pgxnclient` and `USE_PGXS=1 pgxn install --verbose --pg_config /Applications/Postgres.app/Contents/Versions/17/bin/pg_config pg_stat_monitor` where you specify the version you wish to install for, here it was 17. Then activate with `echo "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_monitor';" | psql` and restart the instance using the PostgresApp. Also run `echo 'CREATE EXTENSION pg_stat_monitor;' | psql contrib_regression` to install it for the test database template.
+  On macOs use `brew install pgxnclient` and `USE_PGXS=1 pgxn install --verbose --pg_config /Applications/Postgres.app/Contents/Versions/18/bin/pg_config pg_stat_monitor` where you specify the version you wish to install for, here it was 18. Then activate with `echo "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_monitor';" | psql` and restart the instance using the PostgresApp. Also run `echo 'CREATE EXTENSION pg_stat_monitor;' | psql contrib_regression` to install it for the test database template.
 
 ## Installation
 
