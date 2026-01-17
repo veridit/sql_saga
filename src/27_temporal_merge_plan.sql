@@ -831,14 +831,15 @@ BEGIN
             FROM unnest(v_identity_columns) col;
     
             -- Build source-side stable PK payload. It must project NULL for columns not present in the source.
+            -- Use WITH ORDINALITY to preserve array order and ensure deterministic output.
             SELECT COALESCE(format('jsonb_build_object(%s)', string_agg(
                 CASE
                     WHEN sa.attname IS NOT NULL THEN format('%L, source_table.%I', c.col, c.col)
                     ELSE format('%L, NULL::%s', c.col, format_type(ta.atttypid, ta.atttypmod))
                 END,
-            ', ')), '{}'::jsonb::text)
+            ', ' ORDER BY c.ord)), '{}'::jsonb::text)
             INTO v_stable_pk_cols_jsonb_build_source
-            FROM unnest(COALESCE(v_identity_columns, '{}')) c(col)
+            FROM unnest(COALESCE(v_identity_columns, '{}')) WITH ORDINALITY AS c(col, ord)
             LEFT JOIN pg_attribute ta ON ta.attrelid = target_table AND ta.attname = c.col AND ta.attnum > 0 AND NOT ta.attisdropped
             LEFT JOIN pg_attribute sa ON sa.attrelid = source_table AND sa.attname = c.col AND sa.attnum > 0 AND NOT sa.attisdropped;
     
