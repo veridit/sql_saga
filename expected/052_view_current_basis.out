@@ -104,7 +104,7 @@ SAVEPOINT expect_fail;
 -- This will fail because the era is not time-based, which is the point of the test.
 SELECT sql_saga.add_current_view('widgets'::regclass, current_func_name := 'test_now()');
 ERROR:  Cannot create a "current" view for era "valid" on table "widgets" because it is a range of integer, and only date or timestamp is supported.
-CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,text) line 48 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,text) line 60 at RAISE
 ROLLBACK TO expect_fail;
 ROLLBACK TO before_failure_setup;
 -- Test DML Semantics
@@ -210,6 +210,27 @@ ERROR:  relation "employees__current_valid" does not exist
 LINE 1: SELECT * FROM employees__current_valid;
                       ^
 ROLLBACK TO view_is_gone;
+-- Test Error Handling for missing era
+-- ====================================
+SAVEPOINT missing_era_test;
+CREATE TABLE no_era_table (
+    id int,
+    value text,
+    valid_range daterange
+);
+-- Should fail: no era registered on this table
+SAVEPOINT expect_error_1;
+SELECT sql_saga.add_current_view('no_era_table'::regclass);
+ERROR:  era "valid" does not exist on table no_era_table
+CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,text) line 34 at RAISE
+ROLLBACK TO SAVEPOINT expect_error_1;
+-- Should also fail with explicit non-existent era name
+SAVEPOINT expect_error_2;
+SELECT sql_saga.add_current_view('no_era_table'::regclass, 'nonexistent');
+ERROR:  era "nonexistent" does not exist on table no_era_table
+CONTEXT:  PL/pgSQL function sql_saga.add_current_view(regclass,name,name,text) line 34 at RAISE
+ROLLBACK TO SAVEPOINT expect_error_2;
+ROLLBACK TO missing_era_test;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

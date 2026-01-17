@@ -11,6 +11,7 @@ DECLARE
     trigger_name name;
     target_schema_name name;
     target_table_name name;
+    era_exists boolean;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'table_oid must be specified';
@@ -26,6 +27,17 @@ BEGIN
     SELECT n.nspname, c.relname INTO target_schema_name, target_table_name
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
     WHERE c.oid = table_oid;
+
+    -- Validate era exists (fail-fast)
+    SELECT EXISTS (
+        SELECT 1 FROM sql_saga.era AS p
+        WHERE (p.table_schema, p.table_name) = (target_schema_name, target_table_name)
+          AND p.era_name = era_name
+    ) INTO era_exists;
+
+    IF NOT era_exists THEN
+        RAISE EXCEPTION 'era "%" does not exist on table %', era_name, table_oid;
+    END IF;
 
     FOR r IN
         SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid, p.range_type, p.range_subtype, p.range_subtype_category, p.range_column_name

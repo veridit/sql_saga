@@ -94,6 +94,28 @@ SAVEPOINT view_is_gone;
 SELECT * FROM employees__current_valid;
 ROLLBACK TO view_is_gone;
 
+-- Test Error Handling for missing era
+-- ====================================
+SAVEPOINT missing_era_test;
+
+CREATE TABLE no_era_table (
+    id int,
+    value text,
+    valid_range daterange
+);
+
+-- Should fail: no era registered on this table
+SAVEPOINT expect_error_1;
+SELECT sql_saga.add_current_view('no_era_table'::regclass);
+ROLLBACK TO SAVEPOINT expect_error_1;
+
+-- Should also fail with explicit non-existent era name
+SAVEPOINT expect_error_2;
+SELECT sql_saga.add_current_view('no_era_table'::regclass, 'nonexistent');
+ROLLBACK TO SAVEPOINT expect_error_2;
+
+ROLLBACK TO missing_era_test;
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql

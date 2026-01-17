@@ -409,6 +409,27 @@ ROLLBACK TO SAVEPOINT test_valid_to;
 
 ROLLBACK TO SAVEPOINT scenario_9;
 
+-- Scenario 10: Era validation - should fail when era doesn't exist
+SAVEPOINT scenario_10;
+
+CREATE TABLE no_era_test (
+    id int,
+    value text,
+    valid_range daterange
+);
+
+-- Should fail: no era registered on this table
+SAVEPOINT expect_error_1;
+SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass);
+ROLLBACK TO SAVEPOINT expect_error_1;
+
+-- Should also fail with explicit non-existent era name
+SAVEPOINT expect_error_2;
+SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass, 'nonexistent');
+ROLLBACK TO SAVEPOINT expect_error_2;
+
+ROLLBACK TO SAVEPOINT scenario_10;
+
 ROLLBACK;
 
 DROP ROLE view_test_role;
