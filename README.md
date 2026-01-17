@@ -258,6 +258,48 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   ##### Executor State and Feedback
   The procedure uses two session-scoped temporary tables to manage its state: `temporal_merge_plan` (which stores the execution plan) and `temporal_merge_feedback` (which stores the final row-by-row feedback). These tables are created in the `pg_temp` schema and are automatically cleaned up at the end of the transaction (`ON COMMIT DROP`).
 
+  ##### Performance Considerations: Batch Sizing
+  For optimal performance, process data in batches of approximately **1,000 rows per `temporal_merge` call**. Benchmarks show:
+  
+  | Batch Size | Throughput (MERGE_ENTITY_*) | Throughput (UPDATE_FOR_PORTION_OF) |
+  |------------|----------------------------|-----------------------------------|
+  | 100 rows   | ~1,300-1,500 rows/s        | ~1,500-1,700 rows/s              |
+  | 1,000 rows | ~2,800-3,000 rows/s        | ~7,000-8,000 rows/s              |
+  | 10,000+ rows | ~1,100-1,200 rows/s      | ~5,500-5,800 rows/s              |
+
+  The 1,000-row sweet spot balances the per-call planning overhead (~300-400ms) against efficient set-based execution. Larger batches hit diminishing returns as the planner's internal data structures grow, while smaller batches pay the planning overhead too frequently.
+
+  **Example: Batched ETL Processing**
+  ```sql
+  DO $$
+  DECLARE
+      v_batch_size CONSTANT int := 1000;
+      v_offset int := 0;
+      v_processed int;
+  BEGIN
+      LOOP
+          -- Create a batch from the staging table
+          CREATE TEMP TABLE batch_source ON COMMIT DROP AS
+          SELECT * FROM staging.imports
+          ORDER BY row_id
+          LIMIT v_batch_size OFFSET v_offset;
+          
+          GET DIAGNOSTICS v_processed = ROW_COUNT;
+          EXIT WHEN v_processed = 0;
+          
+          -- Process the batch
+          CALL sql_saga.temporal_merge(
+              target_table => 'production.entities'::regclass,
+              source_table => 'batch_source'::regclass,
+              primary_identity_columns => '{id}'
+          );
+          
+          DROP TABLE batch_source;
+          v_offset := v_offset + v_batch_size;
+      END LOOP;
+  END $$;
+  ```
+
   - **Caveat for Multi-Role Sessions:** Because temporary tables are owned by the role that creates them, calling `temporal_merge` as different roles within the same session (e.g., via `SET ROLE`) can lead to permission errors. If the procedure is called by a superuser and then later by an unprivileged user, the second call may fail as the unprivileged user might not have permission to `TRUNCATE` the tables created by the superuser.
   - **Solution:** In the rare case that you need to call `temporal_merge` as multiple different roles within a single session, it is safest to manually drop both temporary tables before changing roles: `DROP TABLE IF EXISTS pg_temp.temporal_merge_plan, pg_temp.temporal_merge_feedback;`
   - **Debugging GUCs:** To aid in debugging, `temporal_merge` respects three session-level configuration variables (GUCs). They are disabled by default.

@@ -41,10 +41,10 @@ Key bottlenecks identified from pg_stat_monitor:
 - [ ] **Investigate UPDATE bottleneck** - 12 seconds for 1000 rows is unacceptable
 - [ ] **Optimize planning overhead** - Half a second just for planning
 - [ ] **Review index usage** in temp table queries
-- [ ] **Document optimal batch size** (1000 rows based on benchmarks)
+- [x] **Document optimal batch size** - Added to README with benchmark data and example code
 
 ## High Priority - Bugs & Core Features
-- [ ] **Add test case for range-only tables (no component columns):** Create a test that uses ONLY the `valid_range` column without `valid_from`, `valid_until`, or `valid_to` columns. This validates that the system properly handles tables where temporal tracking is done exclusively through the range column, ensuring all dynamic detection works correctly when component columns don't exist. This should probably be added to the 06x series, each covering different aspects of temporal_merge, and to the for_portion_of view and the current view.
+- [x] **Add test case for range-only tables (no component columns):** Created test 066_temporal_merge_range_only.sql that validates temporal_merge works correctly with tables that have ONLY a range column (no valid_from/valid_until/valid_to). Tests cover: basic PATCH/REPLACE, different range types, coalescing, and DELETE_FOR_PORTION_OF.
 - [x] **Add era existence validation to `add_for_portion_of_view` and `add_current_view`:** Both functions now raise an immediate error when the specified era doesn't exist, providing fail-fast behavior.
 - [ ] **Add test coverage for views with ONLY range column:** Tests 051 and 052 currently include `valid_from`, `valid_until`, and `valid_to` columns in their views alongside `valid_range`. Add test scenarios where the view exposes ONLY the `valid_range` column (not the synchronized component columns). This will verify that `for_portion_of_trigger` and `current_view_trigger` correctly handle range-only views. Likely to fail without additional fixes.
 
