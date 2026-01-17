@@ -10,19 +10,21 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
   for INSERT/UPDATE on temporal keys. A C trigger could eliminate most of this overhead.
 
 ### Phase 3: temporal_merge Performance Investigation
-Performance analysis from benchmarks reveals critical issues:
+Performance analysis from benchmarks (after CASE→OR optimization):
 - Regular DML: ~24,000-45,000 rows/s
 - temporal_merge (no batching): ~75-155 rows/s (200-300x slower!)
 - temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
 
-Key bottlenecks identified from pg_stat_monitor:
-- Planning overhead: 480-538ms per call
-- UPDATE execution: 12+ seconds for 1000 rows
-- Complex temp table creation: 247-260ms for `resolved_atomic_segments_with_payloads`
+Current bottlenecks from pg_stat_monitor (after optimization):
+- Planner call: ~1089ms (improved from 2062ms, 47% faster)
+- Executor call: ~645ms (improved from 1470ms, 56% faster)  
+- UPDATE execution: ~617ms for 2000 rows
+- resolved_atomic_segments_with_payloads: ~475ms (contains recursive CTE in LATERAL)
+- source_with_eclipsed_flag: ~199ms (CROSS JOIN LATERAL)
 
-- [ ] **Investigate UPDATE bottleneck** - 12 seconds for 1000 rows is unacceptable
-- [ ] **Optimize planning overhead** - Half a second just for planning
-- [ ] **Review index usage** in temp table queries
+Remaining optimizations to consider:
+- [ ] **Optimize recursive CTE in LATERAL joins** - The resolved_atomic_segments query uses recursive CTEs inside LATERAL joins which are expensive
+- [ ] **Review CROSS JOIN LATERAL in source_with_eclipsed_flag** - ~200ms for eclipse detection
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
