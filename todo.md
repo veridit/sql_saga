@@ -25,7 +25,7 @@ Keep a tmp/journal.md that tracks the state of the current ongoing task and rele
 ### Phase 2: Performance Optimization
 - [ ] **Consider C-based sync trigger** - Current PL/pgSQL sync trigger causes 2.4-3.8x overhead
   for INSERT/UPDATE on temporal keys. A C trigger could eliminate most of this overhead.
-- [ ] **Update sql/097_readme_usage.sql** - Must match README examples
+- [x] **Update sql/097_readme_usage.sql** - Now matches README examples (valid_range API)
 
 ### Phase 3: temporal_merge Performance Investigation
 Performance analysis from benchmarks reveals critical issues:
