@@ -163,6 +163,31 @@ diff-fail-all diff-fail-first:
 vim vimo nvim nvimo:
 	@:
 
+# Renumber test files to make room for a new test at a specific slot.
+# Usage: make renumber-tests-from SLOT=066
+# This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
+# After running, create your new 066_*.sql file.
+.PHONY: renumber-tests-from
+renumber-tests-from:
+	@if [ -z "$(SLOT)" ]; then \
+		echo "Usage: make renumber-tests-from SLOT=066"; \
+		exit 1; \
+	fi; \
+	echo "Renumbering tests from $(SLOT) onwards..."; \
+	for num in $$(seq 99 -1 $(SLOT)); do \
+		padded=$$(printf "%03d" $$num); \
+		next=$$(printf "%03d" $$((num + 1))); \
+		for dir in sql expected; do \
+			for f in $$dir/$${padded}_*; do \
+				[ -e "$$f" ] || continue; \
+				newname=$$(echo "$$f" | sed "s/$${padded}_/$${next}_/"); \
+				echo "git mv $$f $$newname"; \
+				git mv "$$f" "$$newname"; \
+			done; \
+		done; \
+	done; \
+	echo "Done. Slot $(SLOT) is now available."
+
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
 #
