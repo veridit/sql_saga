@@ -257,36 +257,76 @@ BEGIN
     ELSIF (TG_OP = 'DELETE') THEN
         CASE delete_mode
             WHEN 'delete_as_cutoff' THEN
-                SELECT string_agg(quote_ident(col) || ' = ($1).' || quote_ident(col), ' AND ')
-                INTO where_clause
-                FROM unnest(identifier_columns) AS t(col);
+                DECLARE
+                    now_value text;
+                    is_same_day boolean;
+                BEGIN
+                    -- Get the value of now_function
+                    EXECUTE format('SELECT (%s)::%s::text', now_function /* %s */, info.range_subtype /* %s */) INTO now_value;
 
-                IF info.valid_until_column_name IS NOT NULL THEN
-                    EXECUTE format('UPDATE %I.%I SET %I = %s WHERE %s AND %I = ''infinity''',
-                        info.table_schema, /* %I */
-                        info.table_name, /* %I */
-                        info.valid_until_column_name, /* %I */
-                        now_function, /* %s */
-                        where_clause, /* %s */
-                        info.valid_until_column_name /* %I */
-                    )
-                    USING OLD;
-                ELSE
-                    -- Range-only mode: update the range to end at now
-                    EXECUTE format('UPDATE %I.%I SET %I = %srange(lower(%I), %s) WHERE %s AND (upper(%I) IS NULL OR upper(%I) = ''infinity''::%s)',
-                        info.table_schema, /* %I */
-                        info.table_name, /* %I */
-                        info.range_column_name, /* %I */
-                        info.range_subtype, /* %s */
-                        info.range_column_name, /* %I */
-                        now_function, /* %s */
-                        where_clause, /* %s */
-                        info.range_column_name, /* %I */
-                        info.range_column_name, /* %I */
-                        info.range_subtype /* %s */
-                    )
-                    USING OLD;
-                END IF;
+                    -- Check if created on same "day" - if so, delete entirely instead of creating empty range
+                    IF info.valid_from_column_name IS NOT NULL THEN
+                        is_same_day := (to_jsonb(OLD)->>info.valid_from_column_name) = now_value;
+                    ELSE
+                        is_same_day := lower((to_jsonb(OLD)->>info.range_column_name)::daterange)::text = now_value;
+                    END IF;
+
+                    SELECT string_agg(quote_ident(col) || ' = ($1).' || quote_ident(col), ' AND ')
+                    INTO where_clause
+                    FROM unnest(identifier_columns) AS t(col);
+
+                    IF is_same_day THEN
+                        -- Entity was created on the same "day" - delete entirely
+                        IF info.valid_until_column_name IS NOT NULL THEN
+                            EXECUTE format('DELETE FROM %I.%I WHERE %s AND %I = ''infinity''',
+                                info.table_schema, /* %I */
+                                info.table_name, /* %I */
+                                where_clause, /* %s */
+                                info.valid_until_column_name /* %I */
+                            )
+                            USING OLD;
+                        ELSE
+                            -- Range-only mode
+                            EXECUTE format('DELETE FROM %I.%I WHERE %s AND (upper(%I) IS NULL OR upper(%I) = ''infinity''::%s)',
+                                info.table_schema, /* %I */
+                                info.table_name, /* %I */
+                                where_clause, /* %s */
+                                info.range_column_name, /* %I */
+                                info.range_column_name, /* %I */
+                                info.range_subtype /* %s */
+                            )
+                            USING OLD;
+                        END IF;
+                    ELSE
+                        -- Standard soft-delete: end the validity at now
+                        IF info.valid_until_column_name IS NOT NULL THEN
+                            EXECUTE format('UPDATE %I.%I SET %I = %s WHERE %s AND %I = ''infinity''',
+                                info.table_schema, /* %I */
+                                info.table_name, /* %I */
+                                info.valid_until_column_name, /* %I */
+                                now_function, /* %s */
+                                where_clause, /* %s */
+                                info.valid_until_column_name /* %I */
+                            )
+                            USING OLD;
+                        ELSE
+                            -- Range-only mode: update the range to end at now
+                            EXECUTE format('UPDATE %I.%I SET %I = %srange(lower(%I), %s) WHERE %s AND (upper(%I) IS NULL OR upper(%I) = ''infinity''::%s)',
+                                info.table_schema, /* %I */
+                                info.table_name, /* %I */
+                                info.range_column_name, /* %I */
+                                info.range_subtype, /* %s */
+                                info.range_column_name, /* %I */
+                                now_function, /* %s */
+                                where_clause, /* %s */
+                                info.range_column_name, /* %I */
+                                info.range_column_name, /* %I */
+                                info.range_subtype /* %s */
+                            )
+                            USING OLD;
+                        END IF;
+                    END IF;
+                END;
             WHEN 'delete_as_documented_ending' THEN
                 RAISE EXCEPTION 'Direct DELETE on a "current" view is disallowed.'
                     USING HINT = 'To end an entity''s timeline, perform an UPDATE. For an undocumented soft-delete, use the protocol: UPDATE ... SET valid_from = ''infinity''. For a documented soft-delete, add a comment or status change: UPDATE ... SET valid_from = ''infinity'', comment = ''...''';

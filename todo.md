@@ -46,7 +46,7 @@ Key bottlenecks identified from pg_stat_monitor:
 ## High Priority - Bugs & Core Features
 - [x] **Add test case for range-only tables (no component columns):** Created test 066_temporal_merge_range_only.sql that validates temporal_merge works correctly with tables that have ONLY a range column (no valid_from/valid_until/valid_to). Tests cover: basic PATCH/REPLACE, different range types, coalescing, and DELETE_FOR_PORTION_OF.
 - [x] **Add era existence validation to `add_for_portion_of_view` and `add_current_view`:** Both functions now raise an immediate error when the specified era doesn't exist, providing fail-fast behavior.
-- [ ] **Add test coverage for views with ONLY range column:** Tests 051 and 052 currently include `valid_from`, `valid_until`, and `valid_to` columns in their views alongside `valid_range`. Add test scenarios where the view exposes ONLY the `valid_range` column (not the synchronized component columns). This will verify that `for_portion_of_trigger` and `current_view_trigger` correctly handle range-only views. Likely to fail without additional fixes.
+- [x] **Add test coverage for views with ONLY range column:** Added Scenario 11 to test 051 (for_portion_of) and Scenario 3 to test 053 (current view) for range-only tables. Fixed bug in `current_view_trigger` DELETE path that didn't handle same-day entity deletion (created empty range instead of hard delete).
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:

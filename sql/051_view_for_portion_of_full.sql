@@ -430,6 +430,52 @@ ROLLBACK TO SAVEPOINT expect_error_2;
 
 ROLLBACK TO SAVEPOINT scenario_10;
 
+-- Scenario 11: Range-only table (no synchronized columns)
+-- This tests that the for_portion_of view works with tables that have ONLY
+-- a range column, without valid_from/valid_until/valid_to.
+SAVEPOINT scenario_11;
+
+\echo 'Scenario 11: Range-only table for for_portion_of view'
+
+CREATE TABLE range_only_test (
+    id int,
+    value text,
+    valid_range daterange NOT NULL,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+SELECT sql_saga.add_era('range_only_test', 'valid_range');
+SELECT sql_saga.add_unique_key('range_only_test', ARRAY['id']);
+SELECT sql_saga.add_for_portion_of_view('range_only_test'::regclass);
+
+\d range_only_test__for_portion_of_valid
+
+-- Insert initial data directly into base table
+INSERT INTO range_only_test (id, value, valid_range) VALUES
+    (1, 'Original', '[2024-01-01, 2024-12-31)');
+
+\echo '--- Initial state ---'
+TABLE range_only_test ORDER BY id, valid_range;
+
+-- Test UPDATE using the range column directly
+\echo '--- UPDATE via for_portion_of view (using range column) ---'
+UPDATE range_only_test__for_portion_of_valid
+SET value = 'Modified', valid_range = '[2024-03-01, 2024-06-01)'
+WHERE id = 1;
+
+\echo '--- Expected: 3-way split ---'
+TABLE range_only_test ORDER BY id, valid_range;
+
+-- Test data-only UPDATE (no temporal change)
+\echo '--- Data-only UPDATE (no temporal change) ---'
+UPDATE range_only_test__for_portion_of_valid
+SET value = 'Data Only Change'
+WHERE id = 1 AND valid_range = '[2024-03-01, 2024-06-01)';
+
+TABLE range_only_test ORDER BY id, valid_range;
+
+SELECT sql_saga.drop_for_portion_of_view('range_only_test'::regclass);
+ROLLBACK TO SAVEPOINT scenario_11;
+
 ROLLBACK;
 
 DROP ROLE view_test_role;

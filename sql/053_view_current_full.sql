@@ -104,6 +104,68 @@ ROLLBACK TO can_insert;
 
 SELECT sql_saga.drop_current_view('acl_test'::regclass);
 
+-- Scenario 3: Range-only table (no synchronized columns)
+-- This tests that the current view works with tables that have ONLY
+-- a range column, without valid_from/valid_until/valid_to synchronized columns.
+SAVEPOINT scenario_3;
+
+\echo 'Scenario 3: Range-only table for current view'
+
+CREATE TABLE range_only_employees (
+    id int,
+    valid_range daterange NOT NULL,
+    name text,
+    department text,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+
+-- Register era (range-only, no synchronized columns)
+SELECT sql_saga.add_era('range_only_employees', 'valid_range');
+SELECT sql_saga.add_unique_key('range_only_employees', ARRAY['id']);
+
+-- Populate with initial data using range column
+INSERT INTO range_only_employees (id, valid_range, name, department) VALUES
+    (1, '[2023-01-01, 2024-01-01)', 'Alice', 'Engineering'),
+    (1, '[2024-01-01, infinity)', 'Alice', 'R&D'),
+    (2, '[2023-05-01, infinity)', 'Bob', 'Sales');
+
+\echo '--- Initial base table state ---'
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Add the current view
+SELECT sql_saga.add_current_view('range_only_employees'::regclass, current_func_name := 'test_now()');
+\d range_only_employees__current_valid
+
+-- Test SELECT: Should show only current records (Alice in R&D and Bob)
+\echo '--- Current view SELECT ---'
+TABLE range_only_employees__current_valid ORDER BY id;
+
+-- Test INSERT: Carol joins the company
+\echo '--- INSERT via current view ---'
+INSERT INTO range_only_employees__current_valid (id, name, department)
+VALUES (3, 'Carol', 'Marketing');
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Test UPDATE (SCD Type 2): Bob moves to Management
+\echo '--- UPDATE via current view (SCD Type 2) ---'
+UPDATE range_only_employees__current_valid SET department = 'Management' WHERE id = 2;
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Test DELETE (soft delete): Carol leaves (same day as creation = hard delete)
+\echo '--- DELETE via current view (soft delete on same-day entity = hard delete) ---'
+DELETE FROM range_only_employees__current_valid WHERE id = 3;
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Current view should now show only Alice and Bob
+\echo '--- Final current view state ---'
+TABLE range_only_employees__current_valid ORDER BY id;
+
+SELECT sql_saga.drop_current_view('range_only_employees'::regclass);
+ROLLBACK TO SAVEPOINT scenario_3;
+
 ROLLBACK;
 
 DROP ROLE view_test_role;
