@@ -31,7 +31,6 @@ Key bottlenecks identified from pg_stat_monitor:
   - `uk_update_trigger` - Always NULL (no longer needed with native FKs)
   - `uk_delete_trigger` - Always NULL (no longer needed with native FKs)
   - However, these are still used for `regular_to_temporal` FKs and kept for backward compatibility. Removal would complicate upgrades and lose historical schema documentation.
-- [ ] **Optimize `temporal_merge` planner join logic:** Restructure planner's lateral join to avoid `CASE` statements, allowing the query optimizer to use more efficient index-based access paths.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 - [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
@@ -44,6 +43,7 @@ Key bottlenecks identified from pg_stat_monitor:
 # Done
 
 ## 2026-01-17
+- Optimize temporal_merge planner: replace CASE→OR for 36-56% speedup on benchmarks
 - Add range-only view tests (051, 053) and fix same-day DELETE bug in current_view_trigger
 - Add range-only temporal_merge test (066) with proper test renumbering
 - Add Makefile target `renumber-tests-from` for inserting tests at any slot
