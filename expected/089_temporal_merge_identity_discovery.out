@@ -86,10 +86,13 @@ Indexes:
     "person_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "person_employee_nr_idx" btree (employee_nr)
     "person_employee_nr_valid_pk_consistency_excl" EXCLUDE USING gist (employee_nr WITH =, id WITH <>)
+    "person_employee_nr_valid_range_idx" btree (employee_nr, valid_range)
     "person_employee_nr_valid_uniq" UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS)
     "person_id_idx" btree (id)
+    "person_id_valid_range_idx" btree (id, valid_range)
     "person_ssn_idx" btree (ssn)
     "person_ssn_valid_pk_consistency_excl" EXCLUDE USING gist (ssn WITH =, id WITH <>)
+    "person_ssn_valid_range_idx" btree (ssn, valid_range)
     "person_ssn_valid_uniq" UNIQUE (ssn, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "person_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)

@@ -73,6 +73,7 @@ TABLE sql_saga.unique_keys;
 Indexes:
     "pk_first_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "pk_first_id_idx" btree (id)
+    "pk_first_id_valid_range_idx" btree (id, valid_range)
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -106,8 +107,10 @@ TABLE sql_saga.unique_keys;
 Indexes:
     "pk_first_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "pk_first_id_idx" btree (id)
+    "pk_first_id_valid_range_idx" btree (id, valid_range)
     "pk_first_natural_key_idx" btree (natural_key)
     "pk_first_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+    "pk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "pk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
@@ -161,6 +164,7 @@ TABLE sql_saga.unique_keys;
  valid_until | date      |           |          | 
 Indexes:
     "nk_first_natural_key_idx" btree (natural_key)
+    "nk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "nk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
@@ -196,8 +200,10 @@ TABLE sql_saga.unique_keys;
 Indexes:
     "nk_first_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "nk_first_id_idx" btree (id)
+    "nk_first_id_valid_range_idx" btree (id, valid_range)
     "nk_first_natural_key_idx" btree (natural_key)
     "nk_first_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+    "nk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "nk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
@@ -267,7 +273,9 @@ TABLE sql_saga.unique_keys;
 Indexes:
     "opt_out_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "opt_out_id_idx" btree (id)
+    "opt_out_id_valid_range_idx" btree (id, valid_range)
     "opt_out_natural_key_idx" btree (natural_key)
+    "opt_out_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "opt_out_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "opt_out_valid_check" CHECK (NOT isempty(valid_range))
@@ -347,7 +355,7 @@ SAVEPOINT expect_error;
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_b', ARRAY['org_id', 'unit_id'], key_type => 'primary'); -- fails
 NOTICE:  sql_saga: altering table pk_consistency.composite_pk_b to add constraints: ALTER COLUMN org_id SET NOT NULL, ALTER COLUMN unit_id SET NOT NULL, ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
 ERROR:  cannot add primary key (org_id, unit_id) to table "pk_consistency.composite_pk_b" because its stable part (org_id, unit_id) is composite, which is not supported for consistency enforcement required by existing natural keys
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 546 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 590 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4b;
 -- Scenario 5: API Symmetry (Drop Key)
@@ -398,8 +406,10 @@ NOTICE:  sql_saga: altering table pk_consistency.drop_nk to add constraints: ADD
 Indexes:
     "drop_nk_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "drop_nk_id_idx" btree (id)
+    "drop_nk_id_valid_range_idx" btree (id, valid_range)
     "drop_nk_natural_key_idx" btree (natural_key)
     "drop_nk_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+    "drop_nk_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "drop_nk_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
@@ -427,7 +437,9 @@ NOTICE:  sql_saga: dropping constraint: ALTER TABLE pk_consistency.drop_nk DROP 
 Indexes:
     "drop_nk_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "drop_nk_id_idx" btree (id)
+    "drop_nk_id_valid_range_idx" btree (id, valid_range)
     "drop_nk_natural_key_idx" btree (natural_key)
+    "drop_nk_natural_key_valid_range_idx" btree (natural_key, valid_range)
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -491,11 +503,14 @@ NOTICE:  sql_saga: retroactively applying pk consistency for table pk_consistenc
 Indexes:
     "drop_pk_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "drop_pk_id_idx" btree (id)
+    "drop_pk_id_valid_range_idx" btree (id, valid_range)
     "drop_pk_nk1_idx" btree (nk1)
     "drop_pk_nk1_valid_pk_consistency_excl" EXCLUDE USING gist (nk1 WITH =, id WITH <>)
+    "drop_pk_nk1_valid_range_idx" btree (nk1, valid_range)
     "drop_pk_nk1_valid_uniq" UNIQUE (nk1, valid_range WITHOUT OVERLAPS)
     "drop_pk_nk2_idx" btree (nk2)
     "drop_pk_nk2_valid_pk_consistency_excl" EXCLUDE USING gist (nk2 WITH =, id WITH <>)
+    "drop_pk_nk2_valid_range_idx" btree (nk2, valid_range)
     "drop_pk_nk2_valid_uniq" UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))
@@ -522,11 +537,14 @@ SELECT sql_saga.drop_unique_key('pk_consistency.drop_pk', ARRAY['id']);
  valid_until | date      |           |          | 
 Indexes:
     "drop_pk_id_idx" btree (id)
+    "drop_pk_id_valid_range_idx" btree (id, valid_range)
     "drop_pk_nk1_idx" btree (nk1)
     "drop_pk_nk1_valid_pk_consistency_excl" EXCLUDE USING gist (nk1 WITH =, id WITH <>)
+    "drop_pk_nk1_valid_range_idx" btree (nk1, valid_range)
     "drop_pk_nk1_valid_uniq" UNIQUE (nk1, valid_range WITHOUT OVERLAPS)
     "drop_pk_nk2_idx" btree (nk2)
     "drop_pk_nk2_valid_pk_consistency_excl" EXCLUDE USING gist (nk2 WITH =, id WITH <>)
+    "drop_pk_nk2_valid_range_idx" btree (nk2, valid_range)
     "drop_pk_nk2_valid_uniq" UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))

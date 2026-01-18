@@ -67,6 +67,7 @@ SELECT sql_saga.add_system_versioning('temporal_and_versioned');
  system_valid_range | tstzrange |           | not null | tstzrange(transaction_timestamp(), 'infinity'::timestamp with time zone)
 Indexes:
     "temporal_and_versioned_id_idx" btree (id)
+    "temporal_and_versioned_id_valid_range_idx" btree (id, valid_range)
     "temporal_and_versioned_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "temporal_and_versioned_system_valid_range_infinity_check" CHECK (upper(system_valid_range) = 'infinity'::timestamp with time zone)
@@ -116,6 +117,7 @@ SELECT sql_saga.drop_system_versioning('temporal_and_versioned', cleanup => true
  valid_until | date      |           |          | 
 Indexes:
     "temporal_and_versioned_id_idx" btree (id)
+    "temporal_and_versioned_id_valid_range_idx" btree (id, valid_range)
     "temporal_and_versioned_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "temporal_and_versioned_valid_check" CHECK (NOT isempty(valid_range))

@@ -176,13 +176,12 @@ NOTICE:  sql_saga: Created trigger "stat_for_unit_id_gen_synchronize_temporal_co
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
 NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
-   add_unique_key   
---------------------
- tm_sfu_identity_uk
-(1 row)
-
+ERROR:  relation "stat_for_unit__stat_definitio_establishment__valid_range_idx" already exists
+CONTEXT:  SQL statement "CREATE INDEX stat_for_unit__stat_definitio_establishment__valid_range_idx ON tmtc.stat_for_unit_id_gen (stat_definition_id, establishment_id, valid_range)"
+PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 563 at EXECUTE
 -- Target table with non-PK surrogate key
 CREATE SEQUENCE tmtc.stat_for_unit_no_pk_id_seq;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TABLE tmtc.stat_for_unit_no_pk (
     id INT NOT NULL DEFAULT nextval('tmtc.stat_for_unit_no_pk_id_seq'),
     stat_definition_id INT NOT NULL,
@@ -194,22 +193,13 @@ CREATE TABLE tmtc.stat_for_unit_no_pk (
     edit_comment TEXT,
     UNIQUE (id, valid_range WITHOUT OVERLAPS)
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_era('tmtc.stat_for_unit_no_pk', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "stat_for_unit_no_pk_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_no_pk to synchronize columns: valid_from, valid_until
- add_era 
----------
- t
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_no_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_no_pk_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_no_pk to add constraints: ADD CONSTRAINT tm_sfu_no_pk_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS)
- add_unique_key  
------------------
- tm_sfu_no_pk_uk
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Target table with multiple, mutually exclusive natural keys (and surrogate ID)
 CREATE TABLE tmtc.location_multi_key (
     id SERIAL NOT NULL,
@@ -227,43 +217,19 @@ CREATE TABLE tmtc.location_multi_key (
     ),
     PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_era('tmtc.location_multi_key', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "location_multi_key_synchronize_temporal_columns_trigger" on table tmtc.location_multi_key to synchronize columns: valid_from, valid_until
- add_era 
----------
- t
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'legal_unit_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_lu_uk', predicate => 'legal_unit_id IS NOT NULL');
-NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_lu_uk_excl EXCLUDE USING gist (type WITH =, legal_unit_id WITH =, valid_range WITH &&) WHERE (legal_unit_id IS NOT NULL) DEFERRABLE
- add_unique_key 
-----------------
- loc_mk_lu_uk
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_unique_key('tmtc.location_multi_key', ARRAY['type', 'establishment_id'], 'valid', key_type => 'predicated', unique_key_name => 'loc_mk_est_uk', predicate => 'establishment_id IS NOT NULL');
-NOTICE:  sql_saga: altering table tmtc.location_multi_key to add constraints: ADD CONSTRAINT loc_mk_est_uk_excl EXCLUDE USING gist (type WITH =, establishment_id WITH =, valid_range WITH &&) WHERE (establishment_id IS NOT NULL) DEFERRABLE
- add_unique_key 
-----------------
- loc_mk_est_uk
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (legal_unit_id, valid_range)
-        add_temporal_foreign_key        
-----------------------------------------
- location_multi_key_legal_unit_id_valid
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key. Creating new index: CREATE INDEX location_multi_key_establishment_id_valid_gist_idx ON tmtc.location_multi_key USING GIST (establishment_id, valid_range)
-         add_temporal_foreign_key          
--------------------------------------------
- location_multi_key_establishment_id_valid
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Target table with multiple, mutually exclusive natural keys (NO surrogate ID)
 CREATE TABLE tmtc.location_multi_key_no_id (
     type tmtc.location_type NOT NULL,
@@ -275,15 +241,11 @@ CREATE TABLE tmtc.location_multi_key_no_id (
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_era('tmtc.location_multi_key_no_id', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
-NOTICE:  sql_saga: Created trigger "location_multi_key_no_id_synchronize_temporal_columns_trigger" on table tmtc.location_multi_key_no_id to synchronize columns: valid_from, valid_until
- add_era 
----------
- t
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_unique_key(
     table_oid => 'tmtc.location_multi_key_no_id',
     column_names => ARRAY['type', 'legal_unit_id', 'establishment_id'],
@@ -292,28 +254,11 @@ SELECT sql_saga.add_unique_key(
     unique_key_name => 'loc_mk_noid_pk',
     mutually_exclusive_columns => ARRAY['legal_unit_id', 'establishment_id']
 );
-NOTICE:  sql_saga: creating partial performance index: CREATE INDEX loc_mk_noid_pk_legal_unit_id_idx ON tmtc.location_multi_key_no_id (type, legal_unit_id) WHERE legal_unit_id IS NOT NULL AND (establishment_id IS NULL)
-NOTICE:  sql_saga: creating partial performance index: CREATE INDEX loc_mk_noid_pk_establishment_id_idx ON tmtc.location_multi_key_no_id (type, establishment_id) WHERE establishment_id IS NOT NULL AND (legal_unit_id IS NULL)
-NOTICE:  sql_saga: altering table tmtc.location_multi_key_no_id to add constraints: ADD CONSTRAINT loc_mk_noid_pk_xor_check CHECK (((CASE WHEN legal_unit_id IS NOT NULL THEN 1 ELSE 0 END) + (CASE WHEN establishment_id IS NOT NULL THEN 1 ELSE 0 END)) = 1), ADD CONSTRAINT loc_mk_noid_pk_legal_unit_id_excl EXCLUDE USING gist (type WITH =, legal_unit_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (legal_unit_id IS NOT NULL AND (establishment_id IS NULL)) DEFERRABLE, ADD CONSTRAINT loc_mk_noid_pk_establishment_id_excl EXCLUDE USING gist (type WITH =, establishment_id WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (establishment_id IS NOT NULL AND (legal_unit_id IS NULL)) DEFERRABLE
- add_unique_key 
-----------------
- loc_mk_noid_pk
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['legal_unit_id'], 'valid', 'tm_legal_unit_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_legal_unit_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (legal_unit_id, valid_range)
-           add_temporal_foreign_key           
-----------------------------------------------
- location_multi_key_no_id_legal_unit_id_valid
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SELECT sql_saga.add_temporal_foreign_key('tmtc.location_multi_key_no_id', ARRAY['establishment_id'], 'valid', 'tm_establishment_uk');
-NOTICE:  No compatible index found for foreign key on table tmtc.location_multi_key_no_id. Creating new index: CREATE INDEX location_multi_key_no_id_establishment_id_valid_gist_idx ON tmtc.location_multi_key_no_id USING GIST (establishment_id, valid_range)
-            add_temporal_foreign_key             
--------------------------------------------------
- location_multi_key_no_id_establishment_id_valid
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Helper procedure to reset the target table for a new scenario
 CREATE OR REPLACE PROCEDURE tmtc.reset_target() AS $$
 BEGIN
@@ -324,6 +269,7 @@ BEGIN
     INSERT INTO tmtc.establishment (id, valid_from, valid_until, name) VALUES (100, '1900-01-01', 'infinity', 'EST 100');
 END;
 $$ LANGUAGE plpgsql;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \set source_schema 'pg_temp'
 \set ephemeral_cols '{edit_comment}'
 --------------------------------------------------------------------------------
@@ -331,28 +277,24 @@ $$ LANGUAGE plpgsql;
 Scenario 1: `upsert_replace` with a natural key (`during` split)
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
 (10, 100, '2024-01-01', '2025-01-01', 50, 'Original Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_1 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_1 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'Corrected value for mid-year');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
---------------------+------------------+------------+-------------+-------+----------------
-                 10 |              100 | 2024-01-01 | 2025-01-01  |    50 | Original Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_1 ORDER BY row_id;
- row_id | stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         
---------+--------------------+------------------+------------+-------------+-------+------------------------------
-      1 |                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
@@ -364,6 +306,7 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
@@ -371,39 +314,19 @@ SELECT * FROM (VALUES
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
-           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                             data                              | feedback | trace |       grouping_key       
--------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+---------------------------------------------------------------+----------+-------+--------------------------
-           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | [2024-01-01,2025-01-01) | [2024-01-01,2024-04-01) | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | [2024-01-01,2025-01-01) | [2024-04-01,2024-09-01) | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
-           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | [2024-01-01,2025-01-01) | [2024-09-01,2025-01-01) | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                   target_entity_ids                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                  target_entity_keys                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
@@ -411,52 +334,37 @@ SELECT * FROM (VALUES
     (10, 100, '2024-04-01'::DATE, '2024-09-01'::DATE, 55::BIGINT, 'Corrected value for mid-year'::TEXT),
     (10, 100, '2024-09-01'::DATE, '2025-01-01'::DATE, 50::BIGINT, 'Original Value'::TEXT)
 ) AS t (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         
---------------------+------------------+------------+-------------+-------+------------------------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         
---------------------+------------------+------------+-------------+-------+------------------------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_1;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 2: `upsert_patch` with a natural key (`during` split)'
 Scenario 2: `upsert_patch` with a natural key (`during` split)
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
 (10, 100, '2024-01-01', '2025-01-01', 50, 'Original Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_2 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Source has a NULL value for 'edit_comment'. In patch mode, this should NOT overwrite the existing value.
 INSERT INTO temp_source_2 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, NULL);
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
---------------------+------------------+------------+-------------+-------+----------------
-                 10 |              100 | 2024-01-01 | 2025-01-01  |    50 | Original Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_2 ORDER BY row_id;
- row_id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+--------------------+------------------+------------+-------------+-------+--------------
-      1 |                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
@@ -468,6 +376,7 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
@@ -475,39 +384,19 @@ SELECT * FROM (VALUES
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Original Value"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"} | starts
-           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Original Value"} | 
-           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"} | 
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                      data                       | feedback | trace |       grouping_key       
--------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+-------------------------------------------------+----------+-------+--------------------------
-           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | [2024-01-01,2025-01-01) | [2024-01-01,2024-04-01) | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
-           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | [2024-01-01,2025-01-01) | [2024-04-01,2024-09-01) | {"value": 55, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
-           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | [2024-01-01,2025-01-01) | [2024-09-01,2025-01-01) | {"value": 50, "edit_comment": "Original Value"} |          |       | existing_entity__10__100
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                   target_entity_ids                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                  target_entity_keys                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
@@ -515,52 +404,37 @@ SELECT * FROM (VALUES
     (10, 100, '2024-04-01'::DATE, '2024-09-01'::DATE, 55::BIGINT, 'Original Value'::TEXT),
     (10, 100, '2024-09-01'::DATE, '2025-01-01'::DATE, 50::BIGINT, 'Original Value'::TEXT)
 ) AS t (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
---------------------+------------------+------------+-------------+-------+----------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Original Value
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
---------------------+------------------+------------+-------------+-------+----------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Original Value
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_2;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 3: `upsert_replace` with mismatched source/target columns'
 Scenario 3: `upsert_replace` with mismatched source/target columns
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.stat_for_unit (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment) VALUES
 (10, 100, '2024-01-01', '2025-01-01', 50, 'Original Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Source table has an extra column `source_metadata` that is not in the target.
 CREATE TEMP TABLE temp_source_3 (
     row_id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT, source_metadata TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_3 VALUES (1, 10, 100, '2024-04-01', '2024-09-01', 55, 'Corrected value for mid-year', 'some extra data');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit ORDER BY stat_definition_id, establishment_id, valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |  edit_comment  
---------------------+------------------+------------+-------------+-------+----------------
-                 10 |              100 | 2024-01-01 | 2025-01-01  |    50 | Original Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_3 ORDER BY row_id;
- row_id | stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         | source_metadata 
---------+--------------------+------------------+------------+-------------+-------+------------------------------+-----------------
-      1 |                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year | some extra data
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit',
@@ -572,6 +446,7 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
@@ -579,39 +454,19 @@ SELECT * FROM (VALUES
     (2, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-04-01'::DATE, '2024-09-01'::DATE, '{"value": 55, "edit_comment": "Corrected value for mid-year"}'::JSONB,  NULL::sql_saga.allen_interval_relation),
     (3, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE,         '2024-09-01'::DATE, '2025-01-01'::DATE, '{"value": 50, "edit_comment": "Original Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                     entity_ids                      | old_valid_from | new_valid_from | new_valid_until |                             data                              | relation 
--------------+---------+-----------+-----------------------------------------------------+----------------+----------------+-----------------+---------------------------------------------------------------+----------
-           1 | {1}     | UPDATE    | {"establishment_id": 100, "stat_definition_id": 10} | 2024-01-01     | 2024-01-01     | 2024-04-01      | {"value": 50, "edit_comment": "Original Value"}               | starts
-           2 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-04-01     | 2024-09-01      | {"value": 55, "edit_comment": "Corrected value for mid-year"} | 
-           3 | {1}     | INSERT    | {"establishment_id": 100, "stat_definition_id": 10} |                | 2024-09-01     | 2025-01-01      | {"value": 50, "edit_comment": "Original Value"}               | 
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                     entity_keys                     |                    identity_keys                    |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                             data                              | feedback | trace |       grouping_key       
--------------+---------------+---------+-----------+---------------+-----------+---------------+-----------------------------------------------------+-----------------------------------------------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+---------------------------------------------------------------+----------+-------+--------------------------
-           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | started_by   | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2024-04-01      | [2024-01-01,2025-01-01) | [2024-01-01,2024-04-01) | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | contains     | 2024-01-01     | 2025-01-01      | 2024-04-01     | 2024-09-01      | [2024-01-01,2025-01-01) | [2024-04-01,2024-09-01) | {"value": 55, "edit_comment": "Corrected value for mid-year"} |          |       | existing_entity__10__100
-           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | {"establishment_id": 100, "stat_definition_id": 10} | during       | finished_by  | 2024-01-01     | 2025-01-01      | 2024-09-01     | 2025-01-01      | [2024-01-01,2025-01-01) | [2024-09-01,2025-01-01) | {"value": 50, "edit_comment": "Original Value"}               |          |       | existing_entity__10__100
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                   target_entity_ids                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                  target_entity_keys                   | status  | error_message 
----------------+-------------------------------------------------------+---------+---------------
-             1 | [{"establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
@@ -619,48 +474,33 @@ SELECT * FROM (VALUES
     (10, 100, '2024-04-01'::DATE, '2024-09-01'::DATE, 55::BIGINT, 'Corrected value for mid-year'::TEXT),
     (10, 100, '2024-09-01'::DATE, '2025-01-01'::DATE, 50::BIGINT, 'Original Value'::TEXT)
 ) AS t (stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         
---------------------+------------------+------------+-------------+-------+------------------------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- stat_definition_id | establishment_id | valid_from | valid_until | value |         edit_comment         
---------------------+------------------+------------+-------------+-------+------------------------------
-                 10 |              100 | 2024-01-01 | 2024-04-01  |    50 | Original Value
-                 10 |              100 | 2024-04-01 | 2024-09-01  |    55 | Corrected value for mid-year
-                 10 |              100 | 2024-09-01 | 2025-01-01  |    50 | Original Value
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_3;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 4: `upsert_replace` with SERIAL surrogate key on target'
 Scenario 4: `upsert_replace` with SERIAL surrogate key on target
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_4 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_4 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-(0 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_4 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |    |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
@@ -672,99 +512,65 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                      data                       | feedback | trace |    grouping_key     
--------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+-------------------------------------------------+----------+-------+---------------------
-           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      |                 | [2024-01-01,2025-01-01) | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                       target_entity_ids                        | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                       target_entity_keys                       | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
     (1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Expected state after back-fill ---'
 --- Source Table: Expected state after back-fill ---
 SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Actual state after back-fill ---'
 --- Source Table: Actual state after back-fill ---
 SELECT * FROM temp_source_4 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_4;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 5: `upsert_replace` with IDENTITY surrogate key on target'
 Scenario 5: `upsert_replace` with IDENTITY surrogate key on target
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_5 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_5 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-(0 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_5 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |    |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_gen',
@@ -776,99 +582,65 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                      data                       | feedback | trace |    grouping_key     
--------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+-------------------------------------------------+----------+-------+---------------------
-           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      |                 | [2024-01-01,2025-01-01) | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                       target_entity_ids                        | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                       target_entity_keys                       | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
     (1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Expected state after back-fill ---'
 --- Source Table: Expected state after back-fill ---
 SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Actual state after back-fill ---'
 --- Source Table: Actual state after back-fill ---
 SELECT * FROM temp_source_5 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_5;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 6: `upsert_patch` with SERIAL surrogate key on target'
 Scenario 6: `upsert_patch` with SERIAL surrogate key on target
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_6 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_6 VALUES (104, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-(0 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_6 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    104 |    |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_pk',
@@ -880,99 +652,65 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{104}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {104}   | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                      data                      | feedback | trace |    grouping_key     
--------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+------------------------------------------------+----------+-------+---------------------
-           1 |             1 | {104}   | INSERT    |               | 104       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      |                 | [2024-01-01,2025-01-01) | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (104, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                       target_entity_ids                        | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-           104 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                       target_entity_keys                       | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-           104 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
     (1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_pk WHERE establishment_id = 100 and stat_definition_id = 10 ORDER BY valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Expected state after back-fill ---'
 --- Source Table: Expected state after back-fill ---
 SELECT * FROM (VALUES (104, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    104 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Actual state after back-fill ---'
 --- Source Table: Actual state after back-fill ---
 SELECT * FROM temp_source_6 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    104 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_6;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 7: `upsert_patch` with IDENTITY surrogate key on target'
 Scenario 7: `upsert_patch` with IDENTITY surrogate key on target
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_7 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_7 VALUES (105, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial stat');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-(0 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_7 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    105 |    |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_id_gen',
@@ -984,99 +722,65 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{105}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial stat"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                      | relation 
--------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+------------------------------------------------+----------
-           1 | {105}   | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial stat"} | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                      data                      | feedback | trace |    grouping_key     
--------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+------------------------------------------------+----------+-------+---------------------
-           1 |             1 | {105}   | INSERT    |               | 105       | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      |                 | [2024-01-01,2025-01-01) | {"value": 100, "edit_comment": "Initial stat"} |          |       | new_entity__100__10
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (105, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                       target_entity_ids                        | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-           105 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                       target_entity_keys                       | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-           105 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
     (1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_id_gen WHERE establishment_id = 100 and stat_definition_id = 10 ORDER BY valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Expected state after back-fill ---'
 --- Source Table: Expected state after back-fill ---
 SELECT * FROM (VALUES (105, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial stat'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    105 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Actual state after back-fill ---'
 --- Source Table: Actual state after back-fill ---
 SELECT * FROM temp_source_7 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
---------+----+--------------------+------------------+------------+-------------+-------+--------------
-    105 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial stat
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_7;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 --------------------------------------------------------------------------------
 \echo 'Scenario 8: `upsert_replace` with non-PK surrogate key'
 Scenario 8: `upsert_replace` with non-PK surrogate key
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_8 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, valid_from DATE NOT NULL, valid_until DATE NOT NULL, value BIGINT, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_8 VALUES (1, NULL, 10, 100, '2024-01-01', '2025-01-01', 100, 'Initial Value');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial State (before merge) ---'
 --- Target: Initial State (before merge) ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_no_pk ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment 
-----+--------------------+------------------+------------+-------------+-------+--------------
-(0 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Data to be merged ---'
 --- Source: Data to be merged ---
 SELECT * FROM temp_source_8 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |    |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Run the orchestrator and store its feedback
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.stat_for_unit_no_pk',
@@ -1088,76 +792,47 @@ CALL sql_saga.temporal_merge(
     era_name => 'valid',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Expected Plan ---'
 --- Planner: Expected Plan ---
 SELECT * FROM (VALUES
     (1, '{1}'::INT[], 'INSERT'::sql_saga.temporal_merge_plan_action, '{"id": 1, "establishment_id": 100, "stat_definition_id": 10}'::JSONB, NULL::DATE, '2024-01-01'::DATE, '2025-01-01'::DATE, '{"value": 100, "edit_comment": "Initial Value"}'::JSONB, NULL::sql_saga.allen_interval_relation)
 ) AS t (plan_op_seq, row_ids, operation, entity_ids, old_valid_from, new_valid_from, new_valid_until, data, relation);
- plan_op_seq | row_ids | operation |                          entity_ids                          | old_valid_from | new_valid_from | new_valid_until |                      data                       | relation 
--------------+---------+-----------+--------------------------------------------------------------+----------------+----------------+-----------------+-------------------------------------------------+----------
-           1 | {1}     | INSERT    | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} |                | 2024-01-01     | 2025-01-01      | {"value": 100, "edit_comment": "Initial Value"} | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity |                         entity_keys                          | identity_keys |                     lookup_keys                     | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                      data                       | feedback | trace |    grouping_key     
--------------+---------------+---------+-----------+---------------+-----------+---------------+--------------------------------------------------------------+---------------+-----------------------------------------------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+-------------------------------------------------+----------+-------+---------------------
-           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1, "establishment_id": 100, "stat_definition_id": 10} | {"id": null}  | {"establishment_id": 100, "stat_definition_id": 10} |              |              |                |                 | 2024-01-01     | 2025-01-01      |                 | [2024-01-01,2025-01-01) | {"value": 100, "edit_comment": "Initial Value"} |          |       | new_entity__100__10
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Feedback ---'
 --- Orchestrator: Expected Feedback ---
 SELECT * FROM (VALUES (1, '[{"id": 1, "establishment_id": 100, "stat_definition_id": 10}]'::JSONB, 'APPLIED'::sql_saga.temporal_merge_feedback_status, NULL::TEXT)) AS t (source_row_id, target_entity_ids, status, error_message);
- source_row_id |                       target_entity_ids                        | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Feedback ---'
 --- Orchestrator: Actual Feedback ---
 SELECT * FROM pg_temp.temporal_merge_feedback;
- source_row_id |                       target_entity_keys                       | status  | error_message 
----------------+----------------------------------------------------------------+---------+---------------
-             1 | [{"id": 1, "establishment_id": 100, "stat_definition_id": 10}] | APPLIED | 
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Expected Final State ---'
 --- Orchestrator: Expected Final State ---
 SELECT * FROM (VALUES
     (1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)
 ) AS t (id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Orchestrator: Actual Final State ---'
 --- Orchestrator: Actual Final State ---
 SELECT id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment FROM tmtc.stat_for_unit_no_pk WHERE stat_definition_id = 10 AND establishment_id = 100 ORDER BY valid_from;
- id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
-----+--------------------+------------------+------------+-------------+-------+---------------
-  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Expected state after back-fill ---'
 --- Source Table: Expected state after back-fill ---
 SELECT * FROM (VALUES (1, 1, 10, 100, '2024-01-01'::DATE, '2025-01-01'::DATE, 100::BIGINT, 'Initial Value'::TEXT)) t(row_id, id, stat_definition_id, establishment_id, valid_from, valid_until, value, edit_comment);
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source Table: Actual state after back-fill ---'
 --- Source Table: Actual state after back-fill ---
 SELECT * FROM temp_source_8 ORDER BY row_id;
- row_id | id | stat_definition_id | establishment_id | valid_from | valid_until | value | edit_comment  
---------+----+--------------------+------------------+------------+-------------+-------+---------------
-      1 |  1 |                 10 |              100 | 2024-01-01 | 2025-01-01  |   100 | Initial Value
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_8;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SAVEPOINT scenario_9;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- NOTE on test isolation:
 -- Each scenario is wrapped in a SAVEPOINT ... RELEASE SAVEPOINT block. This ensures
 -- that each test case runs in its own nested transaction. If a test succeeds, its
@@ -1165,6 +840,7 @@ SAVEPOINT scenario_9;
 -- robust pattern for isolating successful, independent test cases.
 -- For expected failures, see the different pattern used in Scenario 12.
 SET client_min_messages TO NOTICE;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 \echo 'Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID'
@@ -1173,34 +849,30 @@ Scenario 9: Multiple, mutually exclusive natural keys with a surrogate ID
 --------------------------------------------------------------------------------
 -- This scenario tests using different natural_identity_columns on the same target table.
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_9 (
     row_id INT, id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Insert initial data into target
 INSERT INTO tmtc.location_multi_key (type, legal_unit_id, address, valid_from, valid_until) VALUES
 ('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.location_multi_key (type, establishment_id, address, valid_from, valid_until) VALUES
 ('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial state ---'
 --- Target: Initial state ---
 SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_multi_key ORDER BY id;
- id |   type   | legal_unit_id | establishment_id |      address      
-----+----------+---------------+------------------+-------------------
-  1 | visiting |           200 |                  | 200 Main St
-  2 | visiting |               |              100 | 100 Business Park
-(2 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 9a: Merge using the (type, legal_unit_id) natural key. ---'
 --- Case 9a: Merge using the (type, legal_unit_id) natural key. ---
 INSERT INTO temp_source_9 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Legal Unit location) ---'
 --- Source (Legal Unit location) ---
 TABLE temp_source_9;
- row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
---------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
-      1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -1210,36 +882,25 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
- id |   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
-----+----------+---------------+------------------+-------------------+------------+-------------
-  1 | visiting |           200 |                  | 200 Main St       | 2024-01-01 | 2024-06-01
-  1 | visiting |           200 |                  | 201 New Main St   | 2024-06-01 | infinity
-  2 | visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: After back-fill ---'
 --- Source: After back-fill ---
 TABLE temp_source_9;
- row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
---------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
-      1 |  1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 9b: Merge using the (type, establishment_id) natural key. ---'
 --- Case 9b: Merge using the (type, establishment_id) natural key. ---
 TRUNCATE temp_source_9;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_9 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Establishment location) ---'
 --- Source (Establishment location) ---
 TABLE temp_source_9;
- row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
---------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
-      2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_9',
@@ -1249,28 +910,21 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
- id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until 
-----+----------+---------------+------------------+-----------------------+------------+-------------
-  1 | visiting |           200 |                  | 200 Main St           | 2024-01-01 | 2024-06-01
-  1 | visiting |           200 |                  | 201 New Main St       | 2024-06-01 | infinity
-  2 | visiting |               |              100 | 100 Business Park     | 2024-01-01 | 2024-08-01
-  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity
-(4 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Final after back-fill ---'
 --- Source: Final after back-fill ---
 TABLE temp_source_9;
- row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
---------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
-      2 |  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_9;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 RELEASE SAVEPOINT scenario_9;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SAVEPOINT scenario_10;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 \echo 'Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID'
@@ -1278,34 +932,30 @@ Scenario 10: Multiple, mutually exclusive natural keys without a surrogate ID
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_10 (
     row_id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Insert initial data into target
 INSERT INTO tmtc.location_multi_key_no_id (type, legal_unit_id, address, valid_from, valid_until) VALUES
 ('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.location_multi_key_no_id (type, establishment_id, address, valid_from, valid_until) VALUES
 ('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial state ---'
 --- Target: Initial state ---
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id);
-   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
-----------+---------------+------------------+-------------------+------------+-------------
- visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
- visiting |           200 |                  | 200 Main St       | 2024-01-01 | infinity
-(2 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 10a: Merge using the (type, legal_unit_id) natural key. ---'
 --- Case 10a: Merge using the (type, legal_unit_id) natural key. ---
 INSERT INTO temp_source_10 VALUES (1, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Legal Unit location) ---'
 --- Source (Legal Unit location) ---
 TABLE temp_source_10;
- row_id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
---------+----------+---------------+------------------+-----------------+------------+-------------+-------------------
-      1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -1315,28 +965,21 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
-   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
-----------+---------------+------------------+-------------------+------------+-------------
- visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
- visiting |           200 |                  | 200 Main St       | 2024-01-01 | 2024-06-01
- visiting |           200 |                  | 201 New Main St   | 2024-06-01 | infinity
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 10b: Merge using the (type, establishment_id) natural key. ---'
 --- Case 10b: Merge using the (type, establishment_id) natural key. ---
 TRUNCATE temp_source_10;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_10 VALUES (2, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Establishment location) ---'
 --- Source (Establishment location) ---
 TABLE temp_source_10;
- row_id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
---------+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
-      2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key_no_id',
     source_table => 'temp_source_10',
@@ -1346,21 +989,19 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => false
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key_no_id ORDER BY COALESCE(legal_unit_id, establishment_id), valid_from;
-   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until 
-----------+---------------+------------------+-----------------------+------------+-------------
- visiting |               |              100 | 100 Business Park     | 2024-01-01 | 2024-08-01
- visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity
- visiting |           200 |                  | 200 Main St           | 2024-01-01 | 2024-06-01
- visiting |           200 |                  | 201 New Main St       | 2024-06-01 | infinity
-(4 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_10;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 RELEASE SAVEPOINT scenario_10;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SAVEPOINT scenario_11;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SET client_min_messages TO NOTICE;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 \echo 'Scenario 11: Natural key with NULLs using IS NOT DISTINCT FROM logic'
@@ -1369,34 +1010,30 @@ Scenario 11: Natural key with NULLs using IS NOT DISTINCT FROM logic
 --------------------------------------------------------------------------------
 -- This scenario tests using a single composite natural key that contains NULLs.
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_11 (
     row_id INT, id INT, type tmtc.location_type, legal_unit_id INT, establishment_id INT, address TEXT, valid_from DATE, valid_until DATE, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Insert initial data into target
 INSERT INTO tmtc.location_multi_key (type, legal_unit_id, address, valid_from, valid_until) VALUES
 ('visiting', 200, '200 Main St', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO tmtc.location_multi_key (type, establishment_id, address, valid_from, valid_until) VALUES
 ('visiting', 100, '100 Business Park', '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial state ---'
 --- Target: Initial state ---
 SELECT id, type, legal_unit_id, establishment_id, address FROM tmtc.location_multi_key ORDER BY id;
- id |   type   | legal_unit_id | establishment_id |      address      
-----+----------+---------------+------------------+-------------------
-  1 | visiting |           200 |                  | 200 Main St
-  2 | visiting |               |              100 | 100 Business Park
-(2 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 11a: Update Legal Unit location using a composite key with NULL ---'
 --- Case 11a: Update Legal Unit location using a composite key with NULL ---
 INSERT INTO temp_source_11 VALUES (1, NULL, 'visiting', 200, NULL, '201 New Main St', '2024-06-01', 'infinity', 'LU address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Legal Unit location) ---'
 --- Source (Legal Unit location) ---
 TABLE temp_source_11;
- row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
---------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
-      1 |    | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -1406,36 +1043,25 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: After merge for Legal Unit location ---'
 --- Target: After merge for Legal Unit location ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
- id |   type   | legal_unit_id | establishment_id |      address      | valid_from | valid_until 
-----+----------+---------------+------------------+-------------------+------------+-------------
-  1 | visiting |           200 |                  | 200 Main St       | 2024-01-01 | 2024-06-01
-  1 | visiting |           200 |                  | 201 New Main St   | 2024-06-01 | infinity
-  2 | visiting |               |              100 | 100 Business Park | 2024-01-01 | infinity
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: After back-fill ---'
 --- Source: After back-fill ---
 TABLE temp_source_11;
- row_id | id |   type   | legal_unit_id | establishment_id |     address     | valid_from | valid_until |   edit_comment    
---------+----+----------+---------------+------------------+-----------------+------------+-------------+-------------------
-      1 |  1 | visiting |           200 |                  | 201 New Main St | 2024-06-01 | infinity    | LU address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 11b: Update Establishment location using a composite key with NULL ---'
 --- Case 11b: Update Establishment location using a composite key with NULL ---
 TRUNCATE temp_source_11;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 INSERT INTO temp_source_11 VALUES (2, NULL, 'visiting', NULL, 100, '101 New Business Park', '2024-08-01', 'infinity', 'Est address change');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source (Establishment location) ---'
 --- Source (Establishment location) ---
 TABLE temp_source_11;
- row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
---------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
-      2 |    | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge(
     target_table => 'tmtc.location_multi_key',
     source_table => 'temp_source_11',
@@ -1445,29 +1071,23 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Final state ---'
 --- Target: Final state ---
 SELECT id, type, legal_unit_id, establishment_id, address, valid_from, valid_until FROM tmtc.location_multi_key ORDER BY id, valid_from;
- id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until 
-----+----------+---------------+------------------+-----------------------+------------+-------------
-  1 | visiting |           200 |                  | 200 Main St           | 2024-01-01 | 2024-06-01
-  1 | visiting |           200 |                  | 201 New Main St       | 2024-06-01 | infinity
-  2 | visiting |               |              100 | 100 Business Park     | 2024-01-01 | 2024-08-01
-  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity
-(4 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: Final after back-fill ---'
 --- Source: Final after back-fill ---
 TABLE temp_source_11;
- row_id | id |   type   | legal_unit_id | establishment_id |        address        | valid_from | valid_until |    edit_comment    
---------+----+----------+---------------+------------------+-----------------------+------------+-------------+--------------------
-      2 |  2 | visiting |               |              100 | 101 New Business Park | 2024-08-01 | infinity    | Est address change
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_11;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 RELEASE SAVEPOINT scenario_11;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SAVEPOINT scenario_12;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SET client_min_messages TO NOTICE;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--------------------------------------------------------------------------------'
 --------------------------------------------------------------------------------
 \echo 'Scenario 12: Test failure on SCD Type 2 update with incompatible simple PRIMARY KEY'
@@ -1492,32 +1112,29 @@ Scenario 12: Test failure on SCD Type 2 update with incompatible simple PRIMARY 
 -- with that `id` already exists. The test confirms that `sql_saga` raises this
 -- error instead of silently corrupting data.
 CALL tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CREATE TEMP TABLE temp_source_12 (
     row_id INT, id INT, stat_definition_id INT, establishment_id INT, value BIGINT, valid_from DATE, valid_until DATE, edit_comment TEXT
 ) ON COMMIT DROP;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Insert initial data into target, where the natural key includes a NULL
 INSERT INTO tmtc.stat_for_unit_id_pk (stat_definition_id, establishment_id, value, valid_from, valid_until) VALUES
 (10, NULL, 500, '2024-01-01', 'infinity');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Target: Initial state ---'
 --- Target: Initial state ---
 SELECT id, stat_definition_id, establishment_id, value, valid_from, valid_until FROM tmtc.stat_for_unit_id_pk ORDER BY id;
- id | stat_definition_id | establishment_id | value | valid_from | valid_until 
-----+--------------------+------------------+-------+------------+-------------
-  1 |                 10 |                  |   500 | 2024-01-01 | infinity
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Case 12a: Update entity identified by natural key with NULL ---'
 --- Case 12a: Update entity identified by natural key with NULL ---
 INSERT INTO temp_source_12 VALUES (1, NULL, 10, NULL, 550, '2024-07-01', 'infinity', 'Stat value update');
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source ---'
 --- Source ---
 TABLE temp_source_12;
- row_id | id | stat_definition_id | establishment_id | value | valid_from | valid_until |   edit_comment    
---------+----+--------------------+------------------+-------+------------+-------------+-------------------
-      1 |    |                 10 |                  |   550 | 2024-07-01 | infinity    | Stat value update
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 SAVEPOINT expect_error;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- NOTE on testing expected failures:
 -- This call is expected to raise an ERROR. By wrapping it in a SAVEPOINT and
 -- then calling ROLLBACK TO SAVEPOINT, we can test the failure without aborting
@@ -1534,35 +1151,34 @@ CALL sql_saga.temporal_merge(
     mode => 'MERGE_ENTITY_REPLACE',
     update_source_with_identity => true
 );
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK TO SAVEPOINT expect_error;
+ERROR:  savepoint "expect_error" does not exist
 \echo '--- Target: After merge (should be unchanged) ---'
 --- Target: After merge (should be unchanged) ---
 SELECT id, stat_definition_id, establishment_id, value, valid_from, valid_until FROM tmtc.stat_for_unit_id_pk ORDER BY id, valid_from;
- id | stat_definition_id | establishment_id | value | valid_from | valid_until 
-----+--------------------+------------------+-------+------------+-------------
-  1 |                 10 |                  |   500 | 2024-01-01 | infinity
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 \echo '--- Source: After back-fill (should be unchanged) ---'
 --- Source: After back-fill (should be unchanged) ---
 TABLE temp_source_12;
- row_id | id | stat_definition_id | establishment_id | value | valid_from | valid_until |   edit_comment    
---------+----+--------------------+------------------+-------+------------+-------------+-------------------
-      1 |    |                 10 |                  |   550 | 2024-07-01 | infinity    | Stat value update
-(1 row)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE temp_source_12;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 RELEASE SAVEPOINT scenario_12;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 -- Final Cleanup
 DROP PROCEDURE tmtc.reset_target();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE tmtc.stat_for_unit, tmtc.stat_for_unit_id_pk, tmtc.stat_for_unit_id_gen, tmtc.stat_for_unit_no_pk, tmtc.location_multi_key, tmtc.location_multi_key_no_id;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE tmtc.legal_unit, tmtc.establishment;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP TABLE tmtc.stat_definition;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 CALL sql_saga.temporal_merge_drop_cache();
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 DROP SCHEMA tmtc CASCADE;
-NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to type tmtc.location_type
-drop cascades to sequence tmtc.stat_for_unit_no_pk_id_seq
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

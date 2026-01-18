@@ -156,6 +156,7 @@ TABLE sql_saga.foreign_keys;
 Indexes:
     "employees_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "employees_id_idx" btree (id)
+    "employees_id_valid_range_idx" btree (id, valid_range)
     "employees_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "employees_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -180,6 +181,7 @@ Indexes:
     "staff_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "staff_employee_id_valid_gist_idx" gist (employee_id, valid_range)
     "staff_id_idx" btree (id)
+    "staff_id_valid_range_idx" btree (id, valid_range)
     "staff_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
 Check constraints:
     "staff_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -293,6 +295,7 @@ TABLE sql_saga.era;
 Indexes:
     "employees_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "employees_id_idx" btree (id)
+    "employees_id_valid_range_idx" btree (id, valid_range)
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -308,6 +311,7 @@ Indexes:
 Indexes:
     "staff_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "staff_id_idx" btree (id)
+    "staff_id_valid_range_idx" btree (id, valid_range)
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

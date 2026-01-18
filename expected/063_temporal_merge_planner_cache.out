@@ -81,6 +81,7 @@ d tmpc.target
 Indexes:
     "target_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "target_id_idx" btree (id)
+    "target_id_valid_range_idx" btree (id, valid_range)
 Check constraints:
     "target_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_valid_check" CHECK (NOT isempty(valid_range))
@@ -1424,6 +1425,7 @@ d tmpc.target_nk_not_null
 Indexes:
     "target_nk_not_null_pkey" PRIMARY KEY (type, lu_id, valid_range WITHOUT OVERLAPS)
     "target_nk_not_null_type_lu_id_idx" btree (type, lu_id)
+    "target_nk_not_null_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
 Check constraints:
     "target_nk_not_null_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_nk_not_null_valid_check" CHECK (NOT isempty(valid_range))
@@ -2772,8 +2774,10 @@ d tmpc.target_nk
 Indexes:
     "target_nk_type_es_id_idx" btree (type, es_id)
     "target_nk_type_es_id_valid_excl" EXCLUDE USING gist (type WITH =, es_id WITH =, valid_range WITH &&) WHERE (lu_id IS NULL) DEFERRABLE
+    "target_nk_type_es_id_valid_range_idx" btree (type, es_id, valid_range)
     "target_nk_type_lu_id_idx" btree (type, lu_id)
     "target_nk_type_lu_id_valid_excl" EXCLUDE USING gist (type WITH =, lu_id WITH =, valid_range WITH &&) WHERE (es_id IS NULL) DEFERRABLE
+    "target_nk_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
 Check constraints:
     "lu_or_es_id_check" CHECK (lu_id IS NOT NULL AND es_id IS NULL OR lu_id IS NULL AND es_id IS NOT NULL)
     "target_nk_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)

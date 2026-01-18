@@ -584,6 +584,50 @@ BEGIN
     INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, pk_consistency_constraint_names)
     VALUES (unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names);
 
+    -- Create compound index for efficient exact match queries (needed by temporal_merge)
+    -- This index helps UPDATE/DELETE operations that need to find rows by both
+    -- identity columns AND exact range match
+    IF era_name IS NOT NULL AND array_length(v_stable_cols_to_store, 1) > 0 THEN
+        DECLARE
+            compound_index_name name;
+            compound_index_sql text;
+            compound_columns text;
+        BEGIN
+            -- Build list of columns for the compound index
+            compound_columns := (
+                SELECT string_agg(quote_ident(c), ', ') 
+                FROM unnest(v_stable_cols_to_store) AS c
+            );
+            
+            -- Add the range column at the end
+            compound_columns := compound_columns || ', ' || quote_ident(era_row.range_column_name);
+            
+            compound_index_name := sql_saga.__internal_make_name(
+                ARRAY[table_name] || v_stable_cols_to_store || ARRAY[era_row.range_column_name, 'idx']
+            );
+            
+            -- Check if index already exists
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                WHERE i.indrelid = table_oid
+                AND c.relname = compound_index_name
+            ) THEN
+                compound_index_sql := format(
+                    'CREATE INDEX %I ON %I.%I (%s)',
+                    compound_index_name,
+                    table_schema,
+                    table_name,
+                    compound_columns
+                );
+                
+                RAISE DEBUG 'add_unique_key: Creating compound index for temporal_merge performance: %', compound_index_sql;
+                EXECUTE compound_index_sql;
+                RAISE DEBUG 'sql_saga: created compound index % on % for temporal_merge performance', compound_index_name, table_oid::regclass;
+            END IF;
+        END;
+    END IF;
+
     -- When adding a primary key, scan for any natural keys in a "pending" state.
     IF key_type = 'primary' THEN
         DECLARE

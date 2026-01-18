@@ -193,6 +193,7 @@ NOTICE:  sql_saga: altering table public.pk_test to add constraints: ALTER COLUM
 Indexes:
     "pk_test_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "pk_test_id_idx" btree (id)
+    "pk_test_id_valid_range_idx" btree (id, valid_range)
 Check constraints:
     "pk_test_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:

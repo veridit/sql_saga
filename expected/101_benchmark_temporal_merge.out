@@ -99,14 +99,16 @@ SELECT indexname, indexdef FROM pg_indexes WHERE tablename IN ('legal_unit_tm', 
 -----------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------
  establishment_tm_id_idx                       | CREATE INDEX establishment_tm_id_idx ON public.establishment_tm USING btree (id)
  establishment_tm_id_idx1                      | CREATE INDEX establishment_tm_id_idx1 ON public.establishment_tm USING btree (id)
+ establishment_tm_id_valid_range_idx           | CREATE INDEX establishment_tm_id_valid_range_idx ON public.establishment_tm USING btree (id, valid_range)
  establishment_tm_id_valid_uniq                | CREATE UNIQUE INDEX establishment_tm_id_valid_uniq ON public.establishment_tm USING gist (id, valid_range)
  establishment_tm_legal_unit_id_valid_gist_idx | CREATE INDEX establishment_tm_legal_unit_id_valid_gist_idx ON public.establishment_tm USING gist (legal_unit_id, valid_range)
  establishment_tm_valid_range_idx              | CREATE INDEX establishment_tm_valid_range_idx ON public.establishment_tm USING gist (valid_range)
  legal_unit_tm_id_idx                          | CREATE INDEX legal_unit_tm_id_idx ON public.legal_unit_tm USING btree (id)
  legal_unit_tm_id_idx1                         | CREATE INDEX legal_unit_tm_id_idx1 ON public.legal_unit_tm USING btree (id)
+ legal_unit_tm_id_valid_range_idx              | CREATE INDEX legal_unit_tm_id_valid_range_idx ON public.legal_unit_tm USING btree (id, valid_range)
  legal_unit_tm_id_valid_uniq                   | CREATE UNIQUE INDEX legal_unit_tm_id_valid_uniq ON public.legal_unit_tm USING gist (id, valid_range)
  legal_unit_tm_valid_range_idx                 | CREATE INDEX legal_unit_tm_valid_range_idx ON public.legal_unit_tm USING gist (valid_range)
-(9 rows)
+(11 rows)
 
 --------------------------------------------------------------------------------
 \echo '--- Temporal Merge SEED (2000 rows) ---'
