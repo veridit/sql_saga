@@ -23,9 +23,14 @@ Current bottlenecks from pg_stat_monitor:
 - resolved_atomic_segments_with_payloads: Optimized with split-path approach
 - source_with_eclipsed_flag: ~199ms (CROSS JOIN LATERAL)
 
-High-priority optimizations:
-- [ ] **Optimize temporal_merge UPDATE execution** - Eliminate LATERAL jsonb_populate_record, add compound indexes, direct JSONB extraction (expected 13x speedup)
-- [ ] **Complete valid_range transition** - Plan still uses old_valid_from/until and new_valid_from/until instead of ranges as core construct
+Completed optimizations (2026-01-18):
+- [x] **Eliminated LATERAL jsonb_populate_record** - Direct JSONB extraction provides ~48% UPDATE speedup
+- [x] **Added old_valid_range/new_valid_range to plan** - Pre-computed ranges eliminate runtime construction
+- [x] **Updated executor to use range columns** - No more daterange() construction at execution time
+
+Remaining optimizations:
+- [ ] **Add compound index on (id, valid_range)** - Would further improve UPDATE performance
+- [ ] **Consider typed temp tables** - Eliminate range type casting (e.g., ::daterange) overhead
 - [ ] **Review CROSS JOIN LATERAL in source_with_eclipsed_flag** - ~200ms for eclipse detection
 
 ## Medium Priority - Refactoring & API Improvements
@@ -45,6 +50,11 @@ High-priority optimizations:
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+
+## 2026-01-18
+- Optimize temporal_merge executor: eliminate LATERAL jsonb_populate_record (~48% UPDATE speedup)
+- Add old_valid_range/new_valid_range columns to temporal_merge_plan
+- Update executor to use pre-computed range columns
 
 ## 2026-01-17
 - Optimize temporal_merge planner: split-path approach for resolved_atomic_segments_with_payloads (~10x speedup)

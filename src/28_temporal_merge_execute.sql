@@ -439,13 +439,22 @@ BEGIN
         v_valid_until_col_type := v_range_subtype;
     END IF;
 
-    -- Dynamically construct join clause for composite entity key.
-    -- This uses an index-friendly, null-safe pattern.
+    -- Dynamically construct join clause for composite entity key using direct JSONB extraction.
+    -- Uses IS NOT DISTINCT FROM for null-safe comparison without LATERAL overhead.
     SELECT
-        string_agg(format('(t.%1$I = jpr_entity.%1$I OR (t.%1$I IS NULL AND jpr_entity.%1$I IS NULL))', col), ' AND ')
+        string_agg(
+            format(
+                't.%1$I IS NOT DISTINCT FROM (p.entity_keys->>%2$L)::%3$s',
+                col,
+                col,
+                format_type(a.atttypid, -1)
+            ),
+            ' AND '
+        )
     INTO
         v_entity_key_join_clause
-    FROM unnest(identity_columns) AS col;
+    FROM unnest(identity_columns) AS col
+    JOIN pg_attribute a ON a.attrelid = temporal_merge_execute.target_table AND a.attname = col AND NOT a.attisdropped;
 
     v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
 
@@ -584,9 +593,9 @@ BEGIN
                 -- 1. Execute DELETE operations
                 IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
                     v_sql := format($$ DELETE FROM %1$s t
-                        USING temporal_merge_plan p, LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = %5$I(p.old_valid_from::%4$s, p.old_valid_until::%6$s, '[)');
-                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_valid_from_col_type, v_range_constructor, v_valid_until_col_type);
+                        USING temporal_merge_plan p
+                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor);
                     EXECUTE v_sql;
                 END IF;
 
@@ -605,18 +614,16 @@ BEGIN
                 IF v_update_statement_seqs IS NOT NULL THEN
                     FOREACH v_update_statement_seq IN ARRAY v_update_statement_seqs LOOP
                         IF v_update_set_clause IS NOT NULL THEN
-                            v_sql := format($$ UPDATE %1$s t SET %4$I = %8$I(p.new_valid_from::%6$s, p.new_valid_until::%7$s, '[)'), %2$s
-                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %9$s ORDER BY plan_op_seq) p,
-                                     LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                                WHERE %3$s AND t.%4$I = %8$I(p.old_valid_from::%6$s, p.old_valid_until::%7$s, '[)');
-                            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, NULL, v_valid_from_col_type, v_valid_until_col_type, v_range_constructor, v_update_statement_seq);
+                            v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_range::%5$I, %2$s
+                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s ORDER BY plan_op_seq) p
+                                WHERE %3$s AND t.%4$I = p.old_valid_range::%5$I;
+                            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq);
                             EXECUTE v_sql;
                         ELSIF v_all_cols_ident IS NOT NULL THEN
-                            v_sql := format($$ UPDATE %1$s t SET %3$I = %7$I(p.new_valid_from::%5$s, p.new_valid_until::%6$s, '[)')
-                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s ORDER BY plan_op_seq) p,
-                                     LATERAL jsonb_populate_record(null::%1$s, p.entity_keys) AS jpr_entity
-                                WHERE %2$s AND t.%3$I = %7$I(p.old_valid_from::%5$s, p.old_valid_until::%6$s, '[)');
-                            $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, NULL, v_valid_from_col_type, v_valid_until_col_type, v_range_constructor, v_update_statement_seq);
+                            v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
+                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s ORDER BY plan_op_seq) p
+                                WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                            $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq);
                             EXECUTE v_sql;
                         END IF;
                     END LOOP;
@@ -663,8 +670,7 @@ BEGIN
                                         p.plan_op_seq,
                                         p.causal_id,
                                         p.grouping_key,
-                                        p.new_valid_from,
-                                        p.new_valid_until,
+                                        p.new_valid_range,
                                         p.entity_keys || p.data as full_data
                                     FROM temporal_merge_plan p
                                     WHERE p.operation = 'INSERT' AND p.is_new_entity
@@ -675,7 +681,7 @@ BEGIN
                                     USING founding_plan_ops s ON false
                                     WHEN NOT MATCHED THEN
                                         INSERT (%2$s, %5$I)
-                                        VALUES (%3$s, %7$I(s.new_valid_from::%8$s, s.new_valid_until::%9$s, '[)'))
+                                        VALUES (%3$s, s.new_valid_range::%7$I)
                                     RETURNING t.*, s.causal_id, s.grouping_key
                                 )
                                 INSERT INTO temporal_merge_entity_id_map (grouping_key, causal_id, new_entity_keys)
@@ -691,9 +697,7 @@ BEGIN
                                 v_entity_id_update_jsonb_build, /* %4$s */
                                 v_range_col,                    /* %5$I */
                                 NULL,                           /* %6$I (placeholder) */
-                                v_range_constructor,            /* %7$I */
-                                v_valid_from_col_type,          /* %8$s */
-                                v_valid_until_col_type          /* %9$s */
+                                v_range_constructor             /* %7$I */
                             );
 
                             -- Step 1.2: Back-fill the captured, generated IDs into the plan
@@ -707,7 +711,7 @@ BEGIN
                             -- Step 1.3: Insert the remaining historical slices for the new entities
                             EXECUTE format($$
                                 INSERT INTO %1$s (%2$s, %4$I)
-                                SELECT %3$s, %6$I(p.new_valid_from::%7$s, p.new_valid_until::%8$s, '[)')
+                                SELECT %3$s, p.new_valid_range::%6$I
                                 FROM temporal_merge_plan p,
                                      LATERAL jsonb_populate_record(null::%1$s, p.entity_keys || p.data) as jpr_all
                                 WHERE p.operation = 'INSERT'
@@ -729,9 +733,7 @@ BEGIN
                                 v_all_cols_select,          /* %3$s */
                                 v_range_col,                /* %4$I */
                                 NULL,                       /* %5$I (placeholder) */
-                                v_range_constructor,        /* %6$I */
-                                v_valid_from_col_type,      /* %7$s */
-                                v_valid_until_col_type      /* %8$s */
+                                v_range_constructor         /* %6$I */
                             );
 
                             DROP TABLE temporal_merge_entity_id_map;
@@ -743,7 +745,7 @@ BEGIN
                                 WITH
                                 source_for_insert AS (
                                     SELECT
-                                        p.plan_op_seq, p.new_valid_from, p.new_valid_until,
+                                        p.plan_op_seq, p.new_valid_range,
                                         p.entity_keys || p.data as full_data
                                     FROM temporal_merge_plan p
                                     WHERE p.operation = 'INSERT' AND NOT p.is_new_entity
@@ -753,7 +755,7 @@ BEGIN
                                     USING source_for_insert s ON false
                                     WHEN NOT MATCHED THEN
                                         INSERT (%2$s, %3$I)
-                                        VALUES (%5$s, %9$I(s.new_valid_from::%6$s, s.new_valid_until::%7$s, '[)'))
+                                        VALUES (%5$s, s.new_valid_range::%9$I)
                                     RETURNING t.*, s.plan_op_seq
                                 )
                                 UPDATE temporal_merge_plan p
@@ -766,8 +768,8 @@ BEGIN
                                 v_range_col,                        /* %3$I */
                                 NULL,                               /* %4$I (placeholder) */
                                 v_all_cols_from_jsonb,              /* %5$s */
-                                v_valid_from_col_type,              /* %6$s */
-                                v_valid_until_col_type,             /* %7$s */
+                                NULL,                               /* %6$s (placeholder) */
+                                NULL,                               /* %7$s (placeholder) */
                                 v_entity_id_update_jsonb_build,     /* %8$s */
                                 v_range_constructor                 /* %9$I */
                             );
@@ -801,8 +803,7 @@ BEGIN
                             source_for_insert AS (
                                 SELECT
                                     p.plan_op_seq,
-                                    p.new_valid_from,
-                                    p.new_valid_until,
+                                    p.new_valid_range,
                                     p.entity_keys || p.data as full_data
                                 FROM temporal_merge_plan p
                                 WHERE p.operation = 'INSERT'
@@ -812,7 +813,7 @@ BEGIN
                                 USING source_for_insert s ON false
                                 WHEN NOT MATCHED THEN
                                     INSERT (%8$s, %3$I)
-                                    VALUES (%9$s, %7$I(s.new_valid_from::%5$s, s.new_valid_until::%6$s, '[)'))
+                                    VALUES (%9$s, s.new_valid_range::%7$I)
                                 RETURNING t.*, s.plan_op_seq
                             )
                             UPDATE temporal_merge_plan p
@@ -824,8 +825,8 @@ BEGIN
                             v_entity_id_update_jsonb_build, /* %2$s */
                             v_range_col,                    /* %3$I */
                             NULL,                           /* %4$I (placeholder) */
-                            v_valid_from_col_type,          /* %5$s */
-                            v_valid_until_col_type,         /* %6$s */
+                            NULL,                           /* %5$s (placeholder) */
+                            NULL,                           /* %6$s (placeholder) */
                             v_range_constructor,            /* %7$I */
                             v_all_cols_ident,               /* %8$s */
                             v_all_cols_from_jsonb           /* %9$s */

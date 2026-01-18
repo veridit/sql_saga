@@ -1301,7 +1301,19 @@ NOTICE:  Explaining:
                     plan_op_seq,
                     dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
                     row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
-                    old_valid_until, new_valid_from, new_valid_until, data, feedback, trace, grouping_key
+                    old_valid_until, new_valid_from, new_valid_until,
+                    -- New range columns
+                    CASE 
+                        WHEN old_valid_from IS NOT NULL AND old_valid_until IS NOT NULL 
+                        THEN daterange(old_valid_from::date, old_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as old_valid_range,
+                    CASE 
+                        WHEN new_valid_from IS NOT NULL AND new_valid_until IS NOT NULL 
+                        THEN daterange(new_valid_from::date, new_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as new_valid_range,
+                    data, feedback, trace, grouping_key
                 FROM with_statement_seq
                 ORDER BY plan_op_seq;
             
@@ -2623,7 +2635,19 @@ NOTICE:  Explaining:
                     plan_op_seq,
                     dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
                     row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
-                    old_valid_until, new_valid_from, new_valid_until, data, feedback, trace, grouping_key
+                    old_valid_until, new_valid_from, new_valid_until,
+                    -- New range columns
+                    CASE 
+                        WHEN old_valid_from IS NOT NULL AND old_valid_until IS NOT NULL 
+                        THEN daterange(old_valid_from::date, old_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as old_valid_range,
+                    CASE 
+                        WHEN new_valid_from IS NOT NULL AND new_valid_until IS NOT NULL 
+                        THEN daterange(new_valid_from::date, new_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as new_valid_range,
+                    data, feedback, trace, grouping_key
                 FROM with_statement_seq
                 ORDER BY plan_op_seq;
             
@@ -3980,13 +4004,25 @@ NOTICE:  Explaining:
                     plan_op_seq,
                     dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
                     row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
-                    old_valid_until, new_valid_from, new_valid_until, data, feedback, trace, grouping_key
+                    old_valid_until, new_valid_from, new_valid_until,
+                    -- New range columns
+                    CASE 
+                        WHEN old_valid_from IS NOT NULL AND old_valid_until IS NOT NULL 
+                        THEN daterange(old_valid_from::date, old_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as old_valid_range,
+                    CASE 
+                        WHEN new_valid_from IS NOT NULL AND new_valid_until IS NOT NULL 
+                        THEN daterange(new_valid_from::date, new_valid_until::date, '[)')::TEXT
+                        ELSE NULL 
+                    END as new_valid_range,
+                    data, feedback, trace, grouping_key
                 FROM with_statement_seq
                 ORDER BY plan_op_seq;
             
 NOTICE:  Sort (actual rows=6.00 loops=1)
 NOTICE:    Sort Key: o.plan_op_seq
-NOTICE:    Sort Method: quicksort  Memory: 26kB
+NOTICE:    Sort Method: quicksort  Memory: 27kB
 NOTICE:    Buffers: local hit=1
 NOTICE:    CTE ordered_plan
 NOTICE:      ->  WindowAgg (actual rows=6.00 loops=1)

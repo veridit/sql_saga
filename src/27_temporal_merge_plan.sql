@@ -2201,13 +2201,27 @@ BEGIN
                     plan_op_seq,
                     dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
                     row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
-                    old_valid_until, new_valid_from, new_valid_until, data, feedback, trace, grouping_key
+                    old_valid_until, new_valid_from, new_valid_until,
+                    -- New range columns
+                    CASE 
+                        WHEN old_valid_from IS NOT NULL AND old_valid_until IS NOT NULL 
+                        THEN %3$s(old_valid_from::%4$s, old_valid_until::%5$s, '[)')::TEXT
+                        ELSE NULL 
+                    END as old_valid_range,
+                    CASE 
+                        WHEN new_valid_from IS NOT NULL AND new_valid_until IS NOT NULL 
+                        THEN %3$s(new_valid_from::%4$s, new_valid_until::%5$s, '[)')::TEXT
+                        ELSE NULL 
+                    END as new_valid_range,
+                    data, feedback, trace, grouping_key
                 FROM with_statement_seq
                 ORDER BY plan_op_seq;
             $SQL$,
                 v_final_order_by_expr, /* %1$s */
                 v_multirange_type, /* %2$s - multirange type */
-                v_range_constructor /* %3$s - range type */
+                v_range_constructor, /* %3$s - range type */
+                v_range_subtype, /* %4$s - range subtype for from cast */
+                v_range_subtype /* %5$s - range subtype for until cast */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'query', 'sql', v_sql);
     

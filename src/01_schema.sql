@@ -377,6 +377,8 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     old_valid_until TEXT,
     new_valid_from TEXT,
     new_valid_until TEXT,
+    old_valid_range TEXT,  -- Pre-computed range for old period
+    new_valid_range TEXT,  -- Pre-computed range for new period
     data JSONB,
     feedback JSONB,
     trace JSONB,

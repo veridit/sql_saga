@@ -324,9 +324,9 @@ CALL sql_saga.temporal_merge(
 \echo '--- Planner output for Case 2b ---'
 --- Planner output for Case 2b ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                  data                  | feedback | trace |    grouping_key    
--------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------+----------+-------+--------------------
-           1 |             1 | {2}     | INSERT    |               | 2         | f             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2023-04-01     | 2023-07-01      | {"value_int": 5, "legal_unit_id": 100} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                  data                  | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+----------------------------------------+----------+-------+--------------------
+           1 |             1 | {2}     | INSERT    |               | 2         | f             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2023-04-01     | 2023-07-01      |                 | [2023-04-01,2023-07-01) | {"value_int": 5, "legal_unit_id": 100} |          |       | existing_entity__1
 (1 row)
 
 \echo '--- Target after second import (CORRECT: 2 historical rows for id=1) ---'
