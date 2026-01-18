@@ -10,20 +10,22 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
   for INSERT/UPDATE on temporal keys. A C trigger could eliminate most of this overhead.
 
 ### Phase 3: temporal_merge Performance Investigation
-Performance analysis from benchmarks (after CASE→OR optimization):
+Performance analysis from benchmarks (after CASE→OR and split-path optimizations):
 - Regular DML: ~24,000-45,000 rows/s
 - temporal_merge (no batching): ~75-155 rows/s (200-300x slower!)
 - temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
 
-Current bottlenecks from pg_stat_monitor (after optimization):
-- Planner call: ~1089ms (improved from 2062ms, 47% faster)
-- Executor call: ~645ms (improved from 1470ms, 56% faster)  
-- UPDATE execution: ~617ms for 2000 rows
-- resolved_atomic_segments_with_payloads: ~475ms (contains recursive CTE in LATERAL)
+Current bottlenecks from pg_stat_monitor:
+- **UPDATE execution: 13ms per row** (13,095ms for 1000 rows) - Major bottleneck!
+  - Uses LATERAL jsonb_populate_record() for each row
+  - Missing compound index on (id, valid_range)
+  - 1.4M buffer hits for 1000 rows
+- resolved_atomic_segments_with_payloads: Optimized with split-path approach
 - source_with_eclipsed_flag: ~199ms (CROSS JOIN LATERAL)
 
-Remaining optimizations to consider:
-- [ ] **Optimize recursive CTE in LATERAL joins** - The resolved_atomic_segments query uses recursive CTEs inside LATERAL joins which are expensive
+High-priority optimizations:
+- [ ] **Optimize temporal_merge UPDATE execution** - Eliminate LATERAL jsonb_populate_record, add compound indexes, direct JSONB extraction (expected 13x speedup)
+- [ ] **Complete valid_range transition** - Plan still uses old_valid_from/until and new_valid_from/until instead of ranges as core construct
 - [ ] **Review CROSS JOIN LATERAL in source_with_eclipsed_flag** - ~200ms for eclipse detection
 
 ## Medium Priority - Refactoring & API Improvements
@@ -45,6 +47,7 @@ Remaining optimizations to consider:
 # Done
 
 ## 2026-01-17
+- Optimize temporal_merge planner: split-path approach for resolved_atomic_segments_with_payloads (~10x speedup)
 - Optimize temporal_merge planner: replace CASE→OR for 36-56% speedup on benchmarks
 - Add range-only view tests (051, 053) and fix same-day DELETE bug in current_view_trigger
 - Add range-only temporal_merge test (066) with proper test renumbering
