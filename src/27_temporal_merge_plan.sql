@@ -1194,7 +1194,7 @@ BEGIN
             * `trace` column incurs no runtime overhead when tracing is not active.
             */
             IF p_log_trace THEN
-                v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'grouping_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', target_payloads.data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', target_payloads.ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, target_payloads.t_valid_from, target_payloads.t_valid_until), 'stable_pk_payload', target_payloads.stable_pk_payload, 'propagated_stable_pk_payload', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id, 'direct_source_causal_id', source_payloads.causal_id) as trace$$,
+                v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'grouping_key', jsonb_build_object(%1$s), 'source_row_id', source_payloads.source_row_id, 's_data', source_payloads.data_payload, 't_data', seg.t_data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', seg.t_ephemeral_payload, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, seg.t_valid_from, seg.t_valid_until), 'stable_pk_payload', seg.target_stable_pk_payload, 'propagated_stable_pk_payload', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id, 'direct_source_causal_id', source_payloads.causal_id) as trace$$,
                     (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                     v_identity_cols_trace_expr,
                     v_natural_identity_cols_trace_expr,
@@ -1699,41 +1699,78 @@ BEGIN
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
             
-            -- CTE 15: resolved_atomic_segments_with_payloads
+            -- CTE 15: resolved_atomic_segments_with_payloads (Split-path optimization)
+            -- Path 1: Existing entities (use Hash Join for better performance)
+            v_sql := format($SQL$
+                CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
+                SELECT
+                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
+                    target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
+                    target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
+                    target_row.stable_pk_payload as target_stable_pk_payload,
+                    %2$s
+                FROM atomic_segments seg
+                LEFT JOIN target_rows target_row 
+                    ON %3$s 
+                    AND %4$I(seg.valid_from, seg.valid_until) <@ %4$I(target_row.valid_from, target_row.valid_until)
+                WHERE NOT seg.is_new_entity
+            $SQL$,
+                v_entity_key_for_with_base_payload_expr, /* %1$s */
+                v_trace_seed_expr,                       /* %2$s */
+                v_lateral_join_tr_to_seg,                /* %3$s */
+                v_range_constructor                      /* %4$I */
+            );
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            -- Path 2: New entities (no target join needed)
+            v_sql := format($SQL$
+                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
+                SELECT
+                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
+                    NULL::%3$s as t_valid_from, NULL::%3$s as t_valid_until,
+                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
+                    NULL::jsonb as target_stable_pk_payload,
+                    %2$s
+                FROM atomic_segments seg
+                WHERE seg.is_new_entity
+            $SQL$,
+                v_entity_key_for_with_base_payload_expr, /* %1$s */
+                v_trace_seed_expr,                       /* %2$s */
+                v_range_subtype                          /* %3$s */
+            );
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            -- Path 3: Union and apply source resolution
             v_sql := format($SQL$
                 CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
+                WITH all_segments AS (
+                    SELECT * FROM existing_segments_with_target
+                    UNION ALL
+                    SELECT * FROM new_segments_no_target
+                )
                 SELECT
                     with_base_payload.*,
                     with_base_payload.stable_pk_payload as propagated_stable_pk_payload
                 FROM (
                     SELECT
-                        seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
-                        target_payloads.t_valid_from, target_payloads.t_valid_until, source_payloads.source_row_id, source_payloads.contributing_row_ids, source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        target_payloads.data_payload as t_data_payload, target_payloads.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
-                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until, %2$s
-                    FROM atomic_segments seg
-                    LEFT JOIN LATERAL (
-                        SELECT target_row.data_payload, target_row.ephemeral_payload, target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until, target_row.stable_pk_payload
-                        FROM target_rows target_row
-                        WHERE %3$s AND %4$I(seg.valid_from, seg.valid_until) <@ %4$I(target_row.valid_from, target_row.valid_until)
-                    ) target_payloads ON true
-                    %5$s
-                    WHERE (source_payloads.data_payload IS NOT NULL OR target_payloads.data_payload IS NOT NULL)
-                    AND CASE %6$L::sql_saga.temporal_merge_mode
-                        WHEN 'PATCH_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
-                        WHEN 'REPLACE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
-                        WHEN 'DELETE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
-                        WHEN 'UPDATE_FOR_PORTION_OF' THEN target_payloads.data_payload IS NOT NULL
+                        seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
+                        source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                        source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
+                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
+                    FROM all_segments seg
+                    %1$s
+                    WHERE (source_payloads.data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
+                    AND CASE %2$L::sql_saga.temporal_merge_mode
+                        WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                        WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                        WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                        WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
                         ELSE true
                     END
                 ) with_base_payload
             $SQL$,
-                v_entity_key_for_with_base_payload_expr, /* %1$s */
-                v_trace_seed_expr,                       /* %2$s */
-                v_lateral_join_tr_to_seg,                /* %3$s */
-                v_range_constructor,                     /* %4$I */
-                v_lateral_source_resolver_sql,           /* %5$s */
-                mode                                     /* %6$L */
+                v_lateral_source_resolver_sql,           /* %1$s */
+                mode                                     /* %2$L */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
@@ -2232,6 +2269,8 @@ BEGIN
     IF to_regclass('pg_temp.time_points_with_unified_ids') IS NOT NULL THEN DROP TABLE pg_temp.time_points_with_unified_ids; END IF;
     IF to_regclass('pg_temp.time_points') IS NOT NULL THEN DROP TABLE pg_temp.time_points; END IF;
     IF to_regclass('pg_temp.atomic_segments') IS NOT NULL THEN DROP TABLE pg_temp.atomic_segments; END IF;
+    IF to_regclass('pg_temp.existing_segments_with_target') IS NOT NULL THEN DROP TABLE pg_temp.existing_segments_with_target; END IF;
+    IF to_regclass('pg_temp.new_segments_no_target') IS NOT NULL THEN DROP TABLE pg_temp.new_segments_no_target; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_payloads') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_payloads; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_flag') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_flag; END IF;
     IF to_regclass('pg_temp.resolved_atomic_segments_with_propagated_ids') IS NOT NULL THEN DROP TABLE pg_temp.resolved_atomic_segments_with_propagated_ids; END IF;
