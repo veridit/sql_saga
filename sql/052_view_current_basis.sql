@@ -7,6 +7,7 @@ CREATE FUNCTION test_now() RETURNS date AS $$ SELECT '2024-02-29'::date $$ LANGU
 
 CREATE TABLE employees (
     id int,
+    valid_range daterange,
     valid_from date,
     valid_until date,
     name text,
@@ -14,11 +15,11 @@ CREATE TABLE employees (
 );
 
 -- Register era and unique key
-SELECT sql_saga.add_era('employees', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('employees', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('employees', ARRAY['id']);
 
 -- Populate with some data
-INSERT INTO employees VALUES
+INSERT INTO employees (id, valid_from, valid_until, name, department) VALUES
 (1, '2023-01-01', '2024-01-01', 'Alice', 'Engineering'),
 (1, '2024-01-01', 'infinity', 'Alice', 'R&D'),
 (2, '2023-05-01', 'infinity', 'Bob', 'Sales');
@@ -35,8 +36,8 @@ TABLE sql_saga.updatable_view;
 
 -- Test Error Handling for non-time-based eras
 SAVEPOINT before_failure_setup;
-CREATE TABLE widgets (id int, valid_from int, valid_until int);
-SELECT sql_saga.add_era('widgets', 'valid_from', 'valid_until');
+CREATE TABLE widgets (id int, valid_range int4range, valid_from int, valid_until int);
+SELECT sql_saga.add_era('widgets', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SAVEPOINT expect_fail;
 -- This will fail because the era is not time-based, which is the point of the test.
 SELECT sql_saga.add_current_view('widgets'::regclass, current_func_name := 'test_now()');
@@ -92,6 +93,28 @@ TABLE sql_saga.updatable_view;
 SAVEPOINT view_is_gone;
 SELECT * FROM employees__current_valid;
 ROLLBACK TO view_is_gone;
+
+-- Test Error Handling for missing era
+-- ====================================
+SAVEPOINT missing_era_test;
+
+CREATE TABLE no_era_table (
+    id int,
+    value text,
+    valid_range daterange
+);
+
+-- Should fail: no era registered on this table
+SAVEPOINT expect_error_1;
+SELECT sql_saga.add_current_view('no_era_table'::regclass);
+ROLLBACK TO SAVEPOINT expect_error_1;
+
+-- Should also fail with explicit non-existent era name
+SAVEPOINT expect_error_2;
+SELECT sql_saga.add_current_view('no_era_table'::regclass, 'nonexistent');
+ROLLBACK TO SAVEPOINT expect_error_2;
+
+ROLLBACK TO missing_era_test;
 
 ROLLBACK;
 

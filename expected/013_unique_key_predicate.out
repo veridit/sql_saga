@@ -29,10 +29,12 @@ CREATE TABLE employees (
     id int,
     name text,
     department_id int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('employees', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('employees', 'valid_range');
+NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table employees to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -46,51 +48,54 @@ SELECT sql_saga.add_unique_key(
     predicate => 'department_id IS NOT NULL',
     unique_key_name => 'employees_name_if_department_valid'
 );
-NOTICE:  sql_saga: altering table public.employees to add constraints: ADD CONSTRAINT employees_name_if_department_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: altering table public.employees to add constraints: ADD CONSTRAINT employees_name_if_department_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
            add_unique_key           
 ------------------------------------
  employees_name_if_department_valid
 (1 row)
 
 \d employees
-                     Table "public.employees"
-    Column     |  Type   | Collation | Nullable |     Default      
----------------+---------+-----------+----------+------------------
- id            | integer |           |          | 
- name          | text    |           |          | 
- department_id | integer |           |          | 
- valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 'infinity'::date
+                  Table "public.employees"
+    Column     |   Type    | Collation | Nullable | Default 
+---------------+-----------+-----------+----------+---------
+ id            | integer   |           |          | 
+ name          | text      |           |          | 
+ department_id | integer   |           |          | 
+ valid_range   | daterange |           | not null | 
+ valid_from    | date      |           |          | 
+ valid_until   | date      |           |          | 
 Indexes:
     "employees_name_idx" btree (name)
-    "employees_name_if_department_valid_excl" EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
-    "employees_name_if_department_valid_idx" UNIQUE, btree (name, valid_from, valid_until) WHERE department_id IS NOT NULL
+    "employees_name_if_department_valid_excl" EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
+    "employees_name_valid_range_idx" btree (name, valid_range)
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "employees_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    employees_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.public_employees_valid_template_sync()
 
 -- 1. Inserts that should PASS
 -- Two employees with same name, but NULL department (outside predicate)
-INSERT INTO employees VALUES (1, 'Alice', NULL, '2020-01-01', 'infinity');
-INSERT INTO employees VALUES (2, 'Alice', NULL, '2021-01-01', 'infinity');
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (1, 'Alice', NULL, '2020-01-01', 'infinity');
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (2, 'Alice', NULL, '2021-01-01', 'infinity');
 -- Two employees with different names in the same department
-INSERT INTO employees VALUES (3, 'Bob', 101, '2020-01-01', 'infinity');
-INSERT INTO employees VALUES (4, 'Charlie', 101, '2021-01-01', 'infinity');
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (3, 'Bob', 101, '2020-01-01', 'infinity');
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (4, 'Charlie', 101, '2021-01-01', 'infinity');
 -- 2. Inserts that should FAIL (due to temporal overlap)
 -- Overlapping period for an existing employee in a department
-INSERT INTO employees VALUES (5, 'Bob', 101, '2020-06-01', '2021-06-01');
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (5, 'Bob', 101, '2020-06-01', '2021-06-01');
 ERROR:  conflicting key value violates exclusion constraint "employees_name_if_department_valid_excl"
-DETAIL:  Key (name, daterange(valid_from, valid_until))=(Bob, [2020-06-01,2021-06-01)) conflicts with existing key (name, daterange(valid_from, valid_until))=(Bob, [2020-01-01,infinity)).
+DETAIL:  Key (name, valid_range)=(Bob, [2020-06-01,2021-06-01)) conflicts with existing key (name, valid_range)=(Bob, [2020-01-01,infinity)).
 -- 3. Inserts that should FAIL (due to exact duplicate record)
-INSERT INTO employees VALUES (6, 'Charlie', 101, '2021-01-01', 'infinity');
-ERROR:  duplicate key value violates unique constraint "employees_name_if_department_valid_idx"
-DETAIL:  Key (name, valid_from, valid_until)=(Charlie, 2021-01-01, infinity) already exists.
-SELECT id, name, department_id, valid_from, valid_until FROM employees ORDER BY id;
- id |  name   | department_id | valid_from | valid_until 
-----+---------+---------------+------------+-------------
-  1 | Alice   |               | 2020-01-01 | infinity
-  2 | Alice   |               | 2021-01-01 | infinity
-  3 | Bob     |           101 | 2020-01-01 | infinity
-  4 | Charlie |           101 | 2021-01-01 | infinity
+INSERT INTO employees(id,name,department_id,valid_from,valid_until) VALUES (6, 'Charlie', 101, '2021-01-01', 'infinity');
+ERROR:  conflicting key value violates exclusion constraint "employees_name_if_department_valid_excl"
+DETAIL:  Key (name, valid_range)=(Charlie, [2021-01-01,infinity)) conflicts with existing key (name, valid_range)=(Charlie, [2021-01-01,infinity)).
+SELECT id, name, department_id, valid_range, valid_from, valid_until FROM employees ORDER BY id;
+ id |  name   | department_id |      valid_range      | valid_from | valid_until 
+----+---------+---------------+-----------------------+------------+-------------
+  1 | Alice   |               | [2020-01-01,infinity) | 2020-01-01 | infinity
+  2 | Alice   |               | [2021-01-01,infinity) | 2021-01-01 | infinity
+  3 | Bob     |           101 | [2020-01-01,infinity) | 2020-01-01 | infinity
+  4 | Charlie |           101 | [2021-01-01,infinity) | 2021-01-01 | infinity
 (4 rows)
 
 -- 4. Drop the predicated unique key
@@ -107,18 +112,23 @@ SELECT unique_key_name FROM sql_saga.unique_keys WHERE table_schema = 'public' A
 (0 rows)
 
 \d employees
-                     Table "public.employees"
-    Column     |  Type   | Collation | Nullable |     Default      
----------------+---------+-----------+----------+------------------
- id            | integer |           |          | 
- name          | text    |           |          | 
- department_id | integer |           |          | 
- valid_from    | date    |           | not null | 
- valid_until   | date    |           | not null | 'infinity'::date
+                  Table "public.employees"
+    Column     |   Type    | Collation | Nullable | Default 
+---------------+-----------+-----------+----------+---------
+ id            | integer   |           |          | 
+ name          | text      |           |          | 
+ department_id | integer   |           |          | 
+ valid_range   | daterange |           | not null | 
+ valid_from    | date      |           |          | 
+ valid_until   | date      |           |          | 
 Indexes:
     "employees_name_idx" btree (name)
+    "employees_name_if_department_valid_excl" EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
+    "employees_name_valid_range_idx" btree (name, valid_range)
 Check constraints:
-    "employees_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "employees_valid_check" CHECK (NOT isempty(valid_range))
+Triggers:
+    employees_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.public_employees_valid_template_sync()
 
 -- Test Scenario 2: Add constraint to a table with existing data.
 -- ===============================================================
@@ -126,10 +136,12 @@ CREATE TABLE contractors (
     id int,
     name text,
     agency_id int,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('contractors', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('contractors', 'valid_range');
+NOTICE:  sql_saga: Created trigger "contractors_synchronize_temporal_columns_trigger" on table contractors to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -137,11 +149,11 @@ SELECT sql_saga.add_era('contractors', 'valid_from', 'valid_until');
 
 -- Insert initial data, including data that will violate the future constraint.
 -- Two 'David' records in agency 202 have overlapping periods.
-INSERT INTO contractors VALUES (101, 'David', 202, '2020-01-01', '2022-01-01');
-INSERT INTO contractors VALUES (102, 'David', 202, '2021-01-01', '2023-01-01');
+INSERT INTO contractors(id,name,agency_id,valid_from,valid_until) VALUES (101, 'David', 202, '2020-01-01', '2022-01-01');
+INSERT INTO contractors(id,name,agency_id,valid_from,valid_until) VALUES (102, 'David', 202, '2021-01-01', '2023-01-01');
 -- This is fine, NULL agency is outside predicate.
-INSERT INTO contractors VALUES (103, 'Eve', NULL, '2020-01-01', 'infinity');
-INSERT INTO contractors VALUES (104, 'Eve', NULL, '2021-01-01', 'infinity');
+INSERT INTO contractors(id,name,agency_id,valid_from,valid_until) VALUES (103, 'Eve', NULL, '2020-01-01', 'infinity');
+INSERT INTO contractors(id,name,agency_id,valid_from,valid_until) VALUES (104, 'Eve', NULL, '2021-01-01', 'infinity');
 -- Attempt to add the unique key. This should fail due to the overlapping 'David' records.
 SELECT sql_saga.add_unique_key(
     table_oid => 'contractors',
@@ -149,11 +161,11 @@ SELECT sql_saga.add_unique_key(
     key_type => 'predicated',
     predicate => 'agency_id IS NOT NULL'
 );
-NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
 ERROR:  could not create exclusion constraint "contractors_name_valid_excl"
-DETAIL:  Key (name, daterange(valid_from, valid_until))=(David, [2020-01-01,2022-01-01)) conflicts with key (name, daterange(valid_from, valid_until))=(David, [2021-01-01,2023-01-01)).
-CONTEXT:  SQL statement "ALTER TABLE public.contractors ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE"
-PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 553 at EXECUTE
+DETAIL:  Key (name, valid_range)=(David, [2020-01-01,2022-01-01)) conflicts with key (name, valid_range)=(David, [2021-01-01,2023-01-01)).
+CONTEXT:  SQL statement "ALTER TABLE public.contractors ADD CONSTRAINT contractors_name_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE"
+PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 505 at EXECUTE
 -- Correct the data by deleting one of the conflicting records.
 DELETE FROM contractors WHERE id = 102;
 -- Try adding the unique key again. This should now succeed.
@@ -164,22 +176,22 @@ SELECT sql_saga.add_unique_key(
     predicate => 'agency_id IS NOT NULL',
     unique_key_name => 'contractors_name_if_agency_valid'
 );
-NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_if_agency_valid_excl EXCLUDE USING gist (name WITH =, daterange(valid_from, valid_until) WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
+NOTICE:  sql_saga: altering table public.contractors to add constraints: ADD CONSTRAINT contractors_name_if_agency_valid_excl EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (agency_id IS NOT NULL) DEFERRABLE
           add_unique_key          
 ----------------------------------
  contractors_name_if_agency_valid
 (1 row)
 
 -- Test the new constraint with an insert that should fail.
-INSERT INTO contractors VALUES (105, 'David', 202, '2021-01-01', '2023-01-01');
+INSERT INTO contractors(id,name,agency_id,valid_from,valid_until) VALUES (105, 'David', 202, '2021-01-01', '2023-01-01');
 ERROR:  conflicting key value violates exclusion constraint "contractors_name_if_agency_valid_excl"
-DETAIL:  Key (name, daterange(valid_from, valid_until))=(David, [2021-01-01,2023-01-01)) conflicts with existing key (name, daterange(valid_from, valid_until))=(David, [2020-01-01,2022-01-01)).
-SELECT id, name, agency_id, valid_from, valid_until FROM contractors ORDER BY id;
- id  | name  | agency_id | valid_from | valid_until 
------+-------+-----------+------------+-------------
- 101 | David |       202 | 2020-01-01 | 2022-01-01
- 103 | Eve   |           | 2020-01-01 | infinity
- 104 | Eve   |           | 2021-01-01 | infinity
+DETAIL:  Key (name, valid_range)=(David, [2021-01-01,2023-01-01)) conflicts with existing key (name, valid_range)=(David, [2020-01-01,2022-01-01)).
+SELECT id, name, agency_id, valid_range, valid_from, valid_until FROM contractors ORDER BY id;
+ id  | name  | agency_id |       valid_range       | valid_from | valid_until 
+-----+-------+-----------+-------------------------+------------+-------------
+ 101 | David |       202 | [2020-01-01,2022-01-01) | 2020-01-01 | 2022-01-01
+ 103 | Eve   |           | [2020-01-01,infinity)   | 2020-01-01 | infinity
+ 104 | Eve   |           | [2021-01-01,infinity)   | 2021-01-01 | infinity
 (3 rows)
 
 DROP TABLE employees;

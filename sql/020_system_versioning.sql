@@ -12,7 +12,7 @@ SELECT sql_saga.add_system_versioning('system_versioning_test');
 \d system_versioning_test
 
 -- Check metadata tables
-SELECT table_schema, table_name, era_name, valid_from_column_name, valid_until_column_name FROM sql_saga.era WHERE table_name = 'system_versioning_test';
+SELECT table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name FROM sql_saga.era WHERE table_name = 'system_versioning_test';
 SELECT table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger FROM sql_saga.system_time_era WHERE table_name = 'system_versioning_test';
 SELECT table_schema, table_name, era_name, history_table_name, view_table_name FROM sql_saga.system_versioning WHERE table_name = 'system_versioning_test';
 

@@ -1,163 +1,203 @@
 /*
- * This is a unified trigger function that synchronizes all three temporal column
- * types: bounds (`valid_from`/`valid_until`), inclusive-end (`valid_to`), and
- * native range (`validity`). It uses a two-step "derive, then verify" approach:
- * 1. Derive: It establishes a single source of truth for the temporal period
- *    based on a strict precedence of the columns provided by the user.
- * 2. Verify: It checks if any other user-provided temporal values are
- *    inconsistent with the derived source of truth, raising an error if so.
+ * This is a unified trigger function that synchronizes all temporal column
+ * representations: the authoritative range column, the discrete bounds
+ * (`valid_from`/`valid_until`), and the inclusive-end (`valid_to`).
+ * It uses a "detect change, derive, check, then populate" approach to ensure
+ * perfect consistency regardless of which representation the user provides.
+ *
+ * The logic is especially nuanced for UPDATE operations to correctly infer user
+ * intent. The core principle is that only columns that are explicitly part of
+ * the SET clause are considered sources of truth for the new period. Unchanged
+ * temporal columns are ignored during consistency checks and their values are
+ * preserved from the OLD record.
+ *
+ * The process is as follows:
+ * 1. Detect Change (on UPDATE): It identifies which temporal representation was
+ *    actually modified by comparing the NEW and OLD records. For example, if an
+ *    `UPDATE` statement only `SET`s `valid_until`, only `valid_until` is
+ *    treated as an input for the new period. The existing `valid_from` and
+ *    `valid_range` are considered unchanged.
+ * 2. Derive: It deconstructs all *changed* source representation(s) into a
+ *    common `[from, until)` form.
+ * 3. Check Consistency: It verifies that all derived forms are consistent. If a
+ *    user provides multiple, conflicting temporal values in a single statement
+ *    (e.g., a `valid_to` that disagrees with a `valid_range`), it raises an
+ *    error. There is no priority; all provided inputs must agree.
+ * 4. Preserve Unchanged Bounds (on UPDATE): If a bound (e.g., the period's start)
+ *    was not specified in the `UPDATE`, its value is carried over from the OLD record.
+ * 5. Apply Defaults: If the end of the period is still undetermined (e.g., it
+ *    was explicitly set to NULL or was not provided on INSERT) and the era is
+ *    configured to apply defaults, it is set to 'infinity'.
+ * 6. Populate: It determines the final, authoritative period from the combination
+ *    of derived, preserved, and defaulted bounds, and then overwrites all
+ *    temporal columns in the NEW record to be consistent with that single period.
  */
 CREATE OR REPLACE FUNCTION sql_saga.synchronize_temporal_columns()
 RETURNS TRIGGER LANGUAGE plpgsql AS $synchronize_temporal_columns$
 DECLARE
     -- Column names passed from add_era
-    from_col      name := TG_ARGV[0];
-    until_col     name := TG_ARGV[1];
-    to_col        name := NULLIF(TG_ARGV[2], ''); -- Convert empty string to NULL
-    range_col     name := NULLIF(TG_ARGV[3], ''); -- Convert empty string to NULL
-    range_subtype regtype := TG_ARGV[4]::regtype; -- The concrete type of the bounds
+    range_col     name := TG_ARGV[0];
+    from_col      name := NULLIF(NULLIF(TG_ARGV[1], ''),'null');
+    until_col     name := NULLIF(NULLIF(TG_ARGV[2], ''),'null');
+    to_col        name := NULLIF(NULLIF(TG_ARGV[3], ''),'null');
+    range_subtype regtype := TG_ARGV[4]::regtype;
     apply_defaults boolean := TG_ARGV[5]::boolean;
 
     -- For dynamic manipulation
     rec_new record;
     new_row jsonb := to_jsonb(NEW);
+    old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) ELSE NULL END;
 
-    -- Derived values
-    derived_from    text;
-    derived_until   text;
-    derived_to      text;
-    derived_range   text;
+    -- Deconstructed bounds from each potential source in the NEW record
+    from_via_bounds text;
+    until_via_bounds text;
+    until_via_to    text;
+    from_via_range  text;
+    until_via_range text;
 
-    -- User-provided values
-    user_from    text := new_row ->> from_col;
-    user_until   text := new_row ->> until_col;
-    user_to      text := new_row ->> to_col;
-    user_range   text := new_row ->> range_col;
+    -- Final, authoritative values for the period
+    final_from  text;
+    final_until text;
+
+    is_range_changed  boolean;
+    is_from_changed   boolean;
+    is_until_changed  boolean;
+    is_to_changed     boolean;
+    is_until_explicitly_null boolean;
 BEGIN
-    RAISE DEBUG 'TG_OP: %, user_from: %, user_until: %, user_to: %, user_range: %', TG_OP, user_from, user_until, user_to, user_range;
+    -- This trigger follows a strict logical sequence:
+    -- 1. Gather all inputs provided by the user for this operation. For an UPDATE,
+    --    an "input" is any temporal column whose value is distinct from the OLD record.
+    -- 2. Apply default values. If the user did not provide any end-of-period and
+    --    defaults are enabled, 'infinity' is used. This happens *before* consistency
+    --    checks to simplify the logic.
+    -- 3. Check for inconsistencies among all the gathered inputs. If multiple, conflicting
+    --    values were provided for the start or end of the period, raise an error.
+    -- 4. Derive the final, authoritative period. This is a single `[from, until)`
+    --    that is either taken from a consistent user input, or preserved from the
+    --    OLD record on an UPDATE if no change was requested.
+    -- 5. Populate all temporal representations (`range`, `from/until`, `to`) from
+    --    the single authoritative period to ensure the row is perfectly consistent.
 
-    -- Step 1: Determine the source of truth and derive initial bounds.
-    IF TG_OP = 'UPDATE' THEN
-        DECLARE
-            old_row jsonb := to_jsonb(OLD);
-            range_changed boolean := range_col IS NOT NULL AND (new_row ->> range_col) IS DISTINCT FROM (old_row ->> range_col);
-            to_changed    boolean := to_col IS NOT NULL AND (new_row ->> to_col) IS DISTINCT FROM (old_row ->> to_col);
-        BEGIN
-            IF range_changed THEN
-                -- Derivation Source: Range has the highest precedence.
-                DECLARE range_type regtype;
-                BEGIN
-                    SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-                    EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type /* %s */, range_type /* %s */) INTO derived_from, derived_until USING user_range;
-                END;
-            ELSIF to_changed THEN
-                -- Derivation Source: valid_to has the second highest precedence.
-                derived_from := user_from;
-                EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype /* %s */) INTO derived_until USING user_to;
-            ELSE -- Derivation Source: bounds are the default.
-                derived_from  := user_from;
-                derived_until := user_until;
-            END IF;
-        END;
-    ELSE -- INSERT: Establish derivation source based on simple precedence.
-        IF range_col IS NOT NULL AND user_range IS NOT NULL AND user_range <> 'empty' THEN
-            -- Derivation Source: Range has the highest precedence.
-            DECLARE range_type regtype;
-            BEGIN
-                SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-                EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type /* %s */, range_type /* %s */) INTO derived_from, derived_until USING user_range;
-            END;
-        ELSIF to_col IS NOT NULL AND user_to IS NOT NULL THEN
-            -- Derivation Source: valid_to has the second highest precedence.
-            derived_from := user_from;
-            EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype /* %s */) INTO derived_until USING user_to;
-        ELSE
-            -- Derivation Source: bounds are the default.
-            derived_from  := user_from;
-            derived_until := user_until;
-        END IF;
+    -- STEP 1: Gather all changed inputs.
+    is_range_changed  := (TG_OP = 'INSERT' AND (new_row ->> range_col) IS NOT NULL AND (new_row ->> range_col) <> 'empty') OR (TG_OP = 'UPDATE' AND (new_row ->> range_col) IS DISTINCT FROM (old_row ->> range_col));
+    is_from_changed   := from_col IS NOT NULL AND ((TG_OP = 'INSERT' AND (new_row ->> from_col) IS NOT NULL) OR (TG_OP = 'UPDATE' AND (new_row ->> from_col) IS DISTINCT FROM (old_row ->> from_col)));
+    is_until_changed  := until_col IS NOT NULL AND ((TG_OP = 'INSERT' AND (new_row ->> until_col) IS NOT NULL) OR (TG_OP = 'UPDATE' AND (new_row ->> until_col) IS DISTINCT FROM (old_row ->> until_col)));
+    is_to_changed     := to_col IS NOT NULL AND ((TG_OP = 'INSERT' AND (new_row ->> to_col) IS NOT NULL) OR (TG_OP = 'UPDATE' AND (new_row ->> to_col) IS DISTINCT FROM (old_row ->> to_col)));
+    -- An explicit NULL is also a change. The condition for applying defaults must be more specific.
+    is_until_explicitly_null := until_col IS NOT NULL AND (new_row ->> until_col) IS NULL AND ((TG_OP = 'INSERT') OR (TG_OP = 'UPDATE' AND (old_row ->> until_col) IS NOT NULL));
+
+    -- Check for empty range explicitly
+    IF (new_row ->> range_col) = 'empty' THEN
+        RAISE EXCEPTION 'Cannot use an empty range for temporal column "%"', range_col;
     END IF;
 
-    -- For INSERTs, if the trigger is configured to apply defaults and the bounds
-    -- are still open, default them to infinity.
-    IF TG_OP = 'INSERT' AND apply_defaults AND derived_until IS NULL THEN
-        derived_until := 'infinity';
-    END IF;
-
-    -- For UPDATEs, a NULL end date is a consistency violation. It must be infinity.
-    IF TG_OP = 'UPDATE' AND derived_until IS NULL THEN
-        DECLARE
-            culprit_col   name;
-            old_row       jsonb := to_jsonb(OLD);
-        BEGIN
-            -- Determine which column the user set to NULL to provide a more helpful error message.
-            IF to_col IS NOT NULL AND (new_row ->> to_col) IS DISTINCT FROM (old_row ->> to_col) AND (new_row ->> to_col) IS NULL THEN
-                culprit_col := to_col;
-            ELSIF range_col IS NOT NULL AND (new_row ->> range_col) IS DISTINCT FROM (old_row ->> range_col) AND (new_row ->> range_col) IS NULL THEN
-                culprit_col := range_col;
-            ELSE
-                -- Default to the main 'until' column if the specific cause isn't one of the other synchronized columns.
-                culprit_col := until_col;
-            END IF;
-
-            RAISE EXCEPTION 'An update resulted in an unbounded period by setting the end date to NULL. To make a period open-ended, set "%" to ''infinity''.', culprit_col;
-        END;
-    END IF;
-
-    RAISE DEBUG 'Derived after Step 1: derived_from: %, derived_until: %', derived_from, derived_until;
-
-    -- Step 2: From the derived bounds, derive all other representations.
-    IF to_col IS NOT NULL AND derived_until IS NOT NULL THEN
-        EXECUTE format('SELECT CASE WHEN $1 = ''infinity'' THEN ''infinity'' ELSE ($1::%s - 1)::text END', range_subtype /* %s */)
-            INTO derived_to
-            USING derived_until;
-    END IF;
-
-    IF range_col IS NOT NULL AND derived_from IS NOT NULL AND derived_until IS NOT NULL THEN
+    IF is_range_changed THEN
         DECLARE range_type regtype;
         BEGIN
             SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
-            EXECUTE format('SELECT %s($1::%s, $2::%s, ''[)'')', range_type /* %s */, range_subtype /* %s */, range_subtype /* %s */) INTO derived_range USING derived_from, derived_until;
-        EXCEPTION WHEN data_exception THEN -- let CHECK constraint handle invalid bounds
+            -- `upper()` correctly returns NULL for an unbounded upper range.
+            EXECUTE format('SELECT lower($1::%s)::text, upper($1::%s)::text', range_type, range_type)
+                INTO from_via_range, until_via_range
+                USING (new_row ->> range_col);
         END;
     END IF;
+    IF is_from_changed THEN from_via_bounds := (new_row ->> from_col); END IF;
+    IF is_until_changed THEN until_via_bounds := (new_row ->> until_col); END IF;
 
-    -- Step 3: Verify consistency and populate NEW record.
-    -- Fail fast if the user provides multiple, inconsistent temporal representations.
+    -- STEP 2: Check for inconsistencies and determine authoritative period.
+    -- This logic is declarative: it gathers all provided sources for each part
+    -- of the period (start and end), verifies they are consistent, and then
+    -- determines the final, authoritative value.
+
+    -- Part A: Determine the start of the period ('final_from')
     DECLARE
-        old_row       jsonb := to_jsonb(OLD);
-        from_changed  boolean := TG_OP = 'UPDATE' AND (new_row ->> from_col) IS DISTINCT FROM (old_row ->> from_col);
-        until_changed boolean := TG_OP = 'UPDATE' AND (new_row ->> until_col) IS DISTINCT FROM (old_row ->> until_col);
-        to_changed    boolean := TG_OP = 'UPDATE' AND to_col IS NOT NULL AND (new_row ->> to_col) IS DISTINCT FROM (old_row ->> to_col);
-        range_changed boolean := TG_OP = 'UPDATE' AND range_col IS NOT NULL AND (new_row ->> range_col) IS DISTINCT FROM (old_row ->> range_col);
+        from_sources jsonb := '{}'::jsonb;
     BEGIN
-        IF (TG_OP = 'INSERT' AND user_from IS NOT NULL) OR from_changed THEN
-            IF user_from IS DISTINCT FROM derived_from THEN
-                RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', from_col, user_from, derived_from;
+        IF is_range_changed THEN from_sources := from_sources || jsonb_build_object(range_col, from_via_range); END IF;
+        IF is_from_changed THEN from_sources := from_sources || jsonb_build_object(from_col, from_via_bounds); END IF;
+
+        DECLARE
+            -- Ignore NULL values during consistency check; they mean "not provided".
+            distinct_from_values text[] := (SELECT array_agg(DISTINCT value) FROM jsonb_each_text(from_sources) WHERE value IS NOT NULL);
+        BEGIN
+            IF array_length(distinct_from_values, 1) > 1 THEN
+                 RAISE EXCEPTION 'Inconsistent start of period provided. Sources: %', jsonb_strip_nulls(from_sources);
             END IF;
-        END IF;
-        IF (TG_OP = 'INSERT' AND user_until IS NOT NULL) OR until_changed THEN
-            IF user_until IS DISTINCT FROM derived_until THEN
-                RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', until_col, user_until, derived_until;
-            END IF;
-        END IF;
-        IF (TG_OP = 'INSERT' AND to_col IS NOT NULL AND user_to IS NOT NULL) OR to_changed THEN
-            IF user_to IS DISTINCT FROM derived_to THEN
-                RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', to_col, user_to, derived_to;
-            END IF;
-        END IF;
-        IF (TG_OP = 'INSERT' AND range_col IS NOT NULL AND user_range IS NOT NULL AND user_range <> 'empty') OR range_changed THEN
-            IF user_range IS DISTINCT FROM derived_range THEN
-                RAISE EXCEPTION 'Inconsistent values: "%" is %, but is derived as % from other inputs.', range_col, user_range, derived_range;
-            END IF;
+            final_from := distinct_from_values[1];
+        END;
+
+        IF TG_OP = 'UPDATE' AND (SELECT count(*) FROM jsonb_object_keys(from_sources)) = 0 THEN
+            final_from := old_row ->> from_col;
         END IF;
     END;
 
-    -- Populate all columns with the consistent, derived values.
-    new_row := jsonb_set(new_row, ARRAY[from_col], to_jsonb(derived_from));
-    new_row := jsonb_set(new_row, ARRAY[until_col], to_jsonb(derived_until));
-    IF to_col IS NOT NULL THEN new_row := jsonb_set(new_row, ARRAY[to_col], to_jsonb(derived_to)); END IF;
-    IF range_col IS NOT NULL THEN new_row := jsonb_set(new_row, ARRAY[range_col], to_jsonb(derived_range)); END IF;
+    -- Part B: Determine the end of the period ('final_until')
+    DECLARE
+        until_sources jsonb := '{}'::jsonb;
+    BEGIN
+        IF is_to_changed THEN
+            IF final_from IS NULL THEN
+                 RAISE EXCEPTION 'When setting "%", the start of the period must also be provided via "%" or "%".', to_col, from_col, range_col;
+            END IF;
+            EXECUTE format('SELECT ($1::%s + 1)::text', range_subtype) INTO until_via_to USING (new_row ->> to_col);
+            until_sources := until_sources || jsonb_build_object(to_col, until_via_to);
+        END IF;
+
+        IF is_range_changed THEN until_sources := until_sources || jsonb_build_object(range_col, until_via_range); END IF;
+        IF is_until_changed THEN until_sources := until_sources || jsonb_build_object(until_col, until_via_bounds); END IF;
+
+        DECLARE
+            -- Ignore NULL values during consistency check, they mean "not provided".
+            distinct_until_values text[] := (SELECT array_agg(DISTINCT value) FROM jsonb_each_text(until_sources) WHERE value IS NOT NULL);
+        BEGIN
+            IF array_length(distinct_until_values, 1) > 1 THEN
+                RAISE EXCEPTION 'Inconsistent end of period provided. Sources: %', jsonb_strip_nulls(until_sources);
+            END IF;
+            final_until := distinct_until_values[1];
+        END;
+
+        IF TG_OP = 'UPDATE' AND (SELECT count(*) FROM jsonb_object_keys(until_sources)) = 0 THEN
+            final_until := old_row ->> until_col;
+        END IF;
+
+        IF apply_defaults AND final_until IS NULL THEN
+            final_until := 'infinity';
+        END IF;
+    END;
+
+    IF final_from IS NULL OR final_until IS NULL THEN
+        IF to_col IS NOT NULL THEN
+             RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%", "%" (with "%"), or the pair "%"/"%" must be provided.', range_col, to_col, from_col, from_col, until_col;
+        ELSE
+             RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%" or the pair "%"/"%" must be provided.', range_col, from_col, until_col;
+        END IF;
+    END IF;
+
+    -- STEP 4: Populate all temporal columns in the NEW record from the final bounds.
+    -- This ensures all representations are consistent.
+    IF from_col IS NOT NULL THEN
+        new_row := jsonb_set(new_row, ARRAY[from_col], to_jsonb(final_from));
+        new_row := jsonb_set(new_row, ARRAY[until_col], to_jsonb(final_until));
+    END IF;
+
+    IF to_col IS NOT NULL THEN
+        DECLARE final_to text;
+        BEGIN
+            EXECUTE format('SELECT CASE WHEN $1 = ''infinity'' THEN ''infinity'' ELSE ($1::%s - 1)::text END', range_subtype) INTO final_to USING final_until;
+            new_row := jsonb_set(new_row, ARRAY[to_col], to_jsonb(final_to));
+        END;
+    END IF;
+
+    DECLARE
+        final_range text;
+        range_type regtype;
+    BEGIN
+        SELECT a.atttypid INTO range_type FROM pg_attribute a WHERE a.attrelid = TG_RELID AND a.attname = range_col;
+        EXECUTE format('SELECT %s($1::%s, $2::%s, ''[)'')', range_type, range_subtype, range_subtype) INTO final_range USING final_from, final_until;
+        new_row := jsonb_set(new_row, ARRAY[range_col], to_jsonb(final_range));
+    EXCEPTION WHEN data_exception THEN -- Let the table's CHECK constraint handle invalid bounds (e.g., from >= until)
+    END;
 
     rec_new := jsonb_populate_record(NEW, new_row);
     RETURN rec_new;

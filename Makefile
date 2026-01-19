@@ -74,15 +74,19 @@ test: setup_test_files installcheck
 
 
 # expected updates the .out files for the last run test suite.
-# It parses regression.out to find which tests were run.
+# It parses regression.out to find which tests were run, or uses TESTS if provided.
 # Usage: `make test [fast|benchmark|TESTS=...]; make expected`
+#    or: `make expected TESTS="test1 test2"`
 .PHONY: expected
 expected:
-	@if [ ! -f regression.out ]; then \
+	@if [ -n "$(TESTS)" ]; then \
+		TESTS_TO_UPDATE="$(TESTS)"; \
+	elif [ ! -f regression.out ]; then \
 		echo "All tests passed. Nothing to update."; \
 		exit 0; \
-	fi
-	@TESTS_TO_UPDATE=$$(awk -F ' - ' '/^(not )?ok/ {print $$2}' regression.out | awk '{print $$1}'); \
+	else \
+		TESTS_TO_UPDATE=$$(awk -F ' - ' '/^(not )?ok/ {print $$2}' regression.out | awk '{print $$1}'); \
+	fi; \
 	if [ -z "$$TESTS_TO_UPDATE" ]; then \
 		echo "No tests found in regression.out. Nothing to update."; \
 		exit 0; \
@@ -158,6 +162,31 @@ diff-fail-all diff-fail-first:
 
 vim vimo nvim nvimo:
 	@:
+
+# Renumber test files to make room for a new test at a specific slot.
+# Usage: make renumber-tests-from SLOT=066
+# This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
+# After running, create your new 066_*.sql file.
+.PHONY: renumber-tests-from
+renumber-tests-from:
+	@if [ -z "$(SLOT)" ]; then \
+		echo "Usage: make renumber-tests-from SLOT=066"; \
+		exit 1; \
+	fi; \
+	echo "Renumbering tests from $(SLOT) onwards..."; \
+	for num in $$(seq 99 -1 $(SLOT)); do \
+		padded=$$(printf "%03d" $$num); \
+		next=$$(printf "%03d" $$((num + 1))); \
+		for dir in sql expected; do \
+			for f in $$dir/$${padded}_*; do \
+				[ -e "$$f" ] || continue; \
+				newname=$$(echo "$$f" | sed "s/$${padded}_/$${next}_/"); \
+				echo "git mv $$f $$newname"; \
+				git mv "$$f" "$$newname"; \
+			done; \
+		done; \
+	done; \
+	echo "Done. Slot $(SLOT) is now available."
 
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master

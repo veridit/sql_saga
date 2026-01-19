@@ -122,11 +122,20 @@ This document is automatically generated from the database schema by the `80_gen
 
 > Represents the internal DML action to be taken by the executor for a given atomical time segment, as determined by the planner.
 > These values use a "future tense" convention (e.g., SKIP_...) as they represent a plan for an action, not a completed result.
+> 
+> Execution Strategy: with_temporary_temporal_gaps (PostgreSQL 18+)
 > The order of these values is critical, as it defines the execution order when sorting the plan:
-> INSERTs must happen before UPDATEs, which must happen before DELETEs to ensure foreign key consistency,
-> that is check on the intermediate MVCC snapshots between the changes in the same transaction.
+> DELETEs must happen before UPDATEs, which must happen before INSERTs to preserve temporal uniqueness.
+> This execution order creates temporary gaps (orphaned child records) that are tolerated by DEFERRABLE
+> foreign key checks until transaction end, avoiding overlaps that would violate NOT DEFERRABLE unique constraints.
+> 
+> This enables native PostgreSQL 18 temporal foreign keys (FOREIGN KEY ... PERIOD) which cannot reference
+> DEFERRABLE unique constraints. The DELETE-first strategy ensures temporal uniqueness is never violated
+> while maintaining referential integrity through deferred FK checks.
+> 
+> Operation Definitions:
 > - INSERT: A new historical record will be inserted.
-> - UPDATE: An existing historical record will be modified (typically by shortening its period).
+> - UPDATE: An existing historical record will be modified (data and/or period).
 > - DELETE: An existing historical record will be deleted.
 > - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
 > - SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.
@@ -147,18 +156,29 @@ This document is automatically generated from the database schema by the `80_gen
 
 ### temporal_merge_update_effect
 
-> Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations to ensure temporal integrity.
-> The planner relies on this specific ENUM order for sorting: timeline-extending operations must execute before timeline-shortening operations.
-> - GROW: The new period is a superset of the old one. These are executed first.
-> - NONE: The period is unchanged (a data-only update).
+> Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations within the
+> with_temporary_temporal_gaps execution strategy.
+> 
+> The ENUM order determines execution sequence to minimize temporary gap duration:
+> 1. NONE: Data-only updates (no timeline change) - executed first, no temporal impact
+> 2. SHRINK: Period contraction - reduces timeline coverage, executed early
+> 3. MOVE: Period shift - neither pure growth nor shrinkage
+> 4. GROW: Period extension - increases timeline coverage, executed last to minimize gaps
+> 
+> This ordering ensures that timeline contractions happen before expansions, minimizing the window
+> where temporary gaps exist and reducing the risk of constraint violations.
+> 
+> Effect Definitions:
+> - NONE: The period is unchanged (a data-only update). No temporal impact.
+> - SHRINK: The new period is a subset of the old one. Reduces timeline coverage.
 > - MOVE: The period shifts without being a pure grow or shrink.
-> - SHRINK: The new period is a subset of the old one. These are executed last.
+> - GROW: The new period is a superset of the old one. Expands timeline coverage.
 
 ```sql
-- GROW
 - NONE
-- MOVE
 - SHRINK
+- MOVE
+- GROW
 ```
 
 ### trigger_action
@@ -199,16 +219,17 @@ This document is automatically generated from the database schema by the `80_gen
 ```sql
 FUNCTION add_era(
     table_oid regclass,
-    valid_from_column_name name DEFAULT 'valid_from'::name,
-    valid_until_column_name name DEFAULT 'valid_until'::name,
+    range_column_name name,
     era_name name DEFAULT 'valid'::name,
-    range_type regtype DEFAULT NULL::regtype,
-    bounds_check_constraint name DEFAULT NULL::name,
-    synchronize_valid_to_column name DEFAULT NULL::name,
-    synchronize_range_column name DEFAULT NULL::name,
+    synchronize_columns boolean DEFAULT true,
+    valid_from_column_name name DEFAULT NULL::name,
+    valid_until_column_name name DEFAULT NULL::name,
+    valid_to_column_name name DEFAULT NULL::name,
     create_columns boolean DEFAULT false,
     add_defaults boolean DEFAULT true,
-    add_bounds_check boolean DEFAULT true
+    add_bounds_check boolean DEFAULT true,
+    range_type regtype DEFAULT NULL::regtype,
+    bounds_check_constraint name DEFAULT NULL::name
 ) RETURNS boolean
 SECURITY DEFINER
 ```
@@ -336,8 +357,6 @@ FUNCTION add_temporal_foreign_key(
     update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
     delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
     foreign_key_name name DEFAULT NULL::name,
-    fk_insert_trigger name DEFAULT NULL::name,
-    fk_update_trigger name DEFAULT NULL::name,
     uk_update_trigger name DEFAULT NULL::name,
     uk_delete_trigger name DEFAULT NULL::name,
     create_index boolean DEFAULT true
@@ -573,12 +592,36 @@ SECURITY DEFINER
 
 ## Internal and Helper Functions
 
+### add_synchronize_temporal_columns_trigger
+
+> Generator for high-performance table-specific temporal column sync triggers.
+
+```sql
+PROCEDURE add_synchronize_temporal_columns_trigger(
+    IN table_oid regclass,
+    IN era_name name
+)
+SECURITY DEFINER
+```
+
 ### drop_protection
 
 > An event trigger function that prevents accidental dropping of sql_saga-managed objects.
 
 ```sql
 FUNCTION drop_protection() RETURNS event_trigger
+SECURITY DEFINER
+```
+
+### drop_synchronize_temporal_columns_trigger
+
+> Drops the table-specific sync trigger and its specialized trigger function.
+
+```sql
+PROCEDURE drop_synchronize_temporal_columns_trigger(
+    IN table_oid regclass,
+    IN era_name name
+)
 SECURITY DEFINER
 ```
 

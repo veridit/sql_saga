@@ -31,17 +31,19 @@ CREATE SCHEMA test_schema;
 CREATE TABLE test_schema.schema_test (
     id int,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('test_schema.schema_test', 'valid_range');
+NOTICE:  sql_saga: Created trigger "schema_test_synchronize_temporal_columns_trigger" on table test_schema.schema_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ADD CONSTRAINT schema_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT schema_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ADD CONSTRAINT schema_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  schema_test_id_valid
@@ -54,13 +56,14 @@ SELECT sql_saga.add_for_portion_of_view('test_schema.schema_test'::regclass);
 (1 row)
 
 \d test_schema.schema_test__for_portion_of_valid
-  View "test_schema.schema_test__for_portion_of_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- value       | text    |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
+   View "test_schema.schema_test__for_portion_of_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ value       | text      |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
@@ -71,11 +74,11 @@ TABLE sql_saga.updatable_view;
 (1 row)
 
 -- DML must be on the base table now
-INSERT INTO test_schema.schema_test VALUES (1, 'A', '2024-01-01', 'infinity');
+INSERT INTO test_schema.schema_test (id, value, valid_from, valid_until) VALUES (1, 'A', '2024-01-01', 'infinity');
 TABLE test_schema.schema_test;
- id | value | valid_from | valid_until 
-----+-------+------------+-------------
-  1 | A     | 2024-01-01 | infinity
+ id | value |      valid_range      | valid_from | valid_until 
+----+-------+-----------------------+------------+-------------
+  1 | A     | [2024-01-01,infinity) | 2024-01-01 | infinity
 (1 row)
 
 SELECT sql_saga.drop_for_portion_of_view('test_schema.schema_test'::regclass);
@@ -87,16 +90,17 @@ SELECT sql_saga.drop_for_portion_of_view('test_schema.schema_test'::regclass);
 ROLLBACK TO SAVEPOINT scenario_1;
 -- Scenario 2: ACL and Ownership tests
 SAVEPOINT scenario_2;
-CREATE TABLE acl_test (id int, value text, valid_from date, valid_until date);
+CREATE TABLE acl_test (id int, value text, valid_range daterange, valid_from date, valid_until date);
 ALTER TABLE acl_test OWNER to view_test_role;
-SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('acl_test', 'valid_range');
+NOTICE:  sql_saga: Created trigger "acl_test_synchronize_temporal_columns_trigger" on table acl_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT acl_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  acl_test_id_valid
@@ -113,13 +117,14 @@ SELECT sql_saga.add_for_portion_of_view('acl_test'::regclass);
 RESET ROLE;
 -- Verify owner of the view is correct
 \d acl_test__for_portion_of_valid
-      View "public.acl_test__for_portion_of_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- value       | text    |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
+       View "public.acl_test__for_portion_of_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ value       | text      |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
@@ -156,11 +161,11 @@ NOTICE:  schema "pg_temp" does not exist, skipping
 SET ROLE sql_saga_unprivileged_user;
 UPDATE acl_test__for_portion_of_valid SET value = 'no', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
 TABLE acl_test ORDER BY valid_from;
- id |  value  | valid_from | valid_until 
-----+---------+------------+-------------
-  1 | initial | 2024-01-01 | 2024-02-01
-  1 | no      | 2024-02-01 | 2024-03-01
-  1 | initial | 2024-03-01 | infinity
+ id |  value  |       valid_range       | valid_from | valid_until 
+----+---------+-------------------------+------------+-------------
+  1 | initial | [2024-01-01,2024-02-01) | 2024-01-01 | 2024-02-01
+  1 | no      | [2024-02-01,2024-03-01) | 2024-02-01 | 2024-03-01
+  1 | initial | [2024-03-01,infinity)   | 2024-03-01 | infinity
 (3 rows)
 
 ROLLBACK TO SAVEPOINT expect_update_without_delete_priv;
@@ -181,11 +186,11 @@ SELECT CURRENT_ROLE;
 -- Should now succeed
 UPDATE acl_test__for_portion_of_valid SET value = 'yes', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
 TABLE acl_test ORDER BY valid_from;
- id |  value  | valid_from | valid_until 
-----+---------+------------+-------------
-  1 | initial | 2024-01-01 | 2024-02-01
-  1 | yes     | 2024-02-01 | 2024-03-01
-  1 | initial | 2024-03-01 | infinity
+ id |  value  |       valid_range       | valid_from | valid_until 
+----+---------+-------------------------+------------+-------------
+  1 | initial | [2024-01-01,2024-02-01) | 2024-01-01 | 2024-02-01
+  1 | yes     | [2024-02-01,2024-03-01) | 2024-02-01 | 2024-03-01
+  1 | initial | [2024-03-01,infinity)   | 2024-03-01 | infinity
 (3 rows)
 
 ROLLBACK TO can_update;
@@ -198,8 +203,9 @@ SELECT sql_saga.drop_for_portion_of_view('acl_test'::regclass);
 ROLLBACK TO SAVEPOINT scenario_2;
 -- Scenario 3: Drop behavior
 SAVEPOINT scenario_3;
-CREATE TABLE drop_test (id int, value text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
-SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
+CREATE TABLE drop_test (id int, value text, valid_range daterange, valid_from date, valid_until date, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('drop_test', 'valid_range');
+NOTICE:  sql_saga: Created trigger "drop_test_synchronize_temporal_columns_trigger" on table drop_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -233,8 +239,9 @@ TABLE sql_saga.updatable_view;
 -- DROP TABLE should now succeed
 DROP TABLE drop_test;
 -- Recreate for next test
-CREATE TABLE drop_test (id int, value text, valid_from date, valid_until date, PRIMARY KEY (id, valid_from));
-SELECT sql_saga.add_era('drop_test', 'valid_from', 'valid_until');
+CREATE TABLE drop_test (id int, value text, valid_range daterange, valid_from date, valid_until date, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('drop_test', 'valid_range');
+NOTICE:  sql_saga: Created trigger "drop_test_synchronize_temporal_columns_trigger" on table drop_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -267,17 +274,19 @@ SAVEPOINT scenario_4;
 CREATE TABLE no_pk_test (
     id integer,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
-SELECT sql_saga.add_era('no_pk_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('no_pk_test', 'valid_range');
+NOTICE:  sql_saga: Created trigger "no_pk_test_synchronize_temporal_columns_trigger" on table no_pk_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.no_pk_test to add constraints: ADD CONSTRAINT no_pk_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT no_pk_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.no_pk_test to add constraints: ADD CONSTRAINT no_pk_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  no_pk_test_id_valid
@@ -291,18 +300,18 @@ SELECT sql_saga.add_for_portion_of_view('no_pk_test');
 
 INSERT INTO no_pk_test (id, value, valid_from, valid_until) VALUES (1, 'initial', '2020-01-01', '2021-01-01');
 TABLE no_pk_test;
- id |  value  | valid_from | valid_until 
-----+---------+------------+-------------
-  1 | initial | 2020-01-01 | 2021-01-01
+ id |  value  |       valid_range       | valid_from | valid_until 
+----+---------+-------------------------+------------+-------------
+  1 | initial | [2020-01-01,2021-01-01) | 2020-01-01 | 2021-01-01
 (1 row)
 
 UPDATE no_pk_test__for_portion_of_valid SET value = 'updated', valid_from = '2020-06-01', valid_until = '2020-09-01' WHERE id = 1;
 TABLE no_pk_test ORDER BY valid_from;
- id |  value  | valid_from | valid_until 
-----+---------+------------+-------------
-  1 | initial | 2020-01-01 | 2020-06-01
-  1 | updated | 2020-06-01 | 2020-09-01
-  1 | initial | 2020-09-01 | 2021-01-01
+ id |  value  |       valid_range       | valid_from | valid_until 
+----+---------+-------------------------+------------+-------------
+  1 | initial | [2020-01-01,2020-06-01) | 2020-01-01 | 2020-06-01
+  1 | updated | [2020-06-01,2020-09-01) | 2020-06-01 | 2020-09-01
+  1 | initial | [2020-09-01,2021-01-01) | 2020-09-01 | 2021-01-01
 (3 rows)
 
 SELECT sql_saga.drop_for_portion_of_view('no_pk_test'::regclass);
@@ -331,11 +340,13 @@ CREATE TABLE non_btree_test (
     id integer GENERATED BY DEFAULT AS IDENTITY,
     pt point,
     value text,
+    valid int4range,
     valid_from integer,
     valid_until integer,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('non_btree_test', 'valid_from', 'valid_until', 'p');
+SELECT sql_saga.add_era('non_btree_test', 'valid', 'p');
+NOTICE:  sql_saga: Created trigger "non_btree_test_synchronize_temporal_columns_trigger" on table non_btree_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -349,38 +360,38 @@ SELECT sql_saga.add_for_portion_of_view('non_btree_test', 'p');
 
 INSERT INTO non_btree_test (pt, value, valid_from, valid_until) VALUES ('(0, 0)', 'sample', 10, 41);
 TABLE non_btree_test;
- id |  pt   | value  | valid_from | valid_until 
-----+-------+--------+------------+-------------
-  1 | (0,0) | sample |         10 |          41
+ id |  pt   | value  |  valid  | valid_from | valid_until 
+----+-------+--------+---------+------------+-------------
+  1 | (0,0) | sample | [10,41) |         10 |          41
 (1 row)
 
 -- Test with explicit WHERE clause on PK
 SAVEPOINT before_btree_update;
 UPDATE non_btree_test__for_portion_of_p SET value = 'simple', valid_from = 21, valid_until = 31 WHERE id = 1;
 TABLE non_btree_test ORDER BY valid_from;
- id |  pt   | value  | valid_from | valid_until 
-----+-------+--------+------------+-------------
-  1 | (0,0) | sample |         10 |          21
-  1 | (0,0) | simple |         21 |          31
-  1 | (0,0) | sample |         31 |          41
+ id |  pt   | value  |  valid  | valid_from | valid_until 
+----+-------+--------+---------+------------+-------------
+  1 | (0,0) | sample | [10,21) |         10 |          21
+  1 | (0,0) | simple | [21,31) |         21 |          31
+  1 | (0,0) | sample | [31,41) |         31 |          41
 (3 rows)
 
 ROLLBACK TO before_btree_update;
 -- Check that state was restored
 TABLE non_btree_test;
- id |  pt   | value  | valid_from | valid_until 
-----+-------+--------+------------+-------------
-  1 | (0,0) | sample |         10 |          41
+ id |  pt   | value  |  valid  | valid_from | valid_until 
+----+-------+--------+---------+------------+-------------
+  1 | (0,0) | sample | [10,41) |         10 |          41
 (1 row)
 
 -- Test without explicit WHERE clause (legacy behavior)
 UPDATE non_btree_test__for_portion_of_p SET value = 'simple', valid_from = 21, valid_until = 31;
 TABLE non_btree_test ORDER BY valid_from;
- id |  pt   | value  | valid_from | valid_until 
-----+-------+--------+------------+-------------
-  1 | (0,0) | sample |         10 |          21
-  1 | (0,0) | simple |         21 |          31
-  1 | (0,0) | sample |         31 |          41
+ id |  pt   | value  |  valid  | valid_from | valid_until 
+----+-------+--------+---------+------------+-------------
+  1 | (0,0) | sample | [10,21) |         10 |          21
+  1 | (0,0) | simple | [21,31) |         21 |          31
+  1 | (0,0) | sample | [31,41) |         31 |          41
 (3 rows)
 
 SELECT sql_saga.drop_for_portion_of_view('non_btree_test', 'p');
@@ -413,15 +424,19 @@ CREATE TABLE gen_cols_test (
     id_gen_always BIGINT GENERATED ALWAYS AS IDENTITY,
     id_stored BIGINT GENERATED ALWAYS AS (id_serial * 2) STORED,
     product TEXT,
+    """valid_range""" int4range,
     """from""" INTEGER,
     """until""" INTEGER,
     price NUMERIC,
-    PRIMARY KEY (id_gen_default, """from""")
+    PRIMARY KEY (id_gen_default, """valid_range""" WITHOUT OVERLAPS)
 );
 -- Add sql_saga features with non-standard, quoted column names
-SELECT sql_saga.add_era('gen_cols_test', '"from"', '"until"', 'p');
+SELECT sql_saga.add_era('gen_cols_test', '"valid_range"', era_name => 'p',
+    valid_from_column_name => '"from"', 
+    valid_until_column_name => '"until"');
 WARNING:  Table "gen_cols_test" has a GENERATED ALWAYS AS IDENTITY column ("id_gen_always"). This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, the identity column must be GENERATED BY DEFAULT AS IDENTITY to allow inserting historical records.
+NOTICE:  sql_saga: Created trigger "gen_cols_test_synchronize_temporal_columns_trigger" on table gen_cols_test to synchronize columns: "from", "until"
  add_era 
 ---------
  t
@@ -436,9 +451,9 @@ SELECT sql_saga.add_for_portion_of_view('gen_cols_test', 'p');
 -- Insert initial data
 INSERT INTO gen_cols_test (product, """from""", """until""", price) VALUES ('Widget', 10, 20, 100);
 TABLE gen_cols_test;
- id_serial | id_gen_default | id_gen_always | id_stored | product | "from" | "until" | price 
------------+----------------+---------------+-----------+---------+--------+---------+-------
-         1 |              1 |             1 |         2 | Widget  |     10 |      20 |   100
+ id_serial | id_gen_default | id_gen_always | id_stored | product | "valid_range" | "from" | "until" | price 
+-----------+----------------+---------------+-----------+---------+---------------+--------+---------+-------
+         1 |              1 |             1 |         2 | Widget  | [10,20)       |     10 |      20 |   100
 (1 row)
 
 -- Perform an update that splits the existing row.
@@ -448,33 +463,36 @@ TABLE gen_cols_test;
 UPDATE gen_cols_test__for_portion_of_p SET """from""" = 15, """until""" = 20, price = 80;
 -- Verify the result. We expect two rows now.
 TABLE gen_cols_test ORDER BY """from""";
- id_serial | id_gen_default | id_gen_always | id_stored | product | "from" | "until" | price 
------------+----------------+---------------+-----------+---------+--------+---------+-------
-         1 |              1 |             1 |         2 | Widget  |     10 |      15 |   100
-         2 |              1 |             2 |         4 | Widget  |     15 |      20 |    80
+ id_serial | id_gen_default | id_gen_always | id_stored | product | "valid_range" | "from" | "until" | price 
+-----------+----------------+---------------+-----------+---------+---------------+--------+---------+-------
+         1 |              1 |             1 |         2 | Widget  | [10,15)       |     10 |      15 |   100
+         2 |              1 |             2 |         4 | Widget  | [15,20)       |     15 |      20 |    80
 (2 rows)
 
 -- This also automatically rolls back the SET ROLE
 ROLLBACK TO SAVEPOINT scenario_6;
--- Scenario 7: Foreign key violation regression test
--- This demonstrates the core bug: the current trigger's DELETE-then-INSERT
--- logic creates a transient gap in the timeline, which violates FKs.
+-- Scenario 7: Temporal foreign key with DELETE-first execution strategy
+-- Demonstrates that DEFERRABLE temporal FKs work with DELETE-first execution.
+-- The DELETE-first strategy creates temporary gaps, which are tolerated by
+-- DEFERRABLE constraints and checked at transaction end.
 SAVEPOINT scenario_7;
 CREATE TABLE fk_parent (
     id integer,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('fk_parent', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('fk_parent', 'valid_range');
+NOTICE:  sql_saga: Created trigger "fk_parent_synchronize_temporal_columns_trigger" on table fk_parent to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_parent', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_parent to add constraints: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_parent_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT fk_parent_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table public.fk_parent to add constraints: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  fk_parent_id_valid
@@ -490,18 +508,20 @@ CREATE TABLE fk_child (
     id integer,
     parent_id integer,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('fk_child', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('fk_child', 'valid_range');
+NOTICE:  sql_saga: Created trigger "fk_child_synchronize_temporal_columns_trigger" on table fk_child to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_child', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_child to add constraints: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT fk_child_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT fk_child_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table public.fk_child to add constraints: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  fk_child_id_valid
@@ -511,7 +531,7 @@ SELECT sql_saga.add_foreign_key(
     'fk_child'::regclass, ARRAY['parent_id'],
     'fk_parent'::regclass, ARRAY['id']
 );
-NOTICE:  No compatible index found for foreign key on table fk_child. Creating new index: CREATE INDEX fk_child_parent_id_valid_gist_idx ON fk_child USING GIST (parent_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table fk_child. Creating new index: CREATE INDEX fk_child_parent_id_valid_gist_idx ON fk_child USING GIST (parent_id, valid_range)
      add_foreign_key      
 --------------------------
  fk_child_parent_id_valid
@@ -524,11 +544,11 @@ INSERT INTO fk_child (id, parent_id, value, valid_from, valid_until) VALUES (101
 -- that would occur with a DELETE-then-INSERT approach.
 SAVEPOINT expect_fk_update_to_succeed;
 UPDATE fk_parent__for_portion_of_valid SET value = 'updated', valid_from = '2024-01-01', valid_until = '2024-06-01' WHERE id = 1;
-TABLE fk_parent;
- id |  value  | valid_from | valid_until 
-----+---------+------------+-------------
-  1 | parent  | 2024-06-01 | 2025-01-01
-  1 | updated | 2024-01-01 | 2024-06-01
+TABLE fk_parent ORDER BY valid_range;
+ id |  value  |       valid_range       | valid_from | valid_until 
+----+---------+-------------------------+------------+-------------
+  1 | updated | [2024-01-01,2024-06-01) | 2024-01-01 | 2024-06-01
+  1 | parent  | [2024-06-01,2025-01-01) | 2024-06-01 | 2025-01-01
 (2 rows)
 
 ROLLBACK TO SAVEPOINT expect_fk_update_to_succeed;
@@ -538,13 +558,14 @@ SAVEPOINT scenario_8;
 CREATE TABLE valid_to_test (
     id integer,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_to date,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('valid_to_test', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "valid_to_test_synchronize_temporal_columns_trigger" on table valid_to_test to synchronize columns: valid_to
+SELECT sql_saga.add_era('valid_to_test', 'valid_range', valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "valid_to_test_synchronize_temporal_columns_trigger" on table valid_to_test to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
@@ -558,9 +579,9 @@ SELECT sql_saga.add_for_portion_of_view('valid_to_test');
 
 INSERT INTO valid_to_test (id, value, valid_from, valid_until) VALUES (1, 'A', '2024-01-01', '2025-01-01');
 TABLE valid_to_test;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Test 1: Using valid_to should now work correctly.
@@ -568,11 +589,11 @@ SAVEPOINT test_valid_to;
 -- The new trigger implementation correctly derives valid_until from valid_to.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-02-01', valid_to = '2024-02-28' WHERE id = 1;
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
-  1 | B     | 2024-02-01 | 2024-02-28 | 2024-02-29
-  1 | A     | 2024-02-29 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2024-02-01) | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | [2024-02-01,2024-02-29) | 2024-02-01 | 2024-02-28 | 2024-02-29
+  1 | A     | [2024-02-29,2025-01-01) | 2024-02-29 | 2024-12-31 | 2025-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT test_valid_to;
@@ -580,39 +601,39 @@ ROLLBACK TO SAVEPOINT test_valid_to;
 SAVEPOINT test_coalescing;
 -- Before changing
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Update one slice. This creates a 3-way split.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
 -- After changing
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
-  1 | B     | 2024-02-01 | 2024-02-29 | 2024-03-01
-  1 | A     | 2024-03-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2024-02-01) | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | [2024-02-01,2024-03-01) | 2024-02-01 | 2024-02-29 | 2024-03-01
+  1 | A     | [2024-03-01,2025-01-01) | 2024-03-01 | 2024-12-31 | 2025-01-01
 (3 rows)
 
 -- Update an adjacent slice with the same data. The new logic should coalesce them.
 UPDATE valid_to_test__for_portion_of_valid SET value = 'B', valid_from = '2024-03-01', valid_until = '2024-04-01' WHERE id = 1;
 -- The rewritten version correctly coalesces the two 'B' rows into a single row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-01-31 | 2024-02-01
-  1 | B     | 2024-02-01 | 2024-03-31 | 2024-04-01
-  1 | A     | 2024-04-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2024-02-01) | 2024-01-01 | 2024-01-31 | 2024-02-01
+  1 | B     | [2024-02-01,2024-04-01) | 2024-02-01 | 2024-03-31 | 2024-04-01
+  1 | A     | [2024-04-01,2025-01-01) | 2024-04-01 | 2024-12-31 | 2025-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT test_coalescing;
 -- Verify state after rollback
 TABLE valid_to_test;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | A     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | A     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 -- Test 3: Exact match update. This should now perform a simple UPDATE.
@@ -620,9 +641,9 @@ SAVEPOINT test_exact_match;
 UPDATE valid_to_test__for_portion_of_valid SET value = 'C', valid_from = '2024-01-01', valid_to = '2024-12-31' WHERE id = 1;
 -- We expect one row, with the value updated.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | C     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | C     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_exact_match;
@@ -640,9 +661,9 @@ WHERE id = 1
 -- Since this is an exact match, temporal_merge should generate a simple UPDATE.
 -- There should be no DELETE.
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+--------------------
-           1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"value": "D", "valid_to": "2024-12-31"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                   data                   | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+------------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | [2024-01-01,2025-01-01) | [2024-01-01,2025-01-01) | {"value": "D", "valid_to": "2024-12-31"} |          |       | existing_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -653,9 +674,9 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify value is updated on just that one row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | D     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | D     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO exact_match_update_with_where_should_succeed;
@@ -669,9 +690,9 @@ SET
 WHERE id = 1;
 -- Verify there is not DELETE in the plan
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                   data                   | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------+----------+-------+--------------------
-           1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | {"value": "E", "valid_to": "2024-12-31"} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                   data                   | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+------------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {}          | equals       | equals       | 2024-01-01     | 2025-01-01      | 2024-01-01     | 2025-01-01      | [2024-01-01,2025-01-01) | [2024-01-01,2025-01-01) | {"value": "E", "valid_to": "2024-12-31"} |          |       | existing_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
@@ -682,9 +703,9 @@ TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
 
 -- Verify value is updated on just that one row.
 TABLE valid_to_test ORDER BY valid_from;
- id | value | valid_from |  valid_to  | valid_until 
-----+-------+------------+------------+-------------
-  1 | E     | 2024-01-01 | 2024-12-31 | 2025-01-01
+ id | value |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------+-------------------------+------------+------------+-------------
+  1 | E     | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO exact_temporal_match_without_where_should_succeed;
@@ -694,20 +715,21 @@ SAVEPOINT scenario_9;
 CREATE TABLE statbus_repro (
     id integer,
     category_id integer,
+    valid_range daterange,
     valid_from date,
     valid_to date,
     valid_until date,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('statbus_repro', 'valid_from', 'valid_until', synchronize_valid_to_column := 'valid_to');
-NOTICE:  sql_saga: Created trigger "statbus_repro_synchronize_temporal_columns_trigger" on table statbus_repro to synchronize columns: valid_to
+SELECT sql_saga.add_era('statbus_repro', 'valid_range', valid_to_column_name => 'valid_to');
+NOTICE:  sql_saga: Created trigger "statbus_repro_synchronize_temporal_columns_trigger" on table statbus_repro to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('statbus_repro', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.statbus_repro to add constraints: ADD CONSTRAINT statbus_repro_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT statbus_repro_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT statbus_repro_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table public.statbus_repro to add constraints: ADD CONSTRAINT statbus_repro_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  statbus_repro_id_valid
@@ -721,9 +743,9 @@ SELECT sql_saga.add_for_portion_of_view('statbus_repro');
 
 INSERT INTO statbus_repro (id, category_id, valid_from, valid_to) VALUES (1, 13, '2023-01-01', '2025-12-31');
 TABLE statbus_repro;
- id | category_id | valid_from |  valid_to  | valid_until 
-----+-------------+------------+------------+-------------
-  1 |          13 | 2023-01-01 | 2025-12-31 | 2026-01-01
+ id | category_id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------+-------------------------+------------+------------+-------------
+  1 |          13 | [2023-01-01,2026-01-01) | 2023-01-01 | 2025-12-31 | 2026-01-01
 (1 row)
 
 -- Test 1: Update using valid_until (the baseline for correct behavior)
@@ -733,20 +755,20 @@ UPDATE statbus_repro__for_portion_of_valid
  WHERE id = 1;
 -- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                     data                      | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------+----------+-------+--------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
-           2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                     data                      | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+-----------------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | [2023-01-01,2026-01-01) | [2023-01-01,2024-01-01) | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | [2023-01-01,2026-01-01) | [2025-01-01,2026-01-01) | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | [2023-01-01,2026-01-01) | [2024-01-01,2025-01-01) | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
 (3 rows)
 
 -- Check result
 TABLE statbus_repro ORDER BY valid_from;
- id | category_id | valid_from |  valid_to  | valid_until 
-----+-------------+------------+------------+-------------
-  1 |          13 | 2023-01-01 | 2023-12-31 | 2024-01-01
-  1 |          30 | 2024-01-01 | 2024-12-31 | 2025-01-01
-  1 |          13 | 2025-01-01 | 2025-12-31 | 2026-01-01
+ id | category_id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------+-------------------------+------------+------------+-------------
+  1 |          13 | [2023-01-01,2024-01-01) | 2023-01-01 | 2023-12-31 | 2024-01-01
+  1 |          30 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
+  1 |          13 | [2025-01-01,2026-01-01) | 2025-01-01 | 2025-12-31 | 2026-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT test_valid_until;
@@ -757,24 +779,133 @@ UPDATE statbus_repro__for_portion_of_valid
  WHERE id = 1;
 -- Check plan: should be 1 UPDATE and 2 INSERTs for the 3-way split
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                     data                      | feedback | trace |    grouping_key    
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------------------------------------+----------+-------+--------------------
-           1 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
-           2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
-           3 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |                     data                      | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+-----------------------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | SHRINK        | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | started_by   | 2023-01-01     | 2026-01-01      | 2023-01-01     | 2024-01-01      | [2023-01-01,2026-01-01) | [2023-01-01,2024-01-01) | {"valid_to": "2023-12-31", "category_id": 13} |          |       | existing_entity__1
+           2 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | finished_by  | 2023-01-01     | 2026-01-01      | 2025-01-01     | 2026-01-01      | [2023-01-01,2026-01-01) | [2025-01-01,2026-01-01) | {"valid_to": "2025-12-31", "category_id": 13} |          |       | existing_entity__1
+           3 |             2 | {1}     | INSERT    |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | during       | contains     | 2023-01-01     | 2026-01-01      | 2024-01-01     | 2025-01-01      | [2023-01-01,2026-01-01) | [2024-01-01,2025-01-01) | {"valid_to": "2024-12-31", "category_id": 30} |          |       | existing_entity__1
 (3 rows)
 
 -- Check result
 TABLE statbus_repro ORDER BY valid_from;
- id | category_id | valid_from |  valid_to  | valid_until 
-----+-------------+------------+------------+-------------
-  1 |          13 | 2023-01-01 | 2023-12-31 | 2024-01-01
-  1 |          30 | 2024-01-01 | 2024-12-31 | 2025-01-01
-  1 |          13 | 2025-01-01 | 2025-12-31 | 2026-01-01
+ id | category_id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------+-------------------------+------------+------------+-------------
+  1 |          13 | [2023-01-01,2024-01-01) | 2023-01-01 | 2023-12-31 | 2024-01-01
+  1 |          30 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
+  1 |          13 | [2025-01-01,2026-01-01) | 2025-01-01 | 2025-12-31 | 2026-01-01
 (3 rows)
 
 ROLLBACK TO SAVEPOINT test_valid_to;
 ROLLBACK TO SAVEPOINT scenario_9;
+-- Scenario 10: Era validation - should fail when era doesn't exist
+SAVEPOINT scenario_10;
+CREATE TABLE no_era_test (
+    id int,
+    value text,
+    valid_range daterange
+);
+-- Should fail: no era registered on this table
+SAVEPOINT expect_error_1;
+SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass);
+ERROR:  era "valid" does not exist on table no_era_test
+CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name) line 31 at RAISE
+ROLLBACK TO SAVEPOINT expect_error_1;
+-- Should also fail with explicit non-existent era name
+SAVEPOINT expect_error_2;
+SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass, 'nonexistent');
+ERROR:  era "nonexistent" does not exist on table no_era_test
+CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name) line 31 at RAISE
+ROLLBACK TO SAVEPOINT expect_error_2;
+ROLLBACK TO SAVEPOINT scenario_10;
+-- Scenario 11: Range-only table (no synchronized columns)
+-- This tests that the for_portion_of view works with tables that have ONLY
+-- a range column, without valid_from/valid_until/valid_to.
+SAVEPOINT scenario_11;
+\echo 'Scenario 11: Range-only table for for_portion_of view'
+Scenario 11: Range-only table for for_portion_of view
+CREATE TABLE range_only_test (
+    id int,
+    value text,
+    valid_range daterange NOT NULL,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+SELECT sql_saga.add_era('range_only_test', 'valid_range');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('range_only_test', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.range_only_test to add constraints: ADD CONSTRAINT range_only_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+      add_unique_key      
+--------------------------
+ range_only_test_id_valid
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('range_only_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+\d range_only_test__for_portion_of_valid
+   View "public.range_only_test__for_portion_of_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ value       | text      |           |          | 
+ valid_range | daterange |           |          | 
+Triggers:
+    for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON range_only_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
+
+-- Insert initial data directly into base table
+INSERT INTO range_only_test (id, value, valid_range) VALUES
+    (1, 'Original', '[2024-01-01, 2024-12-31)');
+\echo '--- Initial state ---'
+--- Initial state ---
+TABLE range_only_test ORDER BY id, valid_range;
+ id |  value   |       valid_range       
+----+----------+-------------------------
+  1 | Original | [2024-01-01,2024-12-31)
+(1 row)
+
+-- Test UPDATE using the range column directly
+\echo '--- UPDATE via for_portion_of view (using range column) ---'
+--- UPDATE via for_portion_of view (using range column) ---
+UPDATE range_only_test__for_portion_of_valid
+SET value = 'Modified', valid_range = '[2024-03-01, 2024-06-01)'
+WHERE id = 1;
+\echo '--- Expected: 3-way split ---'
+--- Expected: 3-way split ---
+TABLE range_only_test ORDER BY id, valid_range;
+ id |  value   |       valid_range       
+----+----------+-------------------------
+  1 | Original | [2024-01-01,2024-03-01)
+  1 | Modified | [2024-03-01,2024-06-01)
+  1 | Original | [2024-06-01,2024-12-31)
+(3 rows)
+
+-- Test data-only UPDATE (no temporal change)
+\echo '--- Data-only UPDATE (no temporal change) ---'
+--- Data-only UPDATE (no temporal change) ---
+UPDATE range_only_test__for_portion_of_valid
+SET value = 'Data Only Change'
+WHERE id = 1 AND valid_range = '[2024-03-01, 2024-06-01)';
+TABLE range_only_test ORDER BY id, valid_range;
+ id |      value       |       valid_range       
+----+------------------+-------------------------
+  1 | Original         | [2024-01-01,2024-03-01)
+  1 | Data Only Change | [2024-03-01,2024-06-01)
+  1 | Original         | [2024-06-01,2024-12-31)
+(3 rows)
+
+SELECT sql_saga.drop_for_portion_of_view('range_only_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT scenario_11;
 ROLLBACK;
 DROP ROLE view_test_role;
 \i sql/include/test_teardown.sql

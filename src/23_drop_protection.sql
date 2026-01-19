@@ -45,14 +45,7 @@ BEGIN
                 fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
                 -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
                 IF fk_table_oid IS NOT NULL THEN
-                    IF fk_row.type = 'temporal_to_temporal' THEN
-                        IF fk_row.fk_insert_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_insert_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_insert_trigger /* %I */, fk_table_oid /* %s */);
-                        END IF;
-                        IF fk_row.fk_update_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_update_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_update_trigger /* %I */, fk_table_oid /* %s */);
-                        END IF;
-                    ELSE -- 'regular_to_temporal'
+                    IF fk_row.type = 'regular_to_temporal' THEN
                         IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
                             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
                         END IF;
@@ -87,7 +80,27 @@ BEGIN
             END LOOP;
         END;
 
-        -- 3. Delete all metadata for the dropped table.
+        -- 3. Clean up template sync triggers/functions for each era on this table BEFORE deleting metadata
+        DECLARE
+            era_row record;
+            func_name name;
+        BEGIN
+            -- Table has been dropped, but we still need to clean up the functions
+            FOR era_row IN 
+                SELECT e.era_name, e.sync_temporal_trg_function_name
+                FROM sql_saga.era e 
+                WHERE (e.table_schema, e.table_name) = (r.schema_name, r.object_name)
+                  AND e.sync_temporal_trg_function_name IS NOT NULL  -- Only eras with sync triggers
+            LOOP
+                -- Drop the function directly (trigger already gone with table)
+                func_name := era_row.sync_temporal_trg_function_name;
+                IF to_regprocedure(format('sql_saga.%I()', func_name)) IS NOT NULL THEN
+                    EXECUTE format($$DROP FUNCTION sql_saga.%I() CASCADE$$, func_name);
+                END IF;
+            END LOOP;
+        END;
+        
+        -- 4. Delete all metadata for the dropped table.
         DELETE FROM sql_saga.updatable_view WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.foreign_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.unique_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
@@ -305,10 +318,12 @@ BEGIN
                 END;
             END IF;
         ELSIF r.predicate IS NOT NULL THEN
-            -- Predicated keys use a unique index, not a constraint.
-            IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
-                 RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
-                    r.unique_constraint, r.table_oid, r.unique_key_name;
+            IF r.unique_constraint IS NOT NULL THEN
+                -- Predicated keys use a unique index, not a constraint.
+                IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
+                    RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
+                        r.unique_constraint, r.table_oid, r.unique_key_name;
+                END IF;
             END IF;
         ELSE
             -- Standard keys use a unique constraint.
@@ -353,36 +368,14 @@ BEGIN
     --- foreign_keys
     ---
 
-    /* Complain if any of the triggers are missing */
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
-        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_insert_trigger, r.table_oid, r.foreign_key_name;
-    END LOOP;
-
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal' AND NOT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
-        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_update_trigger, r.table_oid, r.foreign_key_name;
-    END LOOP;
-
+    /* Complain if any of the uk triggers are missing */
     FOR r IN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL AND NOT EXISTS (
+        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
+        AND fk.uk_update_trigger IS NOT NULL  -- Skip native FKs (PG18+) which have no triggers
+        AND NOT EXISTS (
             SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
     LOOP
@@ -394,7 +387,9 @@ BEGIN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger
         FROM sql_saga.foreign_keys AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL AND NOT EXISTS (
+        WHERE to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) IS NOT NULL
+        AND fk.uk_delete_trigger IS NOT NULL  -- Skip native FKs (PG18+) which have no triggers
+        AND NOT EXISTS (
             SELECT 1 FROM pg_catalog.pg_trigger AS t
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
     LOOP

@@ -28,16 +28,16 @@ SET ROLE TO sql_saga_unprivileged_user;
 SET client_min_messages TO NOTICE;
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-\echo 'Test: Automatic range column synchronization via add_era'
-Test: Automatic range column synchronization via add_era
+\echo 'Test: Synchronization with an authoritative range column'
+Test: Synchronization with an authoritative range column
 \echo '----------------------------------------------------------------------------'
 ----------------------------------------------------------------------------
-\echo '--- 1. Test default behavior: DATE range ---'
---- 1. Test default behavior: DATE range ---
+\echo '--- 1. Test DATE range with auto-detected synchronized bounds ---'
+--- 1. Test DATE range with auto-detected synchronized bounds ---
 SAVEPOINT test_1;
-CREATE TABLE sync_range_default (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_default', synchronize_range_column := 'validity');
-NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_columns_trigger" on table sync_range_default to synchronize columns: validity
+CREATE TABLE sync_range_default (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
+SELECT sql_saga.add_era('sync_range_default', 'valid_range');
+NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_columns_trigger" on table sync_range_default to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
@@ -48,74 +48,92 @@ NOTICE:  sql_saga: Created trigger "sync_range_default_synchronize_temporal_colu
    Column    |   Type    | Collation | Nullable | Default 
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
- validity    | daterange |           |          | 
 Check constraints:
-    "sync_range_default_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "sync_range_default_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_range_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, validity ON sync_range_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'null', 'validity', 'date', 't')
+    sync_range_default_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_range_default FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_range_default_valid_template_sync()
 
--- 1a. INSERT with bounds, range is auto-populated
+-- 1a. INSERT with from,until, range is auto-populated
 INSERT INTO sync_range_default (id, valid_from, valid_until) VALUES (1, '2024-01-01', '2025-01-01');
-SELECT id, valid_from, valid_until, validity FROM sync_range_default;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  1 | 2024-01-01 | 2025-01-01  | [2024-01-01,2025-01-01)
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 1;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
--- 1b. INSERT with range, bounds are auto-populated
-INSERT INTO sync_range_default (id, validity) VALUES (2, '[2024-02-01, 2025-02-01)');
-SELECT id, valid_from, valid_until, validity FROM sync_range_default WHERE id = 2;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  2 | 2024-02-01 | 2025-02-01  | [2024-02-01,2025-02-01)
+-- 1b. INSERT with from,to, range is auto-populated
+INSERT INTO sync_range_default (id, valid_from, valid_until) VALUES (2, '2025-01-01', '2026-01-01');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 2;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  2 | [2025-01-01,2026-01-01) | 2025-01-01 | 2025-12-31 | 2026-01-01
 (1 row)
 
--- 1c. UPDATE bounds, range is auto-updated
+-- 1c. INSERT with range, bounds are auto-populated
+INSERT INTO sync_range_default (id, valid_range) VALUES (3, '[2024-02-01, 2025-02-01)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 3;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  3 | [2024-02-01,2025-02-01) | 2024-02-01 | 2025-01-31 | 2025-02-01
+(1 row)
+
+-- 1d. UPDATE from,until, range is auto-updated
 UPDATE sync_range_default SET valid_from = '2026-01-01', valid_until = '2027-01-01' WHERE id = 1;
-SELECT id, valid_from, valid_until, validity FROM sync_range_default WHERE id = 1;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  1 | 2026-01-01 | 2027-01-01  | [2026-01-01,2027-01-01)
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 1;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2026-01-01,2027-01-01) | 2026-01-01 | 2026-12-31 | 2027-01-01
 (1 row)
 
--- 1d. UPDATE range, bounds are auto-updated
-UPDATE sync_range_default SET validity = '[2027-01-01, 2028-01-01)' WHERE id = 1;
-SELECT id, valid_from, valid_until, validity FROM sync_range_default WHERE id = 1;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  1 | 2027-01-01 | 2028-01-01  | [2027-01-01,2028-01-01)
+-- 1e. UPDATE from,to, range is auto-updated
+UPDATE sync_range_default SET valid_from = '2027-01-01', valid_to = '2027-12-31' WHERE id = 1;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 1;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2027-01-01,2028-01-01) | 2027-01-01 | 2027-12-31 | 2028-01-01
+(1 row)
+
+-- 1e. UPDATE range, bounds are auto-updated
+UPDATE sync_range_default SET valid_range = '[2028-01-01, 2029-01-01)' WHERE id = 1;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_default WHERE id = 1;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2028-01-01,2029-01-01) | 2028-01-01 | 2028-12-31 | 2029-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_1;
-\echo '--- 2. Test disabling the feature with NULL ---'
---- 2. Test disabling the feature with NULL ---
+\echo '--- 2. Test disabling synchronization ---'
+--- 2. Test disabling synchronization ---
 SAVEPOINT test_2;
-CREATE TABLE sync_range_disabled (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_disabled');
+CREATE TABLE sync_range_disabled (id int, valid_range daterange, valid_from date, valid_until date);
+-- Note: synchronize_columns is set to false, so no trigger is created.
+SELECT sql_saga.add_era('sync_range_disabled', 'valid_range', synchronize_columns := false);
  add_era 
 ---------
  t
 (1 row)
 
 \d sync_range_disabled
-                Table "public.sync_range_disabled"
-   Column    |   Type    | Collation | Nullable |     Default      
--------------+-----------+-----------+----------+------------------
+            Table "public.sync_range_disabled"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
- valid_until | date      |           | not null | 'infinity'::date
- validity    | daterange |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Check constraints:
-    "sync_range_disabled_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "sync_range_disabled_valid_check" CHECK (NOT isempty(valid_range))
 
 -- This will succeed with inconsistent data, proving the trigger was not created.
-INSERT INTO sync_range_disabled (id, valid_from, valid_until, validity) VALUES (1, '2024-01-01', '2025-01-01', '[2099-01-01, 2099-12-31)');
-SELECT id, valid_from, valid_until, validity FROM sync_range_disabled;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  1 | 2024-01-01 | 2025-01-01  | [2099-01-01,2099-12-31)
+INSERT INTO sync_range_disabled (id, valid_range, valid_from, valid_until) VALUES (1,'[2099-01-01, 2099-12-31)', '2024-01-01', '2025-01-01');
+SELECT id, valid_range, valid_from, valid_until FROM sync_range_disabled;
+ id |       valid_range       | valid_from | valid_until 
+----+-------------------------+------------+-------------
+  1 | [2099-01-01,2099-12-31) | 2024-01-01 | 2025-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_2;
@@ -123,8 +141,8 @@ ROLLBACK TO SAVEPOINT test_2;
 --- 3. Test with a custom column name and INT4RANGE (a discrete type) ---
 SAVEPOINT test_3;
 CREATE TABLE sync_range_custom (id int, start_num int, until_num int, num_range int4range, to_num int);
-SELECT sql_saga.add_era('sync_range_custom', 'start_num', 'until_num', synchronize_valid_to_column := 'to_num', synchronize_range_column := 'num_range');
-NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_columns_trigger" on table sync_range_custom to synchronize columns: to_num, num_range
+SELECT sql_saga.add_era('sync_range_custom', 'num_range', valid_from_column_name := 'start_num', valid_until_column_name := 'until_num', valid_to_column_name := 'to_num');
+NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_columns_trigger" on table sync_range_custom to synchronize columns: to_num, start_num, until_num
  add_era 
 ---------
  t
@@ -137,12 +155,13 @@ NOTICE:  sql_saga: Created trigger "sync_range_custom_synchronize_temporal_colum
  id        | integer   |           |          | 
  start_num | integer   |           | not null | 
  until_num | integer   |           |          | 
- num_range | int4range |           |          | 
+ num_range | int4range |           | not null | 
  to_num    | integer   |           |          | 
 Check constraints:
-    "sync_range_custom_valid_check" CHECK (start_num < until_num)
+    "sync_range_custom_check" CHECK (start_num < until_num)
+    "sync_range_custom_valid_check" CHECK (NOT isempty(num_range))
 Triggers:
-    sync_range_custom_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF start_num, until_num, to_num, num_range ON sync_range_custom FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('start_num', 'until_num', 'to_num', 'num_range', 'integer', 'f')
+    sync_range_custom_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF num_range, to_num, start_num, until_num ON sync_range_custom FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_range_custom_valid_template_sync()
 
 INSERT INTO sync_range_custom (id, num_range) VALUES (1, '[100, 200)');
 SELECT id, start_num, until_num, num_range, to_num FROM sync_range_custom;
@@ -152,313 +171,460 @@ SELECT id, start_num, until_num, num_range, to_num FROM sync_range_custom;
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_3;
-\echo '--- 4. Test error case: inconsistent data on INSERT ---'
---- 4. Test error case: inconsistent data on INSERT ---
+\echo '--- 4. Test trigger consistency: inconsistent data on INSERT ---'
+--- 4. Test trigger consistency: inconsistent data on INSERT ---
 SAVEPOINT test_4;
-CREATE TABLE sync_range_error (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_error', synchronize_range_column := 'validity');
-NOTICE:  sql_saga: Created trigger "sync_range_error_synchronize_temporal_columns_trigger" on table sync_range_error to synchronize columns: validity
+-- The trigger now checks for consistency and raises an error on mismatch.
+CREATE TABLE sync_range_error (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
+-- Auto-detects all columns for synchronization
+SELECT sql_saga.add_era('sync_range_error', 'valid_range');
+NOTICE:  sql_saga: Created trigger "sync_range_error_synchronize_temporal_columns_trigger" on table sync_range_error to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
--- This should fail due to inconsistency between the bounds and the range.
+-- This should fail due to inconsistency between valid_to and valid.
 DO $$
 BEGIN
-    INSERT INTO sync_range_error (id, valid_from, valid_until, validity) VALUES (1, '2024-01-01', '2025-01-01', '[2099-01-01, 2099-12-31)');
+    INSERT INTO sync_range_error (id, valid_range, valid_from, valid_to) VALUES (1, '[2024-01-01, 2025-01-01)', '2024-01-01', '2099-12-31');
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error: Inconsistent values: "valid_from" is 2024-01-01, but is derived as 2099-01-01 from other inputs.
--- This should succeed because the bounds and range are consistent.
-INSERT INTO sync_range_error (id, valid_from, valid_until, validity) VALUES (2, '2023-01-01', '2024-01-01', '[2023-01-01, 2024-01-01)');
-SELECT * FROM sync_range_error;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  2 | 2023-01-01 | 2024-01-01  | [2023-01-01,2024-01-01)
-(1 row)
+NOTICE:  Caught expected error: Inconsistent end of period provided. Sources: {"valid_to": "2100-01-01", "valid_range": "2025-01-01"}
+SELECT * FROM sync_range_error; -- should be empty
+ id | valid_range | valid_from | valid_to | valid_until 
+----+-------------+------------+----------+-------------
+(0 rows)
 
 ROLLBACK TO SAVEPOINT test_4;
-\echo '--- 5. Test error case: inclusive-upper bound range is rejected ---'
---- 5. Test error case: inclusive-upper bound range is rejected ---
+\echo '--- 5. Test inclusive-upper bound range is handled ---'
+--- 5. Test inclusive-upper bound range is handled ---
 SAVEPOINT test_5;
-CREATE TABLE sync_range_bounds (id int, valid_from date, valid_until date, validity daterange);
-SELECT sql_saga.add_era('sync_range_bounds', synchronize_range_column := 'validity');
-NOTICE:  sql_saga: Created trigger "sync_range_bounds_synchronize_temporal_columns_trigger" on table sync_range_bounds to synchronize columns: validity
+CREATE TABLE sync_range_bounds (id int, valid_range daterange, valid_from date, valid_until date);
+SELECT sql_saga.add_era('sync_range_bounds', 'valid_range');
+NOTICE:  sql_saga: Created trigger "sync_range_bounds_synchronize_temporal_columns_trigger" on table sync_range_bounds to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
--- This should fail because the range is '[ , ]' not '[ , )'
-DO $$
-BEGIN
-    INSERT INTO sync_range_bounds (id, validity) VALUES (1, daterange('2024-01-01', '2024-12-31', '[]'));
-EXCEPTION WHEN others THEN
-    RAISE NOTICE 'Caught expected error: %', SQLERRM;
-END;
-$$;
+-- The trigger will extract the bounds from the input range and re-create a
+-- canonical '[)' range, so this will be corrected, not rejected.
+INSERT INTO sync_range_bounds (id, valid_range) VALUES (1, daterange('2024-01-01', '2024-12-31', '[]'));
+SELECT * FROM sync_range_bounds;
+ id |       valid_range       | valid_from | valid_until 
+----+-------------------------+------------+-------------
+  1 | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
+(1 row)
+
 ROLLBACK TO SAVEPOINT test_5;
 \echo '--- 6. Test edge case: generated column is skipped ---'
 --- 6. Test edge case: generated column is skipped ---
 SAVEPOINT test_6;
-CREATE TABLE sync_range_generated (id int, valid_from date, valid_until date, validity daterange GENERATED ALWAYS AS (daterange(valid_from, valid_until, '[)')) STORED);
-SELECT sql_saga.add_era('sync_range_generated', synchronize_range_column := 'validity');
-NOTICE:  sql_saga: Created trigger "sync_range_generated_synchronize_temporal_columns_trigger" on table sync_range_generated to synchronize columns: validity
+CREATE TABLE sync_range_generated (
+    id          int GENERATED BY DEFAULT AS IDENTITY,
+    valid_range daterange NOT NULL,
+    
+    valid_from  date GENERATED ALWAYS AS (
+                    lower(valid_range)
+                ) STORED,
+                
+    valid_to date GENERATED ALWAYS AS (
+                    CASE 
+                        WHEN upper_inf(valid_range) THEN 'infinity'::date
+                        WHEN upper_inc(valid_range)  THEN upper(valid_range)      -- [a,b] → b
+                        ELSE upper(valid_range) - 1                               -- [a,b) → b-1
+                    END
+                ) STORED,
+    valid_until date GENERATED ALWAYS AS (
+                    CASE 
+                        WHEN upper_inf(valid_range) THEN 'infinity'::date
+                        WHEN upper_inc(valid_range)  THEN upper(valid_range) + 1  -- [a,b] → b+1
+                        ELSE upper(valid_range)                                   -- [a,b) → b
+                    END
+                ) STORED,
+    PRIMARY KEY (id, valid_range)
+);
+SELECT sql_saga.add_era('sync_range_generated', 'valid_range');
  add_era 
 ---------
  t
 (1 row)
 
 \d sync_range_generated
-                                             Table "public.sync_range_generated"
-   Column    |   Type    | Collation | Nullable |                                   Default                                   
--------------+-----------+-----------+----------+-----------------------------------------------------------------------------
- id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
- valid_until | date      |           |          | 
- validity    | daterange |           |          | generated always as (daterange(valid_from, valid_until, '[)'::text)) stored
+                                     Table "public.sync_range_generated"
+   Column    |   Type    | Collation | Nullable |                           Default                           
+-------------+-----------+-----------+----------+-------------------------------------------------------------
+ id          | integer   |           | not null | generated by default as identity
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | generated always as (lower(valid_range)) stored
+ valid_to    | date      |           |          | generated always as (                                      +
+             |           |           |          | CASE                                                       +
+             |           |           |          |     WHEN upper_inf(valid_range) THEN 'infinity'::date      +
+             |           |           |          |     WHEN upper_inc(valid_range) THEN upper(valid_range)    +
+             |           |           |          |     ELSE upper(valid_range) - 1                            +
+             |           |           |          | END) stored
+ valid_until | date      |           |          | generated always as (                                      +
+             |           |           |          | CASE                                                       +
+             |           |           |          |     WHEN upper_inf(valid_range) THEN 'infinity'::date      +
+             |           |           |          |     WHEN upper_inc(valid_range) THEN upper(valid_range) + 1+
+             |           |           |          |     ELSE upper(valid_range)                                +
+             |           |           |          | END) stored
+Indexes:
+    "sync_range_generated_pkey" PRIMARY KEY, btree (id, valid_range)
 Check constraints:
-    "sync_range_generated_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    sync_range_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, validity ON sync_range_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'null', 'validity', 'date', 't')
+    "sync_range_generated_valid_check" CHECK (NOT isempty(valid_range))
 
 -- This will succeed, proving no trigger was created.
-INSERT INTO sync_range_generated (id, valid_from, valid_until) VALUES (1, '2024-01-01', '2025-01-01');
-SELECT id, valid_from, valid_until, validity FROM sync_range_generated;
- id | valid_from | valid_until |        validity         
-----+------------+-------------+-------------------------
-  1 | 2024-01-01 | 2025-01-01  | [2024-01-01,2025-01-01)
+INSERT INTO sync_range_generated (id, valid_range) VALUES (1, '[2024-01-01,2025-01-01)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_range_generated;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_6;
-\echo '--- 7. Test interaction between both synchronization triggers ---'
---- 7. Test interaction between both synchronization triggers ---
+\echo '--- 7. Test interaction between all synchronization columns ---'
+--- 7. Test interaction between all synchronization columns ---
 SAVEPOINT test_7;
-CREATE TABLE sync_both (id int, valid_from date, valid_to date, valid_until date, validity daterange);
--- Enable both triggers
-SELECT sql_saga.add_era('sync_both', synchronize_valid_to_column := 'valid_to', synchronize_range_column := 'validity', add_defaults := false);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, validity
- add_era 
----------
- t
-(1 row)
-
+CREATE TABLE sync_both (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 \d sync_both
                  Table "public.sync_both"
    Column    |   Type    | Collation | Nullable | Default 
 -------------+-----------+-----------+----------+---------
  id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
- validity    | daterange |           |          | 
-Check constraints:
-    "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    sync_both_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to, validity ON sync_both FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'validity', 'date', 'f')
 
--- 7a. INSERT with range, other columns are auto-populated
-INSERT INTO sync_both (id, validity) VALUES (1, '[2024-01-01, 2025-01-01)');
-SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=1;
- id | valid_from | valid_until |  valid_to  |        validity         
-----+------------+-------------+------------+-------------------------
-  1 | 2024-01-01 | 2025-01-01  | 2024-12-31 | [2024-01-01,2025-01-01)
+SAVEPOINT test_7_table_created;
+\echo '--- 7a. sync (defaults on, but not used) ---'
+--- 7a. sync (defaults on, but not used) ---
+SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true);
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+ add_era 
+---------
+ t
 (1 row)
 
--- 7b. INSERT with valid_to, other columns are auto-populated
+-- INSERT with range, other columns are auto-populated
+INSERT INTO sync_both (id, valid_range) VALUES (1, '[2024-01-01, 2025-01-01)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=1;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  1 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
+(1 row)
+
+-- INSERT with valid_to, other columns are auto-populated
 INSERT INTO sync_both (id, valid_from, valid_to) VALUES (2, '2026-01-01', '2026-12-31');
-SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=2;
- id | valid_from | valid_until |  valid_to  |        validity         
-----+------------+-------------+------------+-------------------------
-  2 | 2026-01-01 | 2027-01-01  | 2026-12-31 | [2026-01-01,2027-01-01)
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=2;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  2 | [2026-01-01,2027-01-01) | 2026-01-01 | 2026-12-31 | 2027-01-01
 (1 row)
 
--- 7c. INSERT with valid_until, other columns are auto-populated
+-- INSERT with valid_until, other columns are auto-populated
 INSERT INTO sync_both (id, valid_from, valid_until) VALUES (3, '2028-01-01', '2029-01-01');
-SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=3;
- id | valid_from | valid_until |  valid_to  |        validity         
-----+------------+-------------+------------+-------------------------
-  3 | 2028-01-01 | 2029-01-01  | 2028-12-31 | [2028-01-01,2029-01-01)
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=3;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+  3 | [2028-01-01,2029-01-01) | 2028-01-01 | 2028-12-31 | 2029-01-01
 (1 row)
 
--- 7c2. INSERT with NULL valid_until, should get default from trigger
-SAVEPOINT with_defaults_test;
--- To test this, we must re-add the era with defaults enabled.
-SELECT sql_saga.drop_era('sync_both');
- drop_era 
-----------
- t
-(1 row)
-
-SELECT sql_saga.add_era('sync_both', synchronize_valid_to_column := 'valid_to', synchronize_range_column := 'validity', add_defaults := true);
-NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, validity
+ROLLBACK TO SAVEPOINT test_7_table_created;
+\echo '--- 7b. sync_no_defaults ---'
+--- 7b. sync_no_defaults ---
+SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => false);
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-\d sync_both
-                 Table "public.sync_both"
-   Column    |   Type    | Collation | Nullable | Default 
--------------+-----------+-----------+----------+---------
- id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
- valid_until | date      |           |          | 
- validity    | daterange |           |          | 
-Check constraints:
-    "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    sync_both_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to, validity ON sync_both FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'validity', 'date', 't')
-
-INSERT INTO sync_both (id, valid_from, valid_until) VALUES (4, '2028-01-01', NULL);
-SELECT * FROM sync_both WHERE id = 4;
- id | valid_from | valid_to | valid_until |       validity        
-----+------------+----------+-------------+-----------------------
-  4 | 2028-01-01 | infinity | infinity    | [2028-01-01,infinity)
+\echo '--- INSERTs ---'
+--- INSERTs ---
+DO $$ BEGIN INSERT INTO sync_both (id, valid_from, valid_until) VALUES (10, '2024-01-01', NULL); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+DO $$ BEGIN INSERT INTO sync_both (id, valid_from, valid_to) VALUES (11, '2024-01-01', NULL); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+DO $$ BEGIN INSERT INTO sync_both (id, valid_from) VALUES (12, '2024-01-01'); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+DO $$ BEGIN INSERT INTO sync_both (id, valid_range) VALUES (13, NULL); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+INSERT INTO sync_both (id, valid_range) VALUES (14, '[2024-01-01, infinity)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=14;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 14 | [2024-01-01,infinity) | 2024-01-01 | infinity | infinity
 (1 row)
 
-ROLLBACK TO with_defaults_test;
--- The era should be back to its previous state (no defaults).
-\d sync_both
-                 Table "public.sync_both"
-   Column    |   Type    | Collation | Nullable | Default 
--------------+-----------+-----------+----------+---------
- id          | integer   |           |          | 
- valid_from  | date      |           | not null | 
- valid_to    | date      |           |          | 
- valid_until | date      |           |          | 
- validity    | daterange |           |          | 
-Check constraints:
-    "sync_both_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
-Triggers:
-    sync_both_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_from, valid_until, valid_to, validity ON sync_both FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_from', 'valid_until', 'valid_to', 'validity', 'date', 'f')
-
--- 7d. INSERT with CONSISTENT multiple representations (valid_to and range)
-\echo '--- 7d. Test consistent multiple inputs ---'
---- 7d. Test consistent multiple inputs ---
-INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (5, '2030-01-01', '2030-12-31', '[2030-01-01, 2031-01-01)');
-SELECT id, valid_from, valid_until, valid_to, validity FROM sync_both WHERE id=5;
- id | valid_from | valid_until |  valid_to  |        validity         
-----+------------+-------------+------------+-------------------------
-  5 | 2030-01-01 | 2031-01-01  | 2030-12-31 | [2030-01-01,2031-01-01)
+DO $$ BEGIN INSERT INTO sync_both (id, valid_range) VALUES (15, '[2024-01-01,)'); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+\echo '--- UPDATEs ---'
+--- UPDATEs ---
+INSERT INTO sync_both (id, valid_from, valid_until) VALUES (16, '2024-01-01', '2025-01-01');
+DO $$ BEGIN UPDATE sync_both SET valid_until = NULL WHERE id = 16; EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+DO $$ BEGIN UPDATE sync_both SET valid_to = NULL WHERE id = 16; EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+UPDATE sync_both SET valid_range = '[2026-01-01, infinity)' WHERE id = 16;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=16;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 16 | [2026-01-01,infinity) | 2026-01-01 | infinity | infinity
 (1 row)
 
--- 7e. INSERT with INCONSISTENT multiple representations (valid_to and range)
-\echo '--- 7e. Test inconsistent multiple inputs ---'
---- 7e. Test inconsistent multiple inputs ---
+DO $$ BEGIN UPDATE sync_both SET valid_range = '[2027-01-01,)' WHERE id = 16; EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+ROLLBACK TO SAVEPOINT test_7_table_created;
+\echo '--- 7c. sync_with_defaults ---'
+--- 7c. sync_with_defaults ---
+SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+\echo '--- INSERTs ---'
+--- INSERTs ---
+DO $$ BEGIN INSERT INTO sync_both (id, valid_from) VALUES (20, NULL); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+INSERT INTO sync_both (id, valid_from, valid_until) VALUES (21, '2024-01-01', NULL);
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=21;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 21 | [2024-01-01,infinity) | 2024-01-01 | infinity | infinity
+(1 row)
+
+INSERT INTO sync_both (id, valid_from, valid_to) VALUES (22, '2025-01-01', NULL);
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=22;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 22 | [2025-01-01,infinity) | 2025-01-01 | infinity | infinity
+(1 row)
+
+DO $$ BEGIN INSERT INTO sync_both (id, valid_range) VALUES (23, NULL); EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+INSERT INTO sync_both (id, valid_range) VALUES (24, '[2026-01-01, infinity)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=24;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 24 | [2026-01-01,infinity) | 2026-01-01 | infinity | infinity
+(1 row)
+
+INSERT INTO sync_both (id, valid_range) VALUES (25, '[2027-01-01,)');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=25;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 25 | [2027-01-01,infinity) | 2027-01-01 | infinity | infinity
+(1 row)
+
+\echo '--- UPDATEs ---'
+--- UPDATEs ---
+INSERT INTO sync_both (id, valid_from, valid_until) VALUES (26, '2024-01-01', '2025-01-01');
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=26;
+ id |       valid_range       | valid_from |  valid_to  | valid_until 
+----+-------------------------+------------+------------+-------------
+ 26 | [2024-01-01,2025-01-01) | 2024-01-01 | 2024-12-31 | 2025-01-01
+(1 row)
+
+SAVEPOINT test_7_sync_both_setup;
+DO $$ BEGIN UPDATE sync_both SET valid_from = NULL WHERE id = 26; EXCEPTION WHEN others THEN RAISE NOTICE 'Caught expected error: %', SQLERRM; END; $$;
+NOTICE:  Caught expected error: The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
+ROLLBACK TO SAVEPOINT test_7_sync_both_setup;
+UPDATE sync_both SET valid_until = NULL WHERE id = 26;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=26;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 26 | [2024-01-01,infinity) | 2024-01-01 | infinity | infinity
+(1 row)
+
+ROLLBACK TO SAVEPOINT test_7_sync_both_setup;
+UPDATE sync_both SET valid_from = '2025-01-01', valid_to = NULL WHERE id = 26;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=26;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 26 | [2025-01-01,infinity) | 2025-01-01 | infinity | infinity
+(1 row)
+
+ROLLBACK TO SAVEPOINT test_7_sync_both_setup;
+UPDATE sync_both SET valid_range = '[2026-01-01, infinity)' WHERE id = 26;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=26;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 26 | [2026-01-01,infinity) | 2026-01-01 | infinity | infinity
+(1 row)
+
+ROLLBACK TO SAVEPOINT test_7_sync_both_setup;
+UPDATE sync_both SET valid_range = '[2027-01-01,)' WHERE id = 26;
+SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_both WHERE id=26;
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 26 | [2027-01-01,infinity) | 2027-01-01 | infinity | infinity
+(1 row)
+
+ROLLBACK TO SAVEPOINT test_7_table_created;
+-- 7d. INSERT with inconsistent multiple representations should fail.
+\echo '--- 7d. Test inconsistent multiple inputs ---'
+--- 7d. Test inconsistent multiple inputs ---
+SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
 DO $$
 BEGIN
-    INSERT INTO sync_both (id, valid_from, valid_to, validity) VALUES (6, '2030-01-01', '2030-12-31', '[2099-01-01, 2100-01-01)');
+    INSERT INTO sync_both (id, valid_range, valid_from, valid_to, valid_until) VALUES (5, '[2030-01-01, 2031-01-01)', '2030-02-01', '2032-12-31', '2033-12-31');
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error: Inconsistent values: "valid_from" is 2030-01-01, but is derived as 2099-01-01 from other inputs.
--- 7f. UPDATE with INCONSISTENT multiple representations
-\echo '--- 7f. Test inconsistent update ---'
---- 7f. Test inconsistent update ---
+NOTICE:  Caught expected error: Inconsistent start of period provided. Sources: {"valid_from": "2030-02-01", "valid_range": "2030-01-01"}
+SELECT * FROM sync_both WHERE id=5; -- should be empty
+ id | valid_range | valid_from | valid_to | valid_until 
+----+-------------+------------+----------+-------------
+(0 rows)
+
+ROLLBACK TO SAVEPOINT test_7_table_created;
+-- 7e. UPDATE with INCONSISTENT multiple representations
+\echo '--- 7e. Test inconsistent update ---'
+--- 7e. Test inconsistent update ---
+SELECT sql_saga.add_era('sync_both', 'valid_range', synchronize_columns => true, add_defaults => true);
+NOTICE:  sql_saga: Created trigger "sync_both_synchronize_temporal_columns_trigger" on table sync_both to synchronize columns: valid_to, valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+INSERT INTO sync_both (id, valid_range) VALUES (27, '[2024-01-01, infinity)');
 DO $$
 BEGIN
-    UPDATE sync_both SET valid_to = '2025-12-31', validity = '[2099-01-01, 2100-01-01)' WHERE id = 1;
+    UPDATE sync_both SET valid_to = '2025-12-31', valid_range = '[2099-01-01, 2100-01-01)' WHERE id = 27;
 EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error: Inconsistent values: "valid_to" is 2025-12-31, but is derived as 2099-12-31 from other inputs.
+NOTICE:  Caught expected error: Inconsistent end of period provided. Sources: {"valid_to": "2026-01-01", "valid_range": "2100-01-01"}
+SELECT * FROM sync_both WHERE id=27; -- should be inserted value (no UPDATE)
+ id |      valid_range      | valid_from | valid_to | valid_until 
+----+-----------------------+------------+----------+-------------
+ 27 | [2024-01-01,infinity) | 2024-01-01 | infinity | infinity
+(1 row)
+
 ROLLBACK TO SAVEPOINT test_7;
 \echo '--- 8. Test continuous types disable valid_to sync ---'
 --- 8. Test continuous types disable valid_to sync ---
 SAVEPOINT test_8a;
 \echo '--- 8a. timestamptz ---'
 --- 8a. timestamptz ---
-CREATE TABLE sync_continuous_tstz (id int, valid_from timestamptz, valid_to timestamptz, valid_until timestamptz);
-SELECT sql_saga.add_era('sync_continuous_tstz', synchronize_valid_to_column := 'valid_to');
+CREATE TABLE sync_continuous_tstz (id int, valid_range tstzrange, valid_from timestamptz, valid_to timestamptz, valid_until timestamptz);
+SELECT sql_saga.add_era('sync_continuous_tstz', 'valid_range');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_tstz.
+NOTICE:  sql_saga: Created trigger "sync_continuous_tstz_synchronize_temporal_columns_trigger" on table sync_continuous_tstz to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-\d sync_continuous_tstz
-                   Table "public.sync_continuous_tstz"
-   Column    |           Type           | Collation | Nullable | Default 
--------------+--------------------------+-----------+----------+---------
- id          | integer                  |           |          | 
- valid_from  | timestamp with time zone |           | not null | 
- valid_to    | timestamp with time zone |           |          | 
- valid_until | timestamp with time zone |           |          | 
+\d+ sync_continuous_tstz
+                                       Table "public.sync_continuous_tstz"
+   Column    |           Type           | Collation | Nullable | Default | Storage  | Stats target | Description 
+-------------+--------------------------+-----------+----------+---------+----------+--------------+-------------
+ id          | integer                  |           |          |         | plain    |              | 
+ valid_range | tstzrange                |           | not null |         | extended |              | 
+ valid_from  | timestamp with time zone |           |          |         | plain    |              | 
+ valid_to    | timestamp with time zone |           |          |         | plain    |              | 
+ valid_until | timestamp with time zone |           |          |         | plain    |              | 
 Check constraints:
-    "sync_continuous_tstz_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp with time zone)
+    "sync_continuous_tstz_valid_check" CHECK (NOT isempty(valid_range))
+Not-null constraints:
+    "sync_continuous_tstz_valid_range_not_null" NOT NULL "valid_range"
+Triggers:
+    sync_continuous_tstz_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_continuous_tstz FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_continuous_tstz_valid_template_sync()
 
-INSERT INTO sync_continuous_tstz (id, valid_from, valid_until, valid_to) VALUES (1, '2024-01-01', '2025-01-01', '2099-12-31');
+INSERT INTO sync_continuous_tstz (id, valid_from, valid_to, valid_until) VALUES (1, '2024-01-01', '2099-12-31', '2025-01-01');
 SELECT * FROM sync_continuous_tstz;
- id |       valid_from       |        valid_to        |      valid_until       
-----+------------------------+------------------------+------------------------
-  1 | 2024-01-01 00:00:00-08 | 2099-12-31 00:00:00-08 | 2025-01-01 00:00:00-08
+ id |                     valid_range                     |       valid_from       |        valid_to        |      valid_until       
+----+-----------------------------------------------------+------------------------+------------------------+------------------------
+  1 | ["2024-01-01 00:00:00-08","2025-01-01 00:00:00-08") | 2024-01-01 00:00:00-08 | 2099-12-31 00:00:00-08 | 2025-01-01 00:00:00-08
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_8a;
 SAVEPOINT test_8b;
 \echo '--- 8b. timestamp ---'
 --- 8b. timestamp ---
-CREATE TABLE sync_continuous_ts (id int, valid_from timestamp, valid_to timestamp, valid_until timestamp);
-SELECT sql_saga.add_era('sync_continuous_ts', synchronize_valid_to_column := 'valid_to');
+CREATE TABLE sync_continuous_ts (id int, valid_range tsrange, valid_from timestamp, valid_to timestamp, valid_until timestamp);
+SELECT sql_saga.add_era('sync_continuous_ts', 'valid_range');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_ts.
+NOTICE:  sql_saga: Created trigger "sync_continuous_ts_synchronize_temporal_columns_trigger" on table sync_continuous_ts to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-\d sync_continuous_ts
-                     Table "public.sync_continuous_ts"
-   Column    |            Type             | Collation | Nullable | Default 
--------------+-----------------------------+-----------+----------+---------
- id          | integer                     |           |          | 
- valid_from  | timestamp without time zone |           | not null | 
- valid_to    | timestamp without time zone |           |          | 
- valid_until | timestamp without time zone |           |          | 
+\d+ sync_continuous_ts
+                                         Table "public.sync_continuous_ts"
+   Column    |            Type             | Collation | Nullable | Default | Storage  | Stats target | Description 
+-------------+-----------------------------+-----------+----------+---------+----------+--------------+-------------
+ id          | integer                     |           |          |         | plain    |              | 
+ valid_range | tsrange                     |           | not null |         | extended |              | 
+ valid_from  | timestamp without time zone |           |          |         | plain    |              | 
+ valid_to    | timestamp without time zone |           |          |         | plain    |              | 
+ valid_until | timestamp without time zone |           |          |         | plain    |              | 
 Check constraints:
-    "sync_continuous_ts_valid_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::timestamp without time zone)
+    "sync_continuous_ts_valid_check" CHECK (NOT isempty(valid_range))
+Not-null constraints:
+    "sync_continuous_ts_valid_range_not_null" NOT NULL "valid_range"
+Triggers:
+    sync_continuous_ts_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_continuous_ts FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_continuous_ts_valid_template_sync()
 
-INSERT INTO sync_continuous_ts (id, valid_from, valid_until, valid_to) VALUES (1, '2024-01-01', '2025-01-01', '2099-12-31');
+INSERT INTO sync_continuous_ts (id, valid_from, valid_to, valid_until) VALUES (1, '2024-01-01', '2099-12-31', '2025-01-01');
 SELECT * FROM sync_continuous_ts;
- id |     valid_from      |      valid_to       |     valid_until     
-----+---------------------+---------------------+---------------------
-  1 | 2024-01-01 00:00:00 | 2099-12-31 00:00:00 | 2025-01-01 00:00:00
+ id |                  valid_range                  |     valid_from      |      valid_to       |     valid_until     
+----+-----------------------------------------------+---------------------+---------------------+---------------------
+  1 | ["2024-01-01 00:00:00","2025-01-01 00:00:00") | 2024-01-01 00:00:00 | 2099-12-31 00:00:00 | 2025-01-01 00:00:00
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_8b;
 SAVEPOINT test_8c;
 \echo '--- 8c. numeric ---'
 --- 8c. numeric ---
-CREATE TABLE sync_continuous_numeric (id int, valid_from numeric, valid_to numeric, valid_until numeric);
-SELECT sql_saga.add_era('sync_continuous_numeric', synchronize_valid_to_column := 'valid_to');
+CREATE TABLE sync_continuous_numeric (id int, valid_range numrange, valid_from numeric, valid_to numeric, valid_until numeric);
+SELECT sql_saga.add_era('sync_continuous_numeric', 'valid_range');
 WARNING:  sql_saga: "valid_to" synchronization is only supported for discrete types (date, integer, bigint). Disabling for column "valid_to" on non-discrete era for table sync_continuous_numeric.
+NOTICE:  sql_saga: Created trigger "sync_continuous_numeric_synchronize_temporal_columns_trigger" on table sync_continuous_numeric to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
-\d sync_continuous_numeric
-         Table "public.sync_continuous_numeric"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- valid_from  | numeric |           | not null | 
- valid_to    | numeric |           |          | 
- valid_until | numeric |           |          | 
+\d+ sync_continuous_numeric
+                             Table "public.sync_continuous_numeric"
+   Column    |   Type   | Collation | Nullable | Default | Storage  | Stats target | Description 
+-------------+----------+-----------+----------+---------+----------+--------------+-------------
+ id          | integer  |           |          |         | plain    |              | 
+ valid_range | numrange |           | not null |         | extended |              | 
+ valid_from  | numeric  |           |          |         | main     |              | 
+ valid_to    | numeric  |           |          |         | main     |              | 
+ valid_until | numeric  |           |          |         | main     |              | 
 Check constraints:
-    "sync_continuous_numeric_valid_check" CHECK (valid_from < valid_until AND valid_from > '-Infinity'::numeric)
+    "sync_continuous_numeric_valid_check" CHECK (NOT isempty(valid_range))
+Not-null constraints:
+    "sync_continuous_numeric_valid_range_not_null" NOT NULL "valid_range"
+Triggers:
+    sync_continuous_numeric_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_continuous_numeric FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_continuous_numeric_valid_template_sync()
 
-INSERT INTO sync_continuous_numeric (id, valid_from, valid_until, valid_to) VALUES (1, 100.5, 200.5, 999.9);
+INSERT INTO sync_continuous_numeric (id, valid_from, valid_to, valid_until) VALUES (1, 100.5, 999.9, 200.5);
 SELECT * FROM sync_continuous_numeric;
- id | valid_from | valid_to | valid_until 
-----+------------+----------+-------------
-  1 |      100.5 |    999.9 |       200.5
+ id |  valid_range  | valid_from | valid_to | valid_until 
+----+---------------+------------+----------+-------------
+  1 | [100.5,200.5) |      100.5 |    999.9 |       200.5
 (1 row)
 
 ROLLBACK TO SAVEPOINT test_8c;

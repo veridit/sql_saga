@@ -53,27 +53,25 @@ SELECT 'establishment_sv' AS type, COUNT(*) AS count FROM establishment_sv;
 
 
 --
--- Benchmark with Eras AND History (System Versioning)
+-- Benchmark with Eras AND History (System Versioning) - using range-only approach
 --
 
 CREATE TABLE legal_unit_era_history (
   id INTEGER,
-  valid_from date,
-  valid_until date,
+  valid_range daterange NOT NULL,
   name varchar NOT NULL
 );
 
 CREATE TABLE establishment_era_history (
   id INTEGER,
-  valid_from date,
-  valid_until date,
+  valid_range daterange NOT NULL,
   legal_unit_id INTEGER NOT NULL,
   postal_place TEXT NOT NULL
 );
 
 -- Enable Eras and System Versioning
-SELECT sql_saga.add_era(table_oid => 'legal_unit_era_history', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
-SELECT sql_saga.add_era(table_oid => 'establishment_era_history', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era('legal_unit_era_history'::regclass, 'valid_range', 'valid');
+SELECT sql_saga.add_era('establishment_era_history'::regclass, 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_era_history', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_era_history', column_names => ARRAY['id'], era_name => 'valid');
 SELECT sql_saga.add_temporal_foreign_key(
@@ -95,8 +93,8 @@ BEGIN;
 DO $$
 BEGIN
   FOR i IN 1..10000 LOOP
-    INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) VALUES (i, '2015-01-01', 'infinity', 'Company ' || i);
-    INSERT INTO establishment_era_history (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES (i, '2015-01-01', 'infinity', i, 'Shop ' || i);
+    INSERT INTO legal_unit_era_history (id, valid_range, name) VALUES (i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i);
+    INSERT INTO establishment_era_history (id, valid_range, legal_unit_id, postal_place) VALUES (i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i);
   END LOOP;
 END; $$;
 END;
@@ -108,8 +106,8 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Era 
 CALL sql_saga.benchmark_reset();
 BEGIN;
   SET CONSTRAINTS ALL DEFERRED;
-  UPDATE legal_unit_era_history SET valid_until = '2016-01-01' WHERE id <= 10000 AND valid_from = '2015-01-01';
-  INSERT INTO legal_unit_era_history (id, valid_from, valid_until, name) SELECT id, '2016-01-01', 'infinity', name FROM legal_unit_era_history WHERE valid_until = '2016-01-01';
+  UPDATE legal_unit_era_history SET valid_range = daterange(lower(valid_range), '2016-01-01', '[)') WHERE id <= 10000 AND lower(valid_range) = '2015-01-01';
+  INSERT INTO legal_unit_era_history (id, valid_range, name) SELECT id, daterange('2016-01-01', 'infinity', '[)'), name FROM legal_unit_era_history WHERE upper(valid_range) = '2016-01-01';
   SET CONSTRAINTS ALL IMMEDIATE;
 END;
 CALL sql_saga.benchmark_log_and_reset('Era + History Update deferred constraints');

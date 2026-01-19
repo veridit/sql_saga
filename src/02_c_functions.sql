@@ -42,7 +42,7 @@ AS 'sql_saga', 'covers_without_gaps_finalfn'
 LANGUAGE c;
 
 COMMENT ON FUNCTION sql_saga.generated_always_as_row_start_end() IS
-'Trigger function to set `system_valid_from` and `system_valid_until` on system-versioned tables.';
+'Trigger function to set the system time range on system-versioned tables.';
 
 COMMENT ON FUNCTION sql_saga.write_history() IS
 'Trigger function to write the old row version to the history table for system-versioned tables.';

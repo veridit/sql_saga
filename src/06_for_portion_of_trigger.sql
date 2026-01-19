@@ -16,8 +16,8 @@ BEGIN
 
     -- Get metadata about the view's underlying table.
     SELECT v.table_schema, v.table_name, v.era_name,
-           e.valid_from_column_name, e.valid_until_column_name, e.synchronize_valid_to_column,
-           e.range_subtype_category, e.range_subtype
+           e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
+           e.range_subtype_category, e.range_subtype, e.range_type
     INTO info
     FROM sql_saga.updatable_view AS v
     JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
@@ -33,7 +33,11 @@ BEGIN
     -- The conceptual entity identifier should not include the temporal columns.
     -- We filter them out here to correct for cases where a PRIMARY KEY that
     -- includes a temporal column was introspected by add_for_portion_of_view.
-    identifier_columns := array_remove(array_remove(TG_ARGV::text[], info.valid_from_column_name), info.valid_until_column_name);
+    identifier_columns := TG_ARGV::text[];
+    IF info.range_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.range_column_name); END IF;
+    IF info.valid_from_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_from_column_name); END IF;
+    IF info.valid_until_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_until_column_name); END IF;
+    IF info.valid_to_column_name IS NOT NULL THEN identifier_columns := array_remove(identifier_columns, info.valid_to_column_name); END IF;
 
     -- Create a temporary table to hold the single source row. The table name
     -- is based on the view's OID to be unique per view. It is created only if it
@@ -69,41 +73,77 @@ BEGIN
     -- by specifying a WHERE clause.
     EXECUTE format('DELETE FROM %I WHERE true;', temp_source_table_name);
 
-    -- The `for_portion_of` view allows specifying a time slice using either `valid_until` (exclusive)
-    -- or `valid_to` (inclusive). To provide a clean, unambiguous source row to the underlying
-    -- temporal_merge procedure, the trigger must derive valid_until and pass only that column.
-    IF info.synchronize_valid_to_column IS NOT NULL THEN
-        DECLARE
-             v_valid_to_changed BOOLEAN;
-             v_valid_until_changed BOOLEAN;
-        BEGIN
-            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.synchronize_valid_to_column, info.synchronize_valid_to_column) INTO v_valid_to_changed USING NEW, OLD;
-            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_until_column_name, info.valid_until_column_name) INTO v_valid_until_changed USING NEW, OLD;
+    -- The `for_portion_of` view allows specifying a time slice using either the authoritative range
+    -- column, or the convenient component columns (`valid_from`, `valid_until`, `valid_to`). This trigger must
+    -- determine the definitive time slice for the operation and pass it to temporal_merge.
+    DECLARE
+        v_final_range_val jsonb;
+        v_range_changed BOOLEAN := false;
+        v_from_changed BOOLEAN := false;
+        v_until_changed BOOLEAN := false;
+        v_to_changed BOOLEAN := false;
+        v_until_via_to text;
+    BEGIN
+        IF info.range_column_name IS NOT NULL THEN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.range_column_name, info.range_column_name) INTO v_range_changed USING NEW, OLD;
+        END IF;
+        IF info.valid_from_column_name IS NOT NULL THEN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_from_column_name, info.valid_from_column_name) INTO v_from_changed USING NEW, OLD;
+        END IF;
+        IF info.valid_until_column_name IS NOT NULL THEN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_until_column_name, info.valid_until_column_name) INTO v_until_changed USING NEW, OLD;
+        END IF;
+        IF info.valid_to_column_name IS NOT NULL THEN
+            EXECUTE format('SELECT ($1).%I IS DISTINCT FROM ($2).%I', info.valid_to_column_name, info.valid_to_column_name) INTO v_to_changed USING NEW, OLD;
+        END IF;
 
-            -- If valid_to was changed but valid_until was not, then valid_until is stale and must be derived.
-            IF v_valid_to_changed AND NOT v_valid_until_changed THEN
-                DECLARE
-                    v_interval text;
-                    v_derived_valid_until jsonb;
-                BEGIN
-                    CASE info.range_subtype_category
-                        WHEN 'D' THEN v_interval := '''1 day''::interval';
-                        WHEN 'N' THEN v_interval := '1';
-                        ELSE RAISE EXCEPTION 'Unsupported range subtype category for valid_to -> valid_until conversion: %', info.range_subtype_category;
-                    END CASE;
+        -- If any temporal column was changed, derive the new range for the operation.
+        IF v_range_changed OR v_from_changed OR v_until_changed OR v_to_changed THEN
+            -- If the user set the range column directly, it takes precedence.
+            IF v_range_changed THEN
+                v_final_range_val := jnew->info.range_column_name;
+            -- Otherwise, derive the range from the component from/until/to columns.
+            ELSE
+                -- If valid_to was changed, convert it to valid_until (add 1 to make it exclusive)
+                IF v_to_changed THEN
+                    DECLARE
+                        v_new_to text;
+                    BEGIN
+                        v_new_to := (jnew ->> info.valid_to_column_name);
+                        IF v_new_to IS NOT NULL THEN
+                            EXECUTE format('SELECT ($1::%s + 1)::text', info.range_subtype)
+                            INTO v_until_via_to USING v_new_to;
+                        END IF;
+                    END;
+                END IF;
 
-                    EXECUTE format('SELECT to_jsonb(($1->>%L)::%s + %s)',
-                        info.synchronize_valid_to_column, info.range_subtype, v_interval)
-                    INTO v_derived_valid_until
-                    USING jnew;
-
-                    jnew := jnew || jsonb_build_object(info.valid_until_column_name, v_derived_valid_until);
-                END;
+                -- Build the range using from and until (preferring converted valid_to if available)
+                EXECUTE format('SELECT to_jsonb( %I(($1->>%L)::%s, COALESCE($2, ($1->>%L))::%s, ''[)'') )',
+                    info.range_type,
+                    info.valid_from_column_name, info.range_subtype,
+                    info.valid_until_column_name, info.range_subtype
+                ) INTO v_final_range_val USING jnew, v_until_via_to;
             END IF;
-        END;
-        -- Always remove valid_to before passing to temporal_merge.
-        jnew := jnew - info.synchronize_valid_to_column;
-    END IF;
+        ELSE
+            -- No temporal columns were changed, so this is a data-only update. The portion
+            -- to update is the original time slice from the OLD record.
+            EXECUTE format('SELECT to_jsonb(($1).%I)', info.range_column_name) INTO v_final_range_val USING OLD;
+        END IF;
+
+        IF v_final_range_val IS NULL OR v_final_range_val = 'null'::jsonb THEN
+            RAISE EXCEPTION 'sql_saga: could not determine the time portion for the UPDATE. Please SET either the range column (%) or both component columns (% and %).',
+                quote_ident(info.range_column_name), quote_ident(info.valid_from_column_name), quote_ident(info.valid_until_column_name);
+        END IF;
+
+        jnew := jsonb_set(jnew, ARRAY[info.range_column_name], v_final_range_val);
+    END;
+
+    -- Clean up: always remove the component columns before passing to temporal_merge.
+    -- The range column is the single source of truth for the period, and the sync
+    -- trigger on the base table will re-populate them correctly upon write.
+    IF info.valid_from_column_name IS NOT NULL THEN jnew := jnew - info.valid_from_column_name; END IF;
+    IF info.valid_until_column_name IS NOT NULL THEN jnew := jnew - info.valid_until_column_name; END IF;
+    IF info.valid_to_column_name IS NOT NULL THEN jnew := jnew - info.valid_to_column_name; END IF;
 
     -- We no longer need the complex IF/ELSE for insertion.
     -- Populate a record from the cleaned-up JSON and insert it.

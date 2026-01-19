@@ -1,0 +1,325 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+\i sql/include/benchmark_setup.sql
+\set ECHO none
+SET ROLE TO sql_saga_unprivileged_user;
+--------------------------------------------------------------------------------
+-- BENCHMARK: Tables with Synchronized Columns (Trigger-based)
+--
+-- This benchmark uses tables with valid_from, valid_until, AND valid_range.
+-- The synchronization trigger fires on every INSERT/UPDATE to keep them in sync.
+-- The range column is the source of truth; boundary columns are derived.
+-- This measures the overhead of:
+-- - Native WITHOUT OVERLAPS constraints
+-- - Native temporal foreign keys
+-- - PLUS the synchronization trigger on every row operation
+--------------------------------------------------------------------------------
+\echo '--- Creating Tables with Synchronized Columns ---'
+--- Creating Tables with Synchronized Columns ---
+-- Note: valid_range is source of truth, valid_from/valid_until are derived by trigger
+CREATE TABLE parent_synced (
+    id INTEGER,
+    valid_range daterange NOT NULL,
+    valid_from DATE,
+    valid_until DATE,
+    name VARCHAR NOT NULL
+);
+CREATE TABLE child_synced (
+    id INTEGER,
+    valid_range daterange NOT NULL,
+    valid_from DATE,
+    valid_until DATE,
+    parent_id INTEGER NOT NULL,
+    description TEXT NOT NULL
+);
+-- Add eras with synchronization (this creates the sync trigger)
+-- The trigger will populate valid_from/valid_until from valid_range
+SELECT sql_saga.add_era('parent_synced'::regclass, 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "parent_synced_synchronize_temporal_columns_trigger" on table parent_synced to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_era('child_synced'::regclass, 'valid_range', 'valid',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "child_synced_synchronize_temporal_columns_trigger" on table child_synced to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+-- Add unique keys (uses WITHOUT OVERLAPS)
+SELECT sql_saga.add_unique_key('parent_synced'::regclass, ARRAY['id'], 'valid');
+NOTICE:  sql_saga: altering table public.parent_synced to add constraints: ADD CONSTRAINT parent_synced_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+     add_unique_key     
+------------------------
+ parent_synced_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key('child_synced'::regclass, ARRAY['id'], 'valid');
+NOTICE:  sql_saga: altering table public.child_synced to add constraints: ADD CONSTRAINT child_synced_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    add_unique_key     
+-----------------------
+ child_synced_id_valid
+(1 row)
+
+-- Add temporal foreign key (uses native PG18 temporal FK)
+SELECT sql_saga.add_foreign_key(
+    'child_synced'::regclass,
+    ARRAY['parent_id'],
+    'parent_synced'::regclass,
+    ARRAY['id'],
+    fk_era_name => 'valid',
+    create_index => true
+);
+NOTICE:  No compatible index found for foreign key on table child_synced. Creating new index: CREATE INDEX child_synced_parent_id_valid_gist_idx ON child_synced USING GIST (parent_id, valid_range)
+       add_foreign_key        
+------------------------------
+ child_synced_parent_id_valid
+(1 row)
+
+-- Create performance indexes
+CREATE INDEX ON parent_synced USING GIST (valid_range);
+CREATE INDEX ON child_synced USING GIST (valid_range);
+\echo '--- Populating Tables with Synchronized Columns ---'
+--- Populating Tables with Synchronized Columns ---
+-- Insert via valid_range; trigger will sync to valid_from/valid_until
+INSERT INTO parent_synced (id, valid_range, name)
+SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i
+FROM generate_series(1, 20000) i;
+INSERT INTO child_synced (id, valid_range, parent_id, description)
+SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i
+FROM generate_series(1, 10000) i;
+ANALYZE parent_synced;
+ANALYZE child_synced;
+--------------------------------------------------------------------------------
+\echo '--- DML Benchmarks on Tables with Synchronized Columns ---'
+--- DML Benchmarks on Tables with Synchronized Columns ---
+--------------------------------------------------------------------------------
+-- Parent INSERT
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent INSERT start', 0, false);
+CALL sql_saga.benchmark_reset();
+INSERT INTO parent_synced (id, valid_range, name)
+SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'New Company ' || i
+FROM generate_series(20001, 21000) i;
+CALL sql_saga.benchmark_log_and_reset('Synced Parent INSERT');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent INSERT end', 1000, true);
+-- Parent UPDATE (temporal key change - modify range)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent UPDATE Key start', 0, false);
+CALL sql_saga.benchmark_reset();
+UPDATE parent_synced SET valid_range = daterange('2014-01-01', upper(valid_range), '[)')
+WHERE id BETWEEN 1 AND 1000;
+CALL sql_saga.benchmark_log_and_reset('Synced Parent UPDATE Key');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent UPDATE Key end', 1000, true);
+-- Parent UPDATE (non-key column)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent UPDATE Non-Key start', 0, false);
+CALL sql_saga.benchmark_reset();
+UPDATE parent_synced SET name = 'Updated Company'
+WHERE id BETWEEN 1001 AND 2000;
+CALL sql_saga.benchmark_log_and_reset('Synced Parent UPDATE Non-Key');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent UPDATE Non-Key end', 1000, true);
+-- Parent DELETE (no children)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent DELETE (no children) start', 0, false);
+CALL sql_saga.benchmark_reset();
+DELETE FROM parent_synced WHERE id BETWEEN 20001 AND 21000;
+CALL sql_saga.benchmark_log_and_reset('Synced Parent DELETE (no children)');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Parent DELETE (no children) end', 1000, true);
+-- Child INSERT
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child INSERT start', 0, false);
+CALL sql_saga.benchmark_reset();
+INSERT INTO child_synced (id, valid_range, parent_id, description)
+SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'New Shop ' || i
+FROM generate_series(10001, 11000) i;
+CALL sql_saga.benchmark_log_and_reset('Synced Child INSERT');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child INSERT end', 1000, true);
+-- Child UPDATE (temporal key change)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child UPDATE Key start', 0, false);
+CALL sql_saga.benchmark_reset();
+UPDATE child_synced SET valid_range = daterange('2014-01-01', upper(valid_range), '[)')
+WHERE id BETWEEN 1 AND 1000;
+CALL sql_saga.benchmark_log_and_reset('Synced Child UPDATE Key');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child UPDATE Key end', 1000, true);
+-- Child UPDATE (non-key column)
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child UPDATE Non-Key start', 0, false);
+CALL sql_saga.benchmark_reset();
+UPDATE child_synced SET description = 'Updated Shop'
+WHERE id BETWEEN 1001 AND 2000;
+CALL sql_saga.benchmark_log_and_reset('Synced Child UPDATE Non-Key');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child UPDATE Non-Key end', 1000, true);
+-- Child DELETE
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child DELETE start', 0, false);
+CALL sql_saga.benchmark_reset();
+DELETE FROM child_synced WHERE id BETWEEN 9001 AND 10000;
+CALL sql_saga.benchmark_log_and_reset('Synced Child DELETE');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced Child DELETE end', 1000, true);
+--------------------------------------------------------------------------------
+\echo '--- temporal_merge Benchmarks on Tables with Synchronized Columns ---'
+--- temporal_merge Benchmarks on Tables with Synchronized Columns ---
+--------------------------------------------------------------------------------
+-- Reset data for temporal_merge tests
+DELETE FROM child_synced WHERE id > 10000;
+DELETE FROM parent_synced WHERE id > 20000;
+ANALYZE parent_synced;
+ANALYZE child_synced;
+-- Parent temporal_merge
+CREATE TEMP TABLE parent_source_synced (
+    row_id INT,
+    id INT,
+    valid_range daterange,
+    name VARCHAR
+);
+INSERT INTO parent_source_synced
+SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Merged Company ' || i
+FROM generate_series(4001, 5000) AS i;
+CREATE INDEX ON parent_source_synced(id);
+CREATE INDEX ON parent_source_synced USING GIST (valid_range);
+ANALYZE parent_source_synced;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced temporal_merge Parent start', 0, false);
+CALL sql_saga.benchmark_reset();
+CALL sql_saga.temporal_merge('parent_synced'::regclass, 'parent_source_synced'::regclass, ARRAY['id']);
+CALL sql_saga.benchmark_log_and_reset('Synced temporal_merge Parent');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced temporal_merge Parent end', 1000, true);
+-- Child temporal_merge
+CREATE TEMP TABLE child_source_synced (
+    row_id INT,
+    id INT,
+    valid_range daterange,
+    parent_id INT,
+    description TEXT
+);
+INSERT INTO child_source_synced
+SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Merged Shop ' || i
+FROM generate_series(4001, 5000) AS i;
+CREATE INDEX ON child_source_synced(id);
+CREATE INDEX ON child_source_synced USING GIST (valid_range);
+ANALYZE child_source_synced;
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced temporal_merge Child start', 0, false);
+CALL sql_saga.benchmark_reset();
+CALL sql_saga.temporal_merge('child_synced'::regclass, 'child_source_synced'::regclass, ARRAY['id']);
+CALL sql_saga.benchmark_log_and_reset('Synced temporal_merge Child');
+INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Synced temporal_merge Child end', 1000, true);
+--------------------------------------------------------------------------------
+\echo '--- Teardown ---'
+--- Teardown ---
+--------------------------------------------------------------------------------
+SELECT sql_saga.drop_foreign_key('child_synced'::regclass, ARRAY['parent_id'], 'valid');
+NOTICE:  Dropping automatically created index "child_synced_parent_id_valid_gist_idx" for foreign key "child_synced_parent_id_valid"
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('child_synced'::regclass, ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('parent_synced'::regclass, ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_era('child_synced'::regclass, cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_era('parent_synced'::regclass, cleanup => true);
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE child_synced;
+DROP TABLE parent_synced;
+\echo '-- Performance log from pg_stat_monitor --'
+-- Performance log from pg_stat_monitor --
+\set monitor_log_filename expected/performance/105_benchmark_synchronized_columns_monitor.csv
+\i sql/include/benchmark_monitor_csv.sql
+\set ECHO none
+ monitor_log_has_rows 
+----------------------
+ t
+(1 row)
+
+-- Verify the benchmark events and row counts
+SELECT event, row_count FROM benchmark ORDER BY seq_id;
+                  event                   | row_count 
+------------------------------------------+-----------
+ BEGIN                                    |         0
+ Synced Parent INSERT start               |         0
+ Synced Parent INSERT end                 |      1000
+ Synced Parent UPDATE Key start           |         0
+ Synced Parent UPDATE Key end             |      1000
+ Synced Parent UPDATE Non-Key start       |         0
+ Synced Parent UPDATE Non-Key end         |      1000
+ Synced Parent DELETE (no children) start |         0
+ Synced Parent DELETE (no children) end   |      1000
+ Synced Child INSERT start                |         0
+ Synced Child INSERT end                  |      1000
+ Synced Child UPDATE Key start            |         0
+ Synced Child UPDATE Key end              |      1000
+ Synced Child UPDATE Non-Key start        |         0
+ Synced Child UPDATE Non-Key end          |      1000
+ Synced Child DELETE start                |         0
+ Synced Child DELETE end                  |      1000
+ Synced temporal_merge Parent start       |         0
+ Synced temporal_merge Parent end         |      1000
+ Synced temporal_merge Child start        |         0
+ Synced temporal_merge Child end          |      1000
+(21 rows)
+
+-- Capture performance metrics to a separate file
+\set benchmark_log_filename expected/performance/105_benchmark_synchronized_columns_report.log
+\i sql/include/benchmark_report_log.sql
+\set ECHO none
+\i sql/include/benchmark_teardown.sql
+\set ECHO none
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

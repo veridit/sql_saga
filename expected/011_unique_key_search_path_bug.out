@@ -45,12 +45,14 @@ SET search_path TO public, saga_bug_test;
 -- Create the "impostor" table in the `public` schema.
 CREATE TABLE public.legal_unit (
     id INT NOT NULL,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('public.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('public.legal_unit', 'valid_range');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table legal_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -58,7 +60,7 @@ SELECT sql_saga.add_era('public.legal_unit', 'valid_from', 'valid_until');
 
 -- On the impostor table, create a unique key with a non-interfering name.
 SELECT sql_saga.add_unique_key('public.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'impostor_uk');
-NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT impostor_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT impostor_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT impostor_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT impostor_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  impostor_uk
@@ -67,12 +69,14 @@ NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONS
 -- Create the real parent table in the `saga_bug_test` schema.
 CREATE TABLE saga_bug_test.legal_unit (
     id INT NOT NULL,
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_range');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table saga_bug_test.legal_unit to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -80,7 +84,7 @@ SELECT sql_saga.add_era('saga_bug_test.legal_unit', 'valid_from', 'valid_until')
 
 -- Use a different, non-interfering name for the unique key on the correct table.
 SELECT sql_saga.add_unique_key('saga_bug_test.legal_unit', ARRAY['id'], 'valid', key_type => 'natural', unique_key_name => 'correct_table_uk');
-NOTICE:  sql_saga: altering table saga_bug_test.legal_unit to add constraints: ADD CONSTRAINT correct_table_uk_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT correct_table_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT correct_table_uk_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table saga_bug_test.legal_unit to add constraints: ADD CONSTRAINT correct_table_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  correct_table_uk
@@ -90,19 +94,21 @@ NOTICE:  sql_saga: altering table saga_bug_test.legal_unit to add constraints: A
 CREATE TABLE saga_bug_test.establishment (
     id INT NOT NULL,
     legal_unit_id INT, -- Temporal FK
+    valid_range DATERANGE NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     name TEXT,
-    PRIMARY KEY (id, valid_from)
+    PRIMARY KEY (id, valid_range)
 );
-SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_range');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], key_type => 'natural');
-NOTICE:  sql_saga: altering table saga_bug_test.establishment to add constraints: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT establishment_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE, ADD CONSTRAINT establishment_id_valid_pk_consistency_excl EXCLUDE USING gist (id WITH =, id WITH <>)
+NOTICE:  sql_saga: altering table saga_bug_test.establishment to add constraints: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  establishment_id_valid
@@ -120,7 +126,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     'valid',
     'correct_table_uk' -- This UK is on saga_bug_test.legal_unit
 );
-NOTICE:  No compatible index found for foreign key on table establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON establishment USING GIST (legal_unit_id, daterange(valid_from, valid_until))
+NOTICE:  No compatible index found for foreign key on table establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON establishment USING GIST (legal_unit_id, valid_range)
      add_temporal_foreign_key      
 -----------------------------------
  establishment_legal_unit_id_valid

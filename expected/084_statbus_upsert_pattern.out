@@ -1,0 +1,356 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SET ROLE TO sql_saga_unprivileged_user;
+CREATE TABLE legal_unit (
+  id INTEGER,
+  valid_range daterange NOT NULL,
+  valid_from date,
+  valid_until date,
+  name varchar NOT NULL
+);
+CREATE TABLE location (
+  id INTEGER,
+  valid_range daterange NOT NULL,
+  valid_from date,
+  valid_until date,
+  legal_unit_id INTEGER NOT NULL,
+  postal_place TEXT NOT NULL
+);
+-- Before using sql_saga
+\d legal_unit
+                    Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           |          | 
+ valid_range | daterange         |           | not null | 
+ valid_from  | date              |           |          | 
+ valid_until | date              |           |          | 
+ name        | character varying |           | not null | 
+
+\d location
+                  Table "public.location"
+    Column     |   Type    | Collation | Nullable | Default 
+---------------+-----------+-----------+----------+---------
+ id            | integer   |           |          | 
+ valid_range   | daterange |           | not null | 
+ valid_from    | date      |           |          | 
+ valid_until   | date      |           |          | 
+ legal_unit_id | integer   |           | not null | 
+ postal_place  | text      |           | not null | 
+
+-- Verify that enable and disable each work correctly.
+SELECT sql_saga.add_era('legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table legal_unit to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+ALTER TABLE legal_unit ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_era('location', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table location to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+ALTER TABLE location ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+TABLE sql_saga.era;
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |       sync_temporal_trg_name       |    sync_temporal_trg_function_name    | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------------------+---------------------------------------+-------------------+------------------
+ public       | legal_unit | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | legal_unit_valid_check  | legal_unit_check          |                      | t                        | legal_unit_valid_sync_temporal_trg | public_legal_unit_valid_template_sync |                   | 
+ public       | location   | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | location_valid_check    | location_check            |                      | t                        | location_valid_sync_temporal_trg   | public_location_valid_template_sync   |                   | 
+(2 rows)
+
+SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
+NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+   add_unique_key    
+---------------------
+ legal_unit_id_valid
+(1 row)
+
+SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
+NOTICE:  sql_saga: altering table public.location to add constraints: ADD CONSTRAINT location_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+  add_unique_key   
+-------------------
+ location_id_valid
+(1 row)
+
+TABLE sql_saga.unique_keys;
+   unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint     | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+---------------------+--------------+------------+----------+--------------+----------+--------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ legal_unit_id_valid | public       | legal_unit | natural  | {id}         | valid    | legal_unit_id_valid_uniq |                    |                  |           |                            |                     |                                  | {}
+ location_id_valid   | public       | location   | natural  | {id}         | valid    | location_id_valid_uniq   |                    |                  |           |                            |                     |                                  | {}
+(2 rows)
+
+SELECT sql_saga.add_temporal_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
+NOTICE:  No compatible index found for foreign key on table location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON location USING GIST (legal_unit_id, valid_range)
+   add_temporal_foreign_key   
+------------------------------
+ location_legal_unit_id_valid
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+       foreign_key_name       |         type         | table_schema | table_name |  column_names   | fk_era_name |                     fk_table_columns_snapshot                      |   unique_key_name   | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |             fk_index_name             
+------------------------------+----------------------+--------------+------------+-----------------+-------------+--------------------------------------------------------------------+---------------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------------------------------
+ location_legal_unit_id_valid | temporal_to_temporal | public       | location   | {legal_unit_id} | valid       | {id,valid_range,valid_from,valid_until,legal_unit_id,postal_place} | legal_unit_id_valid | SIMPLE     | NO ACTION     | NO ACTION     |                     |                    |                   |                   | location_legal_unit_id_valid_gist_idx
+(1 row)
+
+-- While sql_saga is active
+\d legal_unit
+                    Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           | not null | 
+ valid_range | daterange         |           | not null | 
+ valid_from  | date              |           | not null | 
+ valid_until | date              |           |          | 
+ name        | character varying |           | not null | 
+Indexes:
+    "legal_unit_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+    "legal_unit_id_idx" btree (id)
+    "legal_unit_id_valid_range_idx" btree (id, valid_range)
+    "legal_unit_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
+Check constraints:
+    "legal_unit_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "legal_unit_valid_check" CHECK (NOT isempty(valid_range))
+Referenced by:
+    TABLE "location" CONSTRAINT "location_legal_unit_id_valid" FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES legal_unit(id, PERIOD valid_range) DEFERRABLE
+Triggers:
+    legal_unit_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON legal_unit FOR EACH ROW EXECUTE FUNCTION sql_saga.public_legal_unit_valid_template_sync()
+
+\d location
+                  Table "public.location"
+    Column     |   Type    | Collation | Nullable | Default 
+---------------+-----------+-----------+----------+---------
+ id            | integer   |           | not null | 
+ valid_range   | daterange |           | not null | 
+ valid_from    | date      |           | not null | 
+ valid_until   | date      |           |          | 
+ legal_unit_id | integer   |           | not null | 
+ postal_place  | text      |           | not null | 
+Indexes:
+    "location_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+    "location_id_idx" btree (id)
+    "location_id_valid_range_idx" btree (id, valid_range)
+    "location_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    "location_legal_unit_id_valid_gist_idx" gist (legal_unit_id, valid_range)
+Check constraints:
+    "location_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
+    "location_valid_check" CHECK (NOT isempty(valid_range))
+Foreign-key constraints:
+    "location_legal_unit_id_valid" FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES legal_unit(id, PERIOD valid_range) DEFERRABLE
+Triggers:
+    location_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON location FOR EACH ROW EXECUTE FUNCTION sql_saga.public_location_valid_template_sync()
+
+-- Initial Import
+INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
+(101, '2015-01-01', 'infinity', 'NANSETKRYSSET AS');
+INSERT INTO location (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
+(201, '2015-01-01', 'infinity',101 , 'DRAMMEN');
+TABLE legal_unit;
+ id  |      valid_range      | valid_from | valid_until |       name       
+-----+-----------------------+------------+-------------+------------------
+ 101 | [2015-01-01,infinity) | 2015-01-01 | infinity    | NANSETKRYSSET AS
+(1 row)
+
+TABLE location;
+ id  |      valid_range      | valid_from | valid_until | legal_unit_id | postal_place 
+-----+-----------------------+------------+-------------+---------------+--------------
+ 201 | [2015-01-01,infinity) | 2015-01-01 | infinity    |           101 | DRAMMEN
+(1 row)
+
+-- Can't delete referenced legal_Init
+DELETE FROM legal_unit WHERE id = 101;
+ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
+DETAIL:  Key (id, valid_range)=(101, [2015-01-01,infinity)) is still referenced from table "location".
+-- Can't shorten referenced legal_unit more than the referencing location
+UPDATE legal_unit SET valid_until = '2016-01-01' WHERE id = 101;
+ERROR:  update or delete on table "legal_unit" violates foreign key constraint "location_legal_unit_id_valid" on table "location"
+DETAIL:  Key (id, valid_range)=(101, [2015-01-01,infinity)) is still referenced from table "location".
+-- With deferred constraints, adjust the data
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+UPDATE legal_unit SET valid_until = '2016-01-01'
+WHERE id = 101
+  AND valid_from = '2015-01-01'
+  AND valid_until = 'infinity';
+INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
+(101, '2016-01-01', 'infinity', 'NANSETVEIEN AS');
+TABLE legal_unit;
+ id  |       valid_range       | valid_from | valid_until |       name       
+-----+-------------------------+------------+-------------+------------------
+ 101 | [2015-01-01,2016-01-01) | 2015-01-01 | 2016-01-01  | NANSETKRYSSET AS
+ 101 | [2016-01-01,infinity)   | 2016-01-01 | infinity    | NANSETVEIEN AS
+(2 rows)
+
+TABLE location;
+ id  |      valid_range      | valid_from | valid_until | legal_unit_id | postal_place 
+-----+-----------------------+------------+-------------+---------------+--------------
+ 201 | [2015-01-01,infinity) | 2015-01-01 | infinity    |           101 | DRAMMEN
+(1 row)
+
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
+TABLE legal_unit;
+ id  |       valid_range       | valid_from | valid_until |       name       
+-----+-------------------------+------------+-------------+------------------
+ 101 | [2015-01-01,2016-01-01) | 2015-01-01 | 2016-01-01  | NANSETKRYSSET AS
+ 101 | [2016-01-01,infinity)   | 2016-01-01 | infinity    | NANSETVEIEN AS
+(2 rows)
+
+TABLE location;
+ id  |      valid_range      | valid_from | valid_until | legal_unit_id | postal_place 
+-----+-----------------------+------------+-------------+---------------+--------------
+ 201 | [2015-01-01,infinity) | 2015-01-01 | infinity    |           101 | DRAMMEN
+(1 row)
+
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- The algorithm for *_era changes in stabus will delete the old row
+-- and make a new one that replaces it, if they are adjacent.
+DELETE FROM location
+WHERE id = 201
+  AND valid_from = '2015-01-01'
+  AND valid_until = 'infinity';
+INSERT INTO location (id, valid_from, valid_until, legal_unit_id, postal_place) VALUES
+(201, '2015-01-01', 'infinity',101 , 'DRAMMEN');
+SET CONSTRAINTS ALL IMMEDIATE;
+COMMIT;
+TABLE legal_unit;
+ id  |       valid_range       | valid_from | valid_until |       name       
+-----+-------------------------+------------+-------------+------------------
+ 101 | [2015-01-01,2016-01-01) | 2015-01-01 | 2016-01-01  | NANSETKRYSSET AS
+ 101 | [2016-01-01,infinity)   | 2016-01-01 | infinity    | NANSETVEIEN AS
+(2 rows)
+
+TABLE location;
+ id  |      valid_range      | valid_from | valid_until | legal_unit_id | postal_place 
+-----+-----------------------+------------+-------------+---------------+--------------
+ 201 | [2015-01-01,infinity) | 2015-01-01 | infinity    |           101 | DRAMMEN
+(1 row)
+
+-- Teardown
+SELECT sql_saga.drop_foreign_key('location', ARRAY['legal_unit_id'], 'valid');
+NOTICE:  Dropping automatically created index "location_legal_unit_id_valid_gist_idx" for foreign key "location_legal_unit_id_valid"
+ drop_foreign_key 
+------------------
+ 
+(1 row)
+
+TABLE sql_saga.foreign_keys;
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------
+(0 rows)
+
+SELECT sql_saga.drop_unique_key('legal_unit', ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+SELECT sql_saga.drop_unique_key('location',ARRAY['id'], 'valid');
+ drop_unique_key 
+-----------------
+ 
+(1 row)
+
+TABLE sql_saga.unique_keys;
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+(0 rows)
+
+SELECT sql_saga.drop_era('legal_unit');
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_era('location');
+ drop_era 
+----------
+ t
+(1 row)
+
+TABLE sql_saga.era;
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+(0 rows)
+
+-- After removing sql_saga, it should be as before.
+\d legal_unit
+                    Table "public.legal_unit"
+   Column    |       Type        | Collation | Nullable | Default 
+-------------+-------------------+-----------+----------+---------
+ id          | integer           |           | not null | 
+ valid_range | daterange         |           | not null | 
+ valid_from  | date              |           | not null | 
+ valid_until | date              |           |          | 
+ name        | character varying |           | not null | 
+Indexes:
+    "legal_unit_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+    "legal_unit_id_idx" btree (id)
+    "legal_unit_id_valid_range_idx" btree (id, valid_range)
+
+\d location
+                  Table "public.location"
+    Column     |   Type    | Collation | Nullable | Default 
+---------------+-----------+-----------+----------+---------
+ id            | integer   |           | not null | 
+ valid_range   | daterange |           | not null | 
+ valid_from    | date      |           | not null | 
+ valid_until   | date      |           |          | 
+ legal_unit_id | integer   |           | not null | 
+ postal_place  | text      |           | not null | 
+Indexes:
+    "location_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+    "location_id_idx" btree (id)
+    "location_id_valid_range_idx" btree (id, valid_range)
+
+DROP TABLE legal_unit;
+DROP TABLE location;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

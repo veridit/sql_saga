@@ -15,12 +15,15 @@ CREATE SCHEMA tmisd;
 CREATE TABLE tmisd.establishment (
     id SERIAL NOT NULL,
     name TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from) DEFERRABLE
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmisd.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
 -- The conceptual key for the entity
 SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', key_type => 'primary', unique_key_name => 'tmisd_establishment_uk');
 

@@ -1,0 +1,130 @@
+-- Test that temporal_merge executor uses pre-computed range columns
+-- This test verifies the optimization where ranges are pre-computed in the plan
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+NOTICE:  extension "btree_gist" already exists, skipping
+-- Use the standard temporal table pattern from other tests
+CREATE TABLE test_entity (
+    id INT,
+    name TEXT,
+    valid_range daterange,
+    valid_from date GENERATED ALWAYS AS (lower(valid_range)) STORED,
+    valid_until date GENERATED ALWAYS AS (upper(valid_range)) STORED
+);
+SELECT sql_saga.add_era('test_entity', 'valid_range');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('test_entity', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.test_entity to add constraints: ADD CONSTRAINT test_entity_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    add_unique_key    
+----------------------
+ test_entity_id_valid
+(1 row)
+
+-- Insert initial data
+INSERT INTO test_entity (id, name, valid_range) VALUES
+    (1, 'Original', '[2024-01-01,2024-12-31)');
+-- Create source with update
+CREATE TEMP TABLE source_data (
+    row_id INT GENERATED ALWAYS AS IDENTITY,
+    id INT,
+    name TEXT,
+    valid_from DATE,
+    valid_until DATE,
+    valid_range daterange GENERATED ALWAYS AS (daterange(valid_from, valid_until, '[)')) STORED
+);
+INSERT INTO source_data (id, name, valid_from, valid_until) VALUES
+    (1, 'Updated', '2024-06-01', '2024-12-31');
+-- Run temporal_merge
+CALL sql_saga.temporal_merge(
+    'test_entity',
+    'source_data',
+    ARRAY['id']
+);
+-- The key test: verify the plan has pre-computed ranges
+-- These should be populated as TEXT representations of the ranges
+SELECT 
+    operation,
+    old_valid_range IS NOT NULL AS has_old_range,
+    new_valid_range IS NOT NULL AS has_new_range,
+    -- Show a substring to verify they look like ranges
+    substring(old_valid_range from 1 for 10) as old_range_start,
+    substring(new_valid_range from 1 for 10) as new_range_start
+FROM temporal_merge_plan
+WHERE operation IN ('UPDATE', 'INSERT')
+ORDER BY plan_op_seq;
+ operation | has_old_range | has_new_range | old_range_start | new_range_start 
+-----------+---------------+---------------+-----------------+-----------------
+ UPDATE    | t             | t             | [2024-01-0      | [2024-01-0
+ INSERT    | t             | t             | [2024-01-0      | [2024-06-0
+(2 rows)
+
+-- Also show the actual ranges to verify format
+SELECT 
+    operation,
+    old_valid_range,
+    new_valid_range
+FROM temporal_merge_plan
+WHERE operation IN ('UPDATE', 'INSERT')
+ORDER BY plan_op_seq;
+ operation |     old_valid_range     |     new_valid_range     
+-----------+-------------------------+-------------------------
+ UPDATE    | [2024-01-01,2024-12-31) | [2024-01-01,2024-06-01)
+ INSERT    | [2024-01-01,2024-12-31) | [2024-06-01,2024-12-31)
+(2 rows)
+
+-- Verify the result
+SELECT id, name, valid_range FROM test_entity ORDER BY id, valid_range;
+ id |   name   |       valid_range       
+----+----------+-------------------------
+  1 | Original | [2024-01-01,2024-06-01)
+  1 | Updated  | [2024-06-01,2024-12-31)
+(2 rows)
+
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

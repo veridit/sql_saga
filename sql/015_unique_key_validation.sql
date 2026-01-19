@@ -9,11 +9,12 @@ BEGIN;
 CREATE TABLE incompatible_pk (
     id serial PRIMARY KEY,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 -- This should issue a WARNING because of the simple PRIMARY KEY.
-SELECT sql_saga.add_era('incompatible_pk');
+SELECT sql_saga.add_era('incompatible_pk','valid_range');
 
 -- This should fail because the primary key on (id) does not include temporal columns.
 DO $$
@@ -33,11 +34,12 @@ $$;
 CREATE TABLE incompatible_identity (
     id int GENERATED ALWAYS AS IDENTITY,
     value text,
+    valid_range daterange,
     valid_from date,
     valid_until date
 );
 -- This should issue a WARNING because of the GENERATED ALWAYS column.
-SELECT sql_saga.add_era('incompatible_identity');
+SELECT sql_saga.add_era('incompatible_identity','valid_range');
 
 -- This should fail because GENERATED ALWAYS is incompatible with SCD-2 history.
 DO $$

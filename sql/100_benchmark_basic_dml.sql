@@ -8,14 +8,14 @@ SET ROLE TO sql_saga_unprivileged_user;
 -- Enable detailed temporal_merge index logging for this benchmark session.
 --SET sql_saga.temporal_merge.log_index_checks = true;
 
-CREATE TABLE legal_unit (id INTEGER, valid_from date, valid_until date, name varchar NOT NULL, PRIMARY KEY (id, valid_from));
-CREATE TABLE establishment (id INTEGER, valid_from date, valid_until date, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL, PRIMARY KEY (id, valid_from));
+CREATE TABLE legal_unit (id INTEGER, valid_range daterange NOT NULL, name varchar NOT NULL, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
+CREATE TABLE establishment (id INTEGER, valid_range daterange NOT NULL, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
 CREATE TABLE projects (id serial primary key, name text, legal_unit_id int);
 
 \echo '--- Populating tables ---'
-INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 20000) i;
+INSERT INTO legal_unit (id, valid_range, name) SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(1, 20000) i;
 -- Establishments only for the first 10,000 legal units
-INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 10000) i;
+INSERT INTO establishment (id, valid_range, legal_unit_id, postal_place) SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(1, 10000) i;
 INSERT INTO projects (name, legal_unit_id) SELECT 'Project ' || i, i FROM generate_series(1, 10000) i;
 ANALYZE legal_unit;
 ANALYZE establishment;
@@ -28,13 +28,13 @@ ANALYZE projects;
 -- Parent DML
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (Plain)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(20001, 21000) i;
+INSERT INTO legal_unit (id, valid_range, name) SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'New Company ' || i FROM generate_series(20001, 21000) i;
 CALL sql_saga.benchmark_log_and_reset('Parent INSERT (Plain)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (Plain) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (Plain)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE legal_unit SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+UPDATE legal_unit SET valid_range = daterange('2014-01-01', upper(valid_range), '[)') WHERE id BETWEEN 1 AND 1000;
 CALL sql_saga.benchmark_log_and_reset('Parent UPDATE Key (Plain)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (Plain) end', 1000, true);
 
@@ -53,13 +53,13 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Pare
 -- Child DML
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (Plain)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
+INSERT INTO establishment (id, valid_range, legal_unit_id, postal_place) SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
 CALL sql_saga.benchmark_log_and_reset('Child INSERT (Plain)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (Plain) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (Plain)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE establishment SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+UPDATE establishment SET valid_range = daterange('2014-01-01', upper(valid_range), '[)') WHERE id BETWEEN 1 AND 1000;
 CALL sql_saga.benchmark_log_and_reset('Child UPDATE Key (Plain)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (Plain) end', 1000, true);
 
@@ -97,16 +97,16 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regu
 
 \echo '--- Resetting tables and enabling sql_saga constraints ---'
 TRUNCATE legal_unit, establishment, projects;
-INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'Company ' || i FROM generate_series(1, 20000) i;
-INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'Shop ' || i FROM generate_series(1, 10000) i;
+INSERT INTO legal_unit (id, valid_range, name) SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'Company ' || i FROM generate_series(1, 20000) i;
+INSERT INTO establishment (id, valid_range, legal_unit_id, postal_place) SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'Shop ' || i FROM generate_series(1, 10000) i;
 INSERT INTO projects (name, legal_unit_id) SELECT 'Project ' || i, i FROM generate_series(1, 10000) i;
 ANALYZE legal_unit;
 ANALYZE establishment;
 ANALYZE projects;
 
 -- Enable sql_saga constraints
-SELECT sql_saga.add_era('legal_unit'::regclass);
-SELECT sql_saga.add_era('establishment'::regclass);
+SELECT sql_saga.add_era('legal_unit'::regclass, 'valid_range', 'valid');
+SELECT sql_saga.add_era('establishment'::regclass, 'valid_range', 'valid');
 SELECT sql_saga.add_unique_key('legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
 SELECT sql_saga.add_unique_key('establishment'::regclass, column_names => ARRAY['id']);
 SELECT sql_saga.add_foreign_key('establishment'::regclass, ARRAY['legal_unit_id'], 'legal_unit'::regclass, ARRAY['id'], fk_era_name => 'valid', create_index => false);
@@ -119,13 +119,13 @@ SELECT sql_saga.add_foreign_key('projects', ARRAY['legal_unit_id'], 'legal_unit'
 -- Parent DML (fires uk_*_triggers)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (No Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(20001, 21000) i;
+INSERT INTO legal_unit (id, valid_range, name) SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'New Company ' || i FROM generate_series(20001, 21000) i;
 CALL sql_saga.benchmark_log_and_reset('Parent INSERT (No Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (No Index) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (No Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE legal_unit SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+UPDATE legal_unit SET valid_range = daterange('2014-01-01', upper(valid_range), '[)') WHERE id BETWEEN 1 AND 1000;
 CALL sql_saga.benchmark_log_and_reset('Parent UPDATE Key (No Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (No Index) end', 1000, true);
 
@@ -151,13 +151,13 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Pare
 -- Child DML (fires fk_*_triggers)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (No Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
+INSERT INTO establishment (id, valid_range, legal_unit_id, postal_place) SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'New Shop ' || i FROM generate_series(10001, 11000) i;
 CALL sql_saga.benchmark_log_and_reset('Child INSERT (No Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (No Index) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (No Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE establishment SET valid_from = '2014-01-01' WHERE id BETWEEN 1 AND 1000;
+UPDATE establishment SET valid_range = daterange('2014-01-01', upper(valid_range), '[)') WHERE id BETWEEN 1 AND 1000;
 CALL sql_saga.benchmark_log_and_reset('Child UPDATE Key (No Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (No Index) end', 1000, true);
 
@@ -194,7 +194,7 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regu
 
 
 \echo '--- Adding performance index to child table ---'
-CREATE INDEX ON establishment USING GIST (legal_unit_id, daterange(valid_from, valid_until));
+CREATE INDEX ON establishment USING GIST (legal_unit_id, valid_range);
 
 --------------------------------------------------------------------------------
 \echo '--- DML on sql_saga Tables (With Performance Index) ---'
@@ -203,13 +203,13 @@ CREATE INDEX ON establishment USING GIST (legal_unit_id, daterange(valid_from, v
 -- Parent DML (fires uk_*_triggers, now with index)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO legal_unit SELECT i, '2015-01-01', 'infinity', 'New Company ' || i FROM generate_series(21001, 22000) i;
+INSERT INTO legal_unit (id, valid_range, name) SELECT i, daterange('2015-01-01', 'infinity', '[)'), 'New Company ' || i FROM generate_series(21001, 22000) i;
 CALL sql_saga.benchmark_log_and_reset('Parent INSERT (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent INSERT (With Index) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE legal_unit SET valid_from = '2013-01-01' WHERE id BETWEEN 2001 AND 3000;
+UPDATE legal_unit SET valid_range = daterange('2013-01-01', upper(valid_range), '[)') WHERE id BETWEEN 2001 AND 3000;
 CALL sql_saga.benchmark_log_and_reset('Parent UPDATE Key (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Parent UPDATE Key (With Index) end', 1000, true);
 
@@ -235,13 +235,13 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Pare
 -- Child DML (fires fk_*_triggers, should be unaffected by index on parent)
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-INSERT INTO establishment SELECT i, '2015-01-01', 'infinity', i, 'New Shop ' || i FROM generate_series(11001, 12000) i;
+INSERT INTO establishment (id, valid_range, legal_unit_id, postal_place) SELECT i, daterange('2015-01-01', 'infinity', '[)'), i, 'New Shop ' || i FROM generate_series(11001, 12000) i;
 CALL sql_saga.benchmark_log_and_reset('Child INSERT (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child INSERT (With Index) end', 1000, true);
 
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (With Index)', 0, false);
 CALL sql_saga.benchmark_reset();
-UPDATE establishment SET valid_from = '2013-01-01' WHERE id BETWEEN 2001 AND 3000;
+UPDATE establishment SET valid_range = daterange('2013-01-01', upper(valid_range), '[)') WHERE id BETWEEN 2001 AND 3000;
 CALL sql_saga.benchmark_log_and_reset('Child UPDATE Key (With Index)');
 INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Child UPDATE Key (With Index) end', 1000, true);
 
@@ -281,14 +281,16 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Regu
 \echo '--- temporal_merge on sql_saga Tables (With Performance Index) ---'
 --------------------------------------------------------------------------------
 -- Prepare recommended indices by temporal_merge
-CREATE INDEX ON legal_unit USING GIST (daterange(valid_from, valid_until, '[)'));
-CREATE INDEX ON establishment USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON legal_unit USING BTREE (id);
+CREATE INDEX ON legal_unit USING GIST (valid_range);
+CREATE INDEX ON establishment USING BTREE (id);
+CREATE INDEX ON establishment USING GIST (valid_range);
 
 -- Parent table merge
-CREATE TEMP TABLE legal_unit_source (row_id int, id int, valid_from date, valid_until date, name varchar);
-INSERT INTO legal_unit_source SELECT i, i, '2015-01-01', 'infinity', 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
+CREATE TEMP TABLE legal_unit_source (row_id int, id int, valid_range daterange, name varchar);
+INSERT INTO legal_unit_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
 CREATE INDEX ON legal_unit_source(id);
-CREATE INDEX ON legal_unit_source USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON legal_unit_source USING GIST (valid_range);
 ANALYZE legal_unit_source;
 ANALYZE legal_unit;
 
@@ -304,10 +306,10 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temp
 \i sql/include/benchmark_explain_log.sql
 
 -- Child table merge
-CREATE TEMP TABLE establishment_source (row_id int, id int, valid_from date, valid_until date, legal_unit_id int, postal_place text);
-INSERT INTO establishment_source SELECT i, i, '2015-01-01', 'infinity', i, 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
+CREATE TEMP TABLE establishment_source (row_id int, id int, valid_range daterange, legal_unit_id int, postal_place text);
+INSERT INTO establishment_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
 CREATE INDEX ON establishment_source(id);
-CREATE INDEX ON establishment_source USING GIST (daterange(valid_from, valid_until, '[)'));
+CREATE INDEX ON establishment_source USING GIST (valid_range);
 ANALYZE establishment_source;
 ANALYZE establishment;
 

@@ -1,0 +1,134 @@
+\i sql/include/test_setup.sql
+-- This script provides a minimal, reproducible example of a bug in
+-- sql_saga.temporal_merge giving a bigint[] vs integer[] error.
+
+BEGIN;
+
+-- Setup a clean environment
+DROP SCHEMA IF EXISTS repro CASCADE;
+CREATE SCHEMA repro;
+
+-- Minimal dependencies for foreign keys
+CREATE TABLE repro.auth_user (id int primary key);
+INSERT INTO repro.auth_user VALUES (1);
+
+CREATE TABLE repro.legal_unit (
+    id int NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from date,
+    valid_until date,
+    valid_to date,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+SELECT sql_saga.add_era('repro.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+
+INSERT INTO repro.legal_unit (id, valid_from, valid_until, valid_to) 
+VALUES (123, '2020-01-01', 'infinity', 'infinity');
+
+CREATE TABLE repro.stat_definition (
+    id int primary key,
+    code text unique,
+    type text,
+    name text
+);
+INSERT INTO repro.stat_definition VALUES (1, 'employees', 'int', 'Employees');
+
+-- 1. Create the target table, mimicking the real one.
+-- Note the `created_at` column with a DEFAULT.
+CREATE TABLE repro.stat_for_unit (
+    id                 SERIAL NOT NULL,
+    stat_definition_id INT NOT NULL REFERENCES repro.stat_definition(id),
+    legal_unit_id      INT,
+    establishment_id   INT,
+    value_int          INT,
+    value_float        DOUBLE PRECISION,
+    value_string       VARCHAR,
+    value_bool         BOOLEAN,
+    valid_range        daterange NOT NULL,
+    valid_from         DATE NOT NULL,
+    valid_to           DATE NOT NULL,
+    valid_until        DATE NOT NULL,
+    data_source_id     INT,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
+    edit_by_user_id    INT NOT NULL REFERENCES repro.auth_user(id),
+    edit_at            TIMESTAMPTZ NOT NULL DEFAULT statement_timestamp(),
+    edit_comment       VARCHAR(512),
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS),
+    FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES repro.legal_unit (id, PERIOD valid_range)
+);
+
+-- Enable sql_saga on the target table
+SELECT sql_saga.add_era('repro.stat_for_unit'::regclass, 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    valid_to_column_name => 'valid_to');
+
+
+-- 2. Create the source table, which is missing the `created_at` column.
+-- This is the hypothesized root cause of the bug.
+CREATE TEMP TABLE temp_stat_merge_source (
+    synthetic_row_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    founding_key TEXT,
+    id INT,
+    legal_unit_id INT,
+    establishment_id INT,
+    stat_definition_id INT,
+    value_string TEXT, value_int INT, value_float DOUBLE PRECISION, value_bool BOOLEAN,
+    valid_from DATE NOT NULL,
+    valid_to DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    data_source_id INT,
+    edit_by_user_id INT,
+    edit_at TIMESTAMPTZ,
+    edit_comment TEXT
+);
+
+-- 3. Insert one row of sample data into the source table.
+INSERT INTO temp_stat_merge_source (
+    founding_key, id,
+    legal_unit_id, establishment_id, stat_definition_id,
+    value_string, value_int, value_float, value_bool,
+    valid_from, valid_to, valid_until,
+    data_source_id, edit_by_user_id, edit_at, edit_comment
+) VALUES (
+    '101_1',      -- founding_key (founding_row_id || '_' || stat_def_id)
+    NULL,         -- id is NULL because this is a new stat_for_unit record
+    123,          -- legal_unit_id (points to our existing LU)
+    NULL,         -- establishment_id
+    1,            -- stat_definition_id (for 'employees')
+    NULL, 25, NULL, NULL, -- The value is an integer
+    '2024-01-01', -- valid_from
+    '2024-12-31', -- valid_to
+    '2025-01-01', -- valid_until
+    NULL,         -- data_source_id
+    1,            -- edit_by_user_id
+    NOW(),        -- edit_at
+    'Test import' -- edit_comment
+);
+
+-- 4. Call temporal_merge. This is now expected to succeed because the executor
+-- correctly handles BIGINT source row IDs and source tables that are missing columns
+-- with DEFAULT values.
+\echo '--- Calling temporal_merge (EXPECTED TO SUCCEED) ---'
+CALL sql_saga.temporal_merge(
+    target_table => 'repro.stat_for_unit',
+    source_table => 'temp_stat_merge_source',
+    primary_identity_columns => ARRAY['id'],
+    ephemeral_columns => ARRAY['edit_comment', 'edit_by_user_id', 'edit_at'],
+    mode => 'MERGE_ENTITY_REPLACE',
+    era_name => 'valid',
+    row_id_column => 'synthetic_row_id',
+    founding_id_column => 'founding_key',
+    update_source_with_identity => true
+);
+
+\echo '--- Verification: Check if data was inserted and created_at defaulted ---'
+SELECT id, legal_unit_id, stat_definition_id, value_int, valid_from, valid_to, created_at IS NOT NULL as created_at_is_set
+FROM repro.stat_for_unit;
+
+ROLLBACK;
+
+\i sql/include/test_teardown.sql

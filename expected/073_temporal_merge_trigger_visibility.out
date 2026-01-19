@@ -1,0 +1,589 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+SELECT $$
+--------------------------------------------------------------------------------
+Test: 58 - MVCC Trigger Visibility Semantics
+Purpose:
+  This test provides a crystal-clear demonstration of the Multi-Version
+  Concurrency Control (MVCC) semantics for PostgreSQL triggers. Its goal is
+  not to test any sql_saga functionality, but to establish a baseline of
+  understanding about what data is visible to BEFORE and AFTER triggers for
+  each DML operation (INSERT, UPDATE, DELETE).
+
+Methodology:
+  1. A simple table `mvcc_test.t` is created.
+  2. A single, universal trigger function `mvcc_test.log_trigger()` is defined.
+     This function logs:
+     - The trigger's context (WHEN, OP).
+     - The contents of the OLD and NEW tuples.
+     - The *full contents of the table* as seen by a `SELECT *` query
+       executed from within the trigger function. This is the crucial part
+       that reveals the MVCC snapshot available to the trigger.
+  3. This function is attached as both a BEFORE and AFTER ROW trigger to the
+     table.
+  4. A series of simple, isolated DML statements are executed, and the
+     resulting NOTICE output is captured to demonstrate the visibility rules.
+
+Expected Observations:
+  - BEFORE Triggers: The `SELECT *` will show the state of the table
+    *before* the current DML statement has made any changes. The OLD/NEW
+    tuples reflect the change that is about to happen.
+  - AFTER Triggers: The `SELECT *` will show the state of the table *after*
+    the current DML statement has completed. The snapshot includes the
+    change made by the statement that fired the trigger.
+--------------------------------------------------------------------------------
+$$ AS doc;
+                                       doc                                        
+----------------------------------------------------------------------------------
+                                                                                 +
+ --------------------------------------------------------------------------------+
+ Test: 58 - MVCC Trigger Visibility Semantics                                    +
+ Purpose:                                                                        +
+   This test provides a crystal-clear demonstration of the Multi-Version         +
+   Concurrency Control (MVCC) semantics for PostgreSQL triggers. Its goal is     +
+   not to test any sql_saga functionality, but to establish a baseline of        +
+   understanding about what data is visible to BEFORE and AFTER triggers for     +
+   each DML operation (INSERT, UPDATE, DELETE).                                  +
+                                                                                 +
+ Methodology:                                                                    +
+   1. A simple table `mvcc_test.t` is created.                                   +
+   2. A single, universal trigger function `mvcc_test.log_trigger()` is defined. +
+      This function logs:                                                        +
+      - The trigger's context (WHEN, OP).                                        +
+      - The contents of the OLD and NEW tuples.                                  +
+      - The *full contents of the table* as seen by a `SELECT *` query           +
+        executed from within the trigger function. This is the crucial part      +
+        that reveals the MVCC snapshot available to the trigger.                 +
+   3. This function is attached as both a BEFORE and AFTER ROW trigger to the    +
+      table.                                                                     +
+   4. A series of simple, isolated DML statements are executed, and the          +
+      resulting NOTICE output is captured to demonstrate the visibility rules.   +
+                                                                                 +
+ Expected Observations:                                                          +
+   - BEFORE Triggers: The `SELECT *` will show the state of the table            +
+     *before* the current DML statement has made any changes. The OLD/NEW        +
+     tuples reflect the change that is about to happen.                          +
+   - AFTER Triggers: The `SELECT *` will show the state of the table *after*     +
+     the current DML statement has completed. The snapshot includes the          +
+     change made by the statement that fired the trigger.                        +
+ --------------------------------------------------------------------------------+
+ 
+(1 row)
+
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+NOTICE:  extension "btree_gist" already exists, skipping
+CREATE SCHEMA mvcc_test;
+CREATE TABLE mvcc_test.t (
+    row_id int GENERATED ALWAYS AS IDENTITY,
+    id int not null,
+    value text,
+    valid_range int4range NOT NULL,
+    PRIMARY KEY (row_id),
+    UNIQUE (id, valid_range WITHOUT OVERLAPS)
+);
+CREATE FUNCTION mvcc_test.log_trigger()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_row record;
+BEGIN
+    RAISE NOTICE '---';
+    RAISE NOTICE 'Trigger Fired: % % ON mvcc_test.t', TG_WHEN, TG_OP;
+
+    IF TG_OP IN ('UPDATE', 'DELETE') THEN
+        RAISE NOTICE '  OLD: %', to_jsonb(OLD);
+    END IF;
+    IF TG_OP IN ('INSERT', 'UPDATE') THEN
+        RAISE NOTICE '  NEW: %', to_jsonb(NEW);
+    END IF;
+
+    RAISE NOTICE '  Visible Table State (SELECT * FROM mvcc_test.t):';
+    FOR v_row IN SELECT * FROM mvcc_test.t ORDER BY row_id LOOP
+        RAISE NOTICE '    %', v_row;
+    END LOOP;
+
+    IF TG_WHEN = 'BEFORE' THEN
+        RETURN NEW;
+    ELSE
+        RETURN OLD;
+    END IF;
+END;
+$$;
+CREATE TRIGGER t_before
+BEFORE INSERT OR UPDATE OR DELETE ON mvcc_test.t
+FOR EACH ROW EXECUTE FUNCTION mvcc_test.log_trigger();
+CREATE TRIGGER t_after
+AFTER INSERT OR UPDATE OR DELETE ON mvcc_test.t
+FOR EACH ROW EXECUTE FUNCTION mvcc_test.log_trigger();
+\echo '\n--- Initial State ---'
+
+--- Initial State ---
+-- id=1 has a continuous timeline. id=2 is a separate entity.
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (1, 'initial', '[10,20)'), (1, 'untouched', '[20,30)');
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 1, "value": "initial", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 1, "value": "untouched", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 1, "value": "initial", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 1, "value": "untouched", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+TABLE mvcc_test.t ORDER BY row_id;
+ row_id | id |   value   | valid_range 
+--------+----+-----------+-------------
+      1 |  1 | initial   | [10,20)
+      2 |  1 | untouched | [20,30)
+(2 rows)
+
+\echo '\n\n--- Scenario 1: INSERT a new row ---'
+
+
+--- Scenario 1: INSERT a new row ---
+BEGIN;
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (2, 'inserted', '[100,110)');
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 2, "value": "inserted", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 2, "value": "inserted", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+COMMIT;
+\echo '\n\n--- Scenario 2: UPDATE an existing row ---'
+
+
+--- Scenario 2: UPDATE an existing row ---
+BEGIN;
+UPDATE mvcc_test.t SET value = 'updated' WHERE row_id = 1;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "initial", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    NEW: {"id": 1, "value": "updated", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,initial,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "initial", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    NEW: {"id": 1, "value": "updated", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+COMMIT;
+\echo '\n\n--- Scenario 3: DELETE an existing row ---'
+
+
+--- Scenario 3: DELETE an existing row ---
+BEGIN;
+DELETE FROM mvcc_test.t WHERE row_id = 1;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE DELETE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "updated", "row_id": 1, "valid_range": "[10,20)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+COMMIT;
+\echo '\n\n--- Scenario 4: Multi-row UPDATE ---'
+
+
+--- Scenario 4: Multi-row UPDATE ---
+\echo 'Observation: Each row''s AFTER trigger sees the state *after its own update* is complete.'
+Observation: Each row's AFTER trigger sees the state *after its own update* is complete.
+\echo 'The snapshot for the second row''s triggers includes the update from the first row.'
+The snapshot for the second row's triggers includes the update from the first row.
+BEGIN;
+-- Add a row to update
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (2, 'another', '[110,120)');
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 2, "value": "another", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 2, "value": "another", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,another,"[110,120)")
+UPDATE mvcc_test.t SET value = 'multi-updated' WHERE row_id IN (2, 4);
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "untouched", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    NEW: {"id": 1, "value": "multi-updated", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,untouched,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,another,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 2, "value": "another", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    NEW: {"id": 2, "value": "multi-updated", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,multi-updated,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,another,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "untouched", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    NEW: {"id": 1, "value": "multi-updated", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,multi-updated,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 2, "value": "another", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    NEW: {"id": 2, "value": "multi-updated", "row_id": 4, "valid_range": "[110,120)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,multi-updated,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+COMMIT;
+\echo '\n\n--- Scenario 5: Two statements in one transaction ---'
+
+
+--- Scenario 5: Two statements in one transaction ---
+\echo 'Observation: The triggers for the second UPDATE statement see the table state'
+Observation: The triggers for the second UPDATE statement see the table state
+\echo 'that includes the completed update from the first statement.'
+that includes the completed update from the first statement.
+BEGIN;
+\echo '-- First statement in transaction --'
+-- First statement in transaction --
+UPDATE mvcc_test.t SET value = 'tx-update-1' WHERE row_id = 2;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "multi-updated", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    NEW: {"id": 1, "value": "tx-update-1", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,multi-updated,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 1, "value": "multi-updated", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    NEW: {"id": 1, "value": "tx-update-1", "row_id": 2, "valid_range": "[20,30)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+\echo '-- Second statement in transaction --'
+-- Second statement in transaction --
+UPDATE mvcc_test.t SET value = 'tx-update-2' WHERE row_id = 3;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 2, "value": "inserted", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    NEW: {"id": 2, "value": "tx-update-2", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,inserted,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 2, "value": "inserted", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    NEW: {"id": 2, "value": "tx-update-2", "row_id": 3, "valid_range": "[100,110)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+COMMIT;
+\echo '\n\n--- Scenario 6: Adjusting Adjacent Timelines (SCD Type 2 simulation) ---'
+
+
+--- Scenario 6: Adjusting Adjacent Timelines (SCD Type 2 simulation) ---
+\echo 'Observation: This scenario demonstrates why the order of operations is critical'
+Observation: This scenario demonstrates why the order of operations is critical
+\echo 'for temporal data. A "shrink" operation must happen before a "grow" operation'
+for temporal data. A "shrink" operation must happen before a "grow" operation
+\echo 'to avoid creating a transient overlap that would violate NOT DEFERRABLE unique.'
+to avoid creating a transient overlap that would violate NOT DEFERRABLE unique.
+\echo 'With DELETE→UPDATE→INSERT strategy, we minimize gaps instead of overlaps.'
+With DELETE→UPDATE→INSERT strategy, we minimize gaps instead of overlaps.
+BEGIN;
+SET CONSTRAINTS ALL DEFERRED;
+-- Setup: two adjacent timeline segments for id=3
+INSERT INTO mvcc_test.t (id, value, valid_range) 
+VALUES (3, 'a', '[100,200)'), (3, 'b', '[200,300)');
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:      (6,3,b,"[200,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER INSERT ON mvcc_test.t
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:      (6,3,b,"[200,300)")
+\echo '\n-- 6a: Grow then Shrink (Incorrect Order with NOT DEFERRABLE unique) --'
+
+-- 6a: Grow then Shrink (Incorrect Order with NOT DEFERRABLE unique) --
+\echo '-- We update row_id=6 to start at 150. This creates a temporary overlap from 150 to 200.'
+-- We update row_id=6 to start at 150. This creates a temporary overlap from 150 to 200.
+\echo '-- The NOT DEFERRABLE unique constraint rejects this immediately.'
+-- The NOT DEFERRABLE unique constraint rejects this immediately.
+SAVEPOINT grow_shrink;
+UPDATE mvcc_test.t SET valid_range = '[150,300)' WHERE row_id = 6;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[150,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:      (6,3,b,"[200,300)")
+ERROR:  conflicting key value violates exclusion constraint "t_id_valid_range_key"
+DETAIL:  Key (id, valid_range)=(3, [150,300)) conflicts with existing key (id, valid_range)=(3, [100,200)).
+SELECT 'UNEXPECTED: Overlap was allowed!' AS error;
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
+ROLLBACK TO SAVEPOINT grow_shrink;
+\echo '\n-- 6b: Shrink then Grow (Correct Order with NOT DEFERRABLE unique) --'
+
+-- 6b: Shrink then Grow (Correct Order with NOT DEFERRABLE unique) --
+\echo '-- We update row_id=5 to end at 150. The AFTER trigger for this statement sees a'
+-- We update row_id=5 to end at 150. The AFTER trigger for this statement sees a
+\echo '-- gap from 150 to 200. A DEFERRABLE temporal FK check tolerates this.'
+-- gap from 150 to 200. A DEFERRABLE temporal FK check tolerates this.
+SAVEPOINT pre_6b_and_6c;
+UPDATE mvcc_test.t SET valid_range = '[100,150)' WHERE row_id = 5;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,150)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:      (6,3,b,"[200,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,150)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[200,300)")
+\echo '\n-- We update row_id=6 to start at 150, closing the gap. The AFTER trigger'
+
+-- We update row_id=6 to start at 150, closing the gap. The AFTER trigger
+\echo '-- for this statement sees a continuous, valid timeline.'
+-- for this statement sees a continuous, valid timeline.
+UPDATE mvcc_test.t SET valid_range = '[150,300)' WHERE row_id = 6;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[150,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[200,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[150,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[150,300)")
+ROLLBACK TO pre_6b_and_6c;
+\echo '\n-- 6c: Ordered Multi-row UPDATE (Correct Order) --'
+
+-- 6c: Ordered Multi-row UPDATE (Correct Order) --
+\echo '-- We perform both updates in a single statement, using a FROM clause'
+-- We perform both updates in a single statement, using a FROM clause
+\echo '-- with ORDER BY to force the "shrink" operation to happen first.'
+-- with ORDER BY to force the "shrink" operation to happen first.
+UPDATE mvcc_test.t
+SET valid_range = u.new_valid_range
+FROM (
+    SELECT
+        row_id,
+        CASE row_id WHEN 5 THEN '[100,150)'::int4range WHEN 6 THEN '[150,300)'::int4range END AS new_valid_range,
+        -- Order shrinks (1) before growths (2) to avoid overlaps
+        CASE row_id WHEN 5 THEN 1 ELSE 2 END AS op_order
+    FROM mvcc_test.t
+    WHERE row_id IN (5, 6)
+    ORDER BY op_order
+) AS u
+WHERE mvcc_test.t.row_id = u.row_id;
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,150)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,200)")
+NOTICE:      (6,3,b,"[200,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: BEFORE UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[150,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[200,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,200)"}
+NOTICE:    NEW: {"id": 3, "value": "a", "row_id": 5, "valid_range": "[100,150)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[150,300)")
+NOTICE:  ---
+NOTICE:  Trigger Fired: AFTER UPDATE ON mvcc_test.t
+NOTICE:    OLD: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[200,300)"}
+NOTICE:    NEW: {"id": 3, "value": "b", "row_id": 6, "valid_range": "[150,300)"}
+NOTICE:    Visible Table State (SELECT * FROM mvcc_test.t):
+NOTICE:      (1,1,updated,"[10,20)")
+NOTICE:      (2,1,tx-update-1,"[20,30)")
+NOTICE:      (3,2,tx-update-2,"[100,110)")
+NOTICE:      (4,2,multi-updated,"[110,120)")
+NOTICE:      (5,3,a,"[100,150)")
+NOTICE:      (6,3,b,"[150,300)")
+COMMIT;
+\echo '\n--- Final State ---'
+
+--- Final State ---
+TABLE mvcc_test.t ORDER BY row_id;
+ row_id | id |     value     | valid_range 
+--------+----+---------------+-------------
+      1 |  1 | updated       | [10,20)
+      2 |  1 | tx-update-1   | [20,30)
+      3 |  2 | tx-update-2   | [100,110)
+      4 |  2 | multi-updated | [110,120)
+      5 |  3 | a             | [100,150)
+      6 |  3 | b             | [150,300)
+(6 rows)
+
+DROP SCHEMA mvcc_test CASCADE;
+NOTICE:  drop cascades to 2 other objects
+DETAIL:  drop cascades to table mvcc_test.t
+drop cascades to function mvcc_test.log_trigger()
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

@@ -42,12 +42,16 @@ CREATE SCHEMA tmisd;
 CREATE TABLE tmisd.establishment (
     id SERIAL NOT NULL,
     name TEXT,
+    valid_range daterange NOT NULL,
     valid_from DATE NOT NULL,
     valid_until DATE NOT NULL,
     edit_comment TEXT,
-    PRIMARY KEY (id, valid_from) DEFERRABLE
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
-SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('tmisd.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table tmisd.establishment to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
@@ -55,7 +59,7 @@ SELECT sql_saga.add_era('tmisd.establishment', 'valid_from', 'valid_until');
 
 -- The conceptual key for the entity
 SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', key_type => 'primary', unique_key_name => 'tmisd_establishment_uk');
-NOTICE:  sql_saga: altering table tmisd.establishment to add constraints: ALTER COLUMN id SET NOT NULL, ADD CONSTRAINT tmisd_establishment_uk_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table tmisd.establishment to add constraints: ALTER COLUMN id SET NOT NULL
      add_unique_key     
 ------------------------
  tmisd_establishment_uk
@@ -138,10 +142,10 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                        data                                        | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+------------------------------------------------------------------------------------+----------+-------+---------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2023-01-01     | 2023-06-01      | {"name": "Initial Name", "edit_comment": "First slice"}                            |          |       | new_entity__1
-           2 | {2}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2023-06-01     | 2023-12-31      | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                                        data                                        | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+------------------------------------------------------------------------------------+----------+-------+---------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2023-01-01     | 2023-06-01      |                 | [2023-01-01,2023-06-01) | {"name": "Initial Name", "edit_comment": "First slice"}                            |          |       | new_entity__1
+           2 |             1 | {2}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2023-06-01     | 2023-12-31      |                 | [2023-06-01,2023-12-31) | {"name": "Corrected Name", "edit_comment": "Second slice, replaces part of first"} |          |       | new_entity__1
 (2 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'
@@ -278,13 +282,13 @@ SELECT * FROM (VALUES
 \echo '--- Planner: Actual Plan (from Orchestrator) ---'
 --- Planner: Actual Plan (from Orchestrator) ---
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                           data                           | feedback | trace |  grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------------------------------------------------+----------+-------+----------------
-           1 | {101}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2024-06-01      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} |          |       | new_entity__10
-           2 | {102}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-06-01     | 2024-09-01      | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   |          |       | new_entity__10
-           3 | {101}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | 2024-12-31      | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} |          |       | new_entity__10
-           4 | {201}   | INSERT    |               | 20        | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2025-01-01     | 2025-07-01      | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  |          |       | new_entity__20
-           5 | {202}   | INSERT    |               | 20        | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2025-07-01     | 2025-12-31      | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  |          |       | new_entity__20
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |     new_valid_range     |                           data                           | feedback | trace |  grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-------------------------+----------------------------------------------------------+----------+-------+----------------
+           1 |             1 | {101}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-01-01     | 2024-06-01      |                 | [2024-01-01,2024-06-01) | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} |          |       | new_entity__10
+           2 |             1 | {102}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-06-01     | 2024-09-01      |                 | [2024-06-01,2024-09-01) | {"name": "Entity 10 Update", "edit_comment": "E10-S2"}   |          |       | new_entity__10
+           3 |             1 | {101}   | INSERT    |               | 10        | t             | {"id": 1}   | {"id": null}  | {}          |              |              |                |                 | 2024-09-01     | 2024-12-31      |                 | [2024-09-01,2024-12-31) | {"name": "Entity 10 Original", "edit_comment": "E10-S1"} |          |       | new_entity__10
+           4 |             1 | {201}   | INSERT    |               | 20        | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2025-01-01     | 2025-07-01      |                 | [2025-01-01,2025-07-01) | {"name": "Entity 20 Initial", "edit_comment": "E20-S1"}  |          |       | new_entity__20
+           5 |             1 | {202}   | INSERT    |               | 20        | t             | {"id": 2}   | {"id": null}  | {}          |              |              |                |                 | 2025-07-01     | 2025-12-31      |                 | [2025-07-01,2025-12-31) | {"name": "Entity 20 New End", "edit_comment": "E20-S2"}  |          |       | new_entity__20
 (5 rows)
 
 \echo '--- Orchestrator: Expected Feedback ---'

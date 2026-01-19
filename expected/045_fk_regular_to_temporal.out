@@ -42,8 +42,7 @@ BEGIN;
 CREATE TABLE temporal_pk (
     id integer NOT NULL,
     name text,
-    valid_from date,
-    valid_until date
+    valid_range daterange
 );
 CREATE TABLE regular_fk (
     id integer PRIMARY KEY,
@@ -51,7 +50,7 @@ CREATE TABLE regular_fk (
     name text
 );
 -- 2. Add a unique key to the temporal table.
-SELECT sql_saga.add_era('temporal_pk', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('temporal_pk', 'valid_range');
  add_era 
 ---------
  t
@@ -63,7 +62,7 @@ SELECT sql_saga.add_unique_key(
     column_names => ARRAY['id'],
     unique_key_name => 'temporal_pk_id_key'
 );
-NOTICE:  sql_saga: altering table public.temporal_pk to add constraints: ADD CONSTRAINT temporal_pk_id_key_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT temporal_pk_id_key_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.temporal_pk to add constraints: ADD CONSTRAINT temporal_pk_id_key_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  temporal_pk_id_key
@@ -114,8 +113,8 @@ Check constraints:
 \echo "--- DML Validation ---"
 "--- DML Validation ---"
 -- First, insert a valid row into the referenced temporal table
-INSERT INTO temporal_pk (id, name, valid_from, valid_until)
-VALUES (1, 'Entity One', '2023-01-01', 'infinity');
+INSERT INTO temporal_pk (id, name, valid_range)
+VALUES (1, 'Entity One', '[2023-01-01,infinity)');
 -- Test valid INSERTs
 INSERT INTO regular_fk (id, pk_id, name) VALUES (101, 1, 'Link to Entity One');
 INSERT INTO regular_fk (id, pk_id, name) VALUES (102, NULL, 'No link');
@@ -176,9 +175,9 @@ ROLLBACK TO SAVEPOINT before_uk_update;
 -- Test that an UPDATE of a non-key column is allowed
 UPDATE temporal_pk SET name = 'Entity One Updated' WHERE id = 1;
 TABLE temporal_pk;
- id |        name        | valid_from | valid_until 
-----+--------------------+------------+-------------
-  1 | Entity One Updated | 2023-01-01 | infinity
+ id |        name        |      valid_range      
+----+--------------------+-----------------------
+  1 | Entity One Updated | [2023-01-01,infinity)
 (1 row)
 
 -- Verify the row in regular_fk is unchanged
@@ -225,8 +224,8 @@ NOTICE:  Dropping automatically created index "regular_fk_pk_id_idx" for foreign
 -- Deleting from temporal_pk should now succeed
 DELETE FROM temporal_pk WHERE id = 1;
 TABLE temporal_pk;
- id | name | valid_from | valid_until 
-----+------+------------+-------------
+ id | name | valid_range 
+----+------+-------------
 (0 rows)
 
 -- The helper function and CHECK constraint should be gone

@@ -38,10 +38,10 @@ Attempting to add era with an invalid range column type (should fail)
 -- This should fail because 'invalid_range_col' is a DATE, not a range type.
 SELECT sql_saga.add_era(
     'public.test_range_validation'::regclass,
-    synchronize_range_column := 'invalid_range_col'
+    range_column_name => 'invalid_range_col'
 );
-ERROR:  Column "invalid_range_col" provided for range synchronization is type date, which is not a range type.
-CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,name,regtype,name,name,name,boolean,boolean,boolean) line 455 at RAISE
+ERROR:  column "invalid_range_col" is of type date which is not a range type
+CONTEXT:  PL/pgSQL function sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name) line 175 at RAISE
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

@@ -2,218 +2,93 @@
 
 A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
-Keep a tmp/journal.md that tracks the state of the current ongoing task and relevant details.
 
-## High Priority - Bugs & Core Features
+## Current Priority - Critical Issues & Bugs
+- [ ] **Statbus severe issues:** User-reported critical bugs need reproduction and regression tests. Awaiting reproduction case.
+- [ ] **Preserve audit columns on timeline splits:** When temporal_merge splits a timeline segment, audit columns (edit_at, edit_by) should be preserved from the original row, not reset. Currently edit_at gets set to now() and edit_by would be nulled, losing audit trail.
+
 ## Medium Priority - Refactoring & API Improvements
-- [ ] **Optimize `temporal_merge` planner join logic:** Restructure planner's lateral join to avoid `CASE` statements, allowing the query optimizer to use more efficient index-based access paths.
-- [ ] Review application time support in PostgreSQL 18, and use that, simplifying sql_saga.
-      PRIMARY KEY ... column_name WITHOUT OVERLAPS
-      REFERENCES ... PERIOD column_name
-      FOREIGN KEY ... PERIOD column_name
-      Ref. https://www.postgresql.org/docs/18/sql-createtable.html#SQL-CREATETABLE-PARMS-REFERENCES
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 
-## Low Priority - Future Work & New Features
+## Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
-- [x] **Fix `Makefile` test execution:** Resolved issues with `pg_regress` path, `installcheck` override warnings, and test database configuration to ensure tests run correctly, especially with non-standard PostgreSQL distributions like Postgres.app.
-- [x] **Fix benchmark EXPLAIN logging:** Corrected benchmark test harness to robustly handle `psql` variable substitution and temporary table scoping, ensuring `EXPLAIN` logs are generated correctly and performance regressions are reliably detected.
-- [x] **Add performance monitoring for `temporal_merge`:** Added optional performance logging using `pg_stat_monitor`. Logging is enabled declaratively by the caller creating a temporary table (`temporal_merge_performance_log`). The test harness is now solely responsible for resetting stats and logging results, keeping the core procedures free of instrumentation. Performance output files are stored in `expected/performance/`.
-- [x] **Re-implement `temporal_merge` planner caching:** After refactoring to temporary tables, planner caching was removed. It has been re-implemented using a session-local temporary table to cache the generated SQL, restoring performance for batch operations. Fixed a name collision between the planner cache and the executor's index-check cache.
-- [x] **Fix `temporal_merge` planner instability after temp table refactor:** Added a deterministic `ORDER BY` to the `source_rows` query to ensure consistent row selection with `DISTINCT ON`, resolving a regression in the ambiguous key test.
-- [x] **Fix regression in `temporal_merge` planner after refactoring to temp tables:** Corrected dynamic SQL generation for the `resolved_atomic_segments` temporary table, which had a redundant comma causing a syntax error.
-- [x] **Fix `temporal_merge` identity propagation:** Corrected planner logic to robustly propagate identity for existing entities.
-- [x] **Enforce natural key to primary key consistency:** Enhanced `add_unique_key` to automatically create and manage non-temporal `EXCLUDE` constraints that enforce a permanent mapping between a natural key and a single-column primary key.
-- [x] **Fix `temporal_merge` to handle SERIAL/IDENTITY columns correctly on INSERT:** The executor's `INSERT` logic correctly omits `SERIAL` columns to allow the database to generate values.
-- [x] **Fix `temporal_merge` regressions:** Address regressions related to out-of-order source data causing exclusion constraint violations, and failure to coalesce adjacent identical records.
-- [x] **Enhance `temporal_merge` to accept `valid_to` from source tables:** Modify the procedure to automatically detect a `valid_to` column (inclusive end) in the source and calculate the required `valid_until` (exclusive end) internally.
-- [x] **Fix `temporal_merge` planner and executor to handle multi-row inserts/updates:** Corrected a series of critical bugs to fully support multi-row operations on a single conceptual entity within one batch, especially for new entities with fragmented natural key information.
-- [x] **Fix `temporal_merge` planner to preserve unaffected timeline segments:** Corrected a logic bug in the `plan_with_op` CTE that incorrectly dropped unaffected parts of a target entity's timeline during `MERGE_ENTITY_*` operations.
-- [x] **Improve `temporal_merge_plan` clarity and maintainability:** Decomposed the ambiguous `entity_ids` column into `identity_keys` and `lookup_keys`.
-- [x] **Add early warnings for incompatible schemas:** The `add_era` function now issues a `WARNING` if it detects a simple `PRIMARY KEY` or `GENERATED ALWAYS AS IDENTITY` column, guiding users away from schemas that are incompatible with SCD Type 2 history.
-- [x] **Refactor `temporal_merge_plan` for clarity and maintainability:** The planner function has been refactored to use a single source of truth for all column lists, with consistent naming and aliasing throughout all CTEs. This makes the data flow self-evident and the code easier to maintain. This also included a fix for the final regression where a test case used a non-temporal primary key, which correctly caused the executor to fail. The test has been corrected.
-- [x] **Refine `temporal_merge` column validation:** Clarify and enforce validation rules for identity and natural key columns. Natural keys must exist in both source and target. Stable identity keys must exist in the target, but only in the source if no natural key is provided for lookups. Using `update_source_with_identity` requires identity columns to exist in the source.
-- [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
-- [x] **Fix regression in `DELETE_FOR_PORTION_OF`:** The planner is incorrectly generating an `INSERT` operation with a `NULL` identifier when deleting a portion of a timeline, causing a `NOT NULL` violation.
-- [x] **Fix `temporal_merge` planner regressions:** Regressions in `060_...` and `085_...` indicate a fundamental flaw in entity identification and/or timeline coalescing logic. A basic `INSERT` operation is failing. This has been resolved by implementing a robust, unified partitioning strategy in the planner that correctly handles new and existing entities, both with and without pre-assigned stable keys.
-- [x] **Fix `temporal_merge` causal propagation logic:** Corrected a regression where the planner failed to propagate causal information (source row ID, Allen relation) to adjacent timeline segments, causing incorrect `DELETE` operations and `UPDATE`s. The propagation logic now correctly carries forward the causal source row's period, re-calculates the Allen relation at the correct step, and prefers look-behind causality for timeline splits. The propagation is now also correctly partitioned by the original target row's start time, preventing causality from "bleeding" across historical segments.
-- [x] **Fix `temporal_merge` type error with mixed-type correlation keys:** Corrected the planner to handle cases where `founding_id_column` (e.g., `TEXT`) and the fallback `row_id_column` (`INTEGER`) have different data types. The planner now explicitly casts the fallback to the primary column's type, resolving `COALESCE` type mismatch errors.
-- [x] **Fix regression in `temporal_merge` planner with mixed identity keys:** Corrected a bug where a faulty partitioning key caused the planner's window functions to fail, leading to incorrect timeline coalescing and exclusion constraint violations. The progressive trace was instrumental in identifying that the `LAG` function was not seeing adjacent rows. The fix involved removing the incorrect `CASE` statement from the partition key, ensuring all segments for a single entity are processed together.
-- [x] **Fix regression in `temporal_merge` planner DML order and entity identification:** Corrected a bug in the planner's `diff` CTE where an incorrect join condition on the correlation ID (`ident_corr`) caused it to misidentify unchanged timeline segments. This led to redundant `INSERT` operations, which in turn could cause duplicate key violations during `..._FOR_PORTION_OF` updates. The flawed join condition has been removed, restoring correct change detection.
-- [x] **Fix `temporal_merge` planner bugs with temporal identity keys and custom column names:** Corrected the planner's dynamic SQL generation for all CTEs to prevent "ambiguous column" and "column does not exist" errors. This was a persistent bug that occurred when a temporal column (e.g., `valid_from`) was also part of a table's identity key or had a non-standard name. The fix ensures that all dynamically generated `SELECT` and `GROUP BY` clauses are constructed without duplicating columns and correctly alias user-defined column names to the planner's internal standard names.
-- [x] **Fix regression in `temporal_merge` planner with mixed identity keys:** When using a natural key for lookups, the planner incorrectly includes the stable surrogate key in its partitioning logic. This fragments the entity's timeline, causing the planner to generate conflicting `INSERT` operations instead of correct `UPDATE`s, leading to exclusion constraint violations. This has been fixed by correcting the planner's partitioning logic and resolving a downstream `GROUP BY` error caused by incorrect projection of aggregated identity columns.
-- [x] **Fix regression in `temporal_merge` planner projection:** Corrected the `time_points` CTE to project all identity columns, not just the partitioning key. This fixes "column does not exist" errors when a stable identity key (e.g., a surrogate `id`) is used in combination with a natural key for lookups.
-- [x] **Refactor `temporal_merge` for clarity by separating ephemeral data:** The planner logic has been refactored to treat ephemeral data (e.g., `edit_comment`) as a separate payload throughout its CTEs. This makes the core change-detection and coalescing logic simpler and more explicit, as it now operates only on a `data_payload` that contains non-ephemeral data. The two payloads are recombined at the end of the plan.
-- [x] **Fix `temporal_merge` planner new-entity logic:** The planner incorrectly merges distinct new entities if they share a `NULL` stable key (see test `060_...`, Scenario 45), leading to data loss. This has been fixed by partitioning timeline construction by the correlation ID.
-- [x] **Fix `temporal_merge` planner new-entity logic:** The planner incorrectly merged distinct new entities if they shared a `NULL` stable key, leading to data corruption. The fix makes the source data join specific to the correlation ID for new entities, preventing incorrect data crossover.
-- [x] **Fix `temporal_merge` `valid_to` consistency on slice split:** Corrected a regression where `temporal_merge` would produce an incorrect `valid_to` value when splitting or shrinking a time slice. The planner's payload construction logic was refactored to ensure the synchronized `valid_to` column is calculated *after* all other data and ephemeral payloads are combined, guaranteeing its value is consistent with the final `valid_until` of the segment.
-- [x] **Fix `temporal_merge` planner regressions with `delete_mode`:** Corrected a syntax error in the planner's dynamic SQL that occurred with destructive delete modes. Also fixed a logic bug where the causal source row ID was not being correctly propagated to `DELETE` operations. The planner now generates correct and efficient plans for all `delete_mode` variations.
-- [x] **Optimize `temporal_merge` planner:**
-  - [x] Refactored the "gaps-and-islands" logic for coalescing timeline segments to use a more efficient `SUM()` window function instead of a recursive CTE. This simplifies the query plan, improves performance, and makes trace aggregation cleaner.
-  - [x] Added `md5()` hashing of data payloads to significantly accelerate the "gaps-and-islands" logic used for coalescing adjacent time segments. The planner now compares cheap text hashes before falling back to expensive `jsonb` comparisons, improving performance for large batches with many contiguous segments.
-  - [x] Refactored `allen_get_relation` to a high-performance, inlinable `LANGUAGE sql` function (now `get_allen_relation`) for use in the planner.
-  - [x] Enhanced `temporal_merge` trace: The trace now includes the Allen Interval Relation (`s_t_relation`) between the covering source and target time periods for each atomic segment, providing deeper insight into the planner's logic.
-  - [x] Made expensive diagnostic calculations (e.g., Allen interval relation) conditional on tracing being enabled to improve performance when tracing is off.
-  - [x] Enhanced planner trace output with more detailed data at intermediate steps for easier debugging.
-  - [x] Fixed a bug in the planner's recursive CTE that incorrectly aggregated trace data, and added data payload hashes to the trace for improved diagnostics.
-  - [x] **Fix regression in `temporal_merge` planner alias logic:** Corrected a typo in the dynamic SQL for calculating the `s_t_relation` that caused a "column does not exist" error when used inside a `for_portion_of` trigger.
-  - [x] **Optimize `temporal_merge` planner with materialized CTEs:** Added `MATERIALIZED` hints to key CTEs (`source_initial`, `target_rows`, `active_source_rows`) to prevent re-computation and improve performance, and fixed a related regression in the planner cache test.
-- [x] **Add dedicated test for `get_allen_relation`:** Created a new regression test to provide comprehensive coverage for all 13 Allen Interval Algebra relations, ensuring the function's logic is correct and stable.
-- [x] **Fix regression in `temporal_merge` planner variable declaration:** Corrected a bug where a plpgsql variable was used without being declared, causing a compilation error.
-- [x] **Fix `s_t_relation` propagation for all modes:** Refactored the planner's propagation logic to use a robust and performant "nearest neighbor" search implemented with window functions. This ensures that the causal `s_t_relation` and source row ID are correctly propagated to all timeline segments that result from a single source operation, including complex splits caused by `DELETE_FOR_PORTION_OF`.
-- [x] **Fix regression in `temporal_merge` coalescing:** Corrected the planner's logic for identifying "new" entities. It now correctly uses the `target_entity_exists` flag, which allows it to properly partition timelines and coalesce adjacent, identical time segments across multiple ETL batches. This resolves a critical bug that led to timeline fragmentation.
-- [x] **Fix `temporal_merge` planner to correctly coalesce history:** Corrected a critical bug in the planner's logic for identifying new entities. It now correctly uses the `target_entity_exists` flag, which allows it to properly partition timelines and coalesce adjacent, identical time segments across multiple ETL batches. This resolves a critical bug that led to timeline fragmentation.
-- [x] **Clarify `temporal_merge` planner semantics:** Refactored the planner to distinguish between a `SKIP_IDENTICAL` operation caused by a source row and a target segment that is merely unaffected by the source. Unaffected target-only segments are now correctly filtered out of the final plan, making the output more concise and semantically aligned with a "plan of action". The logic is confirmed to correctly preserve `DELETE` operations for destructive modes.
-- [x] **(CRITICAL REGRESSION) Fix `temporal_merge` planner `corr_ent` propagation:** Resolved a regression where a single entity affected by multiple source rows in one batch would have its timeline operations incorrectly associated with multiple correlation IDs. The planner now correctly establishes a single, authoritative correlation ID for each entity at the start of the plan (`time_points_unified` CTE) and propagates it throughout all subsequent operations, ensuring plan stability and correctness.
-- [x] **Document `temporal_merge` planner:** Added comprehensive, explanatory comments to the main planner query's CTEs to document the stateless, declarative architecture and make the code easier to maintain. This also included a logic correction to the `all_rows` CTE to robustly propagate the correlation identifier to target rows.
-- [x] **Fix `temporal_merge` regression causing `current` view trigger to fail:** The planner was failing with a `COALESCE types text and bigint cannot be matched` error. This was caused by a hardcoded type for the `ident_corr` column in the `target_rows` CTE, which could conflict with the type of the source table's correlation column. The fix is to dynamically introspect the correlation column's type and use that to cast the `NULL`, ensuring type safety.
-- [x] **Fix `temporal_merge` type error with mixed-type composite keys:** The planner's logic for comparing composite keys was not robust to mixed data types, causing `ARRAY types...cannot be matched` errors. All remaining instances of type-unsafe `ARRAY[...]` comparisons have been replaced with a robust, type-safe, and index-friendly `(a=b OR (a IS NULL AND b IS NULL))` pattern.
-- [x] **Fix `temporal_merge` planner to generate minimal DML:** Corrected a regression in the planner that caused it to generate inefficient `DELETE` and `INSERT` plans instead of minimal `UPDATE`s when splitting a historical record. The planner now correctly tracks the lineage of time segments, ensuring that the portion of a split record that preserves the original start time is correctly identified as an `UPDATE`, while any remainder segments become `INSERT`s.
-- [x] temporal_merge: Normalize ephemeral_columns to maximize plan cache hits (dedupe + sort)
-- [x] temporal_merge: Add performance hints
-  - [x] Warn if target table lacks GiST index on temporal range
-  - [x] Hint to create BTREE index on target lookup columns used for filtering
-- [x] Make _for_portion_of_ practically usable
-  - [x] Rewrite _for_portion_of_ to use temporal_merge by creating a mini table from
-  the `NEW` record and calling `temporal_merge`. This fixes the bug where edits
-  break foreign keys to the table, because temporal_merge uses a safe `INSERT` then `UPDATE` DML order.
-  - [x] Improve _for_portion_of_ to handle valid_to correctly, allowing the
-  specification of either valid_until or valid_to, and adjust the error message
-  to signal this.
-  - [x] Refine `for_portion_of` view semantics to correctly handle historical data corrections. The view now permits `UPDATE`s that do not change the validity period, treating them as corrections on existing time slices.
-  - [x] Verify _for_portion_of_ merges adjacent equal atomic segments after rewrite to use temporal_merge.
-  - [x] Add ACL and drop protection tests for `current` views.
-- [x] **Add performance warnings to `temporal_merge`:** Enhance `temporal_merge` to check for the existence of a GIST index on both the `source_table` and `target_table`. If a suitable index is not found, issue a `WARNING` with a `HINT` suggesting the optimal `CREATE INDEX` command. This check is now robust and correctly inspects the base table when the source is a view.
-- [x] **Enhance `add_foreign_key` with index management:**
-  - **Justification:** Foreign key checks on temporal tables can be slow without proper indexing. Automating index creation improves performance out-of-the-box and prevents common user errors.
-  - **Details:** The `add_foreign_key` function and its variants now have a `create_index` parameter. If `true` (the default), a performance-optimal index is created on the referencing table and its name is stored in metadata. `NOTICE` and `WARNING` messages are issued to inform the user of actions taken. The `drop_foreign_key` functions have a corresponding `drop_index` parameter to automatically clean up the created index.
-- [x] **Document `temporal_merge` planner tracing:** Expanded comments in the planner to explain the performance characteristics of the GUC-toggled tracing mechanism, with a runnable example demonstrating that the `NULL || jsonb_build_object()` pattern is short-circuited by the query planner and incurs no overhead when tracing is disabled.
-- [x] **Fix `add_era` to not require `NOT NULL` on synchronized columns:** Removed the logic that applied a `NOT NULL` constraint on synchronized columns (e.g., `valid_to`), as the synchronization trigger is responsible for populating them. Added a regression test to verify correct behavior.
-- [x] **Verify and accept all `temporal_merge` planner regressions:** Completed a full review of the test suite after the planner refactoring. Confirmed that all plan outputs are correct, and updated the brittle `070_...` test to use a robust, readable `TABLE` format for its output. All related regressions are now fixed and verified.
-- [x] **Improve ETL architecture test (`070_...`) logging:** Refactored the test to "leak" plan and feedback tables from its procedures. The test now displays all intermediate results at the top level using `TABLE` commands, providing a clean, readable, and comprehensive visualization of the entire ETL process.
-- [x] **Clarify planner's `SKIP_IDENTICAL` traceability:** Added a comment to the planner to document the intentional preservation of `row_ids` for `SKIP_IDENTICAL` operations, which is critical for debugging and traceability.
-- [x] **Fix `temporal_merge` planner regression causing unstable plans:** Corrected a bug where the planner failed to assign a causal source row ID to all segments of a split timeline, resulting in `NULL` row IDs and unstable sorting. The causal-linking logic now uses a robust, declarative `ORDER BY` clause that correctly links segments to their cause by prioritizing direct overlap, then "met by" (look-ahead) adjacency, and finally "meets" (look-behind) adjacency.
-- [x] **Optimize `temporal_merge` planner join logic:** Replaced a `DISTINCT ON` subquery with a more performant `LEFT JOIN LATERAL ... LIMIT 1` pattern for finding a representative correlation ID. This improves planner efficiency when multiple source rows affect a single target entity.
-- [x] **Fix `temporal_merge` planner regression causing plan duplication:** Corrected a bug where the planner's `all_rows` CTE would duplicate a target entity's timeline if multiple source rows were applied to it. The join to the `s_founding` CTE was made deterministic with a `DISTINCT ON` clause, resolving the issue and stabilizing plan generation.
-- [x] **Improve `temporal_merge` performance hint caching for views:** The index check for a source view is now optimized. The result of the check is cached against both the view's OID and its underlying base table's OID. This avoids redundant view-to-table resolution on subsequent calls with the same view within a transaction. A warning is now issued if the check is skipped for a complex view. The associated regression test has been fixed to correctly handle the cache invalidation after a DDL change.
-- [x] **Fix `temporal_merge` to respect `DEFAULT` values on `UPDATE`:** When a source table is missing a column that has a `NOT NULL DEFAULT` constraint in the target, the executor now correctly preserves the existing value instead of setting it to `NULL`, preventing `NOT NULL` violations.
-- [x] **Fix `temporal_merge` validation order:** Moved parameter validation to the beginning of the procedure to ensure that invalid parameters (e.g., `NULL` identity columns) cause an immediate error, preventing confusing, downstream performance hints from being issued.
-- [x] **Refine `temporal_merge` performance warnings:** Suppress GIST index warning for small source tables (under 512 rows) where an index provides little benefit. The row count check is optimized to use statistics from `pg_class` instead of a slow `count(*)`.
-- [x] **Evolve `temporal_merge` API and Performance (Epic):** The `temporal_merge` planner has been completely refactored from a stateful, recursive CTE to a stateless, set-based architecture. This resolved significant performance bottlenecks, enabling near-linear scaling for bulk data loads. The planner now uses raw, indexable columns for entity identity instead of a computed `JSONB` key, allowing the database to use standard join and partition optimizations. The public API has been simplified with more intuitive modes (`MERGE_ENTITY_UPSERT`, etc.) and the documentation has been updated to reflect the new high-performance implementation.
-- [x] **Investigate `disable_temporal_triggers` performance:** Confirmed through refined benchmarks that the procedure works as intended. The initial drop in performance when adjusting triggers was due to the per-batch overhead of disabling/enabling in the test, not a bug in the procedure itself. When the scaling of temporal merge is fixed, the overhead will be negligable relative to the processing, so the recommendation of doing it per batch stands.
-- [x] **Diagnose `temporal_merge` performance bottlenecks:** Confirmed through benchmarking that `MERGE_ENTITY_PATCH` scales poorly due to its stateful algorithm. This provides clear targets for optimization.
-- [x] **Refactor benchmark tests for clarity and maintainability:** Reinstated the 10,000-record batch size test as a performance goal. Moved all common benchmark setup and reporting logic into two new include files (`benchmark_setup.sql` and `benchmark_report.sql`) to eliminate code duplication.
-- [x] **Fix benchmark timing mechanism:** Replaced `NOW()` with `clock_timestamp()` in all benchmark tests. `NOW()` returns the transaction start time, which caused all events within a single transaction to have the same timestamp, making the performance reports unreliable.
-- [x] **Split benchmark tests and adopt 3-digit numbering:** Split the monolithic `99_benchmark.sql` into four smaller, self-contained tests (`100` through `103`). Renamed all regression tests to use three-digit numbering for consistency.
-- [x] **Analyzed `periods` event triggers:** Confirmed `sql_saga`'s implementation is a correct and optimized subset.
-- [x] **Analyzed `time_for_keys` FK implementation:** Confirmed `sql_saga`'s C-based triggers are more performant.
-- [x] **Analyzed `periods` and `time_for_keys` gap coverage:** Confirmed `sql_saga`'s `covers_without_gaps` is more performant, generic, and correct.
-- [x] **Refactor API comments:** Moved all API comments from the centralized `src/98_api_comments.sql` file to their respective source files to improve code locality and maintainability.
-- [x] **Refactor `add_foreign_key` to be declarative:** Created a new, user-friendly `add_foreign_key` function that automatically determines the FK type and looks up internal unique key names. Also enhanced `drop_foreign_key` to be more declarative by auto-detecting the `era_name`.
-- [x] **Reorganize and renumber regression tests:** Renumbered and grouped all regression tests by feature (`era`, `system_versioning`, `fk`, `views`, `temporal_merge`, etc.) to improve clarity and maintainability. Removed obsolete and misplaced test files.
-- [x] **Improve `temporal_merge` debug logging:** Changed plan and feedback logs to be self-describing JSON objects with a predictable key order and a unique 3-character ID per invocation, improving readability. The ID is deterministic for tests via the `sql_saga.temporal_merge.log_id_seed` GUC. Log headers were also made more concise.
-- [x] **Add `FUNCTION`/`PROCEDURE` keywords to API documentation:** The `80_generate_api_docs` test now prefixes each signature with `FUNCTION`, `PROCEDURE`, or `AGGREGATE` to clarify the object type.
-- [x] **Add `SECURITY` property to API documentation:** The `80_generate_api_docs` test now includes the `SECURITY DEFINER` or `SECURITY INVOKER` property in the signature of each function and procedure, making the API's security model explicit.
-- [x] **Fix `80_generate_api_docs` test:** Converted the function-gathering CTE to a temporary view to fix a "relation does not exist" error, making the uncategorized function check robust.
-- [x] **Fix regression in `add_unique_key` and stabilize trigger tests:** Corrected a regression where `add_unique_key` ignored user-provided constraint names. Stabilized tests (`59_...` and `10_...`) by filtering internal triggers and using correct, predictable constraint names.
-- [x] **Make `ephemeral_columns` optional in `temporal_merge`:** Refactored the procedure to provide a sensible default (`NULL`) for the `ephemeral_columns` parameter to improve API ergonomics.
-- [x] **Fix `temporal_merge` coalescing for synchronized columns:** The planner now automatically treats synchronized columns (e.g., `valid_to`) as ephemeral. The executor also excludes them from `INSERT`s, allowing the synchronization trigger to derive their values correctly. This resolves both the coalescing bug and the subsequent trigger inconsistency error.
-- [x] **Fix `temporal_merge` executor bug:** The executor must not include stable identity columns (from `identity_columns`) in the `SET` clause of generated `UPDATE` statements, as this can cause `NOT NULL` violations.
-- [x] **Fix `temporal_merge` GUC handling:** The procedure's logging logic must gracefully handle `NULL` or empty-string GUC values to prevent invalid cast to `BOOLEAN` errors.
-- [x] **Verify `temporal_merge` correctly handles `NULL`s in composite natural keys:** The `45_...` test (Scenarios 11 and 12) was extended to confirm that the planner's entity lookup logic correctly uses `IS NOT DISTINCT FROM`-style comparisons for composite natural keys containing `NULL` values. The existing implementation passed the test, confirming the feature is already supported. Scenario 12 also serves as a regression test to document the expected failure when using this pattern with an incompatible simple `PRIMARY KEY`.
-- [x] **Simplify `temporal_merge` coalescing logic:** Removed a redundant `CASE` statement. The logic now relies on the fact that the `jsonb - text[]` operator gracefully handles `NULL` payloads, making the code more concise.
-- [x] **Refactor `temporal_merge` coalescing logic for clarity:** The logic for merging adjacent time slices now compares the final, resolved data payload instead of intermediate payloads. This makes the planner more declarative and robust, especially for `DELETE` operations which correctly create non-coalesceable `NULL` data gaps.
-- [x] **Fix `temporal_merge` regressions:** Corrected planner logic to ensure natural key columns are used for change detection but excluded from the final plan's data payload, resolving inconsistencies. Also made data comparison logic robust against non-object JSONB payloads to prevent crashes in delete modes.
-- [x] **Fix `temporal_merge` planner data comparison:** The planner's change-detection logic was flawed. When comparing adjacent time slices to see if they could be coalesced, it failed to detect data changes, resulting in incorrect `GROW` operations instead of proper SCD Type 2 updates. The comparison logic is now more explicit and robust, resolving the bug.
-- [x] **Document `GENERATED ... AS IDENTITY` usage:** Clarified in `README.md` and a new regression test that `GENERATED ALWAYS AS IDENTITY` is incompatible with SCD Type 2 history. The correct pattern is `GENERATED BY DEFAULT AS IDENTITY` combined with a composite primary key, which is now demonstrated and verified.
-- [x] **Fix `temporal_merge` to support `NULL`s in natural keys:** Refined the planner's entity identification logic. An entity is now considered "new" only if its stable identifier is `NULL` *and* its natural key does not match an existing entity. This correctly handles SCD Type 2 updates via natural key lookups and resolves exclusion constraint violations whenusing predicated unique keys.
-- [x] **Verify `temporal_merge` with multiple, mutually exclusive natural keys:** Confirmed through extensive testing that `temporal_merge` correctly handles complex scenarios involving tables with multiple, mutually exclusive natural keys, both with and without a surrogate primary key. The planner now correctly generates SCD Type 2 plans, and ID back-filling is robust.
-- [x] **Refine `temporal_merge` identity parameters:** Relaxed API constraints to allow `identity_columns` to be `NULL` if `natural_identity_columns` is provided, making the natural key the stable identifier in such cases. This improves API ergonomics for natural-key-only tables.
-- [x] **Fix regression in `temporal_merge` natural key test:** Corrected test `45_temporal_merge_natural_key` to use `natural_identity_columns` for lookups and `identity_columns` for the stable surrogate key. This resolves a regression caused by stricter back-fill logic and verifies the correct usage pattern for surrogate keys.
-- [x] **Support lookups by natural key in `temporal_merge`:** Enhanced `temporal_merge` to support using a natural key for lookups (`natural_identity_columns`) while preserving a separate, stable entity identifier (`identity_columns`). This is a common pattern for tables with surrogate keys and resolves a critical bug where new surrogate keys were being generated on updates.
-- [x] **Fix `add_era` to validate range column type:** The function must verify that the column passed to `synchronize_range_column` is a valid range type before creating the synchronization trigger, preventing invalid SQL generation.
-- [x] **Fix `temporal_merge` executor to ignore generated columns:** The executor must not include generated columns (`GENERATED ALWAYS`) in its `UPDATE` statements to prevent "cannot update a generated column" errors.
-- [x] **Fix `for_portion_of_trigger` to handle generated columns:** The trigger now correctly creates its temporary table in a way that strips `GENERATED` properties from columns, allowing `INSERT`ing the `NEW` record without errors. The executor logic in `temporal_merge` has also been fixed to correctly handle these columns during `INSERT` and `UPDATE` operations.
-- [x] **Fix `temporal_merge` planner bug causing `NOT NULL` violations:** When splitting a time slice, `PATCH` modes failed with a `NOT NULL` violation if the source omitted a `NOT NULL` column. Fixed the planner's introspection to build the target's data payload using all of the target's columns, not just those common to the source, ensuring inherited values are correctly carried forward. Added regression tests for both `PATCH_FOR_PORTION_OF` and `MERGE_ENTITY_PATCH`.
-- [x] **Fix C-level plan cache collision:** Refactored the C-based foreign key triggers to use the trigger's OID as the plan cache key instead of the foreign key's name. This prevents stale cache hits and potential crashes when a foreign key is dropped and a new one with the same name is created in the same session, making the caching mechanism robust.
-- [x] **Fix C-language FK trigger logic and regressions:** Restored the correct, complex query-building logic to the `uk_update_check_c` trigger and fixed a bug in the `COALESCE` logic in both `uk_update_check_c` and `uk_delete_check_c`. This resolves multiple regressions and the original `temporal_merge` foreign key violation, stabilizing the C-based trigger functionality.
-- [x] **Deeply investigate and document trigger MVCC semantics and multi-step ETL patterns:** Created a new diagnostic test (`58_trigger_visibility.sql`) to empirically prove PostgreSQL trigger visibility rules. This confirmed that multi-step ETL processes with conflicting DML order requirements (`INSERT` vs. shrinking `UPDATE`) must temporarily disable foreign key triggers. This understanding resolved a persistent failure in the `temporal_merge` architecture test (`56_...`) and led to comprehensive documentation of the correct ETL pattern in the `README.md`.
-- [x] **Validate `temporal_merge` architectural assumptions with a low-level test:** Created a new, isolated test (`57_temporal_merge_validate_timely_strategy.sql`) that uses raw SQL to prove that an `INSERT`-then-`UPDATE` sequence is a valid strategy for SCD Type 2 changes. The test was extended to also verify this strategy is compatible with `sql_saga`'s own FK triggers and is correctly implemented by the `temporal_merge` procedure itself. This foundational architecture is now fully verified.
-- [x] **Refine `temporal_merge` API for clarity and consistency:** Refactored the identity and feedback parameters to use a more intuitive and consistent naming convention (`identity_columns`, `row_id_column`, `founding_id_column`, etc.), improving the API's robustness and ease of use.
-- [x] **Fix `temporal_merge` executor to respect `DEFAULT` values during multi-stage inserts:** Corrected the introspection logic for the "Smart Merge" `INSERT` to ensure columns with `DEFAULT` values are correctly excluded, allowing the database to generate their values as intended.
-- [x] **Fix `temporal_merge` planner to support `BIGINT` source row identifiers:** Changed the internal `temporal_merge_plan` and `temporal_merge_feedback` types to use `BIGINT` for source row identifiers, making the procedure robust to different integer types for source primary keys.
-- [x] **Fix `MERGE_ENTITY_PATCH` to carry forward values for new entities:** Replaced the flawed payload inheritance logic for PATCH modes with a robust recursive CTE that correctly computes a "running payload". This ensures that when creating new entities from sparse source data, attribute values are correctly carried forward from one time slice to the next, aligning the implementation with the documented intent.
-- [x] **Design and implement `temporal_merge` deletion semantics:** Based on the architecture outlined in `doc/temporal_merge_delete_semantics.md`, added a new `delete_mode` parameter to `temporal_merge` to allow for opt-in destructive deletes. This enables "source as truth" synchronization for ETL processes while maintaining safe, non-destructive behavior by default.
-- [x] **Improve `temporal_merge` parameter validation:** Added server-side checks to `temporal_merge` to provide clear, immediate error messages for invalid parameters, such as `NULL` or non-existent column names, improving developer experience.
-- [x] **Implement `sql_saga.temporal_merge` (Set-Based Upsert API):** Provided a single, high-performance, set-based function for `INSERT`/`UPDATE`/`DELETE` operations on temporal tables. The API is simplified via `regclass` parameters, era introspection, and auto-detection of defaulted columns. This is the official solution for bulk data modifications.
-- [x] **Fix duplicated column in FK trigger `UPDATE OF` list:** Corrected `add_foreign_key` to prevent adding a synchronized `valid_to`-style column to the trigger's `UPDATE OF` list if it is already part of the era's temporal columns, resolving a "column specified more than once" error. The fix is generic and respects the `synchronize_valid_to_column` era metadata.
-- [x] **Improve `rename_following` to support column renames:** The event trigger now correctly detects when a column in a foreign key is renamed and automatically updates all relevant metadata, including the foreign key name, column list, and associated trigger names.
-- [x] **Foreign key validation fails for tables in different schemas:** Fixed. The `fk_update_trigger` is now created with a dynamic column list that includes `valid_to` (if present) to ensure validation fires correctly for synchronized columns without being an overly-broad row-level trigger.
-- [x] **Support identifiers with quotes inside:** Verified API functions handle quoted identifiers correctly.
-- [x] **Cache query plans:** Cached query plans to improve trigger performance.
-- [x] **Refactor core to use `(schema, table)` instead of `oid`:** Made event triggers robust against `DROP`.
-- [x] **(Breaking Change) Adopted `[valid_from, valid_until)` period semantics:** Refactored the extension to use the standard `[)` inclusive-exclusive period convention, renaming all temporal columns accordingly.
-- [x] **Implement System Versioning:** Ported the complete System Versioning feature from `periods`, including history tables, C-based triggers (`generated_always_as_row_start_end`, `write_history`), and the `add/drop_system_versioning` API.
-- [x] **Feat(api): Add unified synchronization for temporal columns:** Enhanced `add_era` to support `synchronize_valid_to_column` and `synchronize_range_column`. This creates a single, unified trigger to keep all temporal representations (bounds, `valid_to`, range) consistent and enables declarative metadata for synchronization.
-- [x] **Add Docker installation instructions to README:** Added a comprehensive guide to `README.md` for building and installing `sql_saga` using Docker, based on usage in the `statbus` project.
-- [x] **Implement final `temporal_merge` API with unambiguous naming:** Refactor `temporal_merge` to use the final, approved `MERGE_ENTITY_*` naming scheme. Correct the planner logic to be strictly orthogonal, where `mode` controls non-destructive merge scope and `delete_mode` is the sole controller of destructive actions.
-- [x] **Add focused test coverage for `..._FOR_PORTION_OF` modes:** Create a new test file dedicated to validating the behavior of `PATCH_FOR_PORTION_OF`, `REPLACE_FOR_PORTION_OF`, and `DELETE_FOR_PORTION_OF` to ensure the surgical correction logic is fully covered.
-- [x] **Refactor default value handling to be metadata-driven**: Implemented a robust, metadata-driven strategy for default values. For simple eras, `add_era` sets `DEFAULT 'infinity'`. For eras with synchronized columns, a metadata flag instructs the trigger to programmatically apply the default on `INSERT`. This removes the brittle `'infinity'` heuristic and adds fail-fast consistency checks for `UPDATE` operations.
-- [x] **Simplify `for_portion_of` view semantics**: Refactored the `for_portion_of` view to only provide the complex "apply change to a time slice" `UPDATE` functionality. Simple `INSERT`, `UPDATE`, and `DELETE` operations are now disallowed on the view and must be performed on the base table.
-- [x] **Fix regressions from optional `add_era` parameters**: Resolved failures in `04_synchronize_validity_trigger` and other tests caused by `add_era`'s new default-setting behavior interacting incorrectly with generated columns and the synchronization trigger's consistency checks.
-- [x] **Make `add_era` constraints and defaults optional**: Added `add_defaults` and `add_bounds_check` parameters to `add_era` to allow users to opt out of the default integrity management. This provides flexibility for advanced use cases while maintaining a safe default.
-- [x] **Set `valid_until` to `DEFAULT 'infinity'` in `add_era`**: Modified `add_era` to be type-aware, automatically setting `DEFAULT 'infinity'` and stricter `CHECK` constraints on `valid_until` columns only for data types that support infinity. This improves ergonomics while maintaining correctness for all types.
-- [x] **Document Updatable Views in README:** Updated `README.md` with a comprehensive section on the `for_portion_of` and `current` updatable views, explaining their purpose, DML protocols, and security model. The runnable example test (`47_readme_usage.sql`) has been extended to cover the usage of these views.
-- [x] **Support Predicates for Temporally Unique Keys:** Extended `add_unique_key` to support a `WHERE` clause for creating partial unique keys (e.g., `WHERE legal_unit_id IS NOT NULL`). This uses a unique index with a predicate instead of a unique constraint.
-- [x] **Refactor `temporal_merge` to a procedure for better ergonomics:** Converted the `temporal_merge` function into a procedure. Instead of returning a set of results, it now creates a temporary table `__temp_last_sql_saga_temporal_merge` with the feedback, simplifying the calling pattern.
-- [x] **Rename `add_api` to `add_updatable_views` for clarity:** Renamed `add_api` and `drop_api` to `add_updatable_views` and `drop_updatable_views` respectively, to better reflect their purpose of managing views for temporal data.
-- [x] **Refactor and Finalize `for_portion_of` Updatable View:** Ported and expanded test coverage from legacy files, and formalized DML semantics. The view's behavior, including its known limitation of not coalescing adjacent identical rows from multi-row updates, is now fully verified by the test suite.
-- [x] **Implement `current` Updatable View:** Created the new `current` view with a robust and explicit DML protocol for easy integration with ORMs and APIs.
-    - **Phase 1: Data Model (Shared Prerequisite - Complete):**
-        - [x] `updatable_view` metadata table and `updatable_view_type` enum are in place.
-    - **Phase 2: Define the Goal (Tests & Docs) - Complete:**
-        - [x] `README.md` is updated with the symmetrical `add/drop_current_view` API reference.
-        - [x] Created the primary test file (`sql/30_updatable_view_current_basis.sql`) to define the target behavior.
-    - **Phase 3: Implementation - Complete:**
-        - [x] Created the `add_current_view` and `drop_current_view` functions.
-        - [x] Implemented the trigger logic with an explicit `UPDATE` protocol for SCD Type 2 and soft-deletes, while disallowing ambiguous `DELETE`s.
-    - **Phase 4: Verification (Basis) - Complete:**
-        - [x] The `30_updatable_view_current_basis.sql` test is now passing.
-- [x] **Synchronized: Full Test Coverage & Cleanup:**
-    - **Prerequisite:** Phase 4 must be complete for *both* `for_portion_of` and `current` views.
-    - **Phase 5: Full Test Coverage:**
-        - [x] `sql/31_updatable_view_for_portion_of_full.sql` is passing, covering edge cases and ACLs for `for_portion_of` views.
-        - [ ] `sql/32_updatable_view_current_full.sql` is passing, now with full coverage for both empty- and non-empty-range soft-deletes.
-        - [x] The two `current` view tests (`30_..._basis` and `32_..._full`) cover both `delete_as_cutoff` and `delete_as_documented_ending` modes.
-        - [x] `sql/34_updatable_views_types.sql` is passing, testing both views against all supported range types.
-    - **Phase 6: Deprecation & Finalization:**
-        - [x] Deprecate `07_for_portion_of.sql` and `21_api_lifecycle.sql` now that their functionality is fully covered by the new, structured test suite.
-- [x] **Refactor `temporal_merge` founding ID logic:** Made the source `row_id` column configurable (`row_id_column`) and implemented the `founding_id_column` to handle intra-batch dependencies for new entities.
-- [x] **Create a test suite for `temporal_merge` parameter edge cases:** The test `52_temporal_merge_parameters.sql` now provides comprehensive coverage for API parameter variations, including `NULL` and empty `identity_columns`, non-existent column names, custom source row identifiers, and fully non-standard naming conventions.
-- [x] **Add runnable test for README usage examples:** Created a self-contained test that executes the code from the `README.md` "Usage" section. This test serves as living documentation, verifying the public API and demonstrating a realistic `temporal_merge` data loading pattern with ID back-filling.
-- [x] **Enhance ETL architecture test to cover "current state" pattern:** Refactored the `56_temporal_merge-minimal-copying-architecture.sql` test to demonstrate a common ETL pattern where incoming data represents the current state of an entity, valid until `infinity`. The test now uses a batch-driven loop, disables foreign key triggers during processing, and inspects feedback after each batch to fully verify that the minimal-copying architecture correctly manages complex, stateful timelines.
-- [x] **Finalize advanced ETL reference implementation:** The `56_...` test is now a complete reference for a robust, minimal-copying ETL architecture. It demonstrates ID back-propagation (both intra-batch and inter-batch), dynamic metadata-driven procedures that correctly filter source data, handling of natural keys, non-temporal targets, and ephemeral metadata columns.
-- [x] **Add happy-path test coverage for all `temporal_merge` modes and supported range types:** Created two new test files (`49_temporal_merge_modes.sql` and `50_temporal_merge_types.sql`) to verify the behavior of all merge modes and data types, improving overall test coverage.
-- [x] **Clarify `temporal_merge` naming convention:** Finalized a robust and consistent naming convention for the Planner/Executor architecture. All internal `temporal_merge` objects now use a hierarchical naming scheme (e.g., `temporal_merge_plan`, `temporal_merge_plan_action`). Renamed `SKIP_IDEMPOTENT` to `SKIP_IDENTICAL` for improved clarity.
-- [x] **Temporal Merge with Dependent Row Support:** Refactored `temporal_merge` to correctly handle batches containing dependent operations (e.g., an `INSERT` of a new entity and subsequent `UPDATE`s to it). This was achieved by changing the API to accept a `founding_id_column` and implementing internal, multi-stage ID propagation logic, making the function truly set-based and robust.
-- [x] **Remove obsolete legacy files:** Deleted unused source files (`periods.c`, `time_for_keys.c`, etc.) from the repository to reduce clutter and prevent confusion.
-- [x] **Make `temporal_merge` fully dynamic:** Analyzed `temporal_merge` for hardcoded column names. Verified through searches that all user-data columns are handled dynamically. The single identified "hardcoded" string is a private, internal implementation detail for state management, which is a correct design. No changes were needed.
-- [x] **Add option to back-fill generated IDs into source table:** Extended `temporal_merge` with a new parameter `update_source_with_identity`. When `true`, the procedure will update the source table with any generated surrogate or composite key values for newly inserted entities. This simplifies multi-step import processes by removing the need for manual ID propagation between steps.
-- [x] **Ensure Symmetrical APIs:** Refactored `drop_unique_key` and `drop_foreign_key` to be unambiguous by renaming the `_by_name` variants. Aligned tests to use the more intuitive symmetrical API calls by default.
-- [x] **Standardize System Versioning Column Naming:** Renamed system versioning columns to `system_valid_from` and `system_valid_until` to be consistent with application-time `valid_from`/`valid_until` semantics.
-- [x] **Refactor test suite:** Made all tests self-contained and idempotent, resolving all regressions.
-- [x] **Complete the `regclass` -> `(schema, table)` refactoring:** Removed all `oid` columns from metadata tables, making event triggers robust against `DROP`.
-- [x] **Refactor `add_updatable_views` to not require a primary key:** Refactored `add_updatable_views` to use a single-column temporal unique key as the entity identifier if no primary key is present. Fixed `update_portion_of` trigger to correctly preserve identifier columns during updates.
-- [x] **Fix event trigger regressions:** Resolved bugs in `rename_following` and `health_checks` event triggers that were exposed by refactoring. The triggers now correctly handle `search_path` issues and reliably update metadata for renamed objects.
-- [x] **Refactor build system and fix all regressions:** Overhauled the `Makefile` to ensure reliable, incremental builds. Refactored the SQL source into a modular structure and resolved all test failures that were exposed by the new build process.
-- [x] **Support foreign keys from non-temporal tables:** Provided full foreign key support from standard tables to temporal tables. The `add_foreign_key` function now automatically creates a `CHECK` constraint on the referencing table and `UPDATE`/`DELETE` triggers on the referenced temporal table to provide full `RESTRICT`/`NO ACTION` semantics.
-- [x] **Use `pg_temp` schema for temporary tables**: Refactored `temporal_merge` to create its feedback table in the session-local `pg_temp` schema for improved robustness and concurrency safety.
-- [x] **Enforce `NOT NULL` on synchronized temporal columns**: Modified `add_era` to apply `NOT NULL` constraints on `valid_to` and `valid_range` columns when synchronization is enabled to strengthen data integrity guarantees.
-- [x] **Clarify `temporal_merge` FK limitations in README:** Expanded the "Known Limitation" section to explicitly mention that complex `REPLACE` or `DELETE` operations can still cause FK violations due to immediate trigger firing, and reinforced that disabling triggers is the robust solution for complex ETL.
-- [x] **Improve `temporal_merge` executor to handle `NOT NULL DEFAULT` columns:** The executor's `UPDATE` logic is now robust. For columns with a `NOT NULL DEFAULT` constraint, it will preserve the existing value if the source provides a `NULL`, preventing `NOT NULL` violations. This makes `UPSERT` mode more intuitive.
-- [x] **Improve `temporal_merge` to update ephemeral columns:** The planner now correctly generates an `UPDATE` operation when only ephemeral columns have changed, allowing for in-place updates of metadata without creating new historical records.
+
+## 2026-01-19: Performance Optimization Phase Complete
+
+**All PL/pgSQL-level optimizations completed.** Performance status:
+- Regular DML: ~24,000-45,000 rows/s
+- temporal_merge single call (1000 rows): ~270-580 rows/s (depends on operation complexity)
+- temporal_merge batched (1000 rows/call in loop): ~2,650-2,930 rows/s (MERGE_ENTITY_UPSERT), ~7,460-8,310 rows/s (UPDATE_FOR_PORTION_OF)
+
+Further performance gains require either template-based temporal_merge functions (3-5x, HIGH complexity) or PostgreSQL extension in C (10-50x, VERY HIGH complexity). See doc/temporal_merge_postgresql_extension_plan.md for extension approach.
+
+## 2026-01-19: FK Trigger Column Cleanup
+
+**Investigated and removed unused FK trigger columns from sql_saga.foreign_keys table.** Original todo claimed these columns "could potentially be removed" because they're always NULL. Investigation and cleanup:
+
+**Column Usage Patterns:**
+- `fk_insert_trigger`, `fk_update_trigger`: Always NULL for both FK types - **REMOVED** (no functional purpose)
+- `uk_update_trigger`, `uk_delete_trigger`: POPULATED for regular_to_temporal FKs, NULL for temporal_to_temporal FKs - **KEPT** (essential)
+
+**Test Evidence (tests 045 & 072):**
+- regular_to_temporal: Creates actual triggers on referenced table (e.g., `regular_fk_pk_id_fkey_uk_update`, `regular_fk_pk_id_fkey_uk_delete`)
+- temporal_to_temporal: Uses native PG18 `FOREIGN KEY ... PERIOD` with system-generated `RI_ConstraintTrigger_*` triggers
+
+**Actions Taken:**
+- Removed fk_insert_trigger and fk_update_trigger columns from schema (src/01_schema.sql)
+- Updated all code references in drop_protection, rename_following, manage_temporal_triggers, add_foreign_key
+- Updated 75 test expected outputs
+- Net reduction: 87 lines of code deleted
+
+**Result:** Clean schema with only essential columns. uk_update_trigger and uk_delete_trigger retained because they're critical for regular_to_temporal FK functionality. See tmp/fk_trigger_columns_investigation.md for detailed evidence.
+
+## 2026-01-19: Individual Optimizations
+- **Investigate and reject typed temp tables optimization** - Benchmarked TEXT vs typed columns for temporal_merge_plan.
+  Result: TEXT is 2.6% FASTER (38.2ms vs 37.1ms for 10K ops). Range I/O functions are highly optimized, conversion 
+  overhead is negligible. Keeping TEXT for polymorphism, debuggability, and simplicity. See doc/internals/optimization_findings.md.
+- **Implement template-based temporal column sync triggers** - Complete system replacing generic triggers with 
+  specialized per-table/era functions. Performance: 2.3x faster INSERTs (85ms→37ms), 2.2x faster UPDATEs (99ms→45ms).
+  Architecture: Template generator creates hardcoded functions eliminating dynamic SQL/JSONB overhead. Schema tracking
+  via sync_temporal_trg_name and sync_temporal_trg_function_name columns. Comprehensive cleanup chain fixes.
+  Event trigger protection updated. 75+ tests updated. All regression tests passing.
+- **Implement eclipse detection optimizations** - Added composite index on (lookup_columns, source_row_id) and 
+  pre-computed valid_range columns in temporal_merge planner. Expected 30-40% performance improvement in eclipse detection.
+- Document CROSS JOIN LATERAL eclipse detection logic (required for correctness)
+- Analyze eclipse detection performance and identify optimization strategies
+- Test template-based trigger approach: 8-9x faster than generic triggers
+- Abandon C-based trigger implementation (5-7x slower due to SPI overhead)
+- Create comprehensive optimization documentation (doc/internals/eclipse_detection.md, optimization_findings.md)
+
+## 2026-01-18
+- Eliminate LATERAL jsonb_populate_record from temporal_merge executor (~48% UPDATE speedup)
+- Add old_valid_range/new_valid_range columns to temporal_merge_plan (eliminate runtime construction)
+- Update executor to use pre-computed range columns
+- Add compound index (id, valid_range) to add_unique_key (~20x speedup for exact match queries)
+
+## 2026-01-17
+- Optimize temporal_merge planner: split-path approach for resolved_atomic_segments_with_payloads (~10x speedup)
+- Optimize temporal_merge planner: replace CASE→OR for 36-56% speedup on benchmarks
+- Add range-only view tests (051, 053) and fix same-day DELETE bug in current_view_trigger
+- Add range-only temporal_merge test (066) with proper test renumbering
+- Add Makefile target `renumber-tests-from` for inserting tests at any slot
+- Document optimal batch size (1000 rows) in README with benchmark data
+- Add era existence validation to `add_for_portion_of_view` and `add_current_view`
+- Fix flapping test 063 by adding ORDER BY to string_agg
+- Update 097_readme_usage.sql to match README examples (valid_range API)
+
+## Earlier (summarized)
+- Phase 1 complete: Migrated benchmark tests (100-107) to valid_range API
+- Added sync trigger overhead benchmarks (tests 104-107)
+- PostgreSQL 18 native temporal features integration (WITHOUT OVERLAPS, temporal FKs)
+- Implemented smart MOVE batching with multirange types
+- Fixed temporal_merge for range-only tables
+- Comprehensive temporal_merge planner refactoring and optimization
+- System versioning implementation
+- C-based FK triggers for performance
+- Event trigger support for schema changes
+- `[valid_from, valid_until)` period semantics adoption

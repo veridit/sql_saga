@@ -36,13 +36,11 @@ BEGIN
             ARRAY[v_fk_table_name] || p_fk_column_names || ARRAY[p_fk_era_row.era_name, 'gist', 'idx']
         );
         v_index_def := format(
-            'CREATE INDEX %I ON %s USING GIST (%s, %s(%I, %I))',
+            'CREATE INDEX %I ON %s USING GIST (%s, %I)',
             v_index_name,
             p_fk_table_oid::text,
             (SELECT string_agg(quote_ident(c), ', ') FROM unnest(p_fk_column_names) AS c),
-            p_fk_era_row.range_type,
-            p_fk_era_row.valid_from_column_name,
-            p_fk_era_row.valid_until_column_name
+            p_fk_era_row.range_column_name
         );
 
         SELECT c.relname INTO v_existing_index_name
@@ -234,6 +232,7 @@ DECLARE
     uk_where_clause text;
     helper_signature text;
     v_fk_index_name name;
+    v_uk_stable_cols name[];
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -273,6 +272,11 @@ BEGIN
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name, e.era_name) = (uk_row.table_schema, uk_row.table_name, uk_row.era_name);
 
+    -- For regular-to-temporal FKs, we only care about the stable (non-temporal) part of the key.
+    SELECT array_agg(c) INTO v_uk_stable_cols
+    FROM unnest(uk_row.column_names) AS c
+    WHERE c <> uk_era_row.range_column_name;
+
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
     uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
@@ -286,8 +290,13 @@ BEGIN
     );
 
     /* Check that all the columns match */
+    IF array_length(fk_column_names, 1) <> array_length(v_uk_stable_cols, 1) THEN
+        RAISE EXCEPTION 'foreign key column count (%) does not match unique key stable column count (%)',
+             array_length(fk_column_names, 1), array_length(v_uk_stable_cols, 1);
+    END IF;
+
     IF EXISTS (
-        SELECT FROM unnest(fk_column_names, uk_row.column_names) AS u (fk_attname, uk_attname)
+        SELECT FROM unnest(fk_column_names, v_uk_stable_cols) AS u (fk_attname, uk_attname)
         JOIN pg_catalog.pg_attribute AS fa ON (fa.attrelid, fa.attname) = (fk_table_oid, u.fk_attname)
         JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.uk_attname)
         WHERE (fa.atttypid, fa.atttypmod, fa.attcollation) <> (ua.atttypid, ua.atttypmod, ua.attcollation))
@@ -329,7 +338,7 @@ BEGIN
         -- Its name is derived from the UK table, so it can be shared by multiple FKs.
         fk_helper_function := coalesce(fk_helper_function,
             format('%I.%I', uk_schema_name /* %I */, sql_saga.__internal_make_name(
-                ARRAY[uk_table_name] || uk_row.column_names || ARRAY['exists']) /* %I */
+                ARRAY[uk_table_name] || v_uk_stable_cols || ARRAY['exists']) /* %I */
             )
         );
 
@@ -337,7 +346,7 @@ BEGIN
 
         SELECT string_agg(format('uk.%I = $%s', u.name /* %I */, u.ordinality /* %s */), ' AND ')
         INTO uk_where_clause
-        FROM unnest(uk_row.column_names) WITH ORDINALITY AS u(name, ordinality);
+        FROM unnest(v_uk_stable_cols) WITH ORDINALITY AS u(name, ordinality);
 
         helper_body := format($$
             CREATE FUNCTION %s
@@ -461,7 +470,7 @@ BEGIN
 
         SELECT string_agg(format('uk.%I = fk.%I', u.ukc /* %I */, u.fkc /* %I */), ' AND ')
         INTO uk_where_clause
-        FROM unnest(uk_row.column_names, fk_column_names) AS u(ukc, fkc);
+        FROM unnest(v_uk_stable_cols, fk_column_names) AS u(ukc, fkc);
 
         EXECUTE format('SELECT EXISTS( ' ||
             'SELECT 1 FROM %1$I.%2$I AS fk ' ||
@@ -490,7 +499,9 @@ $function_regular_fk$;
 
 
 -- Original function for temporal-to-temporal FKs
-CREATE FUNCTION sql_saga.add_temporal_foreign_key(
+-- This has been refactored to use native PostgreSQL 18+ temporal foreign keys.
+-- The trigger-based implementation has been removed.
+CREATE OR REPLACE FUNCTION sql_saga.add_temporal_foreign_key(
         fk_table_oid regclass,
         fk_column_names name[],
         fk_era_name name,
@@ -499,10 +510,8 @@ CREATE FUNCTION sql_saga.add_temporal_foreign_key(
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         foreign_key_name name DEFAULT NULL,
-        fk_insert_trigger name DEFAULT NULL,
-        fk_update_trigger name DEFAULT NULL,
-        uk_update_trigger name DEFAULT NULL,
-        uk_delete_trigger name DEFAULT NULL,
+        uk_update_trigger name DEFAULT NULL, -- unused, for signature compatibility
+        uk_delete_trigger name DEFAULT NULL, -- unused, for signature compatibility
         create_index boolean DEFAULT true)
  RETURNS name
  LANGUAGE plpgsql
@@ -520,14 +529,10 @@ DECLARE
     uk_table_oid regclass;
     uk_schema_name name;
     uk_table_name name;
-    column_attnums smallint[];
-    idx integer;
     pass integer;
-    upd_action text DEFAULT '';
-    del_action text DEFAULT '';
-    foreign_columns_with_era_columns text;
-    unique_columns_with_era_columns text;
     v_fk_index_name name;
+    v_uk_stable_cols_list text;
+    v_uk_stable_cols name[];
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -552,32 +557,7 @@ BEGIN
     WHERE (e.table_schema, e.table_name, e.era_name) = (fk_schema_name, fk_table_name, fk_era_name);
 
     IF NOT FOUND THEN
-        RAISE EXCEPTION 'era "%" does not exist', fk_era_name;
-    END IF;
-
-    /* Get column attnums from column names */
-    SELECT array_agg(a.attnum ORDER BY n.ordinality)
-    INTO column_attnums
-    FROM unnest(fk_column_names) WITH ORDINALITY AS n (name, ordinality)
-    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (fk_table_oid, n.name);
-
-    /* System columns are not allowed */
-    IF 0 > ANY (column_attnums) THEN
-        RAISE EXCEPTION 'index creation on system columns is not supported';
-    END IF;
-
-    /* Report if any columns weren't found */
-    idx := array_position(column_attnums, NULL);
-    IF idx IS NOT NULL THEN
-        RAISE EXCEPTION 'column "%" does not exist', fk_column_names[idx];
-    END IF;
-
-    /* Make sure the period columns aren't also in the normal columns */
-    IF fk_era_row.valid_from_column_name = ANY (fk_column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.valid_from_column_name;
-    END IF;
-    IF fk_era_row.valid_until_column_name = ANY (fk_column_names) THEN
-        RAISE EXCEPTION 'column "%" specified twice', fk_era_row.valid_until_column_name;
+        RAISE EXCEPTION 'era "%" does not exist on table %', fk_era_name, fk_table_oid;
     END IF;
 
     /* Get the unique key we're linking to */
@@ -590,32 +570,33 @@ BEGIN
         RAISE EXCEPTION 'unique key "%" does not exist', unique_key_name;
     END IF;
 
-    /* Get the unique key's eroa */
+    /* Get the unique key's era */
     SELECT e.*
     INTO uk_era_row
     FROM sql_saga.era AS e
     WHERE (e.table_schema, e.table_name, e.era_name) = (uk_row.table_schema, uk_row.table_name, uk_row.era_name);
 
+    SELECT array_agg(c), string_agg(quote_ident(c), ', ')
+    INTO v_uk_stable_cols, v_uk_stable_cols_list
+    FROM unnest(uk_row.column_names) AS c
+    WHERE c <> uk_era_row.range_column_name;
+
     IF fk_era_row.range_type <> uk_era_row.range_type THEN
-        RAISE EXCEPTION 'era types "%" and "%" are incompatible',
-            fk_era_row.era_name, uk_era_row.era_name;
+        RAISE EXCEPTION 'era range types for foreign key and unique key do not match';
     END IF;
 
     uk_schema_name := uk_row.table_schema;
     uk_table_name := uk_row.table_name;
-    uk_table_oid := format('%I.%I', uk_schema_name /* %I */, uk_table_name /* %I */)::regclass;
-
-    v_fk_index_name := sql_saga.__find_or_create_fk_index(
-        fk_table_oid,
-        fk_column_names,
-        fk_era_row,
-        'temporal_to_temporal',
-        create_index
-    );
+    uk_table_oid := format('%I.%I', uk_schema_name, uk_table_name)::regclass;
 
     /* Check that all the columns match */
+    IF array_length(fk_column_names, 1) <> array_length(v_uk_stable_cols, 1) THEN
+        RAISE EXCEPTION 'foreign key column count (%) does not match unique key stable column count (%)',
+             array_length(fk_column_names, 1), array_length(v_uk_stable_cols, 1);
+    END IF;
+
     IF EXISTS (
-        SELECT FROM unnest(fk_column_names, uk_row.column_names) AS u (fk_attname, uk_attname)
+        SELECT FROM unnest(fk_column_names, v_uk_stable_cols) AS u (fk_attname, uk_attname)
         JOIN pg_catalog.pg_attribute AS fa ON (fa.attrelid, fa.attname) = (fk_table_oid, u.fk_attname)
         JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.uk_attname)
         WHERE (fa.atttypid, fa.atttypmod, fa.attcollation) <> (ua.atttypid, ua.atttypmod, ua.attcollation))
@@ -623,20 +604,10 @@ BEGIN
         RAISE EXCEPTION 'column types do not match';
     END IF;
 
-    /* The range types must match, too */
-    IF fk_era_row.range_type <> uk_era_row.range_type THEN
-        RAISE EXCEPTION 'period types do not match';
-    END IF;
-
-    /*
-     * Generate a name for the foreign constraint.  We don't have to worry about
-     * concurrency here because all period ddl commands lock the periods table.
-     */
+    /* Generate a name for the foreign constraint. */
     IF foreign_key_name IS NULL THEN
         foreign_key_name := sql_saga.__internal_make_name(
-            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = fk_table_oid)]
-               || fk_column_names
-               || ARRAY[fk_era_name]);
+            ARRAY[fk_table_name] || fk_column_names || ARRAY[fk_era_name]);
     END IF;
     pass := 0;
     WHILE EXISTS (
@@ -647,244 +618,41 @@ BEGIN
     END LOOP;
     foreign_key_name := foreign_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
 
-    -- TODO: Consider how update_action should be handled, it seems
-    -- clear it should affect the timing of the trigger.
-    /* See if we're deferring the constraints or not */
-    -- IF update_action = 'NO ACTION' THEN
-    --     upd_action := ' DEFERRABLE INITIALLY DEFERRED';
-    -- END IF;
-    -- IF delete_action = 'NO ACTION' THEN
-    --     del_action := ' DEFERRABLE INITIALLY DEFERRED';
-    -- END IF;
+    v_fk_index_name := sql_saga.__find_or_create_fk_index(
+        fk_table_oid,
+        fk_column_names,
+        fk_era_row,
+        'temporal_to_temporal',
+        create_index
+    );
 
-    /* Get the columns that require checking the constraint */
-    SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
-    INTO foreign_columns_with_era_columns
-    FROM unnest(fk_column_names || fk_era_row.valid_from_column_name || fk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
+    /* Create the native temporal foreign key. This automatically validates existing data. */
+    EXECUTE format($$
+        ALTER TABLE %1$s ADD CONSTRAINT %2$I
+        FOREIGN KEY (%3$s, PERIOD %4$I) REFERENCES %5$s (%6$s)
+        MATCH %7$s ON UPDATE %8$s ON DELETE %9$s
+        DEFERRABLE
+        $$,
+        fk_table_oid::text,                                                              /* %1$s */
+        foreign_key_name,                                                                /* %2$I */
+        (SELECT string_agg(quote_ident(c), ', ') FROM unnest(fk_column_names) AS c),      /* %3$s */
+        fk_era_row.range_column_name,                                                    /* %4$I */
+        uk_table_oid::text,                                                              /* %5$s */
+        CASE
+            WHEN v_uk_stable_cols_list IS NULL THEN format('PERIOD %I', uk_era_row.range_column_name)
+            ELSE format('%s, PERIOD %I', v_uk_stable_cols_list, uk_era_row.range_column_name)
+        END,                                                                             /* %6$s */
+        match_type,                                                                      /* %7$s */
+        update_action,                                                                   /* %8$s */
+        delete_action                                                                    /* %9$s */
+    );
 
-    -- If a synchronized 'valid_to'-style column is defined for the era, add it
-    -- to the list of columns that trigger the fk_update_check. This is only
-    -- done if the column is not already part of the core era columns to avoid
-    -- duplication. This handles cases where a separate BEFORE trigger
-    -- synchronizes this column with valid_until, ensuring validation fires
-    -- correctly without making the trigger an overly-broad row-level trigger.
-    IF fk_era_row.synchronize_valid_to_column IS NOT NULL
-       AND fk_era_row.synchronize_valid_to_column <> fk_era_row.valid_from_column_name
-       AND fk_era_row.synchronize_valid_to_column <> fk_era_row.valid_until_column_name
-    THEN
-        foreign_columns_with_era_columns := foreign_columns_with_era_columns || ', ' || quote_ident(fk_era_row.synchronize_valid_to_column);
-    END IF;
-
-    SELECT string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
-    INTO unique_columns_with_era_columns
-    FROM unnest(uk_row.column_names || uk_era_row.valid_from_column_name || uk_era_row.valid_until_column_name) WITH ORDINALITY AS u (column_name, ordinality);
-
-    /* Add all the known variables for the triggers to avoid lookups when executing the triggers. */
-    DECLARE
-        fk_valid_from_column_name text := fk_era_row.valid_from_column_name;
-        fk_valid_until_column_name text := fk_era_row.valid_until_column_name;
-
-        fk_column_names_arr_str text := fk_column_names::text;
-        uk_column_names_arr_str text := uk_row.column_names::text;
-
-        uk_era_name text := uk_era_row.era_name;
-        uk_table_oid regclass := uk_table_oid;
-
-        uk_valid_from_column_name text := uk_era_row.valid_from_column_name;
-        uk_valid_until_column_name text := uk_era_row.valid_until_column_name;
-    BEGIN
-        /* Time to make the underlying triggers */
-        fk_insert_trigger := coalesce(fk_insert_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_insert'));
-        EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %17$I AFTER INSERT ON %2$I.%3$I FROM %8$I.%9$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.fk_insert_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L);
-            $$
-            -- Parameters for the function call in the template
-            , /* %1$  */ foreign_key_name
-            , /* %2$  */ fk_schema_name
-            , /* %3$  */ fk_table_name
-            , /* %4$  */ fk_column_names_arr_str
-            , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_valid_from_column_name
-            , /* %7$  */ fk_valid_until_column_name
-            , /* %8$ */ uk_schema_name
-            , /* %9$ */ uk_table_name
-            , /* %10$ */ uk_column_names_arr_str
-            , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_valid_from_column_name
-            , /* %13$ */ uk_valid_until_column_name
-            , /* %14$ */ match_type
-            , /* %15$ */ update_action
-            , /* %16$ */ delete_action
-            -- Other parameters
-            , /* %17$  */ fk_insert_trigger
-        );
-
-        fk_update_trigger := coalesce(fk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'fk_update'));
-        EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %17$I AFTER UPDATE OF %18$s ON %2$I.%3$I FROM %8$I.%9$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.fk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L);
-            $$
-            -- Parameters for the function call in the template
-            , /* %1$  */ foreign_key_name
-            , /* %2$  */ fk_schema_name
-            , /* %3$  */ fk_table_name
-            , /* %4$  */ fk_column_names_arr_str
-            , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_valid_from_column_name
-            , /* %7$  */ fk_valid_until_column_name
-            , /* %8$ */ uk_schema_name
-            , /* %9$ */ uk_table_name
-            , /* %10$ */ uk_column_names_arr_str
-            , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_valid_from_column_name
-            , /* %13$ */ uk_valid_until_column_name
-            , /* %14$ */ match_type
-            , /* %15$ */ update_action
-            , /* %16$ */ delete_action
-            -- Other parameters
-            , /* %17$   */ fk_update_trigger
-            , /* %18$   */ foreign_columns_with_era_columns
-        );
-
-        uk_update_trigger := coalesce(uk_update_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_update'));
-        EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %17$I AFTER UPDATE OF %18$s ON %8$I.%9$I FROM %2$I.%3$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_update_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L, 'temporal_to_temporal');
-            $$
-            -- Parameters for the function call in the template
-            , /* %1$  */ foreign_key_name
-            , /* %2$  */ fk_schema_name
-            , /* %3$  */ fk_table_name
-            , /* %4$  */ fk_column_names_arr_str
-            , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_valid_from_column_name
-            , /* %7$  */ fk_valid_until_column_name
-            , /* %8$ */ uk_schema_name
-            , /* %9$ */ uk_table_name
-            , /* %10$ */ uk_column_names_arr_str
-            , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_valid_from_column_name
-            , /* %13$ */ uk_valid_until_column_name
-            , /* %14$ */ match_type
-            , /* %15$ */ update_action
-            , /* %16$ */ delete_action
-            -- Other parameters
-            , /* %17$ */ uk_update_trigger
-            , /* %18$ */ unique_columns_with_era_columns
-        );
-
-        uk_delete_trigger := coalesce(uk_delete_trigger, sql_saga.__internal_make_name(ARRAY[foreign_key_name], 'uk_delete'));
-        EXECUTE format($$
-            CREATE CONSTRAINT TRIGGER %17$I AFTER DELETE ON %8$I.%9$I FROM %2$I.%3$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
-            sql_saga.uk_delete_check_c(%1$L,%2$L,%3$L,%4$L,%5$L,%6$L,%7$L,%8$L,%9$L,%10$L,%11$L,%12$L,%13$L,%14$L,%15$L,%16$L, 'temporal_to_temporal');
-            $$
-            -- Parameters for the function call in the template
-            , /* %1$  */ foreign_key_name
-            , /* %2$  */ fk_schema_name
-            , /* %3$  */ fk_table_name
-            , /* %4$  */ fk_column_names_arr_str
-            , /* %5$  */ fk_era_name
-            , /* %6$  */ fk_valid_from_column_name
-            , /* %7$  */ fk_valid_until_column_name
-            , /* %8$ */ uk_schema_name
-            , /* %9$ */ uk_table_name
-            , /* %10$ */ uk_column_names_arr_str
-            , /* %11$ */ uk_era_name
-            , /* %12$ */ uk_valid_from_column_name
-            , /* %13$ */ uk_valid_until_column_name
-            , /* %14$ */ match_type
-            , /* %15$ */ update_action
-            , /* %16$ */ delete_action
-            -- Other parameters
-            , /* %17$  */ uk_delete_trigger
-        );
-
-        INSERT INTO sql_saga.foreign_keys
-            ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger, fk_index_name)
-        VALUES
-            ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger, v_fk_index_name);
-
-        /* Validate the constraint on existing data. */
-        DECLARE
-            uk_where_clause text;
-            violating_row_found boolean;
-        BEGIN
-            IF match_type = 'FULL' THEN
-                DECLARE
-                    fk_any_null_clause text;
-                    fk_all_null_clause text;
-                BEGIN
-                    SELECT string_agg(format('fk.%I IS NULL', u.fkc), ' OR ')
-                    INTO fk_any_null_clause
-                    FROM unnest(fk_column_names) AS u(fkc);
-
-                    SELECT string_agg(format('fk.%I IS NULL', u.fkc), ' AND ')
-                    INTO fk_all_null_clause
-                    FROM unnest(fk_column_names) AS u(fkc);
-
-                    EXECUTE format(
-                        'SELECT EXISTS (SELECT 1 FROM %1$I.%2$I AS fk WHERE (%3$s) AND NOT (%4$s))',
-                        fk_schema_name,       -- %1$I
-                        fk_table_name,        -- %2$I
-                        fk_any_null_clause,   -- %3$s
-                        fk_all_null_clause    -- %4$s
-                    )
-                    INTO violating_row_found;
-
-                    IF violating_row_found THEN
-                        RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%" (MATCH FULL with NULLs)',
-                                fk_table_oid,
-                                foreign_key_name;
-                    END IF;
-                END;
-            END IF;
-
-            -- Now check for coverage violations on rows with non-null keys.
-            DECLARE
-                fk_not_null_clause text;
-            BEGIN
-                SELECT string_agg(format('fk.%I IS NOT NULL', u.fkc), ' AND ')
-                INTO fk_not_null_clause
-                FROM unnest(fk_column_names) AS u(fkc);
-
-                SELECT string_agg(format('uk.%I = fk.%I', u.ukc, u.fkc), ' AND ')
-                INTO uk_where_clause
-                FROM unnest(uk_row.column_names, fk_column_names) AS u(ukc, fkc);
-
-                EXECUTE format('SELECT EXISTS( ' ||
-                    'SELECT 1 FROM %1$I.%2$I AS fk ' ||
-                    'WHERE %12$s AND NOT COALESCE(( ' ||
-                    '  SELECT sql_saga.covers_without_gaps( ' ||
-                    '    %3$s(uk.%4$I, uk.%5$I), ' ||
-                    '    %6$s(fk.%7$I, fk.%8$I) ' ||
-                    '    ORDER BY uk.%4$I ' ||
-                    '  ) ' ||
-                    '  FROM %9$I.%10$I AS uk ' ||
-                    '  WHERE %11$s ' ||
-                    '), false))',
-                    fk_schema_name,                       -- %1$I
-                    fk_table_name,                        -- %2$I
-                    uk_era_row.range_type,                -- %3$s (regtype cast to text)
-                    uk_era_row.valid_from_column_name,    -- %4$I
-                    uk_era_row.valid_until_column_name,   -- %5$I
-                    fk_era_row.range_type,                -- %6$s (regtype cast to text)
-                    fk_era_row.valid_from_column_name,    -- %7$I
-                    fk_era_row.valid_until_column_name,   -- %8$I
-                    uk_schema_name,                       -- %9$I
-                    uk_table_name,                      -- %10$I
-                    uk_where_clause,                    -- %11$s
-                    fk_not_null_clause                  -- %12$s
-                ) INTO violating_row_found;
-
-                IF violating_row_found THEN
-                    RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-                        fk_table_oid,
-                        foreign_key_name;
-                END IF;
-            END;
-        END;
-    END;
+    INSERT INTO sql_saga.foreign_keys
+        ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_index_name,
+          uk_update_trigger, uk_delete_trigger)
+    VALUES
+        ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, v_fk_index_name,
+          NULL, NULL);
 
     RETURN foreign_key_name;
 END;
@@ -893,7 +661,7 @@ $function$;
 COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
 'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
 
-COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, boolean) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
 
 COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS

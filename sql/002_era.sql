@@ -6,14 +6,15 @@ BEGIN;
 SET ROLE TO sql_saga_unprivileged_user;
 
 /* Basic period definitions with dates */
-CREATE TABLE basic (val text, valid_from date, valid_until date);
+CREATE TABLE basic (val text, valid daterange, valid_from date, valid_until date);
 TABLE sql_saga.era;
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', add_defaults := false);
 TABLE sql_saga.era;
 SELECT sql_saga.drop_era('basic', 'bp');
 TABLE sql_saga.era;
-SELECT sql_saga.add_era('basic', 'valid_from', 'valid_until', 'bp', bounds_check_constraint => 'c', add_defaults => false);
+SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', bounds_check_constraint => 'c', add_defaults => false);
 TABLE sql_saga.era;
+
 /* Test constraints */
 SAVEPOINT pristine;
 INSERT INTO basic (val, valid_from, valid_until) VALUES ('x', null, null); --fail

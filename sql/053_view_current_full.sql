@@ -12,11 +12,12 @@ GRANT EXECUTE ON FUNCTION test_now() TO PUBLIC;
 CREATE SCHEMA test_schema;
 CREATE TABLE test_schema.schema_test (
     id int,
+    value text,
+    valid_range daterange,
     valid_from date,
-    valid_until date,
-    value text
+    valid_until date
 );
-SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('test_schema.schema_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id'], key_type => 'primary');
 SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mode := 'delete_as_cutoff', current_func_name := 'test_now()');
 
@@ -34,9 +35,9 @@ DROP TABLE pg_temp.temporal_merge_feedback;
 SELECT sql_saga.drop_current_view('test_schema.schema_test'::regclass);
 
 -- Scenario 2: ACL and Ownership tests
-CREATE TABLE acl_test (id int, valid_from date, valid_until date, value text, status text, comment text);
+CREATE TABLE acl_test (id int, value text, status text, comment text, valid_range daterange, valid_from date, valid_until date);
 ALTER TABLE acl_test OWNER to view_test_role;
-SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('acl_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
 
 SET ROLE view_test_role;
@@ -82,7 +83,7 @@ SAVEPOINT can_insert;
 GRANT SELECT, INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
 
 -- Insert a record with an old start date to test non-empty range soft-delete
-INSERT INTO acl_test VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
+INSERT INTO acl_test (id, valid_from, valid_until, value, status, comment) VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
 
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
@@ -102,6 +103,68 @@ TABLE acl_test ORDER BY id, valid_from;
 ROLLBACK TO can_insert;
 
 SELECT sql_saga.drop_current_view('acl_test'::regclass);
+
+-- Scenario 3: Range-only table (no synchronized columns)
+-- This tests that the current view works with tables that have ONLY
+-- a range column, without valid_from/valid_until/valid_to synchronized columns.
+SAVEPOINT scenario_3;
+
+\echo 'Scenario 3: Range-only table for current view'
+
+CREATE TABLE range_only_employees (
+    id int,
+    valid_range daterange NOT NULL,
+    name text,
+    department text,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+
+-- Register era (range-only, no synchronized columns)
+SELECT sql_saga.add_era('range_only_employees', 'valid_range');
+SELECT sql_saga.add_unique_key('range_only_employees', ARRAY['id']);
+
+-- Populate with initial data using range column
+INSERT INTO range_only_employees (id, valid_range, name, department) VALUES
+    (1, '[2023-01-01, 2024-01-01)', 'Alice', 'Engineering'),
+    (1, '[2024-01-01, infinity)', 'Alice', 'R&D'),
+    (2, '[2023-05-01, infinity)', 'Bob', 'Sales');
+
+\echo '--- Initial base table state ---'
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Add the current view
+SELECT sql_saga.add_current_view('range_only_employees'::regclass, current_func_name := 'test_now()');
+\d range_only_employees__current_valid
+
+-- Test SELECT: Should show only current records (Alice in R&D and Bob)
+\echo '--- Current view SELECT ---'
+TABLE range_only_employees__current_valid ORDER BY id;
+
+-- Test INSERT: Carol joins the company
+\echo '--- INSERT via current view ---'
+INSERT INTO range_only_employees__current_valid (id, name, department)
+VALUES (3, 'Carol', 'Marketing');
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Test UPDATE (SCD Type 2): Bob moves to Management
+\echo '--- UPDATE via current view (SCD Type 2) ---'
+UPDATE range_only_employees__current_valid SET department = 'Management' WHERE id = 2;
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Test DELETE (soft delete): Carol leaves (same day as creation = hard delete)
+\echo '--- DELETE via current view (soft delete on same-day entity = hard delete) ---'
+DELETE FROM range_only_employees__current_valid WHERE id = 3;
+
+TABLE range_only_employees ORDER BY id, valid_range;
+
+-- Current view should now show only Alice and Bob
+\echo '--- Final current view state ---'
+TABLE range_only_employees__current_valid ORDER BY id;
+
+SELECT sql_saga.drop_current_view('range_only_employees'::regclass);
+ROLLBACK TO SAVEPOINT scenario_3;
 
 ROLLBACK;
 

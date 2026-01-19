@@ -47,7 +47,7 @@ UPDATE excl SET flap = 'B' WHERE id = 1;
 UPDATE excl SET null_value = 100 WHERE id = 1;
 -- Check history. Should have 3 rows from the 3 updates.
 -- The third row has a NULL in null_value because it's the state BEFORE the update.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_range;
  id |     value     | null_value | flap 
 ----+---------------+------------+------
   1 | initial       |            | A
@@ -72,7 +72,7 @@ SELECT excluded_column_names FROM sql_saga.system_time_era WHERE table_name = 'e
 -- This update should NOT generate a history row.
 UPDATE excl SET flap = 'C' WHERE id = 1;
 -- Check history. Should still have only 3 rows.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_range;
  id |     value     | null_value | flap 
 ----+---------------+------------+------
   1 | initial       |            | A
@@ -86,7 +86,7 @@ SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
 UPDATE excl SET value = 'another update' WHERE id = 1;
 -- Check history. Should now have 4 rows.
 -- The new fourth row shows the state before the final update.
-SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_from;
+SELECT id, value, null_value, flap FROM excl_history ORDER BY system_valid_range;
  id |     value     | null_value | flap 
 ----+---------------+------------+------
   1 | initial       |            | A

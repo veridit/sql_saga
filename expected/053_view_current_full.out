@@ -32,18 +32,20 @@ GRANT EXECUTE ON FUNCTION test_now() TO PUBLIC;
 CREATE SCHEMA test_schema;
 CREATE TABLE test_schema.schema_test (
     id int,
+    value text,
+    valid_range daterange,
     valid_from date,
-    valid_until date,
-    value text
+    valid_until date
 );
-SELECT sql_saga.add_era('test_schema.schema_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('test_schema.schema_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "schema_test_synchronize_temporal_columns_trigger" on table test_schema.schema_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_from) DEFERRABLE, ADD CONSTRAINT schema_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  schema_test_id_valid
@@ -56,13 +58,14 @@ SELECT sql_saga.add_current_view('test_schema.schema_test'::regclass, delete_mod
 (1 row)
 
 \d test_schema.schema_test__current_valid
-     View "test_schema.schema_test__current_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
- value       | text    |           |          | 
+      View "test_schema.schema_test__current_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ value       | text      |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
 
@@ -74,15 +77,15 @@ TABLE sql_saga.updatable_view;
 
 INSERT INTO test_schema.schema_test__current_valid (id, value) VALUES (1, 'A');
 TABLE test_schema.schema_test;
- id | valid_from | valid_until | value 
-----+------------+-------------+-------
-  1 | 2024-02-29 | infinity    | A
+ id | value |      valid_range      | valid_from | valid_until 
+----+-------+-----------------------+------------+-------------
+  1 | A     | [2024-02-29,infinity) | 2024-02-29 | infinity
 (1 row)
 
 TABLE pg_temp.temporal_merge_plan;
- plan_op_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |      data      | feedback | trace | grouping_key  
--------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+----------------+----------+-------+---------------
-           1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2024-02-29     | infinity        | {"value": "A"} |          |       | new_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until | old_valid_range |    new_valid_range    |      data      | feedback | trace | grouping_key  
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-----------------+-----------------------+----------------+----------+-------+---------------
+           1 |             1 | {1}     | INSERT    |               | 1         | t             | {"id": 1}   | {"id": 1}     | {}          |              |              |                |                 | 2024-02-29     | infinity        |                 | [2024-02-29,infinity) | {"value": "A"} |          |       | new_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback;
@@ -101,16 +104,17 @@ SELECT sql_saga.drop_current_view('test_schema.schema_test'::regclass);
 (1 row)
 
 -- Scenario 2: ACL and Ownership tests
-CREATE TABLE acl_test (id int, valid_from date, valid_until date, value text, status text, comment text);
+CREATE TABLE acl_test (id int, value text, status text, comment text, valid_range daterange, valid_from date, valid_until date);
 ALTER TABLE acl_test OWNER to view_test_role;
-SELECT sql_saga.add_era('acl_test', 'valid_from', 'valid_until');
+SELECT sql_saga.add_era('acl_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "acl_test_synchronize_temporal_columns_trigger" on table acl_test to synchronize columns: valid_from, valid_until
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_from, valid_until) DEFERRABLE, ADD CONSTRAINT acl_test_id_valid_excl EXCLUDE USING gist (id WITH =, daterange(valid_from, valid_until) WITH &&) DEFERRABLE
+NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  acl_test_id_valid
@@ -127,15 +131,16 @@ SELECT sql_saga.add_current_view('acl_test'::regclass, delete_mode := 'delete_as
 RESET ROLE;
 -- Verify owner of the view is correct
 \d acl_test__current_valid
-         View "public.acl_test__current_valid"
-   Column    |  Type   | Collation | Nullable | Default 
--------------+---------+-----------+----------+---------
- id          | integer |           |          | 
- valid_from  | date    |           |          | 
- valid_until | date    |           |          | 
- value       | text    |           |          | 
- status      | text    |           |          | 
- comment     | text    |           |          | 
+          View "public.acl_test__current_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ value       | text      |           |          | 
+ status      | text      |           |          | 
+ comment     | text      |           |          | 
+ valid_range | daterange |           |          | 
+ valid_from  | date      |           |          | 
+ valid_until | date      |           |          | 
 Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_documented_ending', 'id')
 
@@ -181,7 +186,7 @@ ROLLBACK TO preserve_role_and_state_before_failing_update;
 SAVEPOINT can_insert;
 GRANT SELECT, INSERT, UPDATE, DELETE ON acl_test TO sql_saga_unprivileged_user;
 -- Insert a record with an old start date to test non-empty range soft-delete
-INSERT INTO acl_test VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
+INSERT INTO acl_test (id, valid_from, valid_until, value, status, comment) VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
         current_role        
@@ -193,26 +198,26 @@ SELECT CURRENT_ROLE;
 -- This should perform an UPDATE to close the record.
 UPDATE acl_test__current_valid SET valid_from = 'infinity', status = 'deleted', comment = 'Closed pre-existing' WHERE id = 2;
 TABLE acl_test ORDER BY id, valid_from;
- id | valid_from | valid_until |  value  | status  |       comment       
-----+------------+-------------+---------+---------+---------------------
-  2 | 2024-01-01 | 2024-02-29  | initial | deleted | Closed pre-existing
+ id |  value  | status  |       comment       |       valid_range       | valid_from | valid_until 
+----+---------+---------+---------------------+-------------------------+------------+-------------
+  2 | initial | deleted | Closed pre-existing | [2024-01-01,2024-02-29) | 2024-01-01 | 2024-02-29
 (1 row)
 
 -- Test soft-delete on a record created in the same "instant".
 -- This should perform a DELETE as the record had no valid lifetime.
 INSERT INTO acl_test__current_valid (id, value, status) VALUES (1, 'yes', 'active');
 TABLE acl_test ORDER BY id, valid_from;
- id | valid_from | valid_until |  value  | status  |       comment       
-----+------------+-------------+---------+---------+---------------------
-  1 | 2024-02-29 | infinity    | yes     | active  | 
-  2 | 2024-01-01 | 2024-02-29  | initial | deleted | Closed pre-existing
+ id |  value  | status  |       comment       |       valid_range       | valid_from | valid_until 
+----+---------+---------+---------------------+-------------------------+------------+-------------
+  1 | yes     | active  |                     | [2024-02-29,infinity)   | 2024-02-29 | infinity
+  2 | initial | deleted | Closed pre-existing | [2024-01-01,2024-02-29) | 2024-01-01 | 2024-02-29
 (2 rows)
 
 UPDATE acl_test__current_valid SET valid_from = 'infinity', status = 'deleted', comment = 'Closed same-day' WHERE id = 1;
 TABLE acl_test ORDER BY id, valid_from;
- id | valid_from | valid_until |  value  | status  |       comment       
-----+------------+-------------+---------+---------+---------------------
-  2 | 2024-01-01 | 2024-02-29  | initial | deleted | Closed pre-existing
+ id |  value  | status  |       comment       |       valid_range       | valid_from | valid_until 
+----+---------+---------+---------------------+-------------------------+------------+-------------
+  2 | initial | deleted | Closed pre-existing | [2024-01-01,2024-02-29) | 2024-01-01 | 2024-02-29
 (1 row)
 
 ROLLBACK TO can_insert;
@@ -222,6 +227,134 @@ SELECT sql_saga.drop_current_view('acl_test'::regclass);
  t
 (1 row)
 
+-- Scenario 3: Range-only table (no synchronized columns)
+-- This tests that the current view works with tables that have ONLY
+-- a range column, without valid_from/valid_until/valid_to synchronized columns.
+SAVEPOINT scenario_3;
+\echo 'Scenario 3: Range-only table for current view'
+Scenario 3: Range-only table for current view
+CREATE TABLE range_only_employees (
+    id int,
+    valid_range daterange NOT NULL,
+    name text,
+    department text,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+-- Register era (range-only, no synchronized columns)
+SELECT sql_saga.add_era('range_only_employees', 'valid_range');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('range_only_employees', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.range_only_employees to add constraints: ADD CONSTRAINT range_only_employees_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+        add_unique_key         
+-------------------------------
+ range_only_employees_id_valid
+(1 row)
+
+-- Populate with initial data using range column
+INSERT INTO range_only_employees (id, valid_range, name, department) VALUES
+    (1, '[2023-01-01, 2024-01-01)', 'Alice', 'Engineering'),
+    (1, '[2024-01-01, infinity)', 'Alice', 'R&D'),
+    (2, '[2023-05-01, infinity)', 'Bob', 'Sales');
+\echo '--- Initial base table state ---'
+--- Initial base table state ---
+TABLE range_only_employees ORDER BY id, valid_range;
+ id |       valid_range       | name  | department  
+----+-------------------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | Alice | Engineering
+  1 | [2024-01-01,infinity)   | Alice | R&D
+  2 | [2023-05-01,infinity)   | Bob   | Sales
+(3 rows)
+
+-- Add the current view
+SELECT sql_saga.add_current_view('range_only_employees'::regclass, current_func_name := 'test_now()');
+ add_current_view 
+------------------
+ t
+(1 row)
+
+\d range_only_employees__current_valid
+    View "public.range_only_employees__current_valid"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ valid_range | daterange |           |          | 
+ name        | text      |           |          | 
+ department  | text      |           |          | 
+Triggers:
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON range_only_employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+
+-- Test SELECT: Should show only current records (Alice in R&D and Bob)
+\echo '--- Current view SELECT ---'
+--- Current view SELECT ---
+TABLE range_only_employees__current_valid ORDER BY id;
+ id |      valid_range      | name  | department 
+----+-----------------------+-------+------------
+  1 | [2024-01-01,infinity) | Alice | R&D
+  2 | [2023-05-01,infinity) | Bob   | Sales
+(2 rows)
+
+-- Test INSERT: Carol joins the company
+\echo '--- INSERT via current view ---'
+--- INSERT via current view ---
+INSERT INTO range_only_employees__current_valid (id, name, department)
+VALUES (3, 'Carol', 'Marketing');
+TABLE range_only_employees ORDER BY id, valid_range;
+ id |       valid_range       | name  | department  
+----+-------------------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | Alice | Engineering
+  1 | [2024-01-01,infinity)   | Alice | R&D
+  2 | [2023-05-01,infinity)   | Bob   | Sales
+  3 | [2024-02-29,infinity)   | Carol | Marketing
+(4 rows)
+
+-- Test UPDATE (SCD Type 2): Bob moves to Management
+\echo '--- UPDATE via current view (SCD Type 2) ---'
+--- UPDATE via current view (SCD Type 2) ---
+UPDATE range_only_employees__current_valid SET department = 'Management' WHERE id = 2;
+TABLE range_only_employees ORDER BY id, valid_range;
+ id |       valid_range       | name  | department  
+----+-------------------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | Alice | Engineering
+  1 | [2024-01-01,infinity)   | Alice | R&D
+  2 | [2023-05-01,2024-02-29) | Bob   | Sales
+  2 | [2024-02-29,infinity)   | Bob   | Management
+  3 | [2024-02-29,infinity)   | Carol | Marketing
+(5 rows)
+
+-- Test DELETE (soft delete): Carol leaves (same day as creation = hard delete)
+\echo '--- DELETE via current view (soft delete on same-day entity = hard delete) ---'
+--- DELETE via current view (soft delete on same-day entity = hard delete) ---
+DELETE FROM range_only_employees__current_valid WHERE id = 3;
+TABLE range_only_employees ORDER BY id, valid_range;
+ id |       valid_range       | name  | department  
+----+-------------------------+-------+-------------
+  1 | [2023-01-01,2024-01-01) | Alice | Engineering
+  1 | [2024-01-01,infinity)   | Alice | R&D
+  2 | [2023-05-01,2024-02-29) | Bob   | Sales
+  2 | [2024-02-29,infinity)   | Bob   | Management
+(4 rows)
+
+-- Current view should now show only Alice and Bob
+\echo '--- Final current view state ---'
+--- Final current view state ---
+TABLE range_only_employees__current_valid ORDER BY id;
+ id |      valid_range      | name  | department 
+----+-----------------------+-------+------------
+  1 | [2024-01-01,infinity) | Alice | R&D
+  2 | [2024-02-29,infinity) | Bob   | Management
+(2 rows)
+
+SELECT sql_saga.drop_current_view('range_only_employees'::regclass);
+ drop_current_view 
+-------------------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT scenario_3;
 ROLLBACK;
 DROP ROLE view_test_role;
 CALL sql_saga.temporal_merge_drop_cache();

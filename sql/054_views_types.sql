@@ -38,13 +38,14 @@ BEGIN
             CREATE TABLE %1$I (
                 id int,
                 value text,
-                valid_from %2$s,
-                valid_until %2$s
+                valid_range %2$s,
+                valid_from %3$s,
+                valid_until %3$s
             );
-        $SQL$, v_table_name, p_rec.base_type);
+        $SQL$, v_table_name, p_rec.base_type || 'range', p_rec.base_type);
 
         -- Activate sql_saga
-        PERFORM sql_saga.add_era(v_table_name::regclass, 'valid_from', 'valid_until');
+        PERFORM sql_saga.add_era(v_table_name::regclass, 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
         PERFORM sql_saga.add_unique_key(v_table_name::regclass, '{id}');
         PERFORM sql_saga.add_for_portion_of_view(v_table_name::regclass);
 

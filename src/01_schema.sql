@@ -66,19 +66,24 @@ CREATE TABLE sql_saga.era (
     table_schema name NOT NULL,
     table_name name NOT NULL,
     era_name name NOT NULL DEFAULT 'valid',
-    valid_from_column_name name NOT NULL,
-    valid_until_column_name name NOT NULL,
-    -- active_column_name name NOT NULL,
+    range_column_name name NOT NULL,
+    valid_from_column_name name,
+    valid_until_column_name name,
     range_type regtype NOT NULL,
+    multirange_type regtype NOT NULL,
     range_subtype regtype NOT NULL,
     -- The category of the range's subtype (e.g., 'D' for DateTime, 'N' for Numeric).
     -- This is cached for performance and clarity.
     -- See: https://www.postgresql.org/docs/current/catalog-pg-type.html#CATALOG-TYPCATEGORY-TABLE
     range_subtype_category char(1) NOT NULL,
+    -- bounds_check_constraint: Name of the constraint that enforces NOT isempty(range_column)
     bounds_check_constraint name,
-    synchronize_valid_to_column name,
-    synchronize_range_column name,
+    -- boundary_check_constraint: Name of the constraint that enforces (from < until) for boundary columns
+    boundary_check_constraint name,
+    valid_to_column_name name,
     trigger_applies_defaults boolean NOT NULL DEFAULT false,
+    sync_temporal_trg_name name,
+    sync_temporal_trg_function_name name,
     -- infinity_check_constraint name NOT NULL,
     -- generated_always_trigger name NOT NULL,
     audit_schema_name name,
@@ -158,17 +163,13 @@ CREATE TABLE sql_saga.foreign_keys (
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
 
-    -- For temporal FKs
-    fk_insert_trigger name,
-    fk_update_trigger name,
-
     -- For regular FKs
     fk_check_constraint name,
     fk_helper_function text, -- regprocedure signature
 
     -- These are always on the unique key's table
-    uk_update_trigger name NOT NULL,
-    uk_delete_trigger name NOT NULL,
+    uk_update_trigger name,
+    uk_delete_trigger name,
     fk_index_name name, -- Stores the name of an index created automatically on the FK table
 
     PRIMARY KEY (foreign_key_name),
@@ -183,11 +184,9 @@ CREATE TABLE sql_saga.foreign_keys (
         CASE type
             WHEN 'temporal_to_temporal' THEN
                 fk_era_name IS NOT NULL
-                AND fk_insert_trigger IS NOT NULL AND fk_update_trigger IS NOT NULL
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
             WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL
-                AND fk_insert_trigger IS NULL AND fk_update_trigger IS NULL
                 AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
         END
     )
@@ -308,11 +307,20 @@ CREATE TYPE sql_saga.temporal_merge_plan_action AS ENUM (
 COMMENT ON TYPE sql_saga.temporal_merge_plan_action IS
 'Represents the internal DML action to be taken by the executor for a given atomical time segment, as determined by the planner.
 These values use a "future tense" convention (e.g., SKIP_...) as they represent a plan for an action, not a completed result.
+
+Execution Strategy: with_temporary_temporal_gaps (PostgreSQL 18+)
 The order of these values is critical, as it defines the execution order when sorting the plan:
-INSERTs must happen before UPDATEs, which must happen before DELETEs to ensure foreign key consistency,
-that is check on the intermediate MVCC snapshots between the changes in the same transaction.
+DELETEs must happen before UPDATEs, which must happen before INSERTs to preserve temporal uniqueness.
+This execution order creates temporary gaps (orphaned child records) that are tolerated by DEFERRABLE
+foreign key checks until transaction end, avoiding overlaps that would violate NOT DEFERRABLE unique constraints.
+
+This enables native PostgreSQL 18 temporal foreign keys (FOREIGN KEY ... PERIOD) which cannot reference
+DEFERRABLE unique constraints. The DELETE-first strategy ensures temporal uniqueness is never violated
+while maintaining referential integrity through deferred FK checks.
+
+Operation Definitions:
 - INSERT: A new historical record will be inserted.
-- UPDATE: An existing historical record will be modified (typically by shortening its period).
+- UPDATE: An existing historical record will be modified (data and/or period).
 - DELETE: An existing historical record will be deleted.
 - SKIP_IDENTICAL: A historical record segment is identical to the source data and requires no change.
 - SKIP_NO_TARGET: A source row should be skipped because its target entity does not exist in a mode that requires it (e.g. PATCH_FOR_PORTION_OF). This is used by the executor to generate a SKIPPED_NO_TARGET feedback status.
@@ -321,23 +329,37 @@ that is check on the intermediate MVCC snapshots between the changes in the same
 - ERROR: A safeguard action indicating the planner could not generate a valid plan for a row, signaling a bug.';
 
 -- Defines the effect of an UPDATE on a timeline, used for ordering DML.
+-- Enum order determines execution order for with_temporary_temporal_gaps strategy:
+-- NONE first (no timeline impact), then SHRINK (contract), MOVE (shift), GROW (expand).
 CREATE TYPE sql_saga.temporal_merge_update_effect AS ENUM (
-    'GROW',   -- The new period is a superset of the old one.
     'NONE',   -- The period is unchanged (a data-only update).
+    'SHRINK', -- The new period is a subset of the old one.
     'MOVE',   -- The period shifts without being a pure grow or shrink.
-    'SHRINK'  -- The new period is a subset of the old one.
+    'GROW'    -- The new period is a superset of the old one.
 );
 
 COMMENT ON TYPE sql_saga.temporal_merge_update_effect IS
-'Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations to ensure temporal integrity.
-The planner relies on this specific ENUM order for sorting: timeline-extending operations must execute before timeline-shortening operations.
-- GROW: The new period is a superset of the old one. These are executed first.
-- NONE: The period is unchanged (a data-only update).
+'Defines the effect of an UPDATE on a timeline segment, used for ordering DML operations within the
+with_temporary_temporal_gaps execution strategy.
+
+The ENUM order determines execution sequence to minimize temporary gap duration:
+1. NONE: Data-only updates (no timeline change) - executed first, no temporal impact
+2. SHRINK: Period contraction - reduces timeline coverage, executed early
+3. MOVE: Period shift - neither pure growth nor shrinkage
+4. GROW: Period extension - increases timeline coverage, executed last to minimize gaps
+
+This ordering ensures that timeline contractions happen before expansions, minimizing the window
+where temporary gaps exist and reducing the risk of constraint violations.
+
+Effect Definitions:
+- NONE: The period is unchanged (a data-only update). No temporal impact.
+- SHRINK: The new period is a subset of the old one. Reduces timeline coverage.
 - MOVE: The period shifts without being a pure grow or shrink.
-- SHRINK: The new period is a subset of the old one. These are executed last.';
+- GROW: The new period is a superset of the old one. Expands timeline coverage.';
 
 CREATE TYPE sql_saga.temporal_merge_plan AS (
     plan_op_seq BIGINT,
+    statement_seq INT,  -- Groups operations that can safely execute in a single SQL statement
     row_ids BIGINT[],
     operation sql_saga.temporal_merge_plan_action,
     update_effect sql_saga.temporal_merge_update_effect,
@@ -352,6 +374,8 @@ CREATE TYPE sql_saga.temporal_merge_plan AS (
     old_valid_until TEXT,
     new_valid_from TEXT,
     new_valid_until TEXT,
+    old_valid_range TEXT,  -- Pre-computed range for old period
+    new_valid_range TEXT,  -- Pre-computed range for new period
     data JSONB,
     feedback JSONB,
     trace JSONB,
