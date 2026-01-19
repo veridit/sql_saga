@@ -3,36 +3,13 @@
 A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
-## Current Focus: valid_range API Transition & Performance
+## Current Focus: Performance Optimization
 
-### Phase 2: Performance Optimization
-- [ ] **Consider template-based sync triggers** - Analysis shows template-based triggers are 8-9x faster
-  than generic triggers by eliminating dynamic SQL and JSONB overhead (see doc/internals/optimization_findings.md)
-
-### Phase 3: temporal_merge Performance Investigation
+### temporal_merge Performance Investigation
 Performance analysis from benchmarks (after CASE→OR and split-path optimizations):
 - Regular DML: ~24,000-45,000 rows/s
 - temporal_merge (no batching): ~75-155 rows/s (200-300x slower!)
 - temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
-
-Current bottlenecks from pg_stat_monitor:
-- **UPDATE execution: 13ms per row** (13,095ms for 1000 rows) - Major bottleneck!
-  - Uses LATERAL jsonb_populate_record() for each row
-  - Missing compound index on (id, valid_range)
-  - 1.4M buffer hits for 1000 rows
-- resolved_atomic_segments_with_payloads: Optimized with split-path approach
-- source_with_eclipsed_flag: ~199ms (CROSS JOIN LATERAL)
-
-Completed optimizations (2026-01-18):
-- [x] **Eliminated LATERAL jsonb_populate_record** - Direct JSONB extraction provides ~48% UPDATE speedup
-- [x] **Added old_valid_range/new_valid_range to plan** - Pre-computed ranges eliminate runtime construction
-- [x] **Updated executor to use range columns** - No more daterange() construction at execution time
-
-Completed optimizations (2026-01-18):
-- [x] **Eliminated LATERAL jsonb_populate_record** - Direct JSONB extraction provides ~48% UPDATE speedup
-- [x] **Added old_valid_range/new_valid_range to plan** - Pre-computed ranges eliminate runtime construction
-- [x] **Updated executor to use range columns** - No more daterange() construction at execution time
-- [x] **Added compound index on (id, valid_range)** - ~20x speedup for exact match queries
 
 Remaining optimizations:
 - [ ] **Implement eclipse detection optimizations** - Composite index + pre-computed ranges for 30-40% improvement
@@ -58,6 +35,11 @@ Remaining optimizations:
 # Done
 
 ## 2026-01-19
+- **Implement template-based temporal column sync triggers** - Complete system replacing generic triggers with 
+  specialized per-table/era functions. Performance: 2.3x faster INSERTs (85ms→37ms), 2.2x faster UPDATEs (99ms→45ms).
+  Architecture: Template generator creates hardcoded functions eliminating dynamic SQL/JSONB overhead. Schema tracking
+  via sync_temporal_trg_name and sync_temporal_trg_function_name columns. Comprehensive cleanup chain fixes.
+  Event trigger protection updated. 75+ tests updated. All regression tests passing.
 - Document CROSS JOIN LATERAL eclipse detection logic (required for correctness)
 - Analyze eclipse detection performance and identify optimization strategies
 - Test template-based trigger approach: 8-9x faster than generic triggers
@@ -65,10 +47,10 @@ Remaining optimizations:
 - Create comprehensive optimization documentation (doc/internals/eclipse_detection.md, optimization_findings.md)
 
 ## 2026-01-18
-- Add compound index (id, valid_range) to add_unique_key for temporal_merge performance
-- Optimize temporal_merge executor: eliminate LATERAL jsonb_populate_record (~48% UPDATE speedup)
-- Add old_valid_range/new_valid_range columns to temporal_merge_plan
+- Eliminate LATERAL jsonb_populate_record from temporal_merge executor (~48% UPDATE speedup)
+- Add old_valid_range/new_valid_range columns to temporal_merge_plan (eliminate runtime construction)
 - Update executor to use pre-computed range columns
+- Add compound index (id, valid_range) to add_unique_key (~20x speedup for exact match queries)
 
 ## 2026-01-17
 - Optimize temporal_merge planner: split-path approach for resolved_atomic_segments_with_payloads (~10x speedup)
