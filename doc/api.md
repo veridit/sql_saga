@@ -482,6 +482,8 @@ SECURITY INVOKER
 ### temporal_merge
 
 > Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.
+> 
+> **Performance Note**: The planning phase includes eclipse detection using a CROSS JOIN LATERAL pattern that has O(N×M) complexity where N is the number of source rows and M is the average rows per entity. This is necessary to correctly identify when newer source data completely covers older source data. See `doc/internals/eclipse_detection.md` for details.
 
 ```sql
 PROCEDURE temporal_merge(
