@@ -4,9 +4,9 @@ A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 ## Current Priority - Refactoring & API Improvements
+- [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
-- [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
 
 ## Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**
