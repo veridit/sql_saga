@@ -3,19 +3,7 @@
 A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
-## Current Focus: Performance Optimization
-
-### temporal_merge Performance Status
-Performance analysis from benchmarks (after all PL/pgSQL optimizations):
-- Regular DML: ~24,000-45,000 rows/s
-- temporal_merge single call (1000 rows): ~270-580 rows/s (depends on operation complexity)
-- temporal_merge batched (1000 rows/call in loop): ~2,650-2,930 rows/s (MERGE_ENTITY_UPSERT), ~7,460-8,310 rows/s (UPDATE_FOR_PORTION_OF)
-
-**All PL/pgSQL-level optimizations completed.** Further gains require:
-- Template-based temporal_merge functions (3-5x) - HIGH complexity
-- PostgreSQL extension in C (10-50x) - VERY HIGH complexity (see doc/temporal_merge_postgresql_extension_plan.md)
-
-## Medium Priority - Refactoring & API Improvements
+## Current Priority - Refactoring & API Improvements
 - [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
   - `fk_insert_trigger` - Always NULL (no longer needed with native FKs)
   - `fk_update_trigger` - Always NULL (no longer needed with native FKs)
@@ -26,14 +14,23 @@ Performance analysis from benchmarks (after all PL/pgSQL optimizations):
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 - [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
 
-## Low Priority - Future Work & New Features
+## Future Work & New Features
 - [ ] **Package `sql_saga` with pgxman for distribution:**
   - **Issue:** The extension currently requires manual installation.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
 
-## 2026-01-19
+## 2026-01-19: Performance Optimization Phase Complete
+
+**All PL/pgSQL-level optimizations completed.** Performance status:
+- Regular DML: ~24,000-45,000 rows/s
+- temporal_merge single call (1000 rows): ~270-580 rows/s (depends on operation complexity)
+- temporal_merge batched (1000 rows/call in loop): ~2,650-2,930 rows/s (MERGE_ENTITY_UPSERT), ~7,460-8,310 rows/s (UPDATE_FOR_PORTION_OF)
+
+Further performance gains require either template-based temporal_merge functions (3-5x, HIGH complexity) or PostgreSQL extension in C (10-50x, VERY HIGH complexity). See doc/temporal_merge_postgresql_extension_plan.md for extension approach.
+
+## 2026-01-19: Individual Optimizations
 - **Investigate and reject typed temp tables optimization** - Benchmarked TEXT vs typed columns for temporal_merge_plan.
   Result: TEXT is 2.6% FASTER (38.2ms vs 37.1ms for 10K ops). Range I/O functions are highly optimized, conversion 
   overhead is negligible. Keeping TEXT for polymorphism, debuggability, and simplicity. See doc/internals/optimization_findings.md.
