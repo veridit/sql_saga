@@ -4,12 +4,11 @@ A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 ## Current Priority - Refactoring & API Improvements
-- [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
-  - `fk_insert_trigger` - Always NULL (no longer needed with native FKs)
-  - `fk_update_trigger` - Always NULL (no longer needed with native FKs)
-  - `uk_update_trigger` - Always NULL (no longer needed with native FKs)
-  - `uk_delete_trigger` - Always NULL (no longer needed with native FKs)
-  - However, these are still used for `regular_to_temporal` FKs and kept for backward compatibility. Removal would complicate upgrades and lose historical schema documentation.
+- [ ] **Document FK trigger column usage:** The `sql_saga.foreign_keys` table has four trigger-related columns with different usage patterns by FK type:
+  - `fk_insert_trigger`, `fk_update_trigger` - Always NULL for both FK types (temporal_to_temporal uses native PG18 FKs, regular_to_temporal uses CHECK constraints)
+  - `uk_update_trigger`, `uk_delete_trigger` - Used ONLY by `regular_to_temporal` FKs (creates actual triggers on unique key table), always NULL for `temporal_to_temporal` FKs
+  - **Verified by test evidence:** Test 045 shows regular_to_temporal creates triggers `regular_fk_pk_id_fkey_uk_update` and `regular_fk_pk_id_fkey_uk_delete` on the referenced table. Test 072 shows temporal_to_temporal stores all trigger columns as NULL and uses native `RI_ConstraintTrigger_*` triggers instead.
+  - **Conclusion:** These columns CANNOT be removed - they are essential for `regular_to_temporal` FK functionality. The todo item was based on incorrect assumptions.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 - [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
