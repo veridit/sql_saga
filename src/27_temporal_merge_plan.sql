@@ -991,12 +991,14 @@ BEGIN
     
             -- First, determine payload semantics based on the mode name.
             IF mode IN ('MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF') THEN
+                -- PATCH modes: Strip NULLs from source payload. NULL values in source are ignored.
                 v_source_data_payload_expr := format('jsonb_strip_nulls(%s)', v_source_data_cols_jsonb_build);
                 v_source_ephemeral_payload_expr := format('jsonb_strip_nulls(%s)', v_source_ephemeral_cols_jsonb_build);
             ELSIF mode = 'DELETE_FOR_PORTION_OF' THEN
                 v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
                 v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
             ELSE -- MERGE_ENTITY_REPLACE, MERGE_ENTITY_UPSERT, REPLACE_FOR_PORTION_OF, UPDATE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
+                -- UPDATE/REPLACE modes: Keep NULLs in source. NULL is an explicit value that overwrites target.
                 v_source_data_payload_expr := v_source_data_cols_jsonb_build;
                 v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
             END IF;

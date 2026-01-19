@@ -211,15 +211,15 @@ SET
 WHERE id = 1;
 -- Verify there is not DELETE in the plan
 TABLE pg_temp.temporal_merge_plan ORDER BY plan_op_seq;
- plan_op_seq | statement_seq | row_ids |   operation    | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |               data                | feedback | trace |    grouping_key    
--------------+---------------+---------+----------------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+-----------------------------------+----------+-------+--------------------
-           1 |             1 | {1}     | SKIP_IDENTICAL |               | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | [2023-01-01,2024-01-01) | [2023-01-01,2024-01-01) | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
+ plan_op_seq | statement_seq | row_ids | operation | update_effect | causal_id | is_new_entity | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |     old_valid_range     |     new_valid_range     |               data                | feedback | trace |    grouping_key    
+-------------+---------------+---------+-----------+---------------+-----------+---------------+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+-------------------------+-------------------------+-----------------------------------+----------+-------+--------------------
+           1 |             1 | {1}     | UPDATE    | NONE          | 1         | f             | {"id": 1}   | {"id": 1}     | {"id": 1}   | equals       | equals       | 2023-01-01     | 2024-01-01      | 2023-01-01     | 2024-01-01      | [2023-01-01,2024-01-01) | [2023-01-01,2024-01-01) | {"name": "Laptop", "price": 1250} |          |       | existing_entity__1
 (1 row)
 
 TABLE pg_temp.temporal_merge_feedback ORDER BY source_row_id;
- source_row_id | target_entity_keys |      status       | error_message 
----------------+--------------------+-------------------+---------------
-             1 | [{"id": 1}]        | SKIPPED_IDENTICAL | 
+ source_row_id | target_entity_keys | status  | error_message 
+---------------+--------------------+---------+---------------
+             1 | [{"id": 1}]        | APPLIED | 
 (1 row)
 
 -- Verify price is updated on just that one row.

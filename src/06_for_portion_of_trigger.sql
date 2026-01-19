@@ -30,6 +30,46 @@ BEGIN
 
     jnew := to_jsonb(NEW);
 
+    -- For UPDATE operations, we need to handle column filtering carefully to support two cases:
+    -- 1. Columns not mentioned in UPDATE -> should preserve existing values across segments
+    -- 2. Columns explicitly set (including to NULL) -> should apply the new value
+    --
+    -- Strategy: Build jnew to contain:
+    --   - Identity columns (always from NEW)
+    --   - Temporal columns (always from NEW)
+    --   - Changed columns (from NEW, may be NULL if explicitly set to NULL)
+    --   - Unchanged columns: use OLD value to avoid conflicts across temporal segments
+    --
+    -- This allows temporal_merge with PATCH mode to work correctly:
+    --   - Changed columns (including NULL) are in jnew and will update target
+    --   - Unchanged columns have OLD value, so PATCH preserves them correctly
+    IF TG_OP = 'UPDATE' THEN
+        DECLARE
+            jold jsonb := to_jsonb(OLD);
+            filtered_jnew jsonb := '{}'::jsonb;
+            key text;
+            identity_cols text[] := TG_ARGV::text[];
+        BEGIN
+            -- Iterate through all keys in jnew
+            FOR key IN SELECT jsonb_object_keys(jnew)
+            LOOP
+                IF key = ANY(identity_cols)
+                   OR key = info.range_column_name
+                   OR key = info.valid_from_column_name
+                   OR key = info.valid_until_column_name
+                   OR key = info.valid_to_column_name
+                   OR (jnew->key) IS DISTINCT FROM (jold->key)
+                THEN
+                    -- Include identity, temporal, and changed columns with NEW value
+                    filtered_jnew := filtered_jnew || jsonb_build_object(key, jnew->key);
+                END IF;
+                -- Unchanged columns are omitted entirely - temporal_merge will inherit from target
+            END LOOP;
+            
+            jnew := filtered_jnew;
+        END;
+    END IF;
+
     -- The conceptual entity identifier should not include the temporal columns.
     -- We filter them out here to correct for cases where a PRIMARY KEY that
     -- includes a temporal column was introspected by add_for_portion_of_view.
@@ -68,9 +108,8 @@ BEGIN
     END IF;
 
     
-    -- Avoid banning by pg-safeupdate used by PostgREST
-    -- Ref. https://docs.postgrest.org/en/v12/integrations/pg-safeupdate.html
-    -- by specifying a WHERE clause.
+    -- Truncate the temp table before each row to ensure we only process one source row per trigger firing.
+    -- Each trigger firing calls temporal_merge independently.
     EXECUTE format('DELETE FROM %I WHERE true;', temp_source_table_name);
 
     -- The `for_portion_of` view allows specifying a time slice using either the authoritative range
@@ -99,31 +138,56 @@ BEGIN
 
         -- If any temporal column was changed, derive the new range for the operation.
         IF v_range_changed OR v_from_changed OR v_until_changed OR v_to_changed THEN
-            -- If the user set the range column directly, it takes precedence.
-            IF v_range_changed THEN
-                v_final_range_val := jnew->info.range_column_name;
-            -- Otherwise, derive the range from the component from/until/to columns.
-            ELSE
-                -- If valid_to was changed, convert it to valid_until (add 1 to make it exclusive)
-                IF v_to_changed THEN
-                    DECLARE
-                        v_new_to text;
-                    BEGIN
-                        v_new_to := (jnew ->> info.valid_to_column_name);
-                        IF v_new_to IS NOT NULL THEN
-                            EXECUTE format('SELECT ($1::%s + 1)::text', info.range_subtype)
-                            INTO v_until_via_to USING v_new_to;
-                        END IF;
-                    END;
+            -- The user specified a temporal range for this update. We must intersect this
+            -- requested range with the OLD row's existing timeline to ensure each trigger
+            -- firing only affects its own temporal segment.
+            DECLARE
+                v_requested_range_val jsonb;
+                v_old_range_val jsonb;
+            BEGIN
+                -- First, get the OLD row's range
+                EXECUTE format('SELECT to_jsonb(($1).%I)', info.range_column_name) 
+                INTO v_old_range_val USING OLD;
+
+                -- If the user set the range column directly, use it as the requested range
+                IF v_range_changed THEN
+                    v_requested_range_val := jnew->info.range_column_name;
+                -- Otherwise, derive the requested range from the component from/until/to columns
+                ELSE
+                    -- If valid_to was changed, convert it to valid_until (add 1 to make it exclusive)
+                    IF v_to_changed THEN
+                        DECLARE
+                            v_new_to text;
+                        BEGIN
+                            v_new_to := (jnew ->> info.valid_to_column_name);
+                            IF v_new_to IS NOT NULL THEN
+                                EXECUTE format('SELECT ($1::%s + 1)::text', info.range_subtype)
+                                INTO v_until_via_to USING v_new_to;
+                            END IF;
+                        END;
+                    END IF;
+
+                    -- Build the requested range using from and until (preferring converted valid_to if available)
+                    EXECUTE format('SELECT to_jsonb( %I(($1->>%L)::%s, COALESCE($2, ($1->>%L))::%s, ''[)'') )',
+                        info.range_type,
+                        info.valid_from_column_name, info.range_subtype,
+                        info.valid_until_column_name, info.range_subtype
+                    ) INTO v_requested_range_val USING jnew, v_until_via_to;
                 END IF;
 
-                -- Build the range using from and until (preferring converted valid_to if available)
-                EXECUTE format('SELECT to_jsonb( %I(($1->>%L)::%s, COALESCE($2, ($1->>%L))::%s, ''[)'') )',
-                    info.range_type,
-                    info.valid_from_column_name, info.range_subtype,
-                    info.valid_until_column_name, info.range_subtype
-                ) INTO v_final_range_val USING jnew, v_until_via_to;
-            END IF;
+                -- Compute the intersection of the requested range with the OLD row's range
+                -- This ensures each trigger firing only affects its own temporal segment
+                -- Extract the text value from jsonb first (using ->> operator)
+                EXECUTE format('SELECT to_jsonb( (($1->>0)::%I) * (($2->>0)::%I) )',
+                    info.range_type, info.range_type
+                ) INTO v_final_range_val USING v_requested_range_val, v_old_range_val;
+                
+                -- If the intersection is empty, this row is outside the requested timespan
+                -- Return NULL to signal that this trigger firing should be skipped
+                IF v_final_range_val::text = '"empty"' THEN
+                    RETURN NULL;
+                END IF;
+            END;
         ELSE
             -- No temporal columns were changed, so this is a data-only update. The portion
             -- to update is the original time slice from the OLD record.
@@ -162,7 +226,14 @@ BEGIN
         target_table => (info.table_schema || '.' || info.table_name)::regclass,
         source_table => temp_source_table_name::regclass,
         primary_identity_columns => identifier_columns,
-        mode => 'UPDATE_FOR_PORTION_OF',
+        -- Use UPDATE mode with filtered source (only changed columns).
+        -- Since we filter jnew to exclude unchanged columns, the source will only contain:
+        --   - Identity columns (always included)
+        --   - Temporal columns (always included)
+        --   - Changed columns (including those explicitly set to NULL)
+        -- Absent columns will be NULL in the source row, but that's OK because
+        -- temporal_merge will inherit them from the target via COALESCE(t || s).
+        mode => 'PATCH_FOR_PORTION_OF',
         era_name => info.era_name,
         update_source_with_feedback => true,
         feedback_status_column => 'merge_status',

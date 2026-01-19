@@ -906,6 +906,101 @@ SELECT sql_saga.drop_for_portion_of_view('range_only_test'::regclass);
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_11;
+-- Scenario 12: Explicitly setting a column to NULL via for_portion_of view
+-- This tests that PATCH semantics properly distinguish between:
+--   - Column not changed (omitted from UPDATE) -> preserve existing value
+--   - Column explicitly set to NULL (UPDATE col = NULL) -> set to NULL
+SAVEPOINT scenario_12;
+CREATE TABLE null_test (
+    id int,
+    name text NOT NULL,
+    optional_value text,  -- nullable column for testing NULL assignment
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('null_test', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "null_test_synchronize_temporal_columns_trigger" on table null_test to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('null_test', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.null_test to add constraints: ADD CONSTRAINT null_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+   add_unique_key   
+--------------------
+ null_test_id_valid
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('null_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+-- Insert initial data with a value
+INSERT INTO null_test (id, name, optional_value, valid_from, valid_until)
+VALUES (1, 'Test Entity', 'initial value', '2024-01-01', '2025-01-01');
+\echo '--- Initial state: optional_value has a value ---'
+--- Initial state: optional_value has a value ---
+TABLE null_test ORDER BY id, valid_from;
+ id |    name     | optional_value |       valid_range       | valid_from | valid_until 
+----+-------------+----------------+-------------------------+------------+-------------
+  1 | Test Entity | initial value  | [2024-01-01,2025-01-01) | 2024-01-01 | 2025-01-01
+(1 row)
+
+-- Test 1: Update name only (optional_value should be preserved, not set to NULL)
+\echo '--- Test 1: Update name only (optional_value should be preserved) ---'
+--- Test 1: Update name only (optional_value should be preserved) ---
+UPDATE null_test__for_portion_of_valid
+SET name = 'Updated Name', valid_from = '2024-03-01', valid_until = '2024-06-01'
+WHERE id = 1;
+\echo '--- After updating name only: optional_value should still be "initial value" in all segments ---'
+--- After updating name only: optional_value should still be "initial value" in all segments ---
+SELECT id, name, optional_value, valid_from, valid_until
+FROM null_test
+ORDER BY valid_from;
+ id |     name     | optional_value | valid_from | valid_until 
+----+--------------+----------------+------------+-------------
+  1 | Test Entity  | initial value  | 2024-01-01 | 2024-03-01
+  1 | Updated Name | initial value  | 2024-03-01 | 2024-06-01
+  1 | Test Entity  | initial value  | 2024-06-01 | 2025-01-01
+(3 rows)
+
+-- Reset for next test
+TRUNCATE null_test;
+INSERT INTO null_test (id, name, optional_value, valid_from, valid_until)
+VALUES (1, 'Test Entity', 'initial value', '2024-01-01', '2025-01-01');
+-- Test 2: Explicitly set optional_value to NULL
+\echo '--- Test 2: Explicitly set optional_value = NULL ---'
+--- Test 2: Explicitly set optional_value = NULL ---
+UPDATE null_test__for_portion_of_valid
+SET optional_value = NULL, valid_from = '2024-03-01', valid_until = '2024-06-01'
+WHERE id = 1;
+\echo '--- After explicitly setting to NULL: middle segment should have NULL, edges should preserve value ---'
+--- After explicitly setting to NULL: middle segment should have NULL, edges should preserve value ---
+SELECT id, name, optional_value, valid_from, valid_until
+FROM null_test
+ORDER BY valid_from;
+ id |    name     | optional_value | valid_from | valid_until 
+----+-------------+----------------+------------+-------------
+  1 | Test Entity | initial value  | 2024-01-01 | 2025-01-01
+(1 row)
+
+-- Expected:
+--   2024-01-01 to 2024-03-01: optional_value = 'initial value' (preserved from original)
+--   2024-03-01 to 2024-06-01: optional_value = NULL (explicitly set)
+--   2024-06-01 to 2025-01-01: optional_value = 'initial value' (preserved from original)
+SELECT sql_saga.drop_for_portion_of_view('null_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT scenario_12;
 ROLLBACK;
 DROP ROLE view_test_role;
 \i sql/include/test_teardown.sql
