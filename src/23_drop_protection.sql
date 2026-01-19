@@ -45,14 +45,7 @@ BEGIN
                 fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
                 -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
                 IF fk_table_oid IS NOT NULL THEN
-                    IF fk_row.type = 'temporal_to_temporal' THEN
-                        IF fk_row.fk_insert_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_insert_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_insert_trigger /* %I */, fk_table_oid /* %s */);
-                        END IF;
-                        IF fk_row.fk_update_trigger IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = fk_table_oid AND tgname = fk_row.fk_update_trigger) THEN
-                            EXECUTE format('DROP TRIGGER %I ON %s', fk_row.fk_update_trigger /* %I */, fk_table_oid /* %s */);
-                        END IF;
-                    ELSE -- 'regular_to_temporal'
+                    IF fk_row.type = 'regular_to_temporal' THEN
                         IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
                             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
                         END IF;
@@ -375,35 +368,7 @@ BEGIN
     --- foreign_keys
     ---
 
-    /* Complain if any of the triggers are missing */
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_insert_trigger
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal'
-        AND fk.fk_insert_trigger IS NOT NULL  -- Skip native FKs (PG18+) which have no triggers
-        AND NOT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_insert_trigger))
-        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_insert_trigger, r.table_oid, r.foreign_key_name;
-    END LOOP;
-
-    FOR r IN
-        SELECT fk.foreign_key_name, to_regclass(format('%I.%I', fk.table_schema, fk.table_name)) AS table_oid, fk.fk_update_trigger
-        FROM sql_saga.foreign_keys AS fk
-        WHERE fk.type = 'temporal_to_temporal'
-        AND fk.fk_update_trigger IS NOT NULL  -- Skip native FKs (PG18+) which have no triggers
-        AND NOT EXISTS (
-            SELECT 1 FROM pg_catalog.pg_trigger AS t
-            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', fk.table_schema, fk.table_name)), fk.fk_update_trigger))
-        AND NOT EXISTS (SELECT 1 FROM pg_event_trigger_dropped_objects() dobj WHERE dobj.object_type = 'table' AND (dobj.schema_name, dobj.object_name) = (fk.table_schema, fk.table_name))
-    LOOP
-        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.fk_update_trigger, r.table_oid, r.foreign_key_name;
-    END LOOP;
-
+    /* Complain if any of the uk triggers are missing */
     FOR r IN
         SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger
         FROM sql_saga.foreign_keys AS fk

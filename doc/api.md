@@ -357,8 +357,6 @@ FUNCTION add_temporal_foreign_key(
     update_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
     delete_action sql_saga.fk_actions DEFAULT 'NO ACTION'::sql_saga.fk_actions,
     foreign_key_name name DEFAULT NULL::name,
-    fk_insert_trigger name DEFAULT NULL::name,
-    fk_update_trigger name DEFAULT NULL::name,
     uk_update_trigger name DEFAULT NULL::name,
     uk_delete_trigger name DEFAULT NULL::name,
     create_index boolean DEFAULT true
@@ -596,7 +594,7 @@ SECURITY DEFINER
 
 ### add_synchronize_temporal_columns_trigger
 
-> Generator for high-performance table-specific temporal column sync triggers (8-9x faster).
+> Generator for high-performance table-specific temporal column sync triggers.
 
 ```sql
 PROCEDURE add_synchronize_temporal_columns_trigger(

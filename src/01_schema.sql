@@ -163,10 +163,6 @@ CREATE TABLE sql_saga.foreign_keys (
     update_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
     delete_action sql_saga.fk_actions NOT NULL DEFAULT 'NO ACTION',
 
-    -- For temporal FKs
-    fk_insert_trigger name,
-    fk_update_trigger name,
-
     -- For regular FKs
     fk_check_constraint name,
     fk_helper_function text, -- regprocedure signature
@@ -191,7 +187,6 @@ CREATE TABLE sql_saga.foreign_keys (
                 AND fk_check_constraint IS NULL AND fk_helper_function IS NULL
             WHEN 'regular_to_temporal' THEN
                 fk_era_name IS NULL
-                AND fk_insert_trigger IS NULL AND fk_update_trigger IS NULL
                 AND fk_check_constraint IS NOT NULL AND fk_helper_function IS NOT NULL
         END
     )

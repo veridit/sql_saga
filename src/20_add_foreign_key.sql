@@ -510,8 +510,6 @@ CREATE OR REPLACE FUNCTION sql_saga.add_temporal_foreign_key(
         update_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         delete_action sql_saga.fk_actions DEFAULT 'NO ACTION',
         foreign_key_name name DEFAULT NULL,
-        fk_insert_trigger name DEFAULT NULL, -- unused, for signature compatibility
-        fk_update_trigger name DEFAULT NULL, -- unused, for signature compatibility
         uk_update_trigger name DEFAULT NULL, -- unused, for signature compatibility
         uk_delete_trigger name DEFAULT NULL, -- unused, for signature compatibility
         create_index boolean DEFAULT true)
@@ -651,10 +649,10 @@ BEGIN
 
     INSERT INTO sql_saga.foreign_keys
         ( foreign_key_name, type, table_schema, table_name, column_names, fk_era_name, fk_table_columns_snapshot, unique_key_name, match_type, update_action, delete_action, fk_index_name,
-          fk_insert_trigger, fk_update_trigger, uk_update_trigger, uk_delete_trigger)
+          uk_update_trigger, uk_delete_trigger)
     VALUES
         ( foreign_key_name, 'temporal_to_temporal', fk_schema_name, fk_table_name, fk_column_names, fk_era_name, fk_table_columns_snapshot, uk_row.unique_key_name, match_type, update_action, delete_action, v_fk_index_name,
-          NULL, NULL, NULL, NULL);
+          NULL, NULL);
 
     RETURN foreign_key_name;
 END;
@@ -663,7 +661,7 @@ $function$;
 COMMENT ON FUNCTION sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean) IS
 'Adds a foreign key from a regular (non-temporal) table to a temporal table. It ensures that any referenced key exists at some point in the target''s history.';
 
-COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, name, name, boolean) IS
+COMMENT ON FUNCTION sql_saga.add_temporal_foreign_key(regclass, name[], name, name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, name, boolean) IS
 'Adds a temporal foreign key from one temporal table to another. It ensures that for any given time slice in the referencing table, a corresponding valid time slice exists in the referenced table.';
 
 COMMENT ON FUNCTION sql_saga.add_foreign_key(regclass, name[], regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, boolean) IS

@@ -24,8 +24,6 @@ CREATE TABLE fk (id integer, uk_id integer, valid_range int4range, valid_from in
 SELECT sql_saga.add_era('fk', 'valid_range', 'q');
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
-    fk_insert_trigger => 'fki',
-    fk_update_trigger => 'fku',
     uk_update_trigger => 'uku',
     uk_delete_trigger => 'ukd');
 TABLE sql_saga.foreign_keys;

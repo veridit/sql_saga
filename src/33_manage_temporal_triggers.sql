@@ -6,23 +6,6 @@ DECLARE
 BEGIN
     v_sql := 'ALTER TABLE %s ' || p_action::text || ' TRIGGER %I';
 
-    -- Handle all outgoing FK triggers from the specified tables
-    FOR v_trigger_rec IN
-        SELECT
-            (fk.table_schema || '.' || fk.table_name)::regclass AS table_oid,
-            fk.fk_insert_trigger AS trigger_name
-        FROM sql_saga.foreign_keys AS fk
-        WHERE (fk.table_schema || '.' || fk.table_name)::regclass = ANY(p_table_oids) AND fk.fk_insert_trigger IS NOT NULL
-        UNION ALL
-        SELECT
-            (fk.table_schema || '.' || fk.table_name)::regclass,
-            fk.fk_update_trigger
-        FROM sql_saga.foreign_keys AS fk
-        WHERE (fk.table_schema || '.' || fk.table_name)::regclass = ANY(p_table_oids) AND fk.fk_update_trigger IS NOT NULL
-    LOOP
-        EXECUTE format(v_sql, v_trigger_rec.table_oid, v_trigger_rec.trigger_name);
-    END LOOP;
-
     -- Handle all incoming FK triggers to the specified tables
     FOR v_trigger_rec IN
         SELECT

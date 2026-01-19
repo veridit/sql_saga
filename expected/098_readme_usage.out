@@ -682,8 +682,8 @@ SELECT * FROM sql_saga.unique_keys WHERE table_schema = 'readme';
 (0 rows)
 
 SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';
- foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
-------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+-------------------+-------------------+---------------------+--------------------+-------------------+-------------------+---------------
+ foreign_key_name | type | table_schema | table_name | column_names | fk_era_name | fk_table_columns_snapshot | unique_key_name | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger | fk_index_name 
+------------------+------+--------------+------------+--------------+-------------+---------------------------+-----------------+------------+---------------+---------------+---------------------+--------------------+-------------------+-------------------+---------------
 (0 rows)
 
 --------------------------------------------------------------------------------
