@@ -24,19 +24,25 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 Further performance gains require either template-based temporal_merge functions (3-5x, HIGH complexity) or PostgreSQL extension in C (10-50x, VERY HIGH complexity). See doc/temporal_merge_postgresql_extension_plan.md for extension approach.
 
-## 2026-01-19: FK Trigger Column Investigation
+## 2026-01-19: FK Trigger Column Cleanup
 
-**Investigated FK trigger columns in sql_saga.foreign_keys table.** Original todo claimed these columns "could potentially be removed" because they're always NULL. Investigation revealed:
+**Investigated and removed unused FK trigger columns from sql_saga.foreign_keys table.** Original todo claimed these columns "could potentially be removed" because they're always NULL. Investigation and cleanup:
 
 **Column Usage Patterns:**
-- `fk_insert_trigger`, `fk_update_trigger`: Always NULL for both FK types (defensive/compatibility markers)
-- `uk_update_trigger`, `uk_delete_trigger`: POPULATED for regular_to_temporal FKs, NULL for temporal_to_temporal FKs
+- `fk_insert_trigger`, `fk_update_trigger`: Always NULL for both FK types - **REMOVED** (no functional purpose)
+- `uk_update_trigger`, `uk_delete_trigger`: POPULATED for regular_to_temporal FKs, NULL for temporal_to_temporal FKs - **KEPT** (essential)
 
 **Test Evidence (tests 045 & 072):**
 - regular_to_temporal: Creates actual triggers on referenced table (e.g., `regular_fk_pk_id_fkey_uk_update`, `regular_fk_pk_id_fkey_uk_delete`)
-- temporal_to_temporal: All trigger columns NULL, uses native PG18 `FOREIGN KEY ... PERIOD` with system-generated `RI_ConstraintTrigger_*` triggers
+- temporal_to_temporal: Uses native PG18 `FOREIGN KEY ... PERIOD` with system-generated `RI_ConstraintTrigger_*` triggers
 
-**Conclusion:** uk_update_trigger and uk_delete_trigger CANNOT be removed - essential for regular_to_temporal FK functionality. fk_insert_trigger and fk_update_trigger are always NULL but serve as compatibility markers and have minimal overhead. See tmp/fk_trigger_columns_investigation.md for detailed evidence.
+**Actions Taken:**
+- Removed fk_insert_trigger and fk_update_trigger columns from schema (src/01_schema.sql)
+- Updated all code references in drop_protection, rename_following, manage_temporal_triggers, add_foreign_key
+- Updated 75 test expected outputs
+- Net reduction: 87 lines of code deleted
+
+**Result:** Clean schema with only essential columns. uk_update_trigger and uk_delete_trigger retained because they're critical for regular_to_temporal FK functionality. See tmp/fk_trigger_columns_investigation.md for detailed evidence.
 
 ## 2026-01-19: Individual Optimizations
 - **Investigate and reject typed temp tables optimization** - Benchmarked TEXT vs typed columns for temporal_merge_plan.
