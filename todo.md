@@ -12,8 +12,6 @@ Performance analysis from benchmarks (after CASE→OR and split-path optimizatio
 - temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
 
 Remaining optimizations:
-- [ ] **Implement eclipse detection optimizations** - Composite index + pre-computed ranges for 30-40% improvement
-  (see doc/internals/eclipse_detection.md and optimization_findings.md)
 - [ ] **Consider typed temp tables** - Eliminate range type casting (e.g., ::daterange) overhead
 
 ## Medium Priority - Refactoring & API Improvements
@@ -40,6 +38,8 @@ Remaining optimizations:
   Architecture: Template generator creates hardcoded functions eliminating dynamic SQL/JSONB overhead. Schema tracking
   via sync_temporal_trg_name and sync_temporal_trg_function_name columns. Comprehensive cleanup chain fixes.
   Event trigger protection updated. 75+ tests updated. All regression tests passing.
+- **Implement eclipse detection optimizations** - Added composite index on (lookup_columns, source_row_id) and 
+  pre-computed valid_range columns in temporal_merge planner. Expected 30-40% performance improvement in eclipse detection.
 - Document CROSS JOIN LATERAL eclipse detection logic (required for correctness)
 - Analyze eclipse detection performance and identify optimization strategies
 - Test template-based trigger approach: 8-9x faster than generic triggers
