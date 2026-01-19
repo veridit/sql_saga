@@ -1,79 +1,79 @@
                  event                  | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 ----------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                                  |         0 | 0 ms            |                | 0 rows    | 
- Parent INSERT (Plain)                  |         0 | 372 ms          | 372 ms         | 0 rows    | 
- Parent INSERT (Plain)                  |      1000 | 394 ms          | 22 ms          | 1000 rows | ~46298 rows/s
- Parent UPDATE Key (Plain)              |         0 | 394 ms          | 0 ms           | 0 rows    | 
- Parent UPDATE Key (Plain)              |      1000 | 404 ms          | 10 ms          | 1000 rows | ~97800 rows/s
- Parent UPDATE Non-Key (Plain)          |         0 | 404 ms          | 0 ms           | 0 rows    | 
- Parent UPDATE Non-Key (Plain)          |      1000 | 414 ms          | 10 ms          | 1000 rows | ~103445 rows/s
- Parent DELETE (Plain)                  |         0 | 414 ms          | 0 ms           | 0 rows    | 
- Parent DELETE (Plain)                  |      1000 | 415 ms          | 1 ms           | 1000 rows | ~0 rows/s
- Child INSERT (Plain)                   |         0 | 415 ms          | 0 ms           | 0 rows    | 
- Child INSERT (Plain)                   |      1000 | 428 ms          | 14 ms          | 1000 rows | ~73839 rows/s
- Child UPDATE Key (Plain)               |         0 | 428 ms          | 0 ms           | 0 rows    | 
- Child UPDATE Key (Plain)               |      1000 | 440 ms          | 12 ms          | 1000 rows | ~86014 rows/s
- Child UPDATE Non-Key (Plain)           |         0 | 440 ms          | 0 ms           | 0 rows    | 
- Child UPDATE Non-Key (Plain)           |      1000 | 449 ms          | 9 ms           | 1000 rows | ~114587 rows/s
- Child DELETE (Plain)                   |         0 | 449 ms          | 0 ms           | 0 rows    | 
- Child DELETE (Plain)                   |      1000 | 450 ms          | 1 ms           | 1000 rows | ~950570 rows/s
- Regular INSERT (Plain)                 |         0 | 450 ms          | 0 ms           | 0 rows    | 
- Regular INSERT (Plain)                 |      1000 | 452 ms          | 2 ms           | 1000 rows | ~430478 rows/s
- Regular UPDATE (Plain)                 |         0 | 452 ms          | 0 ms           | 0 rows    | 
- Regular UPDATE (Plain)                 |      1000 | 455 ms          | 3 ms           | 1000 rows | ~311624 rows/s
- Regular DELETE (Plain)                 |         0 | 456 ms          | 0 ms           | 0 rows    | 
- Regular DELETE (Plain)                 |      1000 | 457 ms          | 1 ms           | 1000 rows | ~840336 rows/s
- Parent INSERT (No Index)               |         0 | 1 secs          | 810 ms         | 0 rows    | 
- Parent INSERT (No Index)               |      1000 | 1 secs          | 36 ms          | 1000 rows | ~27725 rows/s
+ Parent INSERT (Plain)                  |         0 | 363 ms          | 363 ms         | 0 rows    | 
+ Parent INSERT (Plain)                  |      1000 | 383 ms          | 20 ms          | 1000 rows | ~50607 rows/s
+ Parent UPDATE Key (Plain)              |         0 | 383 ms          | 0 ms           | 0 rows    | 
+ Parent UPDATE Key (Plain)              |      1000 | 393 ms          | 10 ms          | 1000 rows | ~100766 rows/s
+ Parent UPDATE Non-Key (Plain)          |         0 | 393 ms          | 0 ms           | 0 rows    | 
+ Parent UPDATE Non-Key (Plain)          |      1000 | 403 ms          | 10 ms          | 1000 rows | ~101605 rows/s
+ Parent DELETE (Plain)                  |         0 | 403 ms          | 0 ms           | 0 rows    | 
+ Parent DELETE (Plain)                  |      1000 | 405 ms          | 1 ms           | 1000 rows | ~687758 rows/s
+ Child INSERT (Plain)                   |         0 | 405 ms          | 0 ms           | 0 rows    | 
+ Child INSERT (Plain)                   |      1000 | 417 ms          | 12 ms          | 1000 rows | ~80289 rows/s
+ Child UPDATE Key (Plain)               |         0 | 417 ms          | 0 ms           | 0 rows    | 
+ Child UPDATE Key (Plain)               |      1000 | 426 ms          | 8 ms           | 1000 rows | ~119674 rows/s
+ Child UPDATE Non-Key (Plain)           |         0 | 426 ms          | 0 ms           | 0 rows    | 
+ Child UPDATE Non-Key (Plain)           |      1000 | 434 ms          | 8 ms           | 1000 rows | ~123320 rows/s
+ Child DELETE (Plain)                   |         0 | 434 ms          | 0 ms           | 0 rows    | 
+ Child DELETE (Plain)                   |      1000 | 435 ms          | 1 ms           | 1000 rows | ~0 rows/s
+ Regular INSERT (Plain)                 |         0 | 435 ms          | 0 ms           | 0 rows    | 
+ Regular INSERT (Plain)                 |      1000 | 438 ms          | 3 ms           | 1000 rows | ~378931 rows/s
+ Regular UPDATE (Plain)                 |         0 | 438 ms          | 0 ms           | 0 rows    | 
+ Regular UPDATE (Plain)                 |      1000 | 440 ms          | 3 ms           | 1000 rows | ~362188 rows/s
+ Regular DELETE (Plain)                 |         0 | 441 ms          | 0 ms           | 0 rows    | 
+ Regular DELETE (Plain)                 |      1000 | 442 ms          | 1 ms           | 1000 rows | ~695410 rows/s
+ Parent INSERT (No Index)               |         0 | 1 secs          | 757 ms         | 0 rows    | 
+ Parent INSERT (No Index)               |      1000 | 1 secs          | 30 ms          | 1000 rows | ~33266 rows/s
  Parent UPDATE Key (No Index)           |         0 | 1 secs          | 0 ms           | 0 rows    | 
- Parent UPDATE Key (No Index)           |      1000 | 2 secs          | 935 ms         | 1000 rows | ~1069 rows/s
+ Parent UPDATE Key (No Index)           |      1000 | 2 secs          | 903 ms         | 1000 rows | ~1107 rows/s
  Parent UPDATE Non-Key (No Index)       |         0 | 2 secs          | 0 ms           | 0 rows    | 
- Parent UPDATE Non-Key (No Index)       |      1000 | 2 secs          | 19 ms          | 1000 rows | ~51959 rows/s
+ Parent UPDATE Non-Key (No Index)       |      1000 | 2 secs          | 20 ms          | 1000 rows | ~48897 rows/s
  Parent DELETE (No Index)               |         0 | 2 secs          | 0 ms           | 0 rows    | 
- Parent DELETE (No Index)               |      1000 | 3 secs          | 918 ms         | 1000 rows | ~1090 rows/s
+ Parent DELETE (No Index)               |      1000 | 3 secs          | 904 ms         | 1000 rows | ~1106 rows/s
  Parent DELETE (Check Only, No Index)   |         0 | 3 secs          | 0 ms           | 0 rows    | 
- Parent DELETE (Check Only, No Index)   |      1000 | 4 secs          | 913 ms         | 1000 rows | ~1095 rows/s
+ Parent DELETE (Check Only, No Index)   |      1000 | 4 secs          | 886 ms         | 1000 rows | ~1129 rows/s
  Child INSERT (No Index)                |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child INSERT (No Index)                |      1000 | 4 secs          | 34 ms          | 1000 rows | ~29181 rows/s
+ Child INSERT (No Index)                |      1000 | 4 secs          | 34 ms          | 1000 rows | ~29058 rows/s
  Child UPDATE Key (No Index)            |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child UPDATE Key (No Index)            |      1000 | 4 secs          | 28 ms          | 1000 rows | ~35220 rows/s
+ Child UPDATE Key (No Index)            |      1000 | 4 secs          | 28 ms          | 1000 rows | ~35104 rows/s
  Child UPDATE Non-Key (No Index)        |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child UPDATE Non-Key (No Index)        |      1000 | 4 secs          | 17 ms          | 1000 rows | ~57995 rows/s
+ Child UPDATE Non-Key (No Index)        |      1000 | 4 secs          | 17 ms          | 1000 rows | ~58630 rows/s
  Child DELETE (No Index)                |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child DELETE (No Index)                |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
+ Child DELETE (No Index)                |      1000 | 4 secs          | 1 ms           | 1000 rows | ~917431 rows/s
  Regular INSERT (No Index)              |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Regular INSERT (No Index)              |      1000 | 4 secs          | 12 ms          | 1000 rows | ~80502 rows/s
- Regular UPDATE (No Index)              |         0 | 4 secs          | 1 ms           | 0 rows    | 
- Regular UPDATE (No Index)              |      1000 | 4 secs          | 3 ms           | 1000 rows | ~293513 rows/s
+ Regular INSERT (No Index)              |      1000 | 4 secs          | 11 ms          | 1000 rows | ~88449 rows/s
+ Regular UPDATE (No Index)              |         0 | 4 secs          | 0 ms           | 0 rows    | 
+ Regular UPDATE (No Index)              |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
  Regular DELETE (No Index)              |         0 | 4 secs          | 0 ms           | 0 rows    | 
  Regular DELETE (No Index)              |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
- Parent INSERT (With Index)             |         0 | 4 secs          | 10 ms          | 0 rows    | 
- Parent INSERT (With Index)             |      1000 | 4 secs          | 32 ms          | 1000 rows | ~30918 rows/s
+ Parent INSERT (With Index)             |         0 | 4 secs          | 5 ms           | 0 rows    | 
+ Parent INSERT (With Index)             |      1000 | 4 secs          | 31 ms          | 1000 rows | ~32522 rows/s
  Parent UPDATE Key (With Index)         |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Parent UPDATE Key (With Index)         |      1000 | 4 secs          | 48 ms          | 1000 rows | ~20969 rows/s
+ Parent UPDATE Key (With Index)         |      1000 | 4 secs          | 41 ms          | 1000 rows | ~24617 rows/s
  Parent UPDATE Non-Key (With Index)     |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Parent UPDATE Non-Key (With Index)     |      1000 | 4 secs          | 23 ms          | 1000 rows | ~44066 rows/s
+ Parent UPDATE Non-Key (With Index)     |      1000 | 4 secs          | 21 ms          | 1000 rows | ~47822 rows/s
  Parent DELETE (With Index)             |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Parent DELETE (With Index)             |      1000 | 4 secs          | 16 ms          | 1000 rows | ~63662 rows/s
+ Parent DELETE (With Index)             |      1000 | 4 secs          | 17 ms          | 1000 rows | ~57607 rows/s
  Parent DELETE (Check Only, With Index) |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Parent DELETE (Check Only, With Index) |      1000 | 4 secs          | 15 ms          | 1000 rows | ~64650 rows/s
- Child INSERT (With Index)              |         0 | 4 secs          | 3 ms           | 0 rows    | 
- Child INSERT (With Index)              |      1000 | 4 secs          | 41 ms          | 1000 rows | ~24652 rows/s
+ Parent DELETE (Check Only, With Index) |      1000 | 4 secs          | 15 ms          | 1000 rows | ~66450 rows/s
+ Child INSERT (With Index)              |         0 | 4 secs          | 0 ms           | 0 rows    | 
+ Child INSERT (With Index)              |      1000 | 4 secs          | 38 ms          | 1000 rows | ~26336 rows/s
  Child UPDATE Key (With Index)          |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child UPDATE Key (With Index)          |      1000 | 4 secs          | 32 ms          | 1000 rows | ~30811 rows/s
+ Child UPDATE Key (With Index)          |      1000 | 4 secs          | 33 ms          | 1000 rows | ~30720 rows/s
  Child UPDATE Non-Key (With Index)      |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child UPDATE Non-Key (With Index)      |      1000 | 4 secs          | 21 ms          | 1000 rows | ~47544 rows/s
+ Child UPDATE Non-Key (With Index)      |      1000 | 4 secs          | 22 ms          | 1000 rows | ~46391 rows/s
  Child DELETE (With Index)              |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Child DELETE (With Index)              |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
+ Child DELETE (With Index)              |      1000 | 4 secs          | 1 ms           | 1000 rows | ~900901 rows/s
  Regular INSERT (With Index)            |         0 | 4 secs          | 0 ms           | 0 rows    | 
- Regular INSERT (With Index)            |      1000 | 4 secs          | 12 ms          | 1000 rows | ~81103 rows/s
+ Regular INSERT (With Index)            |      1000 | 4 secs          | 12 ms          | 1000 rows | ~84161 rows/s
  Regular UPDATE (With Index)            |         0 | 4 secs          | 0 ms           | 0 rows    | 
  Regular UPDATE (With Index)            |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
  Regular DELETE (With Index)            |         0 | 4 secs          | 0 ms           | 0 rows    | 
  Regular DELETE (With Index)            |      1000 | 4 secs          | 1 ms           | 1000 rows | ~0 rows/s
- temporal_merge Parent (With Index)     |         0 | 5 secs          | 67 ms          | 0 rows    | 
- temporal_merge Parent (With Index)     |      1000 | 8 secs          | 3 secs         | 1000 rows | ~327 rows/s
- temporal_merge Child (With Index)      |         0 | 8 secs          | 504 ms         | 0 rows    | 
- temporal_merge Child (With Index)      |      1000 | 10 secs         | 2 secs         | 1000 rows | ~601 rows/s
+ temporal_merge Parent (With Index)     |         0 | 4 secs          | 65 ms          | 0 rows    | 
+ temporal_merge Parent (With Index)     |      1000 | 7 secs          | 3 secs         | 1000 rows | ~343 rows/s
+ temporal_merge Child (With Index)      |         0 | 8 secs          | 473 ms         | 0 rows    | 
+ temporal_merge Child (With Index)      |      1000 | 9 secs          | 2 secs         | 1000 rows | ~618 rows/s
 (75 rows)
 
