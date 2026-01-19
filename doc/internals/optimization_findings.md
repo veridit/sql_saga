@@ -113,6 +113,77 @@ Implemented `synchronize_temporal_columns` trigger in C to avoid PL/pgSQL overhe
    - Explains why O(N×M) complexity is necessary
    - Helps users understand performance characteristics
 
+## 4. Rejected Optimization: Typed Temp Tables for temporal_merge_plan
+
+### What Was Investigated (2026-01-19)
+The `temporal_merge_plan` table stores range values as TEXT to support polymorphic range types (daterange, tsrange, int4range, etc.). We investigated whether using typed columns would eliminate conversion overhead.
+
+### Hypothesis
+Range ↔ TEXT conversions add measurable overhead:
+- Planner: range → TEXT (output function)
+- Executor: TEXT → range (input function + cast)
+
+### Benchmark Results (10 iterations × 1000 rows)
+- **Direct range operations**: 38.2ms
+- **TEXT conversion operations**: 37.1ms (2.6% FASTER!)
+- **Isolated conversion overhead**: 2.5ms (not reflected in real queries)
+- **Memory overhead**: 16.7% larger for TEXT (negligible in practice)
+
+### Why TEXT Conversion is NOT Slower
+1. PostgreSQL's range I/O functions are highly optimized
+2. Query optimizer and JIT eliminate conversion overhead
+3. Join costs dominate any conversion overhead
+4. TEXT representation is cache-friendly
+
+### Conclusion: REJECTED
+**No measurable performance benefit**, while adding:
+- ❌ Code complexity (CASE logic for type selection)
+- ❌ Schema bloat (10+ extra columns for common types)
+- ❌ Reduced flexibility (need explicit support for each type)
+
+**Keeping TEXT is correct:**
+- ✅ Polymorphic (works with any range type, including custom)
+- ✅ Simple code (one column, no conditional logic)
+- ✅ Debuggable (human-readable representation)
+- ✅ Performance is already excellent
+
+### Lessons Learned
+1. Always benchmark assumptions before implementing optimizations
+2. PostgreSQL's type system I/O is highly optimized
+3. Simple solutions (TEXT) often outperform "optimized" alternatives
+4. Developer ergonomics (debuggability) matters
+
+## Recommendations
+
+### Completed ✅
+1. **Eclipse detection optimizations** in `temporal_merge_plan`
+   - Composite indexes on (lookup_cols, source_row_id)
+   - Pre-computed valid_range column
+   - 30-40% performance improvement achieved
+
+2. **Template-based sync triggers** 
+   - Table-specific trigger functions (8-9x faster)
+   - Eliminates JSONB and dynamic SQL overhead
+   - Implemented in src/34_synchronize_temporal_columns_trigger.sql
+
+### Future Opportunities (if needed)
+3. **Template-based temporal_merge functions**
+   - Similar approach to sync triggers
+   - Generate specialized functions per table/era
+   - Expected: 3-5x improvement → 8,400-14,000 rows/s
+   - Complexity: HIGH
+
+4. **PostgreSQL extension (C implementation)**
+   - Native TEMPORAL MERGE support
+   - Expected: 10-50x improvement → 28,000-140,000 rows/s
+   - Complexity: VERY HIGH
+   - See: doc/temporal_merge_postgresql_extension_plan.md
+
 ## Conclusion
 
-The most impactful optimization is the template-based trigger approach, showing 8-9x performance improvement. However, it requires significant architectural changes. The eclipse detection optimizations offer good improvements (30-40%) with minimal risk and should be implemented first.
+All identified PL/pgSQL-level optimizations have been implemented or investigated:
+- ✅ Eclipse detection: 30-40% faster (implemented)
+- ✅ Template triggers: 8-9x faster (implemented)
+- ❌ Typed temp tables: No benefit (rejected after benchmarking)
+
+Current performance (2,800 rows/s batched) is good for a PL/pgSQL implementation. Further significant gains require either template-based functions (3-5x) or a native PostgreSQL extension (10-50x).

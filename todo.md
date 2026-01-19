@@ -5,14 +5,15 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 ## Current Focus: Performance Optimization
 
-### temporal_merge Performance Investigation
-Performance analysis from benchmarks (after CASE→OR and split-path optimizations):
+### temporal_merge Performance Status
+Performance analysis from benchmarks (after all PL/pgSQL optimizations):
 - Regular DML: ~24,000-45,000 rows/s
-- temporal_merge (no batching): ~75-155 rows/s (200-300x slower!)
-- temporal_merge (batch 1000): ~2,800-3,000 rows/s (optimal batch size)
+- temporal_merge single call (1000 rows): ~270-580 rows/s (depends on operation complexity)
+- temporal_merge batched (1000 rows/call in loop): ~2,650-2,930 rows/s (MERGE_ENTITY_UPSERT), ~7,460-8,310 rows/s (UPDATE_FOR_PORTION_OF)
 
-Remaining optimizations:
-- [ ] **Consider typed temp tables** - Eliminate range type casting (e.g., ::daterange) overhead
+**All PL/pgSQL-level optimizations completed.** Further gains require:
+- Template-based temporal_merge functions (3-5x) - HIGH complexity
+- PostgreSQL extension in C (10-50x) - VERY HIGH complexity (see doc/temporal_merge_postgresql_extension_plan.md)
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
@@ -33,6 +34,9 @@ Remaining optimizations:
 # Done
 
 ## 2026-01-19
+- **Investigate and reject typed temp tables optimization** - Benchmarked TEXT vs typed columns for temporal_merge_plan.
+  Result: TEXT is 2.6% FASTER (38.2ms vs 37.1ms for 10K ops). Range I/O functions are highly optimized, conversion 
+  overhead is negligible. Keeping TEXT for polymorphism, debuggability, and simplicity. See doc/internals/optimization_findings.md.
 - **Implement template-based temporal column sync triggers** - Complete system replacing generic triggers with 
   specialized per-table/era functions. Performance: 2.3x faster INSERTs (85ms→37ms), 2.2x faster UPDATEs (99ms→45ms).
   Architecture: Template generator creates hardcoded functions eliminating dynamic SQL/JSONB overhead. Schema tracking
