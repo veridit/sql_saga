@@ -506,6 +506,7 @@ TABLE null_test ORDER BY id, valid_from;
 
 -- Test 1: Update name only (optional_value should be preserved, not set to NULL)
 \echo '--- Test 1: Update name only (optional_value should be preserved) ---'
+SAVEPOINT test_1;
 UPDATE null_test__for_portion_of_valid
 SET name = 'Updated Name', valid_from = '2024-03-01', valid_until = '2024-06-01'
 WHERE id = 1;
@@ -514,14 +515,11 @@ WHERE id = 1;
 SELECT id, name, optional_value, valid_from, valid_until
 FROM null_test
 ORDER BY valid_from;
-
--- Reset for next test
-TRUNCATE null_test;
-INSERT INTO null_test (id, name, optional_value, valid_from, valid_until)
-VALUES (1, 'Test Entity', 'initial value', '2024-01-01', '2025-01-01');
+ROLLBACK TO test_1;
 
 -- Test 2: Explicitly set optional_value to NULL
 \echo '--- Test 2: Explicitly set optional_value = NULL ---'
+SAVEPOINT test_2;
 UPDATE null_test__for_portion_of_valid
 SET optional_value = NULL, valid_from = '2024-03-01', valid_until = '2024-06-01'
 WHERE id = 1;
@@ -530,6 +528,7 @@ WHERE id = 1;
 SELECT id, name, optional_value, valid_from, valid_until
 FROM null_test
 ORDER BY valid_from;
+ROLLBACK TO test_2;
 
 -- Expected:
 --   2024-01-01 to 2024-03-01: optional_value = 'initial value' (preserved from original)

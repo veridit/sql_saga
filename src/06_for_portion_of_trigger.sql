@@ -38,11 +38,10 @@ BEGIN
     --   - Identity columns (always from NEW)
     --   - Temporal columns (always from NEW)
     --   - Changed columns (from NEW, may be NULL if explicitly set to NULL)
-    --   - Unchanged columns: use OLD value to avoid conflicts across temporal segments
+    --   - Unchanged columns (from OLD, to preserve values across temporal segments)
     --
-    -- This allows temporal_merge with PATCH mode to work correctly:
-    --   - Changed columns (including NULL) are in jnew and will update target
-    --   - Unchanged columns have OLD value, so PATCH preserves them correctly
+    -- With range intersection, each trigger sees only its own temporal segment in the target,
+    -- so using OLD values for unchanged columns preserves the correct values per segment.
     IF TG_OP = 'UPDATE' THEN
         DECLARE
             jold jsonb := to_jsonb(OLD);
@@ -58,12 +57,16 @@ BEGIN
                    OR key = info.valid_from_column_name
                    OR key = info.valid_until_column_name
                    OR key = info.valid_to_column_name
-                   OR (jnew->key) IS DISTINCT FROM (jold->key)
                 THEN
-                    -- Include identity, temporal, and changed columns with NEW value
+                    -- Always include identity and temporal columns with NEW value
                     filtered_jnew := filtered_jnew || jsonb_build_object(key, jnew->key);
+                ELSIF (jnew->key) IS DISTINCT FROM (jold->key) THEN
+                    -- Changed column: use NEW value (may be explicit NULL)
+                    filtered_jnew := filtered_jnew || jsonb_build_object(key, jnew->key);
+                ELSE
+                    -- Unchanged column: use OLD value to preserve across segments
+                    filtered_jnew := filtered_jnew || jsonb_build_object(key, jold->key);
                 END IF;
-                -- Unchanged columns are omitted entirely - temporal_merge will inherit from target
             END LOOP;
             
             jnew := filtered_jnew;
@@ -233,7 +236,7 @@ BEGIN
         --   - Changed columns (including those explicitly set to NULL)
         -- Absent columns will be NULL in the source row, but that's OK because
         -- temporal_merge will inherit them from the target via COALESCE(t || s).
-        mode => 'PATCH_FOR_PORTION_OF',
+        mode => 'UPDATE_FOR_PORTION_OF',
         era_name => info.era_name,
         update_source_with_feedback => true,
         feedback_status_column => 'merge_status',
