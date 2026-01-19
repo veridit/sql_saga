@@ -4,11 +4,6 @@ A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 ## Current Priority - Refactoring & API Improvements
-- [ ] **Document FK trigger column usage:** The `sql_saga.foreign_keys` table has four trigger-related columns with different usage patterns by FK type:
-  - `fk_insert_trigger`, `fk_update_trigger` - Always NULL for both FK types (temporal_to_temporal uses native PG18 FKs, regular_to_temporal uses CHECK constraints)
-  - `uk_update_trigger`, `uk_delete_trigger` - Used ONLY by `regular_to_temporal` FKs (creates actual triggers on unique key table), always NULL for `temporal_to_temporal` FKs
-  - **Verified by test evidence:** Test 045 shows regular_to_temporal creates triggers `regular_fk_pk_id_fkey_uk_update` and `regular_fk_pk_id_fkey_uk_delete` on the referenced table. Test 072 shows temporal_to_temporal stores all trigger columns as NULL and uses native `RI_ConstraintTrigger_*` triggers instead.
-  - **Conclusion:** These columns CANNOT be removed - they are essential for `regular_to_temporal` FK functionality. The todo item was based on incorrect assumptions.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 - [ ] Use existing values when splitting and making a split segment with insert. I.e. edit_at should not be nulled and set by now(), it should be preserved.
@@ -28,6 +23,20 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 - temporal_merge batched (1000 rows/call in loop): ~2,650-2,930 rows/s (MERGE_ENTITY_UPSERT), ~7,460-8,310 rows/s (UPDATE_FOR_PORTION_OF)
 
 Further performance gains require either template-based temporal_merge functions (3-5x, HIGH complexity) or PostgreSQL extension in C (10-50x, VERY HIGH complexity). See doc/temporal_merge_postgresql_extension_plan.md for extension approach.
+
+## 2026-01-19: FK Trigger Column Investigation
+
+**Investigated FK trigger columns in sql_saga.foreign_keys table.** Original todo claimed these columns "could potentially be removed" because they're always NULL. Investigation revealed:
+
+**Column Usage Patterns:**
+- `fk_insert_trigger`, `fk_update_trigger`: Always NULL for both FK types (defensive/compatibility markers)
+- `uk_update_trigger`, `uk_delete_trigger`: POPULATED for regular_to_temporal FKs, NULL for temporal_to_temporal FKs
+
+**Test Evidence (tests 045 & 072):**
+- regular_to_temporal: Creates actual triggers on referenced table (e.g., `regular_fk_pk_id_fkey_uk_update`, `regular_fk_pk_id_fkey_uk_delete`)
+- temporal_to_temporal: All trigger columns NULL, uses native PG18 `FOREIGN KEY ... PERIOD` with system-generated `RI_ConstraintTrigger_*` triggers
+
+**Conclusion:** uk_update_trigger and uk_delete_trigger CANNOT be removed - essential for regular_to_temporal FK functionality. fk_insert_trigger and fk_update_trigger are always NULL but serve as compatibility markers and have minimal overhead. See tmp/fk_trigger_columns_investigation.md for detailed evidence.
 
 ## 2026-01-19: Individual Optimizations
 - **Investigate and reject typed temp tables optimization** - Benchmarked TEXT vs typed columns for temporal_merge_plan.
