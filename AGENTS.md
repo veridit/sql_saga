@@ -253,6 +253,35 @@ Use `tmp/journal.md` for complex tasks:
 - Never mask or work around problems
 - Use descriptive error messages for debugging
 
+**CRITICAL: Never "Lock In" Bugs in Expected Output**
+
+When a test fails showing incorrect behavior:
+
+❌ **NEVER DO THIS:**
+```bash
+# Bad: Accepting broken behavior
+make expected TESTS="failing_test"  # This locks in the bug!
+```
+
+✅ **ALWAYS DO THIS:**
+1. **Read the test carefully** - Understand what the CORRECT behavior should be
+2. **Edit the expected output** - Manually set it to show CORRECT behavior
+3. **Fix the code** - Modify implementation until test passes with correct output
+4. **Verify** - Ensure test passes with the corrected expected output
+
+**Example:**
+```
+Test shows: edit_by_user_id = 1 (wrong - using default)
+Expected:   edit_by_user_id = 100 (correct - preserved from original)
+
+Action: Edit expected/*.out to show "100", then fix the code to make it happen
+```
+
+**Why this matters:**
+- Locking in bugs means they're forgotten and become "features"
+- Tests should document CORRECT behavior, not current bugs
+- Expected output files are specifications, not snapshots
+
 ## Important Constraints
 
 - **Never** propose SEARCH/REPLACE for `expected/*.out` files
