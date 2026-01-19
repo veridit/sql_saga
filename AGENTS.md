@@ -171,6 +171,56 @@ SELECT 'Transaction still active';
 
 ### Debugging Tools
 
+**Inspecting pg_temp Tables (CRITICAL for debugging temporal_merge):**
+
+When debugging temporal_merge behavior, you can inspect intermediate temp tables by querying them within a transaction before they're dropped:
+
+```sql
+-- In a test file (e.g., sql/999_debug_test.sql):
+BEGIN;
+
+-- Execute the operation that calls temporal_merge
+UPDATE my_table__for_portion_of_valid
+SET some_column = value, valid_from = '2023-01-01', valid_until = '2026-01-01'
+WHERE id = 1;
+
+-- Immediately query pg_temp tables before COMMIT drops them
+TABLE pg_temp.source_rows;           -- What source data was provided?
+TABLE pg_temp.target_rows;           -- What was in the target?
+TABLE pg_temp.resolved_atomic_segments;  -- What segments were created?
+TABLE pg_temp.island_group;          -- How were segments grouped for coalescing?
+TABLE pg_temp.coalesced_final_segments;  -- What was produced after coalescing?
+
+COMMIT;
+```
+
+Then run the test and view output:
+```bash
+make install && make test TESTS="999_debug_test"
+make diff-fail-first  # View the full table contents in the diff output
+```
+
+**Key temp tables to inspect:**
+- `source_rows` - Input data after initial processing
+- `target_rows` - Existing target table data
+- `resolved_atomic_segments` - After payload resolution (shows data_payload)
+- `island_group` - After grouping adjacent segments with same payload
+- `coalesced_final_segments` - Final merged segments before diff
+- `diff` - Comparison between final segments and target
+- `plan_with_op` - Planned operations (INSERT/UPDATE/DELETE)
+
+**When to use:**
+- Understanding why rows are being merged unexpectedly
+- Debugging payload resolution logic
+- Tracing how source data flows through the planner
+- Investigating why segments aren't being split correctly
+
+**Important notes:**
+- Tables are created with `ON COMMIT DROP`, so query them BEFORE commit
+- Use `BEGIN...COMMIT` to keep transaction open during inspection
+- Can temporarily add to existing tests for debugging
+- `enable_trace = true` is NOT required - that's for advanced join debugging
+
 **Add diagnostic output:**
 - Prefer `RAISE DEBUG` over `RAISE NOTICE`
 - Wrap test sections with:
@@ -180,11 +230,12 @@ SET client_min_messages TO DEBUG;
 RESET client_min_messages;
 ```
 
-**temporal_merge tracing:**
+**temporal_merge tracing (advanced):**
 ```sql
 SET sql_saga.temporal_merge.enable_trace = true;
 CALL sql_saga.temporal_merge(...);
 SET sql_saga.temporal_merge.enable_trace = false;
+-- Note: This adds trace jsonb for debugging table joins, not usually needed
 ```
 
 ### Development Journaling
