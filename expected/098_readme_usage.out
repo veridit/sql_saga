@@ -672,8 +672,8 @@ SELECT sql_saga.drop_era('readme.unit_with_range'::regclass);
 --- Verification: Check metadata tables are empty for this schema ---
 -- These queries should return no rows. Any rows returned indicate a cleanup failure.
 SELECT * FROM sql_saga.era WHERE table_schema = 'readme';
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
 (0 rows)
 
 SELECT * FROM sql_saga.unique_keys WHERE table_schema = 'readme';

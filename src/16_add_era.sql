@@ -430,6 +430,9 @@ BEGIN
         v_from_col    name := add_era.valid_from_column_name;
         v_until_col   name := add_era.valid_until_column_name;
         v_to_col      name := add_era.valid_to_column_name;
+        v_create_template_trigger boolean := false;
+        v_sync_cols_text text;
+        v_trigger_name name;
     BEGIN
         IF synchronize_columns THEN
             -- Auto-detect conventional column names if they haven't been explicitly provided.
@@ -504,37 +507,22 @@ BEGIN
                     sync_cols := sync_cols || v_from_col || v_until_col;
                 END IF;
 
-                -- Finally, if there are any columns left to synchronize, create the trigger.
+                -- Finally, if there are any columns left to synchronize, mark the trigger for creation.
                 IF array_length(sync_cols, 1) > 0 THEN
-                    DECLARE
-                        v_quoted_cols text;
-                    BEGIN
-                        -- Quote each column name for use in UPDATE OF clause
-                        SELECT string_agg(quote_ident(col), ', ')
-                        INTO v_quoted_cols
-                        FROM unnest(ARRAY[range_column_name] || sync_cols) AS col;
-                        
-                        trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
-                        EXECUTE format(
-                            'CREATE TRIGGER %I BEFORE INSERT OR UPDATE OF %s ON %s FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns(%L, %L, %L, %L, %L, %L)',
-                            trigger_name,
-                            v_quoted_cols,
-                            table_oid::text,
-                            range_column_name,          -- authoritative range column
-                            v_from_col,                 -- synchronized from column
-                            v_until_col,                -- synchronized until column
-                            v_to_col,                   -- synchronized to column
-                            v_range_subtype,
-                            v_trigger_applies_defaults
-                        );
-                        RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', trigger_name, table_oid, array_to_string(sync_cols, ', ');
-                    END;
+                    v_create_template_trigger := true;
+                    v_sync_cols_text := array_to_string(sync_cols, ', ');
+                    v_trigger_name := format('%s_synchronize_temporal_columns_trigger', table_name);
                 END IF;
             END;
         END IF;
 
         INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults)
         VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults);
+
+        IF v_create_template_trigger THEN
+            CALL sql_saga.add_synchronize_temporal_columns_trigger(table_oid, era_name);
+            RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', v_trigger_name, table_oid, v_sync_cols_text;
+        END IF;
     END;
 
     -- Code for creation of triggers, when extending the era api

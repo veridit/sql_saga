@@ -576,17 +576,18 @@ BEGIN
         IF v_is_alter_trigger THEN
             FOR r IN
                 SELECT e.era_name, to_regclass(format('%I.%I', e.table_schema, e.table_name)) AS table_oid,
-                       format('%s_synchronize_temporal_columns_trigger', e.table_name) AS expected_trigger_name
+                       e.sync_temporal_trg_name, e.sync_temporal_trg_function_name
                 FROM sql_saga.era AS e
-                WHERE e.trigger_applies_defaults  -- Only eras with synchronization triggers
+                WHERE e.sync_temporal_trg_name IS NOT NULL  -- Only eras with synchronization triggers
+                  AND e.sync_temporal_trg_function_name IS NOT NULL
                   AND NOT EXISTS (
                       SELECT FROM pg_catalog.pg_trigger AS t
                       WHERE t.tgrelid = to_regclass(format('%I.%I', e.table_schema, e.table_name))
-                        AND t.tgname = format('%s_synchronize_temporal_columns_trigger', e.table_name)
-                        AND t.tgfoid = 'sql_saga.synchronize_temporal_columns'::regproc)
+                        AND t.tgname = e.sync_temporal_trg_name
+                        AND t.tgfoid = to_regprocedure(format('sql_saga.%I()', e.sync_temporal_trg_function_name)))
             LOOP
                 RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is managed by era "%"',
-                    r.expected_trigger_name, r.table_oid, r.era_name;
+                    r.sync_temporal_trg_name, r.table_oid, r.era_name;
             END LOOP;
         END IF;
     END IF;

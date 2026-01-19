@@ -77,7 +77,7 @@ Indexes:
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    pk_first_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.pk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    pk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.pk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_pk_first_valid_template_sync()
 
 SELECT sql_saga.add_unique_key('pk_consistency.pk_first', ARRAY['natural_key']); -- Use default enforcement
 NOTICE:  sql_saga: altering table pk_consistency.pk_first to add constraints: ADD CONSTRAINT pk_first_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT pk_first_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
@@ -115,7 +115,7 @@ Indexes:
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    pk_first_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.pk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    pk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.pk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_pk_first_valid_template_sync()
 
 ROLLBACK TO SAVEPOINT s1;
 -- Scenario 2: NK added first, then PK
@@ -169,7 +169,7 @@ Indexes:
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    nk_first_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.nk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    nk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.nk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_nk_first_valid_template_sync()
 
 SELECT sql_saga.add_unique_key('pk_consistency.nk_first', ARRAY['id'], key_type => 'primary'); -- This should retroactively apply the constraint
 NOTICE:  sql_saga: altering table pk_consistency.nk_first to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
@@ -208,7 +208,7 @@ Indexes:
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    nk_first_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.nk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    nk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.nk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_nk_first_valid_template_sync()
 
 -- Verify it works
 INSERT INTO pk_consistency.nk_first (id, natural_key, valid_from) VALUES (1, 'NK1', '2023-01-01');
@@ -280,7 +280,7 @@ Indexes:
 Check constraints:
     "opt_out_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    opt_out_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.opt_out FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    opt_out_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.opt_out FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_opt_out_valid_template_sync()
 
 -- This would fail if the constraint existed
 INSERT INTO pk_consistency.opt_out (id, natural_key, valid_from) VALUES (1, 'NK1', '2023-01-01');
@@ -414,7 +414,7 @@ Indexes:
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    drop_nk_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    drop_nk_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_drop_nk_valid_template_sync()
 
 SELECT sql_saga.drop_unique_key('pk_consistency.drop_nk', ARRAY['natural_key']);
 NOTICE:  sql_saga: dropping constraint: ALTER TABLE pk_consistency.drop_nk DROP CONSTRAINT drop_nk_natural_key_valid_pk_consistency_excl
@@ -443,7 +443,7 @@ Indexes:
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    drop_nk_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    drop_nk_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_drop_nk_valid_template_sync()
 
 ROLLBACK TO SAVEPOINT s5a;
 \echo
@@ -515,7 +515,7 @@ Indexes:
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    drop_pk_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_pk FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    drop_pk_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_pk FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_drop_pk_valid_template_sync()
 
 SELECT sql_saga.drop_unique_key('pk_consistency.drop_pk', ARRAY['id']);
  drop_unique_key 
@@ -549,7 +549,7 @@ Indexes:
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    drop_pk_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_pk FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    drop_pk_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.drop_pk FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_drop_pk_valid_template_sync()
 
 ROLLBACK TO SAVEPOINT s5b;
 ROLLBACK;

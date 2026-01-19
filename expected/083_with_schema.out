@@ -101,10 +101,10 @@ NOTICE:  sql_saga: Created trigger "staff_synchronize_temporal_columns_trigger" 
 
 ALTER TABLE hidden.staff ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- exposed      | employees  | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | employees_valid_check   | employees_check           | valid_to             | t                        |                   | 
- hidden       | staff      | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | staff_valid_check       | staff_check               | valid_to             | t                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |      sync_temporal_trg_name       |    sync_temporal_trg_function_name    | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-----------------------------------+---------------------------------------+-------------------+------------------
+ exposed      | employees  | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | employees_valid_check   | employees_check           | valid_to             | t                        | employees_valid_sync_temporal_trg | exposed_employees_valid_template_sync |                   | 
+ hidden       | staff      | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | staff_valid_check       | staff_check               | valid_to             | t                        | staff_valid_sync_temporal_trg     | hidden_staff_valid_template_sync      |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('exposed.employees', ARRAY['id'], 'valid', key_type => 'natural');
@@ -164,7 +164,7 @@ Check constraints:
 Referenced by:
     TABLE "hidden.staff" CONSTRAINT "staff_employee_id_valid" FOREIGN KEY (employee_id, PERIOD valid_range) REFERENCES exposed.employees(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    employees_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON exposed.employees FOR EACH ROW EXECUTE FUNCTION sql_saga.exposed_employees_valid_template_sync()
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -189,7 +189,7 @@ Check constraints:
 Foreign-key constraints:
     "staff_employee_id_valid" FOREIGN KEY (employee_id, PERIOD valid_range) REFERENCES exposed.employees(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    staff_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    staff_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON hidden.staff FOR EACH ROW EXECUTE FUNCTION sql_saga.hidden_staff_valid_template_sync()
 
 -- Test data.
 -- We only insert valid_from and valid_to, the trigger will set valid_after.
@@ -276,8 +276,8 @@ SELECT sql_saga.drop_era('hidden.staff');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.

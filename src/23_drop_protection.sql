@@ -87,7 +87,27 @@ BEGIN
             END LOOP;
         END;
 
-        -- 3. Delete all metadata for the dropped table.
+        -- 3. Clean up template sync triggers/functions for each era on this table BEFORE deleting metadata
+        DECLARE
+            era_row record;
+            func_name name;
+        BEGIN
+            -- Table has been dropped, but we still need to clean up the functions
+            FOR era_row IN 
+                SELECT e.era_name, e.sync_temporal_trg_function_name
+                FROM sql_saga.era e 
+                WHERE (e.table_schema, e.table_name) = (r.schema_name, r.object_name)
+                  AND e.sync_temporal_trg_function_name IS NOT NULL  -- Only eras with sync triggers
+            LOOP
+                -- Drop the function directly (trigger already gone with table)
+                func_name := era_row.sync_temporal_trg_function_name;
+                IF to_regprocedure(format('sql_saga.%I()', func_name)) IS NOT NULL THEN
+                    EXECUTE format($$DROP FUNCTION sql_saga.%I() CASCADE$$, func_name);
+                END IF;
+            END LOOP;
+        END;
+        
+        -- 4. Delete all metadata for the dropped table.
         DELETE FROM sql_saga.updatable_view WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.foreign_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
         DELETE FROM sql_saga.unique_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);

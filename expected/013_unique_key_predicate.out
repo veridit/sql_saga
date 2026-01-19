@@ -71,7 +71,7 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    employees_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.public_employees_valid_template_sync()
 
 -- 1. Inserts that should PASS
 -- Two employees with same name, but NULL department (outside predicate)
@@ -128,7 +128,7 @@ Indexes:
 Check constraints:
     "employees_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    employees_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    employees_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON employees FOR EACH ROW EXECUTE FUNCTION sql_saga.public_employees_valid_template_sync()
 
 -- Test Scenario 2: Add constraint to a table with existing data.
 -- ===============================================================

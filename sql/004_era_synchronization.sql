@@ -14,7 +14,11 @@ SAVEPOINT test_1;
 CREATE TABLE sync_test_default (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 -- This will auto-detect all conventional columns: valid_from, valid_to, valid_until
 SELECT sql_saga.add_era('sync_test_default', 'valid_range');
+
+TABLE sql_saga.era;
 \d sync_test_default
+\sf sql_saga.public_sync_test_default_valid_template_sync
+
 INSERT INTO sync_test_default (id, valid_from, valid_to) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_test_default;
 UPDATE sync_test_default SET valid_until = '2026-01-01' WHERE id = 1;
@@ -27,6 +31,9 @@ CREATE TABLE sync_test_disabled (id int, valid_range daterange, valid_from date,
 -- Note: synchronize_columns is set to false to disable all synchronization.
 SELECT sql_saga.add_era('sync_test_disabled', 'valid_range', synchronize_columns => false);
 
+TABLE sql_saga.era;
+\d sync_test_disabled
+
 \d sync_test_disabled
 INSERT INTO sync_test_disabled (id, valid_range              , valid_from  , valid_until , valid_to    )
                         VALUES (1, '[2023-01-01, 2023-12-31)'::DATERANGE, '2024-01-01', '2025-01-01', '2099-12-31');
@@ -37,7 +44,11 @@ ROLLBACK TO SAVEPOINT test_2;
 SAVEPOINT test_3;
 CREATE TABLE sync_test_custom_name (id int, date_range daterange, start_date date, until_date date, to_date date);
 SELECT sql_saga.add_era('sync_test_custom_name', 'date_range', valid_from_column_name => 'start_date', valid_until_column_name => 'until_date', valid_to_column_name => 'to_date');
+
+TABLE sql_saga.era;
 \d sync_test_custom_name
+\sf sql_saga.public_sync_test_custom_name_valid_template_sync
+
 INSERT INTO sync_test_custom_name (id, start_date, to_date) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, date_range, start_date, until_date, to_date FROM sync_test_custom_name;
 ROLLBACK TO SAVEPOINT test_3;
@@ -47,7 +58,11 @@ SAVEPOINT test_4;
 CREATE TABLE sync_test_generated (id int, valid_range daterange, valid_from date, valid_until date, valid_to date GENERATED ALWAYS AS (valid_until - INTERVAL '1 day') STORED);
 -- Auto-detection should find from/until but skip the generated `valid_to`
 SELECT sql_saga.add_era('sync_test_generated', 'valid_range');
+
+TABLE sql_saga.era;
 \d sync_test_generated
+\sf sql_saga.public_sync_test_generated_valid_template_sync
+
 INSERT INTO sync_test_generated (id, valid_range) VALUES (1, '[2024-01-01,2025-01-01)');
 SELECT id, valid_from, valid_to, valid_until FROM sync_test_generated;
 ROLLBACK TO SAVEPOINT test_4;

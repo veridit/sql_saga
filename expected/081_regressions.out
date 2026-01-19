@@ -72,10 +72,10 @@ NOTICE:  No compatible index found for foreign key on table fk. Creating new ind
 
 --
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | uk         | p        | valid_range       | f                      | u                       | int4range  | int4multirange  | integer       | N                      | uk_p_check              | uk_check                  |                      | t                        |                   | 
- public       | fk         | q        | valid_range       | f                      | u                       | int4range  | int4multirange  | integer       | N                      | fk_q_check              | fk_check                  |                      | t                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+ public       | uk         | p        | valid_range       | f                      | u                       | int4range  | int4multirange  | integer       | N                      | uk_p_check              | uk_check                  |                      | t                        | uk_p_sync_temporal_trg | public_uk_p_template_sync       |                   | 
+ public       | fk         | q        | valid_range       | f                      | u                       | int4range  | int4multirange  | integer       | N                      | fk_q_check              | fk_check                  |                      | t                        | fk_q_sync_temporal_trg | public_fk_q_template_sync       |                   | 
 (2 rows)
 
 TABLE sql_saga.foreign_keys;

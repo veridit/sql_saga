@@ -44,6 +44,12 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_colum
  t
 (1 row)
 
+TABLE sql_saga.era;
+ table_schema |    table_name     | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |    bounds_check_constraint    | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |          sync_temporal_trg_name           |       sync_temporal_trg_function_name        | audit_schema_name | audit_table_name 
+--------------+-------------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------------+---------------------------+----------------------+--------------------------+-------------------------------------------+----------------------------------------------+-------------------+------------------
+ public       | sync_test_default | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | sync_test_default_valid_check |                           | valid_to             | t                        | sync_test_default_valid_sync_temporal_trg | public_sync_test_default_valid_template_sync |                   | 
+(1 row)
+
 \d sync_test_default
              Table "public.sync_test_default"
    Column    |   Type    | Collation | Nullable | Default 
@@ -56,8 +62,171 @@ NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_colum
 Check constraints:
     "sync_test_default_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_test_default_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    sync_test_default_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_default FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_default_valid_template_sync()
 
+\sf sql_saga.public_sync_test_default_valid_template_sync
+CREATE OR REPLACE FUNCTION sql_saga.public_sync_test_default_valid_template_sync()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    final_from text;
+    final_until text;
+
+    from_via_bounds text;
+    until_via_bounds text;
+    from_via_range text;
+    until_via_range text;
+
+
+    until_via_to text;
+
+
+    from_sources text[] := ARRAY[]::text[];
+    until_sources text[] := ARRAY[]::text[];
+    distinct_from text[];
+    distinct_until text[];
+
+    is_range_changed boolean;
+    is_from_changed boolean;
+    is_until_changed boolean;
+    is_to_changed boolean := false;
+
+    has_from_input boolean;
+    has_until_input boolean;
+BEGIN
+    IF NEW.valid_range = 'empty'::daterange THEN
+        RAISE EXCEPTION 'Cannot use an empty range for temporal column "%"', 'valid_range';
+    END IF;
+
+    is_range_changed := (TG_OP = 'INSERT' AND NEW.valid_range IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_range IS DISTINCT FROM OLD.valid_range);
+
+    is_from_changed := (TG_OP = 'INSERT' AND NEW.valid_from IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_from IS DISTINCT FROM OLD.valid_from);
+
+    is_until_changed := (TG_OP = 'INSERT' AND NEW.valid_until IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_until IS DISTINCT FROM OLD.valid_until);
+
+
+    is_to_changed := (TG_OP = 'INSERT' AND NEW.valid_to IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_to IS DISTINCT FROM OLD.valid_to);
+
+
+    has_from_input := is_range_changed OR is_from_changed;
+    has_until_input := is_range_changed OR is_until_changed OR is_to_changed;
+
+    IF is_range_changed THEN
+        from_via_range := lower(NEW.valid_range)::text;
+        until_via_range := upper(NEW.valid_range)::text;
+    END IF;
+
+    IF is_from_changed THEN
+        from_via_bounds := NEW.valid_from::text;
+    END IF;
+
+    IF is_until_changed THEN
+        until_via_bounds := NEW.valid_until::text;
+    END IF;
+
+
+    IF is_to_changed THEN
+        until_via_to := (NEW.valid_to::date + 1)::text;
+    END IF;
+
+
+    IF is_range_changed AND from_via_range IS NOT NULL THEN
+        from_sources := from_sources || from_via_range;
+    END IF;
+    IF is_from_changed AND from_via_bounds IS NOT NULL THEN
+        from_sources := from_sources || from_via_bounds;
+    END IF;
+
+    SELECT array_agg(DISTINCT v) INTO distinct_from FROM unnest(from_sources) AS v;
+
+    IF cardinality(distinct_from) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent start of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'valid_range' AS key, from_via_range AS val WHERE is_range_changed AND from_via_range IS NOT NULL
+                UNION ALL SELECT 'valid_from' AS key, from_via_bounds AS val WHERE is_from_changed AND from_via_bounds IS NOT NULL
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_from) = 1 THEN
+        final_from := distinct_from[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_from_input THEN
+        final_from := OLD.valid_from::text;
+    END IF;
+
+    IF is_range_changed AND until_via_range IS NOT NULL THEN
+        until_sources := until_sources || until_via_range;
+    END IF;
+    IF is_until_changed AND until_via_bounds IS NOT NULL THEN
+        until_sources := until_sources || until_via_bounds;
+    END IF;
+
+
+    IF is_to_changed THEN
+        IF final_from IS NULL THEN
+            RAISE EXCEPTION 'When setting "%", the start of the period must also be provided via "%" or "%".', 'valid_to', 'valid_from', 'valid_range';
+        END IF;
+        until_sources := until_sources || until_via_to;
+    END IF;
+
+
+    SELECT array_agg(DISTINCT v) INTO distinct_until FROM unnest(until_sources) AS v;
+
+    IF cardinality(distinct_until) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent end of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'valid_range' AS key, until_via_range AS val WHERE is_range_changed AND until_via_range IS NOT NULL
+                UNION ALL SELECT 'valid_until' AS key, until_via_bounds AS val WHERE is_until_changed AND until_via_bounds IS NOT NULL
+
+                UNION ALL SELECT 'valid_to' AS key, until_via_to AS val WHERE is_to_changed
+
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_until) = 1 THEN
+        final_until := distinct_until[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_until_input THEN
+        final_until := OLD.valid_until::text;
+    END IF;
+
+
+    IF final_until IS NULL THEN
+        final_until := 'infinity';
+    END IF;
+
+
+    IF final_from IS NULL OR final_until IS NULL THEN
+
+        RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%", "%" (with "%"), or the pair "%"/"%" must be provided.', 'valid_range', 'valid_to', 'valid_from', 'valid_from', 'valid_until';
+
+    END IF;
+
+    NEW.valid_from := final_from::date;
+    NEW.valid_until := final_until::date;
+
+
+    IF final_until = 'infinity' THEN
+        NEW.valid_to := 'infinity'::date;
+    ELSE
+        NEW.valid_to := (final_until::date - 1);
+    END IF;
+
+
+    BEGIN
+        NEW.valid_range := daterange(final_from::date, final_until::date, '[)');
+    EXCEPTION WHEN data_exception THEN
+        -- Let the table's CHECK constraint handle invalid bounds (e.g., from >= until).
+    END;
+
+    RETURN NEW;
+END;
+$function$
 INSERT INTO sync_test_default (id, valid_from, valid_to) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_test_default;
  id |       valid_range       | valid_from |  valid_to  | valid_until 
@@ -83,6 +252,24 @@ SELECT sql_saga.add_era('sync_test_disabled', 'valid_range', synchronize_columns
 ---------
  t
 (1 row)
+
+TABLE sql_saga.era;
+ table_schema |     table_name     | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |    bounds_check_constraint     | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+--------------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+--------------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+ public       | sync_test_disabled | valid    | valid_range       |                        |                         | daterange  | datemultirange  | date          | D                      | sync_test_disabled_valid_check |                           |                      | t                        |                        |                                 |                   | 
+(1 row)
+
+\d sync_test_disabled
+            Table "public.sync_test_disabled"
+   Column    |   Type    | Collation | Nullable | Default 
+-------------+-----------+-----------+----------+---------
+ id          | integer   |           |          | 
+ valid_range | daterange |           | not null | 
+ valid_from  | date      |           |          | 
+ valid_to    | date      |           |          | 
+ valid_until | date      |           |          | 
+Check constraints:
+    "sync_test_disabled_valid_check" CHECK (NOT isempty(valid_range))
 
 \d sync_test_disabled
             Table "public.sync_test_disabled"
@@ -116,6 +303,12 @@ NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_c
  t
 (1 row)
 
+TABLE sql_saga.era;
+ table_schema |      table_name       | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |      bounds_check_constraint      |  boundary_check_constraint  | valid_to_column_name | trigger_applies_defaults |            sync_temporal_trg_name             |         sync_temporal_trg_function_name          | audit_schema_name | audit_table_name 
+--------------+-----------------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-----------------------------------+-----------------------------+----------------------+--------------------------+-----------------------------------------------+--------------------------------------------------+-------------------+------------------
+ public       | sync_test_custom_name | valid    | date_range        | start_date             | until_date              | daterange  | datemultirange  | date          | D                      | sync_test_custom_name_valid_check | sync_test_custom_name_check | to_date              | t                        | sync_test_custom_name_valid_sync_temporal_trg | public_sync_test_custom_name_valid_template_sync |                   | 
+(1 row)
+
 \d sync_test_custom_name
           Table "public.sync_test_custom_name"
    Column   |   Type    | Collation | Nullable | Default 
@@ -129,8 +322,171 @@ Check constraints:
     "sync_test_custom_name_check" CHECK (start_date < until_date AND start_date > '-infinity'::date)
     "sync_test_custom_name_valid_check" CHECK (NOT isempty(date_range))
 Triggers:
-    sync_test_custom_name_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF date_range, to_date, start_date, until_date ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('date_range', 'start_date', 'until_date', 'to_date', 'date', 't')
+    sync_test_custom_name_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF date_range, to_date, start_date, until_date ON sync_test_custom_name FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_custom_name_valid_template_sync()
 
+\sf sql_saga.public_sync_test_custom_name_valid_template_sync
+CREATE OR REPLACE FUNCTION sql_saga.public_sync_test_custom_name_valid_template_sync()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    final_from text;
+    final_until text;
+
+    from_via_bounds text;
+    until_via_bounds text;
+    from_via_range text;
+    until_via_range text;
+
+
+    until_via_to text;
+
+
+    from_sources text[] := ARRAY[]::text[];
+    until_sources text[] := ARRAY[]::text[];
+    distinct_from text[];
+    distinct_until text[];
+
+    is_range_changed boolean;
+    is_from_changed boolean;
+    is_until_changed boolean;
+    is_to_changed boolean := false;
+
+    has_from_input boolean;
+    has_until_input boolean;
+BEGIN
+    IF NEW.date_range = 'empty'::daterange THEN
+        RAISE EXCEPTION 'Cannot use an empty range for temporal column "%"', 'date_range';
+    END IF;
+
+    is_range_changed := (TG_OP = 'INSERT' AND NEW.date_range IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.date_range IS DISTINCT FROM OLD.date_range);
+
+    is_from_changed := (TG_OP = 'INSERT' AND NEW.start_date IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.start_date IS DISTINCT FROM OLD.start_date);
+
+    is_until_changed := (TG_OP = 'INSERT' AND NEW.until_date IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.until_date IS DISTINCT FROM OLD.until_date);
+
+
+    is_to_changed := (TG_OP = 'INSERT' AND NEW.to_date IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.to_date IS DISTINCT FROM OLD.to_date);
+
+
+    has_from_input := is_range_changed OR is_from_changed;
+    has_until_input := is_range_changed OR is_until_changed OR is_to_changed;
+
+    IF is_range_changed THEN
+        from_via_range := lower(NEW.date_range)::text;
+        until_via_range := upper(NEW.date_range)::text;
+    END IF;
+
+    IF is_from_changed THEN
+        from_via_bounds := NEW.start_date::text;
+    END IF;
+
+    IF is_until_changed THEN
+        until_via_bounds := NEW.until_date::text;
+    END IF;
+
+
+    IF is_to_changed THEN
+        until_via_to := (NEW.to_date::date + 1)::text;
+    END IF;
+
+
+    IF is_range_changed AND from_via_range IS NOT NULL THEN
+        from_sources := from_sources || from_via_range;
+    END IF;
+    IF is_from_changed AND from_via_bounds IS NOT NULL THEN
+        from_sources := from_sources || from_via_bounds;
+    END IF;
+
+    SELECT array_agg(DISTINCT v) INTO distinct_from FROM unnest(from_sources) AS v;
+
+    IF cardinality(distinct_from) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent start of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'date_range' AS key, from_via_range AS val WHERE is_range_changed AND from_via_range IS NOT NULL
+                UNION ALL SELECT 'start_date' AS key, from_via_bounds AS val WHERE is_from_changed AND from_via_bounds IS NOT NULL
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_from) = 1 THEN
+        final_from := distinct_from[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_from_input THEN
+        final_from := OLD.start_date::text;
+    END IF;
+
+    IF is_range_changed AND until_via_range IS NOT NULL THEN
+        until_sources := until_sources || until_via_range;
+    END IF;
+    IF is_until_changed AND until_via_bounds IS NOT NULL THEN
+        until_sources := until_sources || until_via_bounds;
+    END IF;
+
+
+    IF is_to_changed THEN
+        IF final_from IS NULL THEN
+            RAISE EXCEPTION 'When setting "%", the start of the period must also be provided via "%" or "%".', 'to_date', 'start_date', 'date_range';
+        END IF;
+        until_sources := until_sources || until_via_to;
+    END IF;
+
+
+    SELECT array_agg(DISTINCT v) INTO distinct_until FROM unnest(until_sources) AS v;
+
+    IF cardinality(distinct_until) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent end of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'date_range' AS key, until_via_range AS val WHERE is_range_changed AND until_via_range IS NOT NULL
+                UNION ALL SELECT 'until_date' AS key, until_via_bounds AS val WHERE is_until_changed AND until_via_bounds IS NOT NULL
+
+                UNION ALL SELECT 'to_date' AS key, until_via_to AS val WHERE is_to_changed
+
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_until) = 1 THEN
+        final_until := distinct_until[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_until_input THEN
+        final_until := OLD.until_date::text;
+    END IF;
+
+
+    IF final_until IS NULL THEN
+        final_until := 'infinity';
+    END IF;
+
+
+    IF final_from IS NULL OR final_until IS NULL THEN
+
+        RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%", "%" (with "%"), or the pair "%"/"%" must be provided.', 'date_range', 'to_date', 'start_date', 'start_date', 'until_date';
+
+    END IF;
+
+    NEW.start_date := final_from::date;
+    NEW.until_date := final_until::date;
+
+
+    IF final_until = 'infinity' THEN
+        NEW.to_date := 'infinity'::date;
+    ELSE
+        NEW.to_date := (final_until::date - 1);
+    END IF;
+
+
+    BEGIN
+        NEW.date_range := daterange(final_from::date, final_until::date, '[)');
+    EXCEPTION WHEN data_exception THEN
+        -- Let the table's CHECK constraint handle invalid bounds (e.g., from >= until).
+    END;
+
+    RETURN NEW;
+END;
+$function$
 INSERT INTO sync_test_custom_name (id, start_date, to_date) VALUES (1, '2024-01-01', '2024-12-31');
 SELECT id, date_range, start_date, until_date, to_date FROM sync_test_custom_name;
  id |       date_range        | start_date | until_date |  to_date   
@@ -151,6 +507,12 @@ NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_col
  t
 (1 row)
 
+TABLE sql_saga.era;
+ table_schema |     table_name      | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |     bounds_check_constraint     | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |           sync_temporal_trg_name            |        sync_temporal_trg_function_name         | audit_schema_name | audit_table_name 
+--------------+---------------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+---------------------------------+---------------------------+----------------------+--------------------------+---------------------------------------------+------------------------------------------------+-------------------+------------------
+ public       | sync_test_generated | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | sync_test_generated_valid_check |                           |                      | t                        | sync_test_generated_valid_sync_temporal_trg | public_sync_test_generated_valid_template_sync |                   | 
+(1 row)
+
 \d sync_test_generated
                                         Table "public.sync_test_generated"
    Column    |   Type    | Collation | Nullable |                             Default                              
@@ -163,8 +525,147 @@ NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_col
 Check constraints:
     "sync_test_generated_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_test_generated_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_test_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    sync_test_generated_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_test_generated FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_generated_valid_template_sync()
 
+\sf sql_saga.public_sync_test_generated_valid_template_sync
+CREATE OR REPLACE FUNCTION sql_saga.public_sync_test_generated_valid_template_sync()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    final_from text;
+    final_until text;
+
+    from_via_bounds text;
+    until_via_bounds text;
+    from_via_range text;
+    until_via_range text;
+
+
+
+    from_sources text[] := ARRAY[]::text[];
+    until_sources text[] := ARRAY[]::text[];
+    distinct_from text[];
+    distinct_until text[];
+
+    is_range_changed boolean;
+    is_from_changed boolean;
+    is_until_changed boolean;
+    is_to_changed boolean := false;
+
+    has_from_input boolean;
+    has_until_input boolean;
+BEGIN
+    IF NEW.valid_range = 'empty'::daterange THEN
+        RAISE EXCEPTION 'Cannot use an empty range for temporal column "%"', 'valid_range';
+    END IF;
+
+    is_range_changed := (TG_OP = 'INSERT' AND NEW.valid_range IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_range IS DISTINCT FROM OLD.valid_range);
+
+    is_from_changed := (TG_OP = 'INSERT' AND NEW.valid_from IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_from IS DISTINCT FROM OLD.valid_from);
+
+    is_until_changed := (TG_OP = 'INSERT' AND NEW.valid_until IS NOT NULL)
+        OR (TG_OP = 'UPDATE' AND NEW.valid_until IS DISTINCT FROM OLD.valid_until);
+
+
+
+    has_from_input := is_range_changed OR is_from_changed;
+    has_until_input := is_range_changed OR is_until_changed OR is_to_changed;
+
+    IF is_range_changed THEN
+        from_via_range := lower(NEW.valid_range)::text;
+        until_via_range := upper(NEW.valid_range)::text;
+    END IF;
+
+    IF is_from_changed THEN
+        from_via_bounds := NEW.valid_from::text;
+    END IF;
+
+    IF is_until_changed THEN
+        until_via_bounds := NEW.valid_until::text;
+    END IF;
+
+
+
+    IF is_range_changed AND from_via_range IS NOT NULL THEN
+        from_sources := from_sources || from_via_range;
+    END IF;
+    IF is_from_changed AND from_via_bounds IS NOT NULL THEN
+        from_sources := from_sources || from_via_bounds;
+    END IF;
+
+    SELECT array_agg(DISTINCT v) INTO distinct_from FROM unnest(from_sources) AS v;
+
+    IF cardinality(distinct_from) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent start of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'valid_range' AS key, from_via_range AS val WHERE is_range_changed AND from_via_range IS NOT NULL
+                UNION ALL SELECT 'valid_from' AS key, from_via_bounds AS val WHERE is_from_changed AND from_via_bounds IS NOT NULL
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_from) = 1 THEN
+        final_from := distinct_from[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_from_input THEN
+        final_from := OLD.valid_from::text;
+    END IF;
+
+    IF is_range_changed AND until_via_range IS NOT NULL THEN
+        until_sources := until_sources || until_via_range;
+    END IF;
+    IF is_until_changed AND until_via_bounds IS NOT NULL THEN
+        until_sources := until_sources || until_via_bounds;
+    END IF;
+
+
+
+    SELECT array_agg(DISTINCT v) INTO distinct_until FROM unnest(until_sources) AS v;
+
+    IF cardinality(distinct_until) > 1 THEN
+        RAISE EXCEPTION 'Inconsistent end of period provided. Sources: %',
+            (SELECT jsonb_object_agg(key, val)
+             FROM (
+                SELECT 'valid_range' AS key, until_via_range AS val WHERE is_range_changed AND until_via_range IS NOT NULL
+                UNION ALL SELECT 'valid_until' AS key, until_via_bounds AS val WHERE is_until_changed AND until_via_bounds IS NOT NULL
+
+             ) AS s);
+    END IF;
+
+    IF cardinality(distinct_until) = 1 THEN
+        final_until := distinct_until[1];
+    ELSIF TG_OP = 'UPDATE' AND NOT has_until_input THEN
+        final_until := OLD.valid_until::text;
+    END IF;
+
+
+    IF final_until IS NULL THEN
+        final_until := 'infinity';
+    END IF;
+
+
+    IF final_from IS NULL OR final_until IS NULL THEN
+
+        RAISE EXCEPTION 'The temporal period could not be determined. At least one of "%" or the pair "%"/"%" must be provided.', 'valid_range', 'valid_from', 'valid_until';
+
+    END IF;
+
+    NEW.valid_from := final_from::date;
+    NEW.valid_until := final_until::date;
+
+
+
+    BEGIN
+        NEW.valid_range := daterange(final_from::date, final_until::date, '[)');
+    EXCEPTION WHEN data_exception THEN
+        -- Let the table's CHECK constraint handle invalid bounds (e.g., from >= until).
+    END;
+
+    RETURN NEW;
+END;
+$function$
 INSERT INTO sync_test_generated (id, valid_range) VALUES (1, '[2024-01-01,2025-01-01)');
 SELECT id, valid_from, valid_to, valid_until FROM sync_test_generated;
  id | valid_from |  valid_to  | valid_until 
@@ -198,7 +699,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_wrong_type_synchronize_temporal_co
 Check constraints:
     "sync_test_wrong_type_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_test_wrong_type_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_test_wrong_type FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    sync_test_wrong_type_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON sync_test_wrong_type FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_wrong_type_valid_template_sync()
 
 INSERT INTO sync_test_wrong_type (id, valid_from, valid_to, valid_until) VALUES (1, '2024-01-01', 'some text', '2025-01-01');
 SELECT id, valid_range, valid_from, valid_to, valid_until FROM sync_test_wrong_type;
@@ -237,7 +738,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_not_null_synchronize_temporal_colu
 Check constraints:
     "sync_test_not_null_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_test_not_null_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_not_null FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    sync_test_not_null_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_not_null FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_not_null_valid_template_sync()
 
 -- This insert omits valid_to, but provides valid_until. The trigger will derive
 -- valid_to, and the INSERT should succeed.
@@ -265,7 +766,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_no_defaults_synchronize_temporal_c
 -- This should fail with an exception from the trigger because no bounds can be determined.
 INSERT INTO sync_test_no_defaults (id, valid_from) VALUES (1, '2024-01-01');
 ERROR:  The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 136 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_sync_test_no_defaults_valid_template_sync() line 132 at RAISE
 ROLLBACK TO SAVEPOINT test_6b;
 SAVEPOINT test_6c;
 \echo '--- 6c. INSERT succeeds with defaults enabled when only lower bound is provided ---'
@@ -291,7 +792,7 @@ NOTICE:  sql_saga: Created trigger "sync_test_nullable_with_defaults_synchronize
 Check constraints:
     "sync_test_nullable_with_defaults_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    sync_test_nullable_with_defaults_synchronize_temporal_columns_t BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_nullable_with_defaults FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    sync_test_nullable_with_defaults_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON sync_test_nullable_with_defaults FOR EACH ROW EXECUTE FUNCTION sql_saga.public_sync_test_nullable_with_defaults_valid_template_sync()
 
 -- This should succeed. The trigger will see that valid_until is NULL, apply the
 -- 'infinity' default, and then derive all other representations from that.
@@ -327,21 +828,21 @@ SAVEPOINT test_7a;
 -- This should fail because it creates an inconsistent state. The trigger raises an exception.
 UPDATE sync_test_null_update SET valid_to = NULL WHERE id = 1;
 ERROR:  The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 136 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_sync_test_null_update_valid_template_sync() line 132 at RAISE
 ROLLBACK TO SAVEPOINT test_7a;
 --- 7b. UPDATE setting valid_until to NULL should fail ---
 SAVEPOINT test_7b;
 -- This should also fail for the same reason.
 UPDATE sync_test_null_update SET valid_until = NULL WHERE id = 1;
 ERROR:  The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 136 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_sync_test_null_update_valid_template_sync() line 132 at RAISE
 ROLLBACK TO SAVEPOINT test_7b;
 --- 7c. UPDATE setting valid_from to NULL should fail ---
 SAVEPOINT test_7c;
 -- This should also fail for the same reason.
 UPDATE sync_test_null_update SET valid_from = NULL WHERE id = 1;
 ERROR:  The temporal period could not be determined. At least one of "valid_range", "valid_to" (with "valid_from"), or the pair "valid_from"/"valid_until" must be provided.
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 136 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_sync_test_null_update_valid_template_sync() line 132 at RAISE
 ROLLBACK TO SAVEPOINT test_7c;
 -- Verify the original row is unchanged after the failed update
 SELECT * FROM sync_test_null_update;

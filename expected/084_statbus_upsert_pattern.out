@@ -83,10 +83,10 @@ NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigge
 
 ALTER TABLE location ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | legal_unit | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | legal_unit_valid_check  | legal_unit_check          |                      | t                        |                   | 
- public       | location   | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | location_valid_check    | location_check            |                      | t                        |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |       sync_temporal_trg_name       |    sync_temporal_trg_function_name    | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------------------+---------------------------------------+-------------------+------------------
+ public       | legal_unit | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | legal_unit_valid_check  | legal_unit_check          |                      | t                        | legal_unit_valid_sync_temporal_trg | public_legal_unit_valid_template_sync |                   | 
+ public       | location   | valid    | valid_range       | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | location_valid_check    | location_check            |                      | t                        | location_valid_sync_temporal_trg   | public_location_valid_template_sync   |                   | 
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
@@ -144,7 +144,7 @@ Check constraints:
 Referenced by:
     TABLE "location" CONSTRAINT "location_legal_unit_id_valid" FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES legal_unit(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    legal_unit_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON legal_unit FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    legal_unit_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON legal_unit FOR EACH ROW EXECUTE FUNCTION sql_saga.public_legal_unit_valid_template_sync()
 
 \d location
                   Table "public.location"
@@ -168,7 +168,7 @@ Check constraints:
 Foreign-key constraints:
     "location_legal_unit_id_valid" FOREIGN KEY (legal_unit_id, PERIOD valid_range) REFERENCES legal_unit(id, PERIOD valid_range) DEFERRABLE
 Triggers:
-    location_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON location FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    location_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON location FOR EACH ROW EXECUTE FUNCTION sql_saga.public_location_valid_template_sync()
 
 -- Initial Import
 INSERT INTO legal_unit (id, valid_from, valid_until, name) VALUES
@@ -300,8 +300,8 @@ SELECT sql_saga.drop_era('location');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
 (0 rows)
 
 -- After removing sql_saga, it should be as before.

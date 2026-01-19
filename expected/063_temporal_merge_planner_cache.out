@@ -86,7 +86,7 @@ Check constraints:
     "target_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    target_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    target_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target FOR EACH ROW EXECUTE FUNCTION sql_saga.tmpc_target_valid_template_sync()
 
 \echo '\d tmpc.source1'
 d tmpc.source1
@@ -1442,7 +1442,7 @@ Check constraints:
     "target_nk_not_null_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_nk_not_null_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    target_nk_not_null_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target_nk_not_null FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    target_nk_not_null_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target_nk_not_null FOR EACH ROW EXECUTE FUNCTION sql_saga.tmpc_target_nk_not_null_valid_template_sync()
 
 \echo '\d tmpc.source_nk_not_null'
 d tmpc.source_nk_not_null
@@ -2807,7 +2807,7 @@ Check constraints:
     "target_nk_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    target_nk_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    target_nk_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON tmpc.target_nk FOR EACH ROW EXECUTE FUNCTION sql_saga.tmpc_target_nk_valid_template_sync()
 
 \echo '\d tmpc.source_nk'
 d tmpc.source_nk

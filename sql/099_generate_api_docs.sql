@@ -86,7 +86,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 6
             WHEN p.prokind = 'a' THEN 7
             WHEN p.proname LIKE 'health_check%' THEN 8
-            WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following') THEN 9
+            WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following', 'add_synchronize_temporal_columns_trigger', 'drop_synchronize_temporal_columns_trigger') THEN 9
         END AS category_order,
         CASE
             WHEN p.proname IN ('add_era', 'drop_era') THEN 'Era Management'
@@ -97,7 +97,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             WHEN p.proname IN ('add_system_versioning', 'drop_system_versioning', 'set_system_time_era_excluded_columns', 'drop_system_time_era') THEN 'System Versioning'
             WHEN p.prokind = 'a' THEN 'Aggregates'
             WHEN p.proname LIKE 'health_check%' THEN 'Health Checks'
-            WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following') THEN 'Internal and Helper Functions'
+            WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following', 'add_synchronize_temporal_columns_trigger', 'drop_synchronize_temporal_columns_trigger') THEN 'Internal and Helper Functions'
         END AS category_name
     FROM
         pg_proc p

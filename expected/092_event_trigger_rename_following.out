@@ -44,38 +44,38 @@ NOTICE:  sql_saga: Created trigger "rename_test_synchronize_temporal_columns_tri
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test | p        | valid_range       | s                      | e                       | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |     sync_temporal_trg_name      |  sync_temporal_trg_function_name   | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+---------------------------------+------------------------------------+-------------------+------------------
+ public       | rename_test | p        | valid_range       | s                      | e                       | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg | public_rename_test_p_template_sync |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME s TO start;
 ALTER TABLE rename_test RENAME e TO "end";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test | p        | valid_range       | start                  | end                     | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |     sync_temporal_trg_name      |  sync_temporal_trg_function_name   | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+---------------------------------+------------------------------------+-------------------+------------------
+ public       | rename_test | p        | valid_range       | start                  | end                     | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg | public_rename_test_p_template_sync |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME start TO "s < e";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test | p        | valid_range       | s < e                  | end                     | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |     sync_temporal_trg_name      |  sync_temporal_trg_function_name   | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+---------------------------------+------------------------------------+-------------------+------------------
+ public       | rename_test | p        | valid_range       | s < e                  | end                     | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg | public_rename_test_p_template_sync |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME "end" TO "embedded "" symbols";
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |     sync_temporal_trg_name      |  sync_temporal_trg_function_name   | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+---------------------------------+------------------------------------+-------------------+------------------
+ public       | rename_test | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | rename_test_p_check     | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg | public_rename_test_p_template_sync |                   | 
 (1 row)
 
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_p_check TO start_before_end;
 TABLE sql_saga.era;
- table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | start_before_end        | rename_test_check         |                      | t                        |                   | 
+ table_schema | table_name  | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |     sync_temporal_trg_name      |  sync_temporal_trg_function_name   | audit_schema_name | audit_table_name 
+--------------+-------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+---------------------------------+------------------------------------+-------------------+------------------
+ public       | rename_test | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | start_before_end        | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg | public_rename_test_p_template_sync |                   | 
 (1 row)
 
 /* api */
@@ -138,10 +138,10 @@ NOTICE:  sql_saga: Created trigger "rename_test_ref_synchronize_temporal_columns
 (1 row)
 
 TABLE sql_saga.era;
- table_schema |   table_name    | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+-----------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | rename_test     | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | start_before_end        | rename_test_check         |                      | t                        |                   | 
- public       | rename_test_ref | q        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | rename_test_ref_q_check | rename_test_ref_check     |                      | t                        |                   | 
+ table_schema |   table_name    | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |       sync_temporal_trg_name        |    sync_temporal_trg_function_name     | audit_schema_name | audit_table_name 
+--------------+-----------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+-------------------------------------+----------------------------------------+-------------------+------------------
+ public       | rename_test     | p        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | start_before_end        | rename_test_check         |                      | t                        | rename_test_p_sync_temporal_trg     | public_rename_test_p_template_sync     |                   | 
+ public       | rename_test_ref | q        | valid_range       | s < e                  | embedded " symbols      | int4range  | int4multirange  | integer       | N                      | rename_test_ref_q_check | rename_test_ref_check     |                      | t                        | rename_test_ref_q_sync_temporal_trg | public_rename_test_ref_q_template_sync |                   | 
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
@@ -167,13 +167,13 @@ TABLE sql_saga.foreign_keys; -- The column name should be updated here
 
 ROLLBACK TO SAVEPOINT pristine;
 /* Test protection of synchronize_temporal_columns_trigger */
-ALTER TRIGGER rename_test_synchronize_temporal_columns_trigger ON rename_test RENAME TO my_trigger;
-ERROR:  cannot drop or rename trigger "rename_test_synchronize_temporal_columns_trigger" on table "rename_test" because it is managed by era "p"
-CONTEXT:  PL/pgSQL function rename_following() line 581 at RAISE
+ALTER TRIGGER rename_test_p_sync_temporal_trg ON rename_test RENAME TO my_trigger;
+ERROR:  cannot drop or rename trigger "rename_test_p_sync_temporal_trg" on table "rename_test" because it is managed by era "p"
+CONTEXT:  PL/pgSQL function rename_following() line 582 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
-ALTER TRIGGER rename_test_ref_synchronize_temporal_columns_trigger ON rename_test_ref RENAME TO another_trigger;
-ERROR:  cannot drop or rename trigger "rename_test_ref_synchronize_temporal_columns_trigger" on table "rename_test_ref" because it is managed by era "q"
-CONTEXT:  PL/pgSQL function rename_following() line 581 at RAISE
+ALTER TRIGGER rename_test_ref_q_sync_temporal_trg ON rename_test_ref RENAME TO another_trigger;
+ERROR:  cannot drop or rename trigger "rename_test_ref_q_sync_temporal_trg" on table "rename_test_ref" because it is managed by era "q"
+CONTEXT:  PL/pgSQL function rename_following() line 582 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |         type         | table_schema |   table_name    |    column_names     | fk_era_name |                   fk_table_columns_snapshot                   |       unique_key_name        | match_type | update_action | delete_action | fk_insert_trigger | fk_update_trigger | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |                fk_index_name                 

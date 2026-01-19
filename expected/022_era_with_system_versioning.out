@@ -73,10 +73,10 @@ Check constraints:
     "temporal_and_versioned_system_valid_range_infinity_check" CHECK (upper(system_valid_range) = 'infinity'::timestamp with time zone)
     "temporal_and_versioned_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    temporal_and_versioned_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
     temporal_and_versioned_system_time_generated_always BEFORE INSERT OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.generated_always_as_row_start_end('system_valid_range')
     temporal_and_versioned_system_time_write_history AFTER DELETE OR UPDATE ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.write_history('system_valid_range')
     temporal_and_versioned_truncate AFTER TRUNCATE ON temporal_and_versioned FOR EACH STATEMENT EXECUTE FUNCTION sql_saga.truncate_system_versioning()
+    temporal_and_versioned_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.public_temporal_and_versioned_valid_template_sync()
 
 -- 4. Perform some DML
 INSERT INTO temporal_and_versioned (id, name, valid_from, valid_until)
@@ -122,7 +122,7 @@ Indexes:
 Check constraints:
     "temporal_and_versioned_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    temporal_and_versioned_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    temporal_and_versioned_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON temporal_and_versioned FOR EACH ROW EXECUTE FUNCTION sql_saga.public_temporal_and_versioned_valid_template_sync()
 
 -- 6. Drop the unique key and the era to return table to original state
 SELECT sql_saga.drop_unique_key('temporal_and_versioned', ARRAY['id'], 'valid', cleanup => true);

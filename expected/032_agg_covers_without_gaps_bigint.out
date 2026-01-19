@@ -46,9 +46,9 @@ NOTICE:  sql_saga: altering table public.bigint_shifts to add constraints: ADD C
 (1 row)
 
 TABLE sql_saga.era;
- table_schema |  table_name   | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |  bounds_check_constraint  | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | audit_schema_name | audit_table_name 
---------------+---------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+---------------------------+---------------------------+----------------------+--------------------------+-------------------+------------------
- public       | bigint_shifts | valid    | valid_range       |                        |                         | int8range  | int8multirange  | bigint        | N                      | bigint_shifts_valid_check |                           |                      | t                        |                   | 
+ table_schema |  table_name   | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category |  bounds_check_constraint  | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
+--------------+---------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+---------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+ public       | bigint_shifts | valid    | valid_range       |                        |                         | int8range  | int8multirange  | bigint        | N                      | bigint_shifts_valid_check |                           |                      | t                        |                        |                                 |                   | 
 (1 row)
 
 TABLE sql_saga.unique_keys;

@@ -120,17 +120,17 @@ $$ LANGUAGE sql;
 \echo '-- Triggers on child table --'
 -- Triggers on child table --
 SELECT * FROM mtt.get_trigger_status('mtt.child');
-                trigger_name                | is_enabled 
---------------------------------------------+------------
- child_synchronize_temporal_columns_trigger | enabled
+         trigger_name          | is_enabled 
+-------------------------------+------------
+ child_valid_sync_temporal_trg | enabled
 (1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
-                trigger_name                 | is_enabled 
----------------------------------------------+------------
- parent_synchronize_temporal_columns_trigger | enabled
+          trigger_name          | is_enabled 
+--------------------------------+------------
+ parent_valid_sync_temporal_trg | enabled
 (1 row)
 
 \echo '--- Disabling triggers for both tables ---'
@@ -141,17 +141,17 @@ CALL sql_saga.disable_temporal_triggers('mtt.parent', 'mtt.child');
 \echo '-- Triggers on child table --'
 -- Triggers on child table --
 SELECT * FROM mtt.get_trigger_status('mtt.child');
-                trigger_name                | is_enabled 
---------------------------------------------+------------
- child_synchronize_temporal_columns_trigger | enabled
+         trigger_name          | is_enabled 
+-------------------------------+------------
+ child_valid_sync_temporal_trg | enabled
 (1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
-                trigger_name                 | is_enabled 
----------------------------------------------+------------
- parent_synchronize_temporal_columns_trigger | enabled
+          trigger_name          | is_enabled 
+--------------------------------+------------
+ parent_valid_sync_temporal_trg | enabled
 (1 row)
 
 \echo '--- Enabling triggers for both tables ---'
@@ -162,17 +162,17 @@ CALL sql_saga.enable_temporal_triggers('mtt.parent', 'mtt.child');
 \echo '-- Triggers on child table --'
 -- Triggers on child table --
 SELECT * FROM mtt.get_trigger_status('mtt.child');
-                trigger_name                | is_enabled 
---------------------------------------------+------------
- child_synchronize_temporal_columns_trigger | enabled
+         trigger_name          | is_enabled 
+-------------------------------+------------
+ child_valid_sync_temporal_trg | enabled
 (1 row)
 
 \echo '-- Triggers on parent table --'
 -- Triggers on parent table --
 SELECT * FROM mtt.get_trigger_status('mtt.parent');
-                trigger_name                 | is_enabled 
----------------------------------------------+------------
- parent_synchronize_temporal_columns_trigger | enabled
+          trigger_name          | is_enabled 
+--------------------------------+------------
+ parent_valid_sync_temporal_trg | enabled
 (1 row)
 
 ROLLBACK;

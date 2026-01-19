@@ -98,7 +98,7 @@ Check constraints:
     "person_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "person_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    person_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON identity_discovery.person FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    person_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON identity_discovery.person FOR EACH ROW EXECUTE FUNCTION sql_saga.identity_discovery_person_valid_template_sync()
 
 -- 2. The source table for data loading, with a columns.
 CREATE TEMP TABLE source_data (

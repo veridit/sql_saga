@@ -94,14 +94,14 @@ BEGIN
 --            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_oid;
 --        END IF;
 
+        /* Drop synchronization trigger BEFORE removing from catalog */
+        IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+            CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+        END IF;
+
         /* Remove from catalog */
         DELETE FROM sql_saga.era AS p
         WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
-
-        /* Drop synchronization trigger */
-        IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
-             EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
-        END IF;
 
         /* Delete bounds check constraint (NOT isempty(range)). */
         IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
@@ -158,14 +158,14 @@ BEGIN
     FROM sql_saga.unique_keys AS uk
     WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name);
 
+    /* Drop synchronization trigger BEFORE removing from catalog */
+    IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+        CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+    END IF;
+
     /* Remove from catalog */
     DELETE FROM sql_saga.era AS p
     WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
-
-    /* Drop synchronization trigger */
-    IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
-         EXECUTE format('DROP TRIGGER IF EXISTS %I ON %s', format('%s_synchronize_temporal_columns_trigger', table_name) /* %I */, table_oid /* %s */);
-    END IF;
 
     /* Delete bounds check constraint (NOT isempty(range)). */
     IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN

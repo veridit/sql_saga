@@ -48,7 +48,7 @@ NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_t
 Check constraints:
     "defaults_date_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    defaults_date_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON defaults_date FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'valid_to', 'date', 't')
+    defaults_date_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_to, valid_from, valid_until ON defaults_date FOR EACH ROW EXECUTE FUNCTION sql_saga.public_defaults_date_valid_template_sync()
 
 -- Test implicit default (omitting column)
 INSERT INTO defaults_date (val, valid_range) VALUES ('a', daterange('2000-01-01', NULL));
@@ -81,7 +81,7 @@ NOTICE:  sql_saga: Created trigger "defaults_ts_synchronize_temporal_columns_tri
 Check constraints:
     "defaults_ts_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    defaults_ts_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_ts FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'timestamp with time zone', 't')
+    defaults_ts_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_ts FOR EACH ROW EXECUTE FUNCTION sql_saga.public_defaults_ts_valid_template_sync()
 
 INSERT INTO defaults_ts (val, valid_range) VALUES ('a', tstzrange('2000-01-01', NULL));
 TABLE defaults_ts;
@@ -110,7 +110,7 @@ NOTICE:  sql_saga: Created trigger "defaults_numeric_synchronize_temporal_column
 Check constraints:
     "defaults_numeric_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    defaults_numeric_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_numeric FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'numeric', 't')
+    defaults_numeric_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_numeric FOR EACH ROW EXECUTE FUNCTION sql_saga.public_defaults_numeric_valid_template_sync()
 
 INSERT INTO defaults_numeric (val, valid_range) VALUES ('a', numrange(100, NULL));
 TABLE defaults_numeric;
@@ -124,7 +124,7 @@ TABLE defaults_numeric;
 SAVEPOINT expect_inf_inf_fail;
 INSERT INTO defaults_numeric (val, valid_range) VALUES ('b', numrange('infinity', 'infinity'));
 ERROR:  Cannot use an empty range for temporal column "valid_range"
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 57 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_defaults_numeric_valid_template_sync() line 27 at RAISE
 ROLLBACK TO SAVEPOINT expect_inf_inf_fail;
 TABLE defaults_numeric;
  val |  valid_range   | valid_from | valid_until 
@@ -153,7 +153,7 @@ NOTICE:  sql_saga: Created trigger "no_neg_inf_synchronize_temporal_columns_trig
 Check constraints:
     "no_neg_inf_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    no_neg_inf_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON no_neg_inf FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    no_neg_inf_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON no_neg_inf FOR EACH ROW EXECUTE FUNCTION sql_saga.public_no_neg_inf_valid_template_sync()
 
 -- This should fail due to the new check constraint
 SAVEPOINT expect_neg_inf_fail;
@@ -180,13 +180,13 @@ NOTICE:  sql_saga: Created trigger "defaults_int_synchronize_temporal_columns_tr
 Check constraints:
     "defaults_int_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    defaults_int_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_int FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'integer', 't')
+    defaults_int_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON defaults_int FOR EACH ROW EXECUTE FUNCTION sql_saga.public_defaults_int_valid_template_sync()
 
 -- This should fail because valid_until is NOT NULL and has no default
 SAVEPOINT expect_fail;
 INSERT INTO defaults_int (val, valid_range) VALUES ('a', int4range(1, NULL));
 ERROR:  invalid input syntax for type integer: "infinity"
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 167 at assignment
+CONTEXT:  PL/pgSQL function sql_saga.public_defaults_int_valid_template_sync() line 123 at assignment
 ROLLBACK TO SAVEPOINT expect_fail;
 TABLE defaults_int;
  val | valid_range | valid_from | valid_until 
@@ -216,13 +216,13 @@ NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trig
 Check constraints:
     "flags_test_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
-    flags_test_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 'f')
+    flags_test_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.public_flags_test_valid_template_sync()
 
 -- This should fail because there is no default
 SAVEPOINT no_default_fail;
 INSERT INTO flags_test (val, valid_range) VALUES ('a', daterange('2000-01-01', NULL));
 ERROR:  The temporal period could not be determined. At least one of "valid_range" or the pair "valid_from"/"valid_until" must be provided.
-CONTEXT:  PL/pgSQL function sql_saga.synchronize_temporal_columns() line 138 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.public_flags_test_valid_template_sync() line 114 at RAISE
 ROLLBACK TO SAVEPOINT no_default_fail;
 ROLLBACK TO SAVEPOINT test_no_defaults;
 -- Test with no bounds check
@@ -243,7 +243,7 @@ NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trig
  valid_from  | date      |           |          | 
  valid_until | date      |           |          | 
 Triggers:
-    flags_test_synchronize_temporal_columns_trigger BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.synchronize_temporal_columns('valid_range', 'valid_from', 'valid_until', 'null', 'date', 't')
+    flags_test_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.public_flags_test_valid_template_sync()
 
 -- Range types have built-in validation that prevents invalid bounds
 -- This should fail with range validation error (even with add_bounds_check => false)

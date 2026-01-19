@@ -482,8 +482,6 @@ SECURITY INVOKER
 ### temporal_merge
 
 > Executes a set-based temporal merge operation. It generates a plan using temporal_merge_plan and then executes it.
-> 
-> **Performance Note**: The planning phase includes eclipse detection using a CROSS JOIN LATERAL pattern that has O(N×M) complexity where N is the number of source rows and M is the average rows per entity. This is necessary to correctly identify when newer source data completely covers older source data. See `doc/internals/eclipse_detection.md` for details.
 
 ```sql
 PROCEDURE temporal_merge(
@@ -596,12 +594,36 @@ SECURITY DEFINER
 
 ## Internal and Helper Functions
 
+### add_synchronize_temporal_columns_trigger
+
+> Generator for high-performance table-specific temporal column sync triggers (8-9x faster).
+
+```sql
+PROCEDURE add_synchronize_temporal_columns_trigger(
+    IN table_oid regclass,
+    IN era_name name
+)
+SECURITY DEFINER
+```
+
 ### drop_protection
 
 > An event trigger function that prevents accidental dropping of sql_saga-managed objects.
 
 ```sql
 FUNCTION drop_protection() RETURNS event_trigger
+SECURITY DEFINER
+```
+
+### drop_synchronize_temporal_columns_trigger
+
+> Drops the table-specific sync trigger and its specialized trigger function.
+
+```sql
+PROCEDURE drop_synchronize_temporal_columns_trigger(
+    IN table_oid regclass,
+    IN era_name name
+)
 SECURITY DEFINER
 ```
 
