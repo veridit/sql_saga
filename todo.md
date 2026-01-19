@@ -6,8 +6,8 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 ## Current Focus: valid_range API Transition & Performance
 
 ### Phase 2: Performance Optimization
-- [ ] **Consider C-based sync trigger** - Current PL/pgSQL sync trigger causes 2.4-3.8x overhead
-  for INSERT/UPDATE on temporal keys. A C trigger could eliminate most of this overhead.
+- [ ] **Consider template-based sync triggers** - Analysis shows template-based triggers are 8-9x faster
+  than generic triggers by eliminating dynamic SQL and JSONB overhead (see doc/internals/optimization_findings.md)
 
 ### Phase 3: temporal_merge Performance Investigation
 Performance analysis from benchmarks (after CASE→OR and split-path optimizations):
@@ -35,8 +35,9 @@ Completed optimizations (2026-01-18):
 - [x] **Added compound index on (id, valid_range)** - ~20x speedup for exact match queries
 
 Remaining optimizations:
+- [ ] **Implement eclipse detection optimizations** - Composite index + pre-computed ranges for 30-40% improvement
+  (see doc/internals/eclipse_detection.md and optimization_findings.md)
 - [ ] **Consider typed temp tables** - Eliminate range type casting (e.g., ::daterange) overhead
-- [ ] **Review CROSS JOIN LATERAL in source_with_eclipsed_flag** - ~200ms for eclipse detection
 
 ## Medium Priority - Refactoring & API Improvements
 - [ ] **Consider removing obsolete FK trigger columns from schema:** After migrating to native PostgreSQL 18 temporal FKs, the following columns in `sql_saga.foreign_keys` are always NULL for temporal_to_temporal FKs and could potentially be removed:
@@ -55,6 +56,13 @@ Remaining optimizations:
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+
+## 2026-01-19
+- Document CROSS JOIN LATERAL eclipse detection logic (required for correctness)
+- Analyze eclipse detection performance and identify optimization strategies
+- Test template-based trigger approach: 8-9x faster than generic triggers
+- Abandon C-based trigger implementation (5-7x slower due to SPI overhead)
+- Create comprehensive optimization documentation (doc/internals/eclipse_detection.md, optimization_findings.md)
 
 ## 2026-01-18
 - Add compound index (id, valid_range) to add_unique_key for temporal_merge performance
