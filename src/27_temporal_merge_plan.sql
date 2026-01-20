@@ -1314,7 +1314,7 @@ BEGIN
                 -- - s_valid_from/until: the source row's original temporal boundaries
                 -- - t_valid_from/until: the target row's temporal boundaries (if matched)
                 -- Note: source_row_id removed as redundant with contributing_row_ids[1]
-                v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'lookup_key_values', jsonb_build_object(%1$s), 's_data', source_payloads.data_payload, 't_data', seg.t_data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', seg.t_ephemeral_payload, 'seg_valid_from', seg.valid_from, 'seg_valid_until', seg.valid_until, 's_valid_from', source_payloads.valid_from, 's_valid_until', source_payloads.valid_until, 't_valid_from', seg.t_valid_from, 't_valid_until', seg.t_valid_until, 's_t_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, seg.t_valid_from, seg.t_valid_until), 'target_stable_pk', seg.target_stable_pk_payload, 'segment_stable_pk', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_natural_identity_column_values_are_null', seg.natural_identity_column_values_are_null, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id) as trace$$,
+                v_trace_seed_expr := format($$jsonb_build_object('cte', 'resolved_atomic_segments_with_payloads', 'contributing_row_ids', source_payloads.contributing_row_ids, 'constellation', %4$L, 'lookup_key_values', jsonb_build_object(%1$s), 's_data', source_payloads.data_payload, 't_data', seg.t_data_payload, 's_ephemeral', source_payloads.ephemeral_payload, 't_ephemeral', seg.t_ephemeral_payload, 'seg_valid_from', seg.valid_from, 'seg_valid_until', seg.valid_until, 's_valid_from', source_payloads.valid_from, 's_valid_until', source_payloads.valid_until, 't_valid_from', seg.t_valid_from, 't_valid_until', seg.t_valid_until, 'orig_source_target_relation', sql_saga.get_allen_relation(source_payloads.valid_from, source_payloads.valid_until, seg.t_valid_from, seg.t_valid_until), 'target_stable_pk', seg.target_stable_pk_payload, 'segment_stable_pk', seg.stable_pk_payload, 'seg_is_new_entity', seg.is_new_entity, 'seg_stable_identity_columns_are_null', seg.stable_identity_columns_are_null, 'seg_lookup_columns_unavailable', seg.lookup_columns_unavailable, 'stable_identity_values', %2$s, 'natural_identity_values', %3$s, 'canonical_causal_id', seg.causal_id) as trace$$,
                     (SELECT string_agg(format('%L, seg.%I', col, col), ',') FROM unnest(v_lookup_columns) col),
                     v_identity_cols_trace_expr,
                     v_natural_identity_cols_trace_expr,
@@ -1450,7 +1450,7 @@ BEGIN
                         %6$s /* v_source_ephemeral_payload_expr */ AS ephemeral_payload,
                         %7$s /* v_stable_pk_cols_jsonb_build_source */ as stable_pk_payload,
                         %8$s /* v_entity_id_check_is_null_expr */ as stable_identity_columns_are_null,
-                        %9$s /* v_lookup_cols_are_null_expr */ as natural_identity_column_values_are_null,
+                        %9$s /* v_lookup_cols_are_null_expr */ as lookup_columns_unavailable,
                         %10$s /* v_is_identifiable_expr */ as is_identifiable,
                         %11$s /* v_consistency_check_expr */ as temporal_columns_are_consistent
                     FROM %12$s /* v_source_table_ident */ source_table
@@ -1514,9 +1514,9 @@ BEGIN
                     FROM source_initial s2
                     WHERE
                         (
-                            (NOT s1.natural_identity_column_values_are_null AND (%1$s))
+                            (NOT s1.lookup_columns_unavailable AND (%1$s))
                             OR
-                            (s1.natural_identity_column_values_are_null AND s1.causal_id = s2.causal_id)
+                            (s1.lookup_columns_unavailable AND s1.causal_id = s2.causal_id)
                         )
                         AND
                         -- Only consider newer rows (higher row_id) as potential eclipsers.
@@ -1614,7 +1614,7 @@ BEGIN
                 SELECT DISTINCT ON (p.source_row_id)
                     p.source_row_id, p.causal_id, p.valid_from, p.valid_until, p.data_payload, p.ephemeral_payload,
                     (p.stable_identity_columns_are_null AND p.discovered_stable_pk_payload IS NULL) as stable_identity_columns_are_null,
-                    p.natural_identity_column_values_are_null, p.is_identifiable,
+                    p.lookup_columns_unavailable, p.is_identifiable,
                     p.is_ambiguous, p.conflicting_ids, p.is_eclipsed, p.eclipsed_by,
                     p.temporal_columns_are_consistent,
                     COALESCE(p.stable_pk_payload, p.discovered_stable_pk_payload) as stable_pk_payload,
@@ -1740,7 +1740,7 @@ BEGIN
             -- CTE 10: all_rows
             v_sql := format($SQL$
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
-                SELECT %1$s /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
+                SELECT %1$s /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, lookup_columns_unavailable, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
                 UNION ALL
                 SELECT
                     %2$s /* v_non_temporal_tr_qualified_lookup_cols_prefix */
@@ -1750,7 +1750,7 @@ BEGIN
                     false as is_new_entity,
                     target_row.stable_pk_payload,
                     false as stable_identity_columns_are_null,
-                    false as natural_identity_column_values_are_null,
+                    false as lookup_columns_unavailable,
                     true as is_identifiable,
                     false as is_ambiguous,
                     NULL::jsonb as conflicting_ids,
@@ -1765,9 +1765,9 @@ BEGIN
             -- CTE 11: time_points_raw
             v_sql := format($SQL$
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
-                SELECT %1$s, causal_id, valid_from AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
+                SELECT %1$s, causal_id, valid_from AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, lookup_columns_unavailable, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
                 UNION ALL
-                SELECT %1$s, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
+                SELECT %1$s, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, lookup_columns_unavailable, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
             $SQL$,
                 v_lookup_cols_select_list_no_alias /* %1$s */
             );
@@ -1802,7 +1802,7 @@ BEGIN
                     tpu.is_new_entity,
                     tpu.unified_stable_pk_payload as stable_pk_payload,
                     tpu.stable_identity_columns_are_null,
-                    tpu.natural_identity_column_values_are_null,
+                    tpu.lookup_columns_unavailable,
                     tpu.is_identifiable,
                     tpu.is_ambiguous,
                     tpu.conflicting_ids,
@@ -1825,7 +1825,7 @@ BEGIN
             -- CTE 14: atomic_segments
             v_sql := format($SQL$
                 CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
-                SELECT grouping_key, %1$s, causal_id, point as valid_from, next_point as valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json
+                SELECT grouping_key, %1$s, causal_id, point as valid_from, next_point as valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, lookup_columns_unavailable, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json
                 FROM (
                     SELECT *, LEAD(point) OVER (PARTITION BY grouping_key ORDER BY point) as next_point
                     FROM time_points
@@ -1841,7 +1841,7 @@ BEGIN
             v_sql := format($SQL$
                 CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
                 SELECT
-                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
+                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
                     target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
                     target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
                     target_row.stable_pk_payload as target_stable_pk_payload,
@@ -1863,7 +1863,7 @@ BEGIN
             v_sql := format($SQL$
                 CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
                 SELECT
-                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.natural_identity_column_values_are_null, seg.valid_from, seg.valid_until,
+                    seg.grouping_key, seg.canonical_nk_json, %1$s, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
                     NULL::%3$s as t_valid_from, NULL::%3$s as t_valid_until,
                     NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
                     NULL::jsonb as target_stable_pk_payload,
@@ -1932,7 +1932,7 @@ BEGIN
                         contributing_row_ids,
                         (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
                         (array_concat_agg(contributing_row_ids) FILTER (WHERE contributing_row_ids IS NOT NULL) OVER (PARTITION BY grouping_key, t_valid_from, look_ahead_grp))
-                    ) as propagated_contributing_row_ids,
+                    ) as causal_source_row_ids,
                     COALESCE(
                         s_valid_from,
                         (max(s_valid_from) OVER (PARTITION BY grouping_key, t_valid_from, look_behind_grp)),
@@ -1959,11 +1959,11 @@ BEGIN
             v_sql := format($SQL$
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
                 SELECT
-                    grouping_key, %1$s stable_identity_columns_are_null, natural_identity_column_values_are_null, is_new_entity, is_identifiable, is_ambiguous, conflicting_ids, unified_canonical_nk_json,
-                    valid_from, valid_until, t_valid_from, t_valid_until, propagated_s_valid_from, propagated_s_valid_until, propagated_contributing_row_ids, causal_id, propagated_stable_pk_payload as stable_pk_payload,
-                    propagated_contributing_row_ids IS NULL AS unaffected_target_only_segment,
+                    grouping_key, %1$s stable_identity_columns_are_null, lookup_columns_unavailable, is_new_entity, is_identifiable, is_ambiguous, conflicting_ids, unified_canonical_nk_json,
+                    valid_from, valid_until, t_valid_from, t_valid_until, propagated_s_valid_from, propagated_s_valid_until, causal_source_row_ids, causal_id, propagated_stable_pk_payload as stable_pk_payload,
+                    causal_source_row_ids IS NULL AS unaffected_target_only_segment,
                     s_data_payload, t_data_payload,
-                    sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
+                    sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS orig_source_target_relation,
                     %2$s as data_payload,
                     md5((jsonb_strip_nulls(%2$s))::text) as data_hash,
                     CASE 
@@ -2019,20 +2019,20 @@ BEGIN
                     grouping_key, %1$s,
                     sql_saga.first(causal_id ORDER BY valid_from) as causal_id,
                     sql_saga.first(stable_identity_columns_are_null ORDER BY valid_from) as stable_identity_columns_are_null,
-                    sql_saga.first(natural_identity_column_values_are_null ORDER BY valid_from) as natural_identity_column_values_are_null,
+                    sql_saga.first(lookup_columns_unavailable ORDER BY valid_from) as lookup_columns_unavailable,
                     sql_saga.first(is_new_entity ORDER BY valid_from) as is_new_entity,
                     sql_saga.first(is_identifiable ORDER BY valid_from) as is_identifiable,
                     sql_saga.first(is_ambiguous ORDER BY valid_from) as is_ambiguous,
                     sql_saga.first(conflicting_ids ORDER BY valid_from) as conflicting_ids,
                     sql_saga.first(unified_canonical_nk_json ORDER BY valid_from) as canonical_nk_json,
-                    sql_saga.first(s_t_relation ORDER BY valid_from) as s_t_relation,
+                    sql_saga.first(orig_source_target_relation ORDER BY valid_from) as orig_source_target_relation,
                     sql_saga.first(t_valid_from ORDER BY valid_from) as ancestor_valid_from,
                     MIN(valid_from) as valid_from,
                     MAX(valid_until) as valid_until,
-                    %2$s as data_payload,
+                    %2$s as final_payload,
                     sql_saga.first(stable_pk_payload ORDER BY valid_from DESC) as stable_pk_payload,
                     bool_and(unaffected_target_only_segment) as unaffected_target_only_segment,
-                    (SELECT array_agg(DISTINCT e) FROM unnest(array_concat_agg(propagated_contributing_row_ids)) e WHERE e IS NOT NULL) as row_ids,
+                    (SELECT array_agg(DISTINCT e) FROM unnest(array_concat_agg(causal_source_row_ids)) e WHERE e IS NOT NULL) as row_ids,
                     CASE WHEN %3$L::boolean
                         THEN jsonb_build_object( 'cte', 'coalesced', 'island_group_id', island_group_id, 'coalesced_stable_pk', sql_saga.first(stable_pk_payload ORDER BY valid_from DESC), 'final_payload', sql_saga.first(data_payload ORDER BY valid_from DESC), 'final_payload_sans_ephemeral', sql_saga.first(data_payload - %4$L::text[] ORDER BY valid_from DESC), 'atomic_traces', jsonb_agg((trace || jsonb_build_object('data_hash', data_hash, 'prev_data_hash', prev_data_hash, 'prev_data_payload', prev_data_payload)) ORDER BY valid_from) )
                         ELSE NULL
@@ -2058,14 +2058,14 @@ BEGIN
                     final_seg.conflicting_ids,
                     final_seg.canonical_nk_json,
                     COALESCE(final_seg.stable_identity_columns_are_null, false) as stable_identity_columns_are_null,
-                    COALESCE(final_seg.natural_identity_column_values_are_null, false) as natural_identity_column_values_are_null,
-                    final_seg.valid_from AS f_from, final_seg.valid_until AS f_until, final_seg.data_payload AS f_data, final_seg.row_ids AS f_row_ids, final_seg.stable_pk_payload, final_seg.s_t_relation,
+                    COALESCE(final_seg.lookup_columns_unavailable, false) as lookup_columns_unavailable,
+                    final_seg.valid_from AS f_from, final_seg.valid_until AS f_until, final_seg.final_payload AS f_payload, final_seg.row_ids AS f_row_ids, final_seg.stable_pk_payload, final_seg.orig_source_target_relation,
                     CASE WHEN %2$L::boolean
-                        THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'diff_stable_pk', final_seg.stable_pk_payload, 'final_seg_causal_id', final_seg.causal_id, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.data_payload, 't', target_seg.data_payload))
+                        THEN final_seg.trace || jsonb_build_object('cte', 'diff', 'diff_stable_pk', final_seg.stable_pk_payload, 'final_seg_causal_id', final_seg.causal_id, 'final_payload_vs_target_payload', jsonb_build_object('f', final_seg.final_payload, 't', target_seg.data_payload))
                         ELSE NULL
                     END as trace,
                     final_seg.unaffected_target_only_segment,
-                    target_seg.valid_from as t_from, target_seg.valid_until as t_until, (target_seg.data_payload || target_seg.ephemeral_payload) as t_data,
+                    target_seg.valid_from as t_from, target_seg.valid_until as t_until, (target_seg.data_payload || target_seg.ephemeral_payload) as t_payload,
                     sql_saga.get_allen_relation(target_seg.valid_from, target_seg.valid_until, final_seg.valid_from, final_seg.valid_until) as b_a_relation
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON %3$s
@@ -2083,13 +2083,13 @@ BEGIN
                     d.*,
                     CASE
                         WHEN d.t_from IS NULL OR d.f_from IS NULL THEN NULL
-                        WHEN d.f_from = d.t_from AND d.f_until = d.t_until AND d.f_data IS NOT DISTINCT FROM d.t_data THEN NULL
+                        WHEN d.f_from = d.t_from AND d.f_until = d.t_until AND d.f_payload IS NOT DISTINCT FROM d.t_payload THEN NULL
                         ELSE
                             row_number() OVER (
                                 PARTITION BY d.grouping_key, d.t_from
                                 ORDER BY
                                     CASE WHEN d.f_from = d.t_from THEN 1 ELSE 2 END,
-                                    CASE WHEN d.f_data - %1$L::text[] IS NOT DISTINCT FROM d.t_data - %1$L::text[] THEN 1 ELSE 2 END,
+                                    CASE WHEN d.f_payload - %1$L::text[] IS NOT DISTINCT FROM d.t_payload - %1$L::text[] THEN 1 ELSE 2 END,
                                     d.f_from,
                                     d.f_until
                             )
@@ -2106,7 +2106,7 @@ BEGIN
                 (
                     SELECT * FROM (
                         SELECT
-                            d.f_row_ids as row_ids, d.s_t_relation, d.is_new_entity,
+                            d.f_row_ids as row_ids, d.orig_source_target_relation, d.is_new_entity,
                             CASE
                                 WHEN d.is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action
                                 WHEN d.is_new_entity AND NOT d.is_identifiable THEN 'ERROR'::sql_saga.temporal_merge_plan_action
@@ -2133,7 +2133,7 @@ BEGIN
                             CASE
                                 WHEN d.is_ambiguous THEN NULL
                                 WHEN d.is_new_entity AND NOT d.is_identifiable THEN NULL
-                                ELSE d.f_data
+                                ELSE d.f_payload
                             END as data,
                             CASE
                                 WHEN d.is_ambiguous
@@ -2148,7 +2148,7 @@ BEGIN
                                 ELSE NULL
                             END as trace
                         FROM diff_ranked d
-                        WHERE d.f_row_ids IS NOT NULL OR d.t_data IS NOT NULL
+                        WHERE d.f_row_ids IS NOT NULL OR d.t_payload IS NOT NULL
                     ) with_op
                     WHERE with_op.operation IS NOT NULL
                 )
@@ -2223,7 +2223,7 @@ BEGIN
                     %1$s,
                     p.entity_keys_json as entity_keys,
                     p.identity_keys, p.lookup_keys,
-                    p.s_t_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
+                    p.orig_source_target_relation, p.b_a_relation, p.old_valid_from, p.old_valid_until,
                     p.new_valid_from, p.new_valid_until, p.data, p.feedback, p.trace,
                     p.grouping_key,
                     CASE
@@ -2330,7 +2330,7 @@ BEGIN
                             WHEN o.operation = 'INSERT' THEN 2000000  -- Will be renumbered
                             ELSE 3000000
                         END::INT as raw_statement_seq,
-                        o.row_ids, o.operation, o.update_effect, o.causal_id::TEXT, o.is_new_entity, o.entity_keys, o.identity_keys, o.lookup_keys, o.s_t_relation, o.b_a_relation, o.old_valid_from::TEXT,
+                        o.row_ids, o.operation, o.update_effect, o.causal_id::TEXT, o.is_new_entity, o.entity_keys, o.identity_keys, o.lookup_keys, o.orig_source_target_relation, o.b_a_relation, o.old_valid_from::TEXT,
                         o.old_valid_until::TEXT, o.new_valid_from::TEXT, o.new_valid_until::TEXT, o.data, o.feedback, CASE WHEN o.trace IS NOT NULL THEN o.trace || jsonb_build_object('final_grouping_key', o.grouping_key) ELSE NULL END as trace, o.grouping_key
                     FROM ordered_plan o
                     LEFT JOIN moves_with_batch mb ON mb.plan_op_seq = o.plan_op_seq
@@ -2338,7 +2338,7 @@ BEGIN
                 SELECT
                     plan_op_seq,
                     dense_rank() OVER (ORDER BY raw_statement_seq)::INT as statement_seq,
-                    row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from,
+                    row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, orig_source_target_relation, b_a_relation, old_valid_from,
                     old_valid_until, new_valid_from, new_valid_until,
                     -- New range columns
                     CASE 
