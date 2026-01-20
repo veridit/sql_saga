@@ -7,7 +7,6 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 (None - all critical issues resolved)
 
 ## Medium Priority - Refactoring & API Improvements
-- [ ] **Move DEFAULT column exclusion logic to planner:** Currently the executor determines which columns to exclude from INSERT based on column attributes (has default, identity, generated). This should be moved to the planner for a declarative approach where the plan explicitly specifies which columns to include/exclude, making execution more predictable and testable. See src/28_temporal_merge_execute.sql:405-417 for current implementation.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 
@@ -77,6 +76,10 @@ Fixed critical user-reported bugs in FOR_PORTION_OF view trigger that were causi
 - Updated AGENTS.md with pg_temp table inspection technique for debugging temporal_merge
 - Updated AGENTS.md warning against "locking in bugs" in expected output files
 - All 75 fast tests pass
+
+## 2026-01-20: Move DEFAULT column exclusion logic to planner
+
+Moved column exclusion logic from executor to planner for a declarative approach where the plan explicitly specifies which columns to include/exclude. Makes execution more predictable and testable.
 
 ## 2026-01-19: Performance Optimization Phase Complete
 
