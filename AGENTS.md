@@ -51,6 +51,44 @@ make install && make test TESTS="001_install YOUR_TEST"; make diff-fail-all
 # Newer self-contained tests can run independently (include test_setup.sql)
 ```
 
+### Efficient Test Logging with tee
+
+**IMPORTANT: Always use `tee` when running test suites** to save output for later inspection without re-running:
+
+```bash
+# Save full test output to tmp/*.log and show tail
+make test fast 2>&1 | tee tmp/test_fast.log | tail -20
+make test benchmark 2>&1 | tee tmp/test_benchmark.log | tail -20
+make test TESTS="001_install 080_test" 2>&1 | tee tmp/test_080.log | tail -10
+
+# After tests complete, you can inspect the saved log without re-running:
+grep "not ok" tmp/test_fast.log           # Find failing tests
+grep "ERROR" tmp/test_fast.log            # Find errors
+grep -A 5 "SCENARIO 6" tmp/test_fast.log  # Search specific content
+less tmp/test_fast.log                    # Browse full output
+```
+
+**Why this matters:**
+- Running full test suite takes 30+ seconds
+- If something fails, you can investigate the log immediately
+- Avoids wasteful re-running of tests just to see earlier output
+- Can search/analyze full output after tests complete
+
+**Common workflow:**
+```bash
+# 1. Run tests with logging
+make install && make test fast 2>&1 | tee tmp/test_fast.log | tail -20
+
+# 2. If failure, find which test without re-running
+grep "not ok" tmp/test_fast.log
+
+# 3. Investigate specific test output
+grep -A 50 "not ok 58.*080_" tmp/test_fast.log
+
+# 4. Check for specific errors
+grep "ERROR" tmp/test_fast.log | head -20
+```
+
 ### Database Commands
 ```bash
 psql -d sql_saga_regress                                 # Connect to test database
