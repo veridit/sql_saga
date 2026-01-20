@@ -15,7 +15,7 @@ BEGIN
     END IF;
 
     -- Get metadata about the view's underlying table.
-    SELECT v.table_schema, v.table_name, v.era_name, v.source_columns,
+    SELECT v.table_schema, v.table_name, v.era_name, v.generated_columns,
            e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
            e.range_subtype_category, e.range_subtype, e.range_type
     INTO info
@@ -30,22 +30,8 @@ BEGIN
 
     jnew := to_jsonb(NEW);
 
-    -- Strip GENERATED columns from jnew that aren't in source_columns
-    -- These columns shouldn't be in the temp source table 
-    DECLARE
-        v_all_columns name[];
-        v_col name;
-    BEGIN
-        -- Get all columns from jnew
-        SELECT array_agg(key::name) INTO v_all_columns FROM jsonb_object_keys(jnew) AS key;
-        
-        -- Remove any column not in info.source_columns
-        FOREACH v_col IN ARRAY v_all_columns LOOP
-            IF v_col <> ALL(info.source_columns) THEN
-                jnew := jnew - v_col;
-            END IF;
-        END LOOP;
-    END;
+    -- Strip GENERATED columns from jnew using direct array subtraction
+    jnew := jnew - info.generated_columns;
 
     -- For UPDATE operations, we need to handle column filtering carefully to support two cases:
     -- 1. Columns not mentioned in UPDATE -> should preserve existing values across segments
@@ -109,7 +95,7 @@ BEGIN
         DECLARE
             v_cols_def text;
         BEGIN
-            -- Build column definitions using the pre-computed source_columns list
+            -- Build column definitions excluding the pre-computed generated_columns list
             -- This excludes GENERATED columns that would cause INSERT failures
             SELECT string_agg(
                 format('%I %s', pa.attname, format_type(pa.atttypid, pa.atttypmod)),
@@ -118,7 +104,7 @@ BEGIN
             INTO v_cols_def
             FROM pg_attribute pa
             WHERE pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
-              AND pa.attname = ANY(info.source_columns)
+              AND pa.attname <> ALL(info.generated_columns)
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
             EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s, merge_status jsonb) ON COMMIT DROP',

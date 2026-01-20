@@ -87,16 +87,16 @@ SELECT sql_saga.add_for_portion_of_view('rename_test', 'p');
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |   trigger_name   | current_func |                        source_columns                         
--------------+-------------------------------+----------------+--------------+-------------+----------+------------------+--------------+---------------------------------------------------------------
- public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | for_portion_of_p |              | {col1,col2,col3,valid_range,"s < e","embedded \" symbols",id}
+ view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |   trigger_name   | current_func | generated_columns 
+-------------+-------------------------------+----------------+--------------+-------------+----------+------------------+--------------+-------------------
+ public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | for_portion_of_p |              | {}
 (1 row)
 
 ALTER TRIGGER for_portion_of_p ON rename_test__for_portion_of_p RENAME TO portion_trigger;
 TABLE sql_saga.updatable_view;
- view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |  trigger_name   | current_func |                        source_columns                         
--------------+-------------------------------+----------------+--------------+-------------+----------+-----------------+--------------+---------------------------------------------------------------
- public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | portion_trigger |              | {col1,col2,col3,valid_range,"s < e","embedded \" symbols",id}
+ view_schema |           view_name           |   view_type    | table_schema | table_name  | era_name |  trigger_name   | current_func | generated_columns 
+-------------+-------------------------------+----------------+--------------+-------------+----------+-----------------+--------------+-------------------
+ public      | rename_test__for_portion_of_p | for_portion_of | public       | rename_test | p        | portion_trigger |              | {}
 (1 row)
 
 SELECT sql_saga.drop_for_portion_of_view('rename_test', 'p');

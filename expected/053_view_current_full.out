@@ -70,9 +70,9 @@ Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
 
 TABLE sql_saga.updatable_view;
- view_schema |         view_name          | view_type | table_schema | table_name  | era_name | trigger_name  | current_func |                source_columns                 
--------------+----------------------------+-----------+--------------+-------------+----------+---------------+--------------+-----------------------------------------------
- test_schema | schema_test__current_valid | current   | test_schema  | schema_test | valid    | current_valid | test_now()   | {id,value,valid_range,valid_from,valid_until}
+ view_schema |         view_name          | view_type | table_schema | table_name  | era_name | trigger_name  | current_func | generated_columns 
+-------------+----------------------------+-----------+--------------+-------------+----------+---------------+--------------+-------------------
+ test_schema | schema_test__current_valid | current   | test_schema  | schema_test | valid    | current_valid | test_now()   | {}
 (1 row)
 
 INSERT INTO test_schema.schema_test__current_valid (id, value) VALUES (1, 'A');
@@ -145,9 +145,9 @@ Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_documented_ending', 'id')
 
 TABLE sql_saga.updatable_view;
- view_schema |        view_name        | view_type | table_schema | table_name | era_name | trigger_name  | current_func |                        source_columns                        
--------------+-------------------------+-----------+--------------+------------+----------+---------------+--------------+--------------------------------------------------------------
- public      | acl_test__current_valid | current   | public       | acl_test   | valid    | current_valid | test_now()   | {id,value,status,comment,valid_range,valid_from,valid_until}
+ view_schema |        view_name        | view_type | table_schema | table_name | era_name | trigger_name  | current_func | generated_columns 
+-------------+-------------------------+-----------+--------------+------------+----------+---------------+--------------+-------------------
+ public      | acl_test__current_valid | current   | public       | acl_test   | valid    | current_valid | test_now()   | {}
 (1 row)
 
 SAVEPOINT preserve_role_and_state_before_no_permission;
