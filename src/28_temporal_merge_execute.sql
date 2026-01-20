@@ -607,6 +607,13 @@ BEGIN
 
             -- This block contains the DML. We wrap it to ensure constraints and search_path are reset.
             BEGIN
+                -- PERFORMANCE: Analyze the plan table to give the optimizer accurate row estimates.
+                -- Without this, PostgreSQL underestimates cardinality (often rows=1 for filtered enums)
+                -- which causes it to choose Nested Loop joins instead of Hash Joins, resulting in
+                -- 70x+ slower DML execution. This is critical for UPDATE operations that join
+                -- temporal_merge_plan to the target table.
+                ANALYZE temporal_merge_plan;
+
                 -- Execute operations ordered by plan_op_seq: DELETE -> UPDATE -> INSERT
                 -- The planner generates plan_op_seq to ensure DELETE operations come first,
                 -- then UPDATEs (ordered by effect), then INSERTs. This prevents temporal overlaps.

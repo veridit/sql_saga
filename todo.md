@@ -17,6 +17,49 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 # Done
 
+## 2026-01-21: temporal_merge Executor ANALYZE Optimization
+
+**Added ANALYZE to temporal_merge_plan for 5x faster executor DML.**
+
+**Problem:** PostgreSQL severely underestimated row counts on the temporary `temporal_merge_plan` table (often `rows=1` when actual was 450+), causing it to choose Nested Loop joins with post-scan filters instead of efficient Hash Joins.
+
+**Root Cause:** Temp tables have no statistics until ANALYZE is run. The planner's default selectivity estimate for enum filters is very low, leading to poor cardinality estimates.
+
+**Solution:** Added `ANALYZE temporal_merge_plan;` in executor before DML execution (src/28_temporal_merge_execute.sql:613).
+
+**Before:**
+```
+->  Nested Loop  (cost=30.79..38.86 rows=1 ...)
+      ->  Index Scan using valid_range_idx ...
+            Filter: (p.id_ek = id)
+            Rows Removed by Filter: 499
+```
+
+**After:**
+```
+->  Hash Join  (cost=68.23..75.87 rows=338 ...)
+      Hash Cond: ((p.id_ek = t.id) AND (p.old_valid_range = t.valid_range))
+```
+
+**Benchmark Results:**
+- Range-Only temporal_merge Parent: 412 rows/s → 2036 rows/s (5x faster)
+- Range-Only temporal_merge Child: 868 rows/s → 3635 rows/s (4.2x faster)
+- UPDATE duration: 34ms → 5ms for 450 rows (6.8x faster)
+
+**Also:** Documented auto_explain setup in README.md for performance debugging of internal EXECUTE statements.
+
+## 2026-01-20: temporal_merge Planner Hash Join Optimization
+
+**Enabled Hash Joins in temporal_merge planner by using = instead of IS NOT DISTINCT FROM.**
+
+Changed two join conditions that were preventing PostgreSQL from using Hash Joins:
+- `v_source_rows_exists_join_expr` (line ~1192)
+- `v_lateral_join_tr_to_seg` (line ~662)
+
+**Why safe:** Target columns are primary key columns (always NOT NULL). Source rows with NULL identity get no match from LEFT JOIN, which is correct behavior.
+
+**Impact:** 470-500x speedup for these specific planner queries.
+
 ## 2026-01-20: temporal_merge UPDATE Performance Optimization
 
 **Optimized entity_key join in temporal_merge executor for 30-38% speedup.**
