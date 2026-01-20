@@ -4,10 +4,10 @@ A living document of upcoming tasks.
 Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 ## Current Priority - Critical Issues & Bugs
-- [ ] **Statbus severe issues:** User-reported critical bugs need reproduction and regression tests. Awaiting reproduction case.
-- [ ] **Preserve audit columns on timeline splits:** When temporal_merge splits a timeline segment, audit columns (edit_at, edit_by) should be preserved from the original row, not reset. Currently edit_at gets set to now() and edit_by would be nulled, losing audit trail.
+(None - all critical issues resolved)
 
 ## Medium Priority - Refactoring & API Improvements
+- [ ] **Move DEFAULT column exclusion logic to planner:** Currently the executor determines which columns to exclude from INSERT based on column attributes (has default, identity, generated). This should be moved to the planner for a declarative approach where the plan explicitly specifies which columns to include/exclude, making execution more predictable and testable. See src/28_temporal_merge_execute.sql:405-417 for current implementation.
 - [ ] **Automate README.md example testing:** Investigate and implement a "literate programming" approach to ensure code examples in `README.md` are automatically tested. This could involve generating a test file from the README or creating a consistency checker script.
 - [ ] **Improve test documentation:** Clarify the purpose of complex or non-obvious test cases, such as expected failures.
 
@@ -17,6 +17,39 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
   - **Action:** Create configuration files and a process to package the extension using `pgxman` for easier distribution and installation.
 
 # Done
+
+## 2026-01-20: Statbus Severe Issues - FOR_PORTION_OF View Bug Fixes (RESOLVED)
+
+Fixed critical user-reported bugs in FOR_PORTION_OF view trigger that were causing data loss and incorrect merging in production Statbus deployment:
+
+**Issue #1: Name Merging Bug (SCENARIO 5)**
+- **Problem:** Updating one attribute via FOR_PORTION_OF view incorrectly merged temporal rows with different values for other attributes, losing historical data. Example: Entity had name "A" Jan-Jun and "B" Jul-Dec; updating legal_form across full year merged into single row, losing name change.
+- **Root Cause:** Each row-level trigger firing called temporal_merge with the FULL requested temporal range, so second trigger saw target already modified by first trigger.
+- **Solution:** Compute intersection of requested range with OLD row's existing timeline (src/06_for_portion_of_trigger.sql:146-197), so each trigger only affects its own temporal segment. Return NULL when intersection is empty.
+- **Test:** sql/080_temporal_merge_reported_regressions.sql SCENARIO 5
+
+**Issue #2: Ephemeral Column Preservation (SCENARIO 6)**
+- **Problem:** Timeline splits were resetting ephemeral/audit columns (edit_at, edit_by_user_id) to NULL/DEFAULT in edge segments instead of preserving original values.
+- **Root Cause:** In UPSERT/REPLACE modes, planner combined ephemeral payloads as `COALESCE(t_ephemeral, '{}') || COALESCE(s_ephemeral, '{}')`, causing source NULLs to overwrite target values for ALL segments.
+- **Solution:** Added conditional logic to preserve target ephemeral when no source data exists (src/27_temporal_merge_plan.sql:1852-1856):
+  ```sql
+  CASE 
+    WHEN s_data_payload IS NULL THEN t_ephemeral_payload
+    ELSE COALESCE(t_ephemeral, '{}') || COALESCE(s_ephemeral, '{}')
+  END
+  ```
+- **Test:** sql/080_temporal_merge_reported_regressions.sql SCENARIO 6
+
+**Issue #3: Explicit NULL Assignment Support**
+- **Problem:** Users couldn't explicitly set a column to NULL via FOR_PORTION_OF view.
+- **Solution:** Use UPDATE_FOR_PORTION_OF mode (not PATCH_FOR_PORTION_OF) so NULL is treated as explicit value. Include unchanged columns with OLD values to preserve per-segment values (src/06_for_portion_of_trigger.sql:53-71).
+- **Test:** sql/051_view_for_portion_of_full.sql SCENARIO 12
+
+**Additional Changes:**
+- Enhanced executor to include ephemeral columns with NOT NULL in INSERT statements (src/28_temporal_merge_execute.sql:417)
+- Updated AGENTS.md with pg_temp table inspection technique for debugging temporal_merge
+- Updated AGENTS.md warning against "locking in bugs" in expected output files
+- All 75 fast tests pass
 
 ## 2026-01-19: Performance Optimization Phase Complete
 
