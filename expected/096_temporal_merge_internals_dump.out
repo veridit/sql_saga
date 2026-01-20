@@ -1,0 +1,517 @@
+-- =============================================================================
+-- Test Suite: temporal_merge Internals Dump
+--
+-- Description:
+--   This test creates a comprehensive dump of ALL intermediate temp tables
+--   created during temporal_merge planning. It serves as a correctness
+--   verification for the temporal_merge algorithm by capturing the state
+--   at each processing stage.
+--
+-- Purpose:
+--   1. Enshrine the correctness of the temporal_merge algorithm
+--   2. Detect unexpected changes to intermediate processing
+--   3. Document the data flow through all 30 temp tables
+--   4. Aid debugging by showing exact intermediate state
+-- =============================================================================
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- ============================================================================
+-- Setup: Create test tables
+-- ============================================================================
+\echo '=== SETUP ==='
+=== SETUP ===
+CREATE TABLE internals_target (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    value INTEGER,
+    valid_range DATERANGE NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    edit_comment TEXT
+);
+SELECT sql_saga.add_era('internals_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+WARNING:  Table "internals_target" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
+HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
+NOTICE:  sql_saga: Created trigger "internals_target_synchronize_temporal_columns_trigger" on table internals_target to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('internals_target', ARRAY['id'], 'valid');
+NOTICE:  sql_saga: altering table public.internals_target to add constraints: ADD CONSTRAINT internals_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+      add_unique_key       
+---------------------------
+ internals_target_id_valid
+(1 row)
+
+CREATE TABLE internals_source (
+    row_id SERIAL PRIMARY KEY,
+    id INTEGER,
+    name TEXT,
+    value INTEGER,
+    valid_from DATE,
+    valid_until DATE,
+    edit_comment TEXT
+);
+-- Initial target state
+INSERT INTO internals_target (id, name, value, valid_range, edit_comment) VALUES
+    (1, 'Original', 100, '[2024-01-01,2024-12-31)', 'initial load'),
+    (2, 'Second', 200, '[2024-06-01,2024-12-31)', 'initial load');
+-- Source updates
+INSERT INTO internals_source (id, name, value, valid_from, valid_until, edit_comment) VALUES
+    (1, 'Updated', 150, '2024-03-01', '2024-09-01', 'Q2-Q3 update'),
+    (3, 'New', 300, '2024-01-01', '2024-12-31', 'new entity');
+\echo ''
+
+\echo '=== Initial State ==='
+=== Initial State ===
+TABLE internals_target;
+ id |   name   | value |       valid_range       | valid_from | valid_until | edit_comment 
+----+----------+-------+-------------------------+------------+-------------+--------------
+  1 | Original |   100 | [2024-01-01,2024-12-31) | 2024-01-01 | 2024-12-31  | initial load
+  2 | Second   |   200 | [2024-06-01,2024-12-31) | 2024-06-01 | 2024-12-31  | initial load
+(2 rows)
+
+TABLE internals_source;
+ row_id | id |  name   | value | valid_from | valid_until | edit_comment 
+--------+----+---------+-------+------------+-------------+--------------
+      1 |  1 | Updated |   150 | 2024-03-01 | 2024-09-01  | Q2-Q3 update
+      2 |  3 | New     |   300 | 2024-01-01 | 2024-12-31  | new entity
+(2 rows)
+
+-- ============================================================================
+-- Execute temporal_merge_plan and dump all temp tables
+-- ============================================================================
+\echo ''
+
+\echo '=== Execute temporal_merge_plan ==='
+=== Execute temporal_merge_plan ===
+BEGIN;
+SELECT COUNT(*) AS plan_row_count FROM sql_saga.temporal_merge_plan(
+    target_table => 'internals_target'::regclass,
+    source_table => 'internals_source'::regclass,
+    mode => 'MERGE_ENTITY_UPSERT',
+    era_name => 'valid',
+    identity_columns => ARRAY['id'],
+    row_id_column => 'row_id',
+    ephemeral_columns => ARRAY['edit_comment'],
+    p_log_trace => false
+);
+ plan_row_count 
+----------------
+              4
+(1 row)
+
+-- ============================================================================
+-- DUMP ALL TEMP TABLES (in processing order)
+-- ============================================================================
+\echo ''
+
+\echo '--- 1. source_initial ---'
+--- 1. source_initial ---
+TABLE pg_temp.source_initial;
+ source_row_id | causal_id | id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | temporal_columns_are_consistent |       valid_range       
+---------------+-----------+----+------------+-------------+-----------------------------------+----------------------------------+-------------------+----------------------------------+-----------------------------------------+-----------------+---------------------------------+-------------------------
+             1 |         1 |  1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | {"id": 1}         | f                                | t                                       | t               | t                               | [2024-03-01,2024-09-01)
+             2 |         2 |  3 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | {"id": 3}         | f                                | t                                       | t               | t                               | [2024-01-01,2024-12-31)
+(2 rows)
+
+\echo ''
+
+\echo '--- 2. source_with_eclipsed_flag ---'
+--- 2. source_with_eclipsed_flag ---
+TABLE pg_temp.source_with_eclipsed_flag;
+ source_row_id | causal_id | id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | temporal_columns_are_consistent |       valid_range       | is_eclipsed | eclipsed_by 
+---------------+-----------+----+------------+-------------+-----------------------------------+----------------------------------+-------------------+----------------------------------+-----------------------------------------+-----------------+---------------------------------+-------------------------+-------------+-------------
+             1 |         1 |  1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | {"id": 1}         | f                                | t                                       | t               | t                               | [2024-03-01,2024-09-01) | f           | 
+             2 |         2 |  3 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | {"id": 3}         | f                                | t                                       | t               | t                               | [2024-01-01,2024-12-31) | f           | 
+(2 rows)
+
+\echo ''
+
+\echo '--- 3. target_rows ---'
+--- 3. target_rows ---
+TABLE pg_temp.target_rows;
+ id | valid_from | causal_id | stable_pk_payload | valid_until |            data_payload            |        ephemeral_payload         | canonical_nk_json 
+----+------------+-----------+-------------------+-------------+------------------------------------+----------------------------------+-------------------
+  1 | 2024-01-01 |           | {"id": 1}         | 2024-12-31  | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {}
+(1 row)
+
+\echo ''
+
+\echo '--- 4. source_rows_with_matches ---'
+--- 4. source_rows_with_matches ---
+TABLE pg_temp.source_rows_with_matches;
+ source_row_id | causal_id | id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | temporal_columns_are_consistent |       valid_range       | is_eclipsed | eclipsed_by | discovered_stable_pk_payload | discovered_id_1 
+---------------+-----------+----+------------+-------------+-----------------------------------+----------------------------------+-------------------+----------------------------------+-----------------------------------------+-----------------+---------------------------------+-------------------------+-------------+-------------+------------------------------+-----------------
+             1 |         1 |  1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | {"id": 1}         | f                                | t                                       | t               | t                               | [2024-03-01,2024-09-01) | f           |             | {"id": 1}                    |               1
+             2 |         2 |  3 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | {"id": 3}         | f                                | t                                       | t               | t                               | [2024-01-01,2024-12-31) | f           |             |                              |                
+(2 rows)
+
+\echo ''
+
+\echo '--- 5. source_rows_with_aggregates ---'
+--- 5. source_rows_with_aggregates ---
+TABLE pg_temp.source_rows_with_aggregates;
+ source_row_id | match_count | conflicting_ids 
+---------------+-------------+-----------------
+             1 |           1 | [{"id": 1}]
+             2 |           0 | [null]
+(2 rows)
+
+\echo ''
+
+\echo '--- 6. source_rows_with_discovery ---'
+--- 6. source_rows_with_discovery ---
+TABLE pg_temp.source_rows_with_discovery;
+ source_row_id | causal_id | id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | temporal_columns_are_consistent |       valid_range       | is_eclipsed | eclipsed_by | discovered_stable_pk_payload | discovered_id_1 | match_count | conflicting_ids | is_ambiguous 
+---------------+-----------+----+------------+-------------+-----------------------------------+----------------------------------+-------------------+----------------------------------+-----------------------------------------+-----------------+---------------------------------+-------------------------+-------------+-------------+------------------------------+-----------------+-------------+-----------------+--------------
+             1 |         1 |  1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | {"id": 1}         | f                                | t                                       | t               | t                               | [2024-03-01,2024-09-01) | f           |             | {"id": 1}                    |               1 |           1 | [{"id": 1}]     | f
+             2 |         2 |  3 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | {"id": 3}         | f                                | t                                       | t               | t                               | [2024-01-01,2024-12-31) | f           |             |                              |                 |           0 | [null]          | f
+(2 rows)
+
+\echo ''
+
+\echo '--- 7. source_rows ---'
+--- 7. source_rows ---
+TABLE pg_temp.source_rows;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id 
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3
+(2 rows)
+
+\echo ''
+
+\echo '--- 8. source_rows_with_new_flag ---'
+--- 8. source_rows_with_new_flag ---
+TABLE pg_temp.source_rows_with_new_flag;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id | is_new_entity 
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----+---------------
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1 | f
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3 | t
+(2 rows)
+
+\echo ''
+
+\echo '--- 9. source_rows_with_nk_json ---'
+--- 9. source_rows_with_nk_json ---
+TABLE pg_temp.source_rows_with_nk_json;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id | is_new_entity | nk_json | nk_non_null_keys_array 
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----+---------------+---------+------------------------
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1 | f             | {}      | {}
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3 | t             | {}      | {}
+(2 rows)
+
+\echo ''
+
+\echo '--- 10. source_rows_with_canonical_key ---'
+--- 10. source_rows_with_canonical_key ---
+TABLE pg_temp.source_rows_with_canonical_key;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id | is_new_entity | nk_json | nk_non_null_keys_array | canonical_nk_json |    grouping_key    
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----+---------------+---------+------------------------+-------------------+--------------------
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1 | f             | {}      | {}                     |                   | existing_entity__1
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3 | t             | {}      | {}                     | {}                | new_entity__3
+(2 rows)
+
+\echo ''
+
+\echo '--- 11. source_rows_with_early_feedback ---'
+--- 11. source_rows_with_early_feedback ---
+TABLE pg_temp.source_rows_with_early_feedback;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id | is_new_entity | nk_json | nk_non_null_keys_array | canonical_nk_json |    grouping_key    | early_feedback 
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----+---------------+---------+------------------------+-------------------+--------------------+----------------
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1 | f             | {}      | {}                     |                   | existing_entity__1 | 
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3 | t             | {}      | {}                     | {}                | new_entity__3      | 
+(2 rows)
+
+\echo ''
+
+\echo '--- 12. active_source_rows ---'
+--- 12. active_source_rows ---
+TABLE pg_temp.active_source_rows;
+ source_row_id | causal_id | valid_from | valid_until |           data_payload            |        ephemeral_payload         | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | is_eclipsed | eclipsed_by | temporal_columns_are_consistent | stable_pk_payload | target_entity_exists | id | is_new_entity | nk_json | nk_non_null_keys_array | canonical_nk_json |    grouping_key    | early_feedback 
+---------------+-----------+------------+-------------+-----------------------------------+----------------------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------+-------------+---------------------------------+-------------------+----------------------+----+---------------+---------+------------------------+-------------------+--------------------+----------------
+             1 |         1 | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | f                                | t                                       | t               | f            | [{"id": 1}]     | f           |             | t                               | {"id": 1}         | t                    |  1 | f             | {}      | {}                     |                   | existing_entity__1 | 
+             2 |         2 | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | f                                | t                                       | t               | f            | [null]          | f           |             | t                               | {"id": 3}         | f                    |  3 | t             | {}      | {}                     | {}                | new_entity__3      | 
+(2 rows)
+
+\echo ''
+
+\echo '--- 13. all_rows ---'
+--- 13. all_rows ---
+TABLE pg_temp.all_rows;
+ id | causal_id | valid_from | valid_until | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json 
+----+-----------+------------+-------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------
+  1 |         1 | 2024-03-01 | 2024-09-01  | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | 
+  3 |         2 | 2024-01-01 | 2024-12-31  | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+  1 |           | 2024-01-01 | 2024-12-31  | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+(3 rows)
+
+\echo ''
+
+\echo '--- 14. time_points_raw ---'
+--- 14. time_points_raw ---
+TABLE pg_temp.time_points_raw;
+ id | causal_id |   point    | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json 
+----+-----------+------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------
+  1 |         1 | 2024-03-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | 
+  3 |         2 | 2024-01-01 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+  1 |           | 2024-01-01 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+  1 |         1 | 2024-09-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | 
+  3 |         2 | 2024-12-31 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+  1 |           | 2024-12-31 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+(6 rows)
+
+\echo ''
+
+\echo '--- 15. time_points_unified ---'
+--- 15. time_points_unified ---
+TABLE pg_temp.time_points_unified;
+ id | causal_id |   point    | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json |    grouping_key    | unified_causal_id | unified_stable_pk_payload | unified_canonical_nk_json 
+----+-----------+------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------+--------------------+-------------------+---------------------------+---------------------------
+  1 |         1 | 2024-03-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     |                   | existing_entity__1 |                 1 | {"id": 1}                 | {}
+  1 |         1 | 2024-09-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     |                   | existing_entity__1 |                 1 | {"id": 1}                 | {}
+  1 |           | 2024-01-01 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}                | existing_entity__1 |                 1 | {"id": 1}                 | {}
+  1 |           | 2024-12-31 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}                | existing_entity__1 |                 1 | {"id": 1}                 | {}
+  3 |         2 | 2024-01-01 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}                | new_entity__3      |                 2 | {"id": 3}                 | {}
+  3 |         2 | 2024-12-31 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}                | new_entity__3      |                 2 | {"id": 3}                 | {}
+(6 rows)
+
+\echo ''
+
+\echo '--- 16. time_points_with_unified_ids ---'
+--- 16. time_points_with_unified_ids ---
+TABLE pg_temp.time_points_with_unified_ids;
+    grouping_key    | id | causal_id |   point    | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json 
+--------------------+----+-----------+------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------
+ existing_entity__1 |  1 |         1 | 2024-03-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ existing_entity__1 |  1 |         1 | 2024-09-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ existing_entity__1 |  1 |         1 | 2024-01-01 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+ existing_entity__1 |  1 |         1 | 2024-12-31 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+ new_entity__3      |  3 |         2 | 2024-01-01 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+ new_entity__3      |  3 |         2 | 2024-12-31 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+(6 rows)
+
+\echo ''
+
+\echo '--- 17. time_points ---'
+--- 17. time_points ---
+TABLE pg_temp.time_points;
+    grouping_key    | id | causal_id |   point    | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json 
+--------------------+----+-----------+------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------
+ existing_entity__1 |  1 |         1 | 2024-01-01 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+ existing_entity__1 |  1 |         1 | 2024-03-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ existing_entity__1 |  1 |         1 | 2024-09-01 | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ existing_entity__1 |  1 |         1 | 2024-12-31 | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+ new_entity__3      |  3 |         2 | 2024-01-01 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+ new_entity__3      |  3 |         2 | 2024-12-31 | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+(6 rows)
+
+\echo ''
+
+\echo '--- 18. atomic_segments ---'
+--- 18. atomic_segments ---
+TABLE pg_temp.atomic_segments;
+    grouping_key    | id | causal_id | valid_from | valid_until | is_new_entity | stable_pk_payload | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json 
+--------------------+----+-----------+------------+-------------+---------------+-------------------+----------------------------------+-----------------------------------------+-----------------+--------------+-----------------+-------------------
+ existing_entity__1 |  1 |         1 | 2024-01-01 | 2024-03-01  | f             | {"id": 1}         | f                                | f                                       | t               | f            |                 | {}
+ existing_entity__1 |  1 |         1 | 2024-03-01 | 2024-09-01  | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ existing_entity__1 |  1 |         1 | 2024-09-01 | 2024-12-31  | f             | {"id": 1}         | f                                | t                                       | t               | f            | [{"id": 1}]     | {}
+ new_entity__3      |  3 |         2 | 2024-01-01 | 2024-12-31  | t             | {"id": 3}         | f                                | t                                       | t               | f            | [null]          | {}
+(4 rows)
+
+\echo ''
+
+\echo '--- 19. existing_segments_with_target ---'
+--- 19. existing_segments_with_target ---
+TABLE pg_temp.existing_segments_with_target;
+    grouping_key    | canonical_nk_json | id | causal_id | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | stable_identity_columns_are_null | natural_identity_column_values_are_null | valid_from | valid_until | t_valid_from | t_valid_until |           t_data_payload           |       t_ephemeral_payload        | stable_pk_payload | target_stable_pk_payload | trace 
+--------------------+-------------------+----+-----------+---------------+-----------------+--------------+-----------------+----------------------------------+-----------------------------------------+------------+-------------+--------------+---------------+------------------------------------+----------------------------------+-------------------+--------------------------+-------
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            |                 | f                                | f                                       | 2024-01-01 | 2024-03-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                | 
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-03-01 | 2024-09-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                | 
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-09-01 | 2024-12-31  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                | 
+(3 rows)
+
+\echo ''
+
+\echo '--- 20. new_segments_no_target (if exists) ---'
+--- 20. new_segments_no_target (if exists) ---
+SELECT CASE WHEN to_regclass('pg_temp.new_segments_no_target') IS NOT NULL 
+    THEN 'exists' ELSE 'not created' END AS table_status;
+ table_status 
+--------------
+ exists
+(1 row)
+
+\echo ''
+
+\echo '--- 21. resolved_atomic_segments_with_payloads ---'
+--- 21. resolved_atomic_segments_with_payloads ---
+TABLE pg_temp.resolved_atomic_segments_with_payloads;
+    grouping_key    | canonical_nk_json | id | causal_id | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | stable_identity_columns_are_null | natural_identity_column_values_are_null | valid_from | valid_until | t_valid_from | t_valid_until |           t_data_payload           |       t_ephemeral_payload        | stable_pk_payload | target_stable_pk_payload | trace | source_row_id | contributing_row_ids |          s_data_payload           |       s_ephemeral_payload        | s_valid_from | s_valid_until | propagated_stable_pk_payload 
+--------------------+-------------------+----+-----------+---------------+-----------------+--------------+-----------------+----------------------------------+-----------------------------------------+------------+-------------+--------------+---------------+------------------------------------+----------------------------------+-------------------+--------------------------+-------+---------------+----------------------+-----------------------------------+----------------------------------+--------------+---------------+------------------------------
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            |                 | f                                | f                                       | 2024-01-01 | 2024-03-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |               |                      |                                   |                                  |              |               | {"id": 1}
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-03-01 | 2024-09-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |             1 | {1}                  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | 2024-03-01   | 2024-09-01    | {"id": 1}
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-09-01 | 2024-12-31  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |               |                      |                                   |                                  |              |               | {"id": 1}
+ new_entity__3      | {}                |  3 |         2 | t             | t               | f            | [null]          | f                                | t                                       | 2024-01-01 | 2024-12-31  |              |               |                                    |                                  | {"id": 3}         |                          |       |             2 | {2}                  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | 2024-01-01   | 2024-12-31    | {"id": 3}
+(4 rows)
+
+\echo ''
+
+\echo '--- 22. resolved_atomic_segments_with_propagated_ids ---'
+--- 22. resolved_atomic_segments_with_propagated_ids ---
+TABLE pg_temp.resolved_atomic_segments_with_propagated_ids;
+    grouping_key    | canonical_nk_json | id | causal_id | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | stable_identity_columns_are_null | natural_identity_column_values_are_null | valid_from | valid_until | t_valid_from | t_valid_until |           t_data_payload           |       t_ephemeral_payload        | stable_pk_payload | target_stable_pk_payload | trace | source_row_id | contributing_row_ids |          s_data_payload           |       s_ephemeral_payload        | s_valid_from | s_valid_until | propagated_stable_pk_payload | look_behind_grp | look_ahead_grp | unified_canonical_nk_json | propagated_contributing_row_ids | propagated_s_valid_from | propagated_s_valid_until 
+--------------------+-------------------+----+-----------+---------------+-----------------+--------------+-----------------+----------------------------------+-----------------------------------------+------------+-------------+--------------+---------------+------------------------------------+----------------------------------+-------------------+--------------------------+-------+---------------+----------------------+-----------------------------------+----------------------------------+--------------+---------------+------------------------------+-----------------+----------------+---------------------------+---------------------------------+-------------------------+--------------------------
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            |                 | f                                | f                                       | 2024-01-01 | 2024-03-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |               |                      |                                   |                                  |              |               | {"id": 1}                    |               0 |              1 | {}                        | {1}                             | 2024-03-01              | 2024-09-01
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-03-01 | 2024-09-01  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |             1 | {1}                  | {"name": "Updated", "value": 150} | {"edit_comment": "Q2-Q3 update"} | 2024-03-01   | 2024-09-01    | {"id": 1}                    |               1 |              1 | {}                        | {1}                             | 2024-03-01              | 2024-09-01
+ existing_entity__1 | {}                |  1 |         1 | f             | t               | f            | [{"id": 1}]     | f                                | t                                       | 2024-09-01 | 2024-12-31  | 2024-01-01   | 2024-12-31    | {"name": "Original", "value": 100} | {"edit_comment": "initial load"} | {"id": 1}         | {"id": 1}                |       |               |                      |                                   |                                  |              |               | {"id": 1}                    |               1 |              0 | {}                        | {1}                             | 2024-03-01              | 2024-09-01
+ new_entity__3      | {}                |  3 |         2 | t             | t               | f            | [null]          | f                                | t                                       | 2024-01-01 | 2024-12-31  |              |               |                                    |                                  | {"id": 3}         |                          |       |             2 | {2}                  | {"name": "New", "value": 300}     | {"edit_comment": "new entity"}   | 2024-01-01   | 2024-12-31    | {"id": 3}                    |               1 |              1 | {}                        | {2}                             | 2024-01-01              | 2024-12-31
+(4 rows)
+
+\echo ''
+
+\echo '--- 23. resolved_atomic_segments ---'
+--- 23. resolved_atomic_segments ---
+TABLE pg_temp.resolved_atomic_segments;
+    grouping_key    | id | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | unified_canonical_nk_json | valid_from | valid_until | t_valid_from | t_valid_until | propagated_s_valid_from | propagated_s_valid_until | propagated_contributing_row_ids | causal_id | stable_pk_payload | unaffected_target_only_segment |          s_data_payload           |           t_data_payload           | s_t_relation |            data_payload            |            data_hash             |        ephemeral_payload         | trace 
+--------------------+----+----------------------------------+-----------------------------------------+---------------+-----------------+--------------+-----------------+---------------------------+------------+-------------+--------------+---------------+-------------------------+--------------------------+---------------------------------+-----------+-------------------+--------------------------------+-----------------------------------+------------------------------------+--------------+------------------------------------+----------------------------------+----------------------------------+-------
+ existing_entity__1 |  1 | f                                | f                                       | f             | t               | f            |                 | {}                        | 2024-01-01 | 2024-03-01  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              |                                   | {"name": "Original", "value": 100} | during       | {"name": "Original", "value": 100} | 4d8375ece8e143f88314f7815a98c606 | {"edit_comment": "initial load"} | 
+ existing_entity__1 |  1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                        | 2024-03-01 | 2024-09-01  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              | {"name": "Updated", "value": 150} | {"name": "Original", "value": 100} | during       | {"name": "Updated", "value": 150}  | d3ea378b21dc20981eab1f302efec856 | {"edit_comment": "Q2-Q3 update"} | 
+ existing_entity__1 |  1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                        | 2024-09-01 | 2024-12-31  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              |                                   | {"name": "Original", "value": 100} | during       | {"name": "Original", "value": 100} | 4d8375ece8e143f88314f7815a98c606 | {"edit_comment": "initial load"} | 
+ new_entity__3      |  3 | f                                | t                                       | t             | t               | f            | [null]          | {}                        | 2024-01-01 | 2024-12-31  |              |               | 2024-01-01              | 2024-12-31               | {2}                             |         2 | {"id": 3}         | f                              | {"name": "New", "value": 300}     |                                    |              | {"name": "New", "value": 300}      | 1f06a7ff0570cf66d4e4a635caf71451 | {"edit_comment": "new entity"}   | 
+(4 rows)
+
+\echo ''
+
+\echo '--- 24. island_group ---'
+--- 24. island_group ---
+TABLE pg_temp.island_group;
+    grouping_key    | id | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | unified_canonical_nk_json | valid_from | valid_until | t_valid_from | t_valid_until | propagated_s_valid_from | propagated_s_valid_until | propagated_contributing_row_ids | causal_id | stable_pk_payload | unaffected_target_only_segment |          s_data_payload           |           t_data_payload           | s_t_relation |            data_payload            |            data_hash             |        ephemeral_payload         | trace | prev_valid_until |          prev_data_hash          |         prev_data_payload          | is_island_start | island_group_id 
+--------------------+----+----------------------------------+-----------------------------------------+---------------+-----------------+--------------+-----------------+---------------------------+------------+-------------+--------------+---------------+-------------------------+--------------------------+---------------------------------+-----------+-------------------+--------------------------------+-----------------------------------+------------------------------------+--------------+------------------------------------+----------------------------------+----------------------------------+-------+------------------+----------------------------------+------------------------------------+-----------------+-----------------
+ existing_entity__1 |  1 | f                                | f                                       | f             | t               | f            |                 | {}                        | 2024-01-01 | 2024-03-01  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              |                                   | {"name": "Original", "value": 100} | during       | {"name": "Original", "value": 100} | 4d8375ece8e143f88314f7815a98c606 | {"edit_comment": "initial load"} |       |                  |                                  |                                    |               1 |               1
+ existing_entity__1 |  1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                        | 2024-03-01 | 2024-09-01  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              | {"name": "Updated", "value": 150} | {"name": "Original", "value": 100} | during       | {"name": "Updated", "value": 150}  | d3ea378b21dc20981eab1f302efec856 | {"edit_comment": "Q2-Q3 update"} |       | 2024-03-01       | 4d8375ece8e143f88314f7815a98c606 | {"name": "Original", "value": 100} |               1 |               2
+ existing_entity__1 |  1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                        | 2024-09-01 | 2024-12-31  | 2024-01-01   | 2024-12-31    | 2024-03-01              | 2024-09-01               | {1}                             |         1 | {"id": 1}         | f                              |                                   | {"name": "Original", "value": 100} | during       | {"name": "Original", "value": 100} | 4d8375ece8e143f88314f7815a98c606 | {"edit_comment": "initial load"} |       | 2024-09-01       | d3ea378b21dc20981eab1f302efec856 | {"name": "Updated", "value": 150}  |               1 |               3
+ new_entity__3      |  3 | f                                | t                                       | t             | t               | f            | [null]          | {}                        | 2024-01-01 | 2024-12-31  |              |               | 2024-01-01              | 2024-12-31               | {2}                             |         2 | {"id": 3}         | f                              | {"name": "New", "value": 300}     |                                    |              | {"name": "New", "value": 300}      | 1f06a7ff0570cf66d4e4a635caf71451 | {"edit_comment": "new entity"}   |       |                  |                                  |                                    |               1 |               1
+(4 rows)
+
+\echo ''
+
+\echo '--- 25. coalesced_final_segments ---'
+--- 25. coalesced_final_segments ---
+TABLE pg_temp.coalesced_final_segments;
+    grouping_key    | id | causal_id | stable_identity_columns_are_null | natural_identity_column_values_are_null | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json | s_t_relation | ancestor_valid_from | valid_from | valid_until |                            data_payload                            | stable_pk_payload | unaffected_target_only_segment | row_ids | trace 
+--------------------+----+-----------+----------------------------------+-----------------------------------------+---------------+-----------------+--------------+-----------------+-------------------+--------------+---------------------+------------+-------------+--------------------------------------------------------------------+-------------------+--------------------------------+---------+-------
+ existing_entity__1 |  1 |         1 | f                                | f                                       | f             | t               | f            |                 | {}                | during       | 2024-01-01          | 2024-01-01 | 2024-03-01  | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {"id": 1}         | f                              | {1}     | 
+ existing_entity__1 |  1 |         1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                | during       | 2024-01-01          | 2024-03-01 | 2024-09-01  | {"name": "Updated", "value": 150, "edit_comment": "Q2-Q3 update"}  | {"id": 1}         | f                              | {1}     | 
+ existing_entity__1 |  1 |         1 | f                                | t                                       | f             | t               | f            | [{"id": 1}]     | {}                | during       | 2024-01-01          | 2024-09-01 | 2024-12-31  | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {"id": 1}         | f                              | {1}     | 
+ new_entity__3      |  3 |         2 | f                                | t                                       | t             | t               | f            | [null]          | {}                |              |                     | 2024-01-01 | 2024-12-31  | {"name": "New", "value": 300, "edit_comment": "new entity"}        | {"id": 3}         | f                              | {2}     | 
+(4 rows)
+
+\echo ''
+
+\echo '--- 26. diff ---'
+--- 26. diff ---
+TABLE pg_temp.diff;
+    grouping_key    | id | causal_id | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json | stable_identity_columns_are_null | natural_identity_column_values_are_null |   f_from   |  f_until   |                               f_data                               | f_row_ids | stable_pk_payload | s_t_relation | trace | unaffected_target_only_segment |   t_from   |  t_until   |                               t_data                               | b_a_relation 
+--------------------+----+-----------+---------------+-----------------+--------------+-----------------+-------------------+----------------------------------+-----------------------------------------+------------+------------+--------------------------------------------------------------------+-----------+-------------------+--------------+-------+--------------------------------+------------+------------+--------------------------------------------------------------------+--------------
+ existing_entity__1 |  1 |         1 | f             | t               | f            |                 | {}                | f                                | f                                       | 2024-01-01 | 2024-03-01 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | started_by
+ existing_entity__1 |  1 |         1 | f             | t               | f            | [{"id": 1}]     | {}                | f                                | t                                       | 2024-03-01 | 2024-09-01 | {"name": "Updated", "value": 150, "edit_comment": "Q2-Q3 update"}  | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | contains
+ existing_entity__1 |  1 |         1 | f             | t               | f            | [{"id": 1}]     | {}                | f                                | t                                       | 2024-09-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | finished_by
+ new_entity__3      |  3 |         2 | t             | t               | f            | [null]          | {}                | f                                | t                                       | 2024-01-01 | 2024-12-31 | {"name": "New", "value": 300, "edit_comment": "new entity"}        | {2}       | {"id": 3}         |              |       | f                              |            |            |                                                                    | 
+(4 rows)
+
+\echo ''
+
+\echo '--- 27. diff_ranked ---'
+--- 27. diff_ranked ---
+TABLE pg_temp.diff_ranked;
+    grouping_key    | id | causal_id | is_new_entity | is_identifiable | is_ambiguous | conflicting_ids | canonical_nk_json | stable_identity_columns_are_null | natural_identity_column_values_are_null |   f_from   |  f_until   |                               f_data                               | f_row_ids | stable_pk_payload | s_t_relation | trace | unaffected_target_only_segment |   t_from   |  t_until   |                               t_data                               | b_a_relation | update_rank 
+--------------------+----+-----------+---------------+-----------------+--------------+-----------------+-------------------+----------------------------------+-----------------------------------------+------------+------------+--------------------------------------------------------------------+-----------+-------------------+--------------+-------+--------------------------------+------------+------------+--------------------------------------------------------------------+--------------+-------------
+ existing_entity__1 |  1 |         1 | f             | t               | f            |                 | {}                | f                                | f                                       | 2024-01-01 | 2024-03-01 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | started_by   |           1
+ existing_entity__1 |  1 |         1 | f             | t               | f            | [{"id": 1}]     | {}                | f                                | t                                       | 2024-09-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | finished_by  |           2
+ existing_entity__1 |  1 |         1 | f             | t               | f            | [{"id": 1}]     | {}                | f                                | t                                       | 2024-03-01 | 2024-09-01 | {"name": "Updated", "value": 150, "edit_comment": "Q2-Q3 update"}  | {1}       | {"id": 1}         | during       |       | f                              | 2024-01-01 | 2024-12-31 | {"name": "Original", "value": 100, "edit_comment": "initial load"} | contains     |           3
+ new_entity__3      |  3 |         2 | t             | t               | f            | [null]          | {}                | f                                | t                                       | 2024-01-01 | 2024-12-31 | {"name": "New", "value": 300, "edit_comment": "new entity"}        | {2}       | {"id": 3}         |              |       | f                              |            |            |                                                                    |              |            
+(4 rows)
+
+\echo ''
+
+\echo '--- 28. plan_with_op ---'
+--- 28. plan_with_op ---
+TABLE pg_temp.plan_with_op;
+ row_ids | s_t_relation | is_new_entity | operation | id | entity_keys_json | identity_keys | lookup_keys | causal_id | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                | feedback | b_a_relation |    grouping_key    | trace 
+---------+--------------+---------------+-----------+----+------------------+---------------+-------------+-----------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------+----------+--------------+--------------------+-------
+ {1}     | during       | f             | UPDATE    |  1 | {"id": 1}        | {"id": 1}     | {}          |         1 | 2024-01-01     | 2024-12-31      | 2024-01-01     | 2024-03-01      | {"name": "Original", "value": 100, "edit_comment": "initial load"} |          | started_by   | existing_entity__1 | 
+ {1}     | during       | f             | INSERT    |  1 | {"id": 1}        | {"id": 1}     | {}          |         1 | 2024-01-01     | 2024-12-31      | 2024-09-01     | 2024-12-31      | {"name": "Original", "value": 100, "edit_comment": "initial load"} |          | finished_by  | existing_entity__1 | 
+ {1}     | during       | f             | INSERT    |  1 | {"id": 1}        | {"id": 1}     | {}          |         1 | 2024-01-01     | 2024-12-31      | 2024-03-01     | 2024-09-01      | {"name": "Updated", "value": 150, "edit_comment": "Q2-Q3 update"}  |          | contains     | existing_entity__1 | 
+ {2}     |              | t             | INSERT    |  3 | {"id": 3}        | {"id": 3}     | {}          |         2 |                |                 | 2024-01-01     | 2024-12-31      | {"name": "New", "value": 300, "edit_comment": "new entity"}        |          |              | new_entity__3      | 
+(4 rows)
+
+\echo ''
+
+\echo '--- 29. plan ---'
+--- 29. plan ---
+TABLE pg_temp.plan;
+ row_ids | operation | causal_id | is_new_entity | id | entity_keys | identity_keys | lookup_keys | s_t_relation | b_a_relation | old_valid_from | old_valid_until | new_valid_from | new_valid_until |                                data                                | feedback | trace |    grouping_key    | update_effect 
+---------+-----------+-----------+---------------+----+-------------+---------------+-------------+--------------+--------------+----------------+-----------------+----------------+-----------------+--------------------------------------------------------------------+----------+-------+--------------------+---------------
+ {1}     | INSERT    |         1 | f             |  1 | {"id": 1}   | {"id": 1}     | {}          | during       | contains     | 2024-01-01     | 2024-12-31      | 2024-03-01     | 2024-09-01      | {"name": "Updated", "value": 150, "edit_comment": "Q2-Q3 update"}  |          |       | existing_entity__1 | 
+ {1}     | INSERT    |         1 | f             |  1 | {"id": 1}   | {"id": 1}     | {}          | during       | finished_by  | 2024-01-01     | 2024-12-31      | 2024-09-01     | 2024-12-31      | {"name": "Original", "value": 100, "edit_comment": "initial load"} |          |       | existing_entity__1 | 
+ {1}     | UPDATE    |         1 | f             |  1 | {"id": 1}   | {"id": 1}     | {}          | during       | started_by   | 2024-01-01     | 2024-12-31      | 2024-01-01     | 2024-03-01      | {"name": "Original", "value": 100, "edit_comment": "initial load"} |          |       | existing_entity__1 | SHRINK
+ {2}     | INSERT    |         2 | t             |  3 | {"id": 3}   | {"id": 3}     | {}          |              |              |                |                 | 2024-01-01     | 2024-12-31      | {"name": "New", "value": 300, "edit_comment": "new entity"}        |          |       | new_entity__3      | 
+(4 rows)
+
+ROLLBACK;
+-- ============================================================================
+-- Cleanup
+-- ============================================================================
+\echo ''
+
+\echo '=== Cleanup ==='
+=== Cleanup ===
+DROP TABLE internals_source;
+DROP TABLE internals_target CASCADE;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

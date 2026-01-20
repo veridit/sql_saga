@@ -464,12 +464,62 @@ The vast majority of columns are correctly designed and essential:
 
 ---
 
+## Trace System Analysis
+
+The trace column provides invaluable debugging capability with zero runtime cost when disabled (`p_log_trace = false`).
+
+### Trace Buildup Stages
+
+| Stage | Table | Keys Added |
+|-------|-------|------------|
+| 1. Seed | `existing_segments_with_target` | contributing_row_ids, constellation, s_data, t_data, s_ephemeral, t_ephemeral, s_t_relation, identity values |
+| 2. Add | `resolved_atomic_segments` | propagated_stable_pk_payload, final_data_payload, final_ephemeral_payload |
+| 3. Aggregate | `coalesced_final_segments` | island_group_id, atomic_traces (preserves full history) |
+| 4. Add | `diff` | final_payload_vs_target_payload |
+| 5. Add | `plan_with_op` | entity_keys derivation |
+| 6. Final | output | final_grouping_key |
+
+### Trace System Strengths
+
+1. **`atomic_traces`** - Excellent design that preserves full segment history through coalescing
+2. **`final_payload_vs_target_payload`** - Clear comparison of what changed
+3. **Zero overhead when disabled** - NULL short-circuit pattern is efficient
+
+### Trace System Issues (Future Improvement)
+
+1. **Naming inconsistency** - `stable_pk_payload` has 5 different variants across stages
+2. **Missing temporal boundaries** - `valid_from`/`valid_until` not captured in trace
+3. **Confusing seed `grouping_key`** - Builds lookup key values, not actual grouping_key string
+4. **Redundant keys** - `source_row_id` duplicates `contributing_row_ids[1]`
+
+### Recommendations for Trace Improvements (Low Priority)
+
+These are suggestions for future work, not blocking issues:
+
+1. **Rename for clarity:**
+   - `grouping_key` in seed → `lookup_key_values`
+   - `stable_pk_payload` in seed → `target_stable_pk`
+   - `propagated_stable_pk_payload` → `segment_stable_pk`
+
+2. **Add temporal context:**
+   - Include `valid_from`/`valid_until` at key stages
+
+3. **Remove redundancy:**
+   - Remove `source_row_id` (use `contributing_row_ids[1]`)
+
+**Overall trace quality: B+** - Captures critical information, would benefit from naming cleanup.
+
+---
+
 ## Conclusion
 
 The `temporal_merge_plan` function is well-designed with minimal waste. The identified unused columns represent minor optimization opportunities (~5% overhead). The trace system is a first-class feature that enables powerful debugging without runtime cost when disabled.
 
-**Priority order for cleanup:**
-1. `temporal_columns_are_consistent` (flows through most tables)
-2. `priority` (dead code)
-3. `s_causal_id`, `direct_source_causal_id` (unused aliases)
-4. Window function helper columns (minor)
+**Completed cleanup (2026-01-20):**
+1. ~~`temporal_columns_are_consistent`~~ - Removed (flowed through 6 tables unnecessarily)
+2. ~~`priority`~~ - Removed (dead code)
+3. ~~`s_causal_id`, `direct_source_causal_id`~~ - Removed (unused aliases)
+
+**Remaining low-priority items:**
+- Window function helper columns (`look_behind_grp`, `look_ahead_grp`) - minor overhead
+- Trace naming improvements - cosmetic, non-blocking
