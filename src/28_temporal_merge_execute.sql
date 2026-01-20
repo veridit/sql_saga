@@ -26,6 +26,7 @@ DECLARE
     v_all_cols_ident TEXT;
     v_all_cols_select TEXT;
     v_entity_key_join_clause TEXT;
+    v_entity_key_select_list TEXT;
     v_target_schema_name name;
     v_target_table_name_only name;
     v_valid_from_col name;
@@ -443,24 +444,42 @@ BEGIN
         v_valid_until_col_type := v_range_subtype;
     END IF;
 
-    -- Dynamically construct join clause for composite entity key using direct JSONB extraction.
-    -- Uses IS NOT DISTINCT FROM for null-safe comparison without LATERAL overhead.
+    -- Dynamically construct join clause for composite entity key.
+    -- PERFORMANCE OPTIMIZATION: Pre-extract JSONB keys in the subquery SELECT list
+    -- so PostgreSQL can use them directly in Hash/Merge join conditions.
+    -- Without this, JSONB extraction in the WHERE clause forces a cross-join
+    -- with post-filtering, causing O(N*M) comparisons instead of O(N+M).
+    --
+    -- IMPORTANT: We use = instead of IS NOT DISTINCT FROM because:
+    -- 1. PostgreSQL can only use = in Hash/Merge join conditions
+    -- 2. IS NOT DISTINCT FROM forces the comparison into a Join Filter (post-hash)
+    -- 3. Identity columns are part of unique keys, so NULLs are not expected
     SELECT
         string_agg(
             format(
-                't.%1$I IS NOT DISTINCT FROM (p.entity_keys->>%2$L)::%3$s',
+                '(entity_keys->>%1$L)::%2$s AS %3$I',
                 col,
+                format_type(a.atttypid, -1),
+                col || '_ek'  -- Suffix to avoid collision with other plan columns
+            ),
+            ', '
+        ),
+        string_agg(
+            format(
+                't.%1$I = p.%2$I',
                 col,
-                format_type(a.atttypid, -1)
+                col || '_ek'
             ),
             ' AND '
         )
     INTO
+        v_entity_key_select_list,
         v_entity_key_join_clause
     FROM unnest(identity_columns) AS col
     JOIN pg_attribute a ON a.attrelid = temporal_merge_execute.target_table AND a.attname = col AND NOT a.attisdropped;
 
     v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
+    v_entity_key_select_list := COALESCE(v_entity_key_select_list, '');
 
 
         -- Get dynamic column lists for DML. The data columns are defined as all columns
@@ -595,11 +614,12 @@ BEGIN
                     RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING DELETES ---', v_log_id;
                 END IF;
                 -- 1. Execute DELETE operations
+                -- Pre-extract entity_keys columns in subquery for efficient join.
                 IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
                     v_sql := format($$ DELETE FROM %1$s t
-                        USING temporal_merge_plan p
-                        WHERE p.operation = 'DELETE' AND %2$s AND t.%3$I = p.old_valid_range::%4$I;
-                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor);
+                        USING (SELECT *, %5$s FROM temporal_merge_plan WHERE operation = 'DELETE') p
+                        WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, v_entity_key_select_list);
                     EXECUTE v_sql;
                 END IF;
 
@@ -618,16 +638,18 @@ BEGIN
                 IF v_update_statement_seqs IS NOT NULL THEN
                     FOREACH v_update_statement_seq IN ARRAY v_update_statement_seqs LOOP
                         IF v_update_set_clause IS NOT NULL THEN
+                            -- Pre-extract entity_keys columns in subquery for efficient join.
+                            -- This allows PostgreSQL to use Hash/Merge joins instead of cross-join with filter.
                             v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_range::%5$I, %2$s
-                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s ORDER BY plan_op_seq) p
+                                FROM (SELECT *, %9$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s ORDER BY plan_op_seq) p
                                 WHERE %3$s AND t.%4$I = p.old_valid_range::%5$I;
-                            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq);
+                            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_entity_key_select_list);
                             EXECUTE v_sql;
                         ELSIF v_all_cols_ident IS NOT NULL THEN
                             v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
-                                FROM (SELECT * FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s ORDER BY plan_op_seq) p
+                                FROM (SELECT *, %8$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s ORDER BY plan_op_seq) p
                                 WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
-                            $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq);
+                            $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_entity_key_select_list);
                             EXECUTE v_sql;
                         END IF;
                     END LOOP;

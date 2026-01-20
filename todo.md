@@ -18,6 +18,33 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 # Done
 
+## 2026-01-20: temporal_merge UPDATE Performance Optimization
+
+**Optimized entity_key join in temporal_merge executor for 30-38% speedup.**
+
+**Problem:** The UPDATE statement in temporal_merge_execute was slow (~3 seconds for 1000 parent rows) due to:
+1. JSONB extraction `(p.entity_keys->>'id')::integer` in WHERE clause prevented hash join usage
+2. `IS NOT DISTINCT FROM` comparison also prevented hash join, forcing cross-join with filter
+
+**Solution:** Pre-extract entity_keys in subquery SELECT list and use `=` for comparison:
+```sql
+-- Before (slow - cross-join with 20M row filter):
+FROM (SELECT * FROM temporal_merge_plan ...) p
+WHERE t.id IS NOT DISTINCT FROM (p.entity_keys->>'id')::integer
+
+-- After (fast - proper hash join):
+FROM (SELECT *, (entity_keys->>'id')::integer AS id_ek FROM temporal_merge_plan ...) p  
+WHERE t.id = p.id_ek
+```
+
+**Results:**
+- Parent temporal_merge: 3669ms → 2471ms (33% faster)
+- Child temporal_merge: 1725ms → 1204ms (30% faster)
+- Parent UPDATE: 3091ms → 1917ms (38% faster)
+- Child UPDATE: 1379ms → 864ms (37% faster)
+
+**Note:** Using `=` instead of `IS NOT DISTINCT FROM` is safe because identity columns are part of unique keys (NULLs not expected).
+
 ## 2026-01-20: Statbus Severe Issues - FOR_PORTION_OF View Bug Fixes (RESOLVED)
 
 Fixed critical user-reported bugs in FOR_PORTION_OF view trigger that were causing data loss and incorrect merging in production Statbus deployment:
