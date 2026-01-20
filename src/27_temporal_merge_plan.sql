@@ -93,6 +93,13 @@ DECLARE
     v_constellation TEXT;
     v_grouping_key_expr TEXT;
     v_entity_id_check_is_null_expr_no_alias TEXT;
+    -- Column Classification Variables
+    v_identity_columns_classified TEXT[];
+    v_generated_columns TEXT[];
+    v_not_null_default_columns TEXT[];
+    v_nullable_default_columns TEXT[];
+    v_always_exclude_columns TEXT[];
+    v_not_null_no_default_columns TEXT[];
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -802,8 +809,15 @@ BEGIN
                 AND t.attgenerated = '' -- Exclude generated columns
             )
             SELECT
-                (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_table.%I', attname, attname), ', '), '')) FROM source_data_cols),
-                (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, source_table.%I', attname, attname), ', '), '')) FROM source_ephemeral_cols),
+                -- Smart data payload construction using jsonb manipulation
+                -- First build the full object, then we'll strip NULL DEFAULT columns in the query
+                (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(
+                    format('%L, source_table.%I', attname, attname), ', '
+                ) FILTER (WHERE attname <> ALL(COALESCE(v_always_exclude_columns, '{}'))), '')) FROM source_data_cols),
+                -- Smart ephemeral payload construction with same approach
+                (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(
+                    format('%L, source_table.%I', attname, attname), ', '
+                ) FILTER (WHERE attname <> ALL(COALESCE(v_always_exclude_columns, '{}'))), '')) FROM source_ephemeral_cols),
                 (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM target_data_cols),
                 (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, %I', attname, attname), ', '), '')) FROM target_data_cols),
                 (SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', attname, attname), ', '), '')) FROM target_ephemeral_cols),
@@ -823,6 +837,41 @@ BEGIN
             v_target_data_cols_jsonb_build_bare := COALESCE(v_target_data_cols_jsonb_build_bare, '''{}''::jsonb');
             v_target_ephemeral_cols_jsonb_build_bare := COALESCE(v_target_ephemeral_cols_jsonb_build_bare, '''{}''::jsonb');
     
+            -- Phase 3.5: Comprehensive Column Classification (MOVED BEFORE payload construction)
+            -- Classify all target columns to enable intelligent payload construction
+            WITH column_classifications AS (
+                SELECT 
+                    a.attname,
+                    a.atthasdef,
+                    a.attidentity,
+                    a.attgenerated,
+                    a.attnotnull,
+                    CASE 
+                        WHEN a.attidentity IN ('a', 'd') THEN 'IDENTITY'
+                        WHEN a.attgenerated <> '' THEN 'GENERATED'  
+                        WHEN a.attnotnull AND a.atthasdef THEN 'NOT_NULL_DEFAULT'
+                        WHEN NOT a.attnotnull AND a.atthasdef THEN 'NULLABLE_DEFAULT'
+                        WHEN a.attnotnull AND NOT a.atthasdef THEN 'NOT_NULL_NO_DEFAULT'
+                        ELSE 'REGULAR'
+                    END as column_class
+                FROM pg_catalog.pg_attribute a
+                WHERE a.attrelid = target_table 
+                  AND a.attnum > 0 
+                  AND NOT a.attisdropped
+            )
+            SELECT 
+                COALESCE(array_agg(attname) FILTER (WHERE column_class = 'IDENTITY'), '{}'),
+                COALESCE(array_agg(attname) FILTER (WHERE column_class = 'GENERATED'), '{}'),
+                COALESCE(array_agg(attname) FILTER (WHERE column_class = 'NOT_NULL_DEFAULT'), '{}'),
+                COALESCE(array_agg(attname) FILTER (WHERE column_class = 'NULLABLE_DEFAULT'), '{}'),
+                COALESCE(array_agg(attname) FILTER (WHERE column_class IN ('IDENTITY', 'GENERATED')), '{}'),
+                COALESCE(array_agg(attname) FILTER (WHERE column_class = 'NOT_NULL_NO_DEFAULT'), '{}')
+            INTO 
+                v_identity_columns_classified, v_generated_columns, 
+                v_not_null_default_columns, v_nullable_default_columns,
+                v_always_exclude_columns, v_not_null_no_default_columns
+            FROM column_classifications;
+
             -- Build a jsonb object of the stable identity columns. These are the keys
             -- that must be preserved across an entity's timeline.
             SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, t.%I', col, col), ', '), ''))
@@ -832,6 +881,17 @@ BEGIN
             SELECT format('jsonb_build_object(%s)', COALESCE(string_agg(format('%L, %I', col, col), ', '), ''))
             INTO v_stable_pk_cols_jsonb_build_bare
             FROM unnest(v_identity_columns) col;
+    
+            -- DEBUG: Temporary validation of column classifications
+            IF cardinality(v_identity_columns_classified) > 0 THEN
+                RAISE DEBUG 'Identity columns detected: %', v_identity_columns_classified;
+            END IF;
+            IF cardinality(v_generated_columns) > 0 THEN
+                RAISE DEBUG 'Generated columns detected: %', v_generated_columns;
+            END IF;
+            IF cardinality(v_not_null_default_columns) > 0 THEN
+                RAISE DEBUG 'NOT NULL + DEFAULT columns detected: %', v_not_null_default_columns;
+            END IF;
     
             -- Build source-side stable PK payload. It must project NULL for columns not present in the source.
             -- Use WITH ORDINALITY to preserve array order and ensure deterministic output.
@@ -998,9 +1058,59 @@ BEGIN
                 v_source_data_payload_expr := '''"__DELETE__"''::jsonb';
                 v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
             ELSE -- MERGE_ENTITY_REPLACE, MERGE_ENTITY_UPSERT, REPLACE_FOR_PORTION_OF, UPDATE_FOR_PORTION_OF, INSERT_NEW_ENTITIES
-                -- UPDATE/REPLACE modes: Keep NULLs in source. NULL is an explicit value that overwrites target.
-                v_source_data_payload_expr := v_source_data_cols_jsonb_build;
-                v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
+                -- UPDATE/REPLACE modes: Smart payload handling for DEFAULT and NOT NULL columns
+                -- Build expressions that exclude NULL values for:
+                -- 1. Columns with defaults (use the default)
+                -- 2. NOT NULL columns without defaults (avoid constraint violation)
+                DECLARE 
+                    v_exclude_if_null_cols TEXT[];
+                    v_source_columns TEXT[];
+                    v_col TEXT;
+                    v_data_strip_expr TEXT;
+                    v_ephemeral_strip_expr TEXT;
+                BEGIN
+                    -- Get list of columns that exist in the source
+                    SELECT array_agg(attname)
+                    INTO v_source_columns
+                    FROM pg_catalog.pg_attribute
+                    WHERE attrelid = source_table
+                      AND attnum > 0
+                      AND NOT attisdropped;
+                    
+                    -- Filter to only columns that exist in both source and target
+                    -- and should be excluded if NULL
+                    v_exclude_if_null_cols := ARRAY(
+                        SELECT unnest(v_not_null_default_columns || v_nullable_default_columns || v_not_null_no_default_columns)
+                        INTERSECT
+                        SELECT unnest(v_source_columns)
+                    );
+                    
+                    IF cardinality(v_exclude_if_null_cols) > 0 THEN
+                        -- Start with the base expression
+                        v_data_strip_expr := v_source_data_cols_jsonb_build;
+                        v_ephemeral_strip_expr := v_source_ephemeral_cols_jsonb_build;
+                        
+                        -- For each column that should be excluded if NULL, wrap with a CASE to remove it
+                        FOREACH v_col IN ARRAY v_exclude_if_null_cols
+                        LOOP
+                            v_data_strip_expr := format(
+                                $$(CASE WHEN source_table.%I IS NULL THEN (%s) - %L ELSE (%s) END)$$,
+                                v_col, v_data_strip_expr, v_col, v_data_strip_expr
+                            );
+                            v_ephemeral_strip_expr := format(
+                                $$(CASE WHEN source_table.%I IS NULL THEN (%s) - %L ELSE (%s) END)$$,
+                                v_col, v_ephemeral_strip_expr, v_col, v_ephemeral_strip_expr
+                            );
+                        END LOOP;
+                        
+                        v_source_data_payload_expr := v_data_strip_expr;
+                        v_source_ephemeral_payload_expr := v_ephemeral_strip_expr;
+                    ELSE
+                        -- No columns to exclude, use original behavior
+                        v_source_data_payload_expr := v_source_data_cols_jsonb_build;
+                        v_source_ephemeral_payload_expr := v_source_ephemeral_cols_jsonb_build;
+                    END IF;
+                END;
             END IF;
     
             -- Second, determine timeline semantics. The default is a non-destructive merge where we
