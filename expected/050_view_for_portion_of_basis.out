@@ -83,9 +83,9 @@ Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON products__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
 TABLE sql_saga.updatable_view;
- view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func 
--------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------
- public      | products__for_portion_of_valid | for_portion_of | public       | products   | valid    | for_portion_of_valid | 
+ view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func |                   source_columns                   
+-------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------+----------------------------------------------------
+ public      | products__for_portion_of_valid | for_portion_of | public       | products   | valid    | for_portion_of_valid |              | {id,name,price,valid_range,valid_from,valid_until}
 (1 row)
 
 -- Test DML Semantics
@@ -374,8 +374,8 @@ SELECT sql_saga.drop_for_portion_of_view('products'::regclass);
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func 
--------------+-----------+-----------+--------------+------------+----------+--------------+--------------
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func | source_columns 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------+----------------
 (0 rows)
 
 -- The view should no longer exist. This will fail if it does.

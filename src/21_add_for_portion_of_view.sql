@@ -52,6 +52,7 @@ BEGIN
             DECLARE
                 identifier_columns name[];
                 identifier_columns_quoted text;
+                source_columns name[];
             BEGIN
                 -- Prefer a single-column temporal unique key as the identifier
                 SELECT uk.column_names INTO identifier_columns
@@ -76,6 +77,17 @@ BEGIN
 
                 SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
 
+                -- Compute non-generated columns for the temp source table
+                -- Excludes GENERATED ALWAYS AS IDENTITY and GENERATED ALWAYS AS ... STORED columns
+                SELECT array_agg(pa.attname ORDER BY pa.attnum)
+                INTO source_columns
+                FROM pg_attribute pa
+                WHERE pa.attrelid = r.table_oid
+                  AND pa.attnum > 0
+                  AND NOT pa.attisdropped
+                  AND pa.attgenerated = ''       -- Exclude GENERATED ALWAYS AS ... STORED
+                  AND pa.attidentity <> 'a';     -- Exclude GENERATED ALWAYS AS IDENTITY
+
                 view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'for_portion_of');
                 trigger_name := 'for_portion_of_' || r.era_name;
                 EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */);
@@ -86,8 +98,8 @@ BEGIN
                     view_name, /* %I */
                     identifier_columns_quoted /* %s */
                 );
-                INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name)
-                    VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name);
+                INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, source_columns)
+                    VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name, source_columns);
             END;
         END LOOP;
     END;

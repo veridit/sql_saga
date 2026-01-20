@@ -24,7 +24,7 @@ BEGIN
 
     -- Get metadata about the view's underlying table.
     SELECT
-        v.table_schema, v.table_name, v.era_name, e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
+        v.table_schema, v.table_name, v.era_name, v.source_columns, e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
         e.range_subtype, to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) as table_oid,
         v.current_func
     INTO info
@@ -53,10 +53,19 @@ BEGIN
             EXECUTE format('DROP TABLE %I', source_table_name /* %I */);
         END IF;
 
-        EXECUTE format(
-            'CREATE TEMP TABLE %I ON COMMIT DROP AS SELECT 1 as row_id, ($1).*',
-            source_table_name /* %I */
-        ) USING NEW;
+        -- Create temp table using explicit column list to exclude GENERATED columns
+        DECLARE
+            v_source_cols_expr text;
+        BEGIN
+            SELECT string_agg(format('($1).%I', col), ', ')
+            INTO v_source_cols_expr
+            FROM unnest(info.source_columns) AS col;
+            
+            EXECUTE format(
+                'CREATE TEMP TABLE %I ON COMMIT DROP AS SELECT 1 as row_id, %s',
+                source_table_name, v_source_cols_expr
+            ) USING NEW;
+        END;
 
         -- Handle both range-only and boundary column modes
         IF info.valid_from_column_name IS NOT NULL AND info.valid_until_column_name IS NOT NULL THEN
@@ -147,6 +156,23 @@ BEGIN
                     FROM unnest(identifier_columns) AS u(c);
 
                     jnew_data := to_jsonb(NEW) - identifier_columns;
+                    
+                    -- Strip GENERATED columns from jnew_data that aren't in source_columns
+                    DECLARE
+                        v_all_columns name[];
+                        v_col name;
+                    BEGIN
+                        -- Get all columns from jnew_data
+                        SELECT array_agg(key::name) INTO v_all_columns FROM jsonb_object_keys(jnew_data) AS key;
+                        
+                        -- Remove any column not in info.source_columns
+                        FOREACH v_col IN ARRAY v_all_columns LOOP
+                            IF v_col <> ALL(info.source_columns) THEN
+                                jnew_data := jnew_data - v_col;
+                            END IF;
+                        END LOOP;
+                    END;
+                    
                     IF info.range_column_name IS NOT NULL THEN jnew_data := jnew_data - info.range_column_name; END IF;
                     IF info.valid_from_column_name IS NOT NULL THEN jnew_data := jnew_data - info.valid_from_column_name; END IF;
                     IF info.valid_until_column_name IS NOT NULL THEN jnew_data := jnew_data - info.valid_until_column_name; END IF;
@@ -226,6 +252,23 @@ BEGIN
             END IF;
 
             jnew := to_jsonb(NEW);
+            
+            -- Strip GENERATED columns from jnew that aren't in source_columns
+            DECLARE
+                v_all_columns name[];
+                v_col name;
+            BEGIN
+                -- Get all columns from jnew
+                SELECT array_agg(key::name) INTO v_all_columns FROM jsonb_object_keys(jnew) AS key;
+                
+                -- Remove any column not in info.source_columns
+                FOREACH v_col IN ARRAY v_all_columns LOOP
+                    IF v_col <> ALL(info.source_columns) THEN
+                        jnew := jnew - v_col;
+                    END IF;
+                END LOOP;
+            END;
+            
             IF info.range_column_name IS NOT NULL THEN jnew := jnew - info.range_column_name; END IF;
             IF info.valid_from_column_name IS NOT NULL THEN jnew := jnew - info.valid_from_column_name; END IF;
             IF info.valid_until_column_name IS NOT NULL THEN jnew := jnew - info.valid_until_column_name; END IF;

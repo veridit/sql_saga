@@ -15,7 +15,7 @@ BEGIN
     END IF;
 
     -- Get metadata about the view's underlying table.
-    SELECT v.table_schema, v.table_name, v.era_name,
+    SELECT v.table_schema, v.table_name, v.era_name, v.source_columns,
            e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
            e.range_subtype_category, e.range_subtype, e.range_type
     INTO info
@@ -29,6 +29,23 @@ BEGIN
     END IF;
 
     jnew := to_jsonb(NEW);
+
+    -- Strip GENERATED columns from jnew that aren't in source_columns
+    -- These columns shouldn't be in the temp source table 
+    DECLARE
+        v_all_columns name[];
+        v_col name;
+    BEGIN
+        -- Get all columns from jnew
+        SELECT array_agg(key::name) INTO v_all_columns FROM jsonb_object_keys(jnew) AS key;
+        
+        -- Remove any column not in info.source_columns
+        FOREACH v_col IN ARRAY v_all_columns LOOP
+            IF v_col <> ALL(info.source_columns) THEN
+                jnew := jnew - v_col;
+            END IF;
+        END LOOP;
+    END;
 
     -- For UPDATE operations, we need to handle column filtering carefully to support two cases:
     -- 1. Columns not mentioned in UPDATE -> should preserve existing values across segments
@@ -92,10 +109,8 @@ BEGIN
         DECLARE
             v_cols_def text;
         BEGIN
-            -- Build column definitions from the base table, but strip any GENERATED
-            -- or IDENTITY properties. Using LIKE ... INCLUDING ALL would copy them,
-            -- which would cause the subsequent INSERT of the NEW record to fail.
-            -- This approach ensures the temp table has plain columns of the correct types.
+            -- Build column definitions using the pre-computed source_columns list
+            -- This excludes GENERATED columns that would cause INSERT failures
             SELECT string_agg(
                 format('%I %s', pa.attname, format_type(pa.atttypid, pa.atttypmod)),
                 ', '
@@ -103,6 +118,7 @@ BEGIN
             INTO v_cols_def
             FROM pg_attribute pa
             WHERE pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
+              AND pa.attname = ANY(info.source_columns)
               AND pa.attnum > 0 AND NOT pa.attisdropped;
 
             EXECUTE format('CREATE TEMP TABLE %I (row_id BIGINT, %s, merge_status jsonb) ON COMMIT DROP',
@@ -212,16 +228,27 @@ BEGIN
     IF info.valid_until_column_name IS NOT NULL THEN jnew := jnew - info.valid_until_column_name; END IF;
     IF info.valid_to_column_name IS NOT NULL THEN jnew := jnew - info.valid_to_column_name; END IF;
 
-    -- We no longer need the complex IF/ELSE for insertion.
-    -- Populate a record from the cleaned-up JSON and insert it.
+    -- Insert the cleaned-up JSON into the temp table using explicit column list
+    -- This avoids issues with GENERATED columns that aren't in the temp table
     BEGIN
-        EXECUTE format(
-            'INSERT INTO %I SELECT 1, (r).*, NULL FROM jsonb_populate_record(null::%I.%I, $1) AS r',
-            temp_source_table_name,
-            info.table_schema,
-            info.table_name
-        )
-        USING jnew;
+        DECLARE
+            v_insert_cols text;
+            v_insert_vals text;
+        BEGIN
+            -- Build explicit column list and values from jnew
+            SELECT 
+                string_agg(quote_ident(key), ', '),
+                string_agg(format('($1->>%L)::%s', key, format_type(pa.atttypid, pa.atttypmod)), ', ')
+            INTO v_insert_cols, v_insert_vals
+            FROM jsonb_object_keys(jnew) AS key
+            JOIN pg_attribute pa ON pa.attrelid = (info.table_schema || '.' || info.table_name)::regclass
+                                AND pa.attname = key
+            WHERE pa.attnum > 0 AND NOT pa.attisdropped;
+
+            EXECUTE format('INSERT INTO %I (row_id, %s, merge_status) VALUES (1, %s, NULL)',
+                temp_source_table_name, v_insert_cols, v_insert_vals)
+            USING jnew;
+        END;
     END;
 
     -- Use temporal_merge to apply the change.

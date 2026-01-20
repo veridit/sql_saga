@@ -419,6 +419,7 @@ CREATE TABLE sql_saga.updatable_view (
 
     trigger_name name NOT NULL,
     current_func text, -- Stores the function call, e.g., 'now()' or 'my_test_now()'
+    source_columns name[] NOT NULL, -- List of non-GENERATED columns for temp source table creation
 
     PRIMARY KEY (view_schema, view_name),
     FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE,

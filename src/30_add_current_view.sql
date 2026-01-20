@@ -59,6 +59,7 @@ BEGIN
             range_category char;
             now_function text;
             trigger_args text;
+            source_columns name[];
         BEGIN
             -- Verify the era is time-based by checking the cached category
             IF r.range_subtype_category <> 'D' THEN -- 'D' for all DateTime types
@@ -109,6 +110,17 @@ BEGIN
                     table_oid, r.era_name;
             END IF;
 
+            -- Compute non-generated columns for the temp source table
+            -- Excludes GENERATED ALWAYS AS IDENTITY and GENERATED ALWAYS AS ... STORED columns
+            SELECT array_agg(pa.attname ORDER BY pa.attnum)
+            INTO source_columns
+            FROM pg_attribute pa
+            WHERE pa.attrelid = r.table_oid
+              AND pa.attnum > 0
+              AND NOT pa.attisdropped
+              AND pa.attgenerated = ''       -- Exclude GENERATED ALWAYS AS ... STORED
+              AND pa.attidentity <> 'a';     -- Exclude GENERATED ALWAYS AS IDENTITY
+
             view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'current');
             trigger_name := 'current_' || r.era_name;
 
@@ -130,8 +142,8 @@ BEGIN
 
             EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.current_view_trigger(%s)',
                 trigger_name, r.schema_name, view_name, trigger_args);
-            INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func)
-                VALUES (r.schema_name, view_name, 'current', r.schema_name, r.table_name, r.era_name, trigger_name, now_function);
+            INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, current_func, source_columns)
+                VALUES (r.schema_name, view_name, 'current', r.schema_name, r.table_name, r.era_name, trigger_name, now_function, source_columns);
         END;
     END LOOP;
 
