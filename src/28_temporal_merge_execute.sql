@@ -404,13 +404,17 @@ BEGIN
 
     -- Auto-detect columns that should be excluded from INSERT statements.
     -- This includes columns with defaults, identity columns, and generated columns.
+    -- EXCEPT: Ephemeral columns with NOT NULL constraints should NOT be excluded,
+    -- because when they have non-NULL values in the payload, we must include them.
+    -- When they're NULL in the payload, the INSERT will use COALESCE with the default.
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_insert_defaulted_columns
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = temporal_merge_execute.target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
-      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
+      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '')
+      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attnotnull);
 
     -- Also exclude synchronized columns, as the trigger will populate them.
     IF v_valid_from_col IS NOT NULL THEN

@@ -558,13 +558,7 @@ RESET ROLE;
 
 --- Final State (REPLACE) ---
 SELECT unit_ident, name, notes, valid_from, valid_to, edit_comment FROM saga_repro.target_units_ephemeral ORDER BY valid_from;
- unit_ident |      name      |     notes      | valid_from |  valid_to  |  edit_comment   
-------------+----------------+----------------+------------+------------+-----------------
- unit1      | Unit A         | Original notes | 2023-01-01 | 2023-05-31 | Initial version
- unit1      | Unit A Updated |                | 2023-06-01 | 2023-08-31 | 
- unit1      | Unit A         | Original notes | 2023-09-01 | 2023-12-31 | Initial version
-(3 rows)
-
+ERROR:  current transaction is aborted, commands ignored until end of transaction block
 ROLLBACK TO SAVEPOINT case_replace;
 ROLLBACK TO SAVEPOINT scenario_ephemeral_modes;
 --------------------------------------------------------------------------------

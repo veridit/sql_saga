@@ -1849,9 +1849,12 @@ BEGIN
                     sql_saga.get_allen_relation(propagated_s_valid_from, propagated_s_valid_until, t_valid_from, t_valid_until) AS s_t_relation,
                     %2$s as data_payload,
                     md5((jsonb_strip_nulls(%2$s))::text) as data_hash,
-                    COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) as ephemeral_payload,
+                    CASE 
+                        WHEN s_data_payload IS NULL THEN t_ephemeral_payload
+                        ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb)
+                    END as ephemeral_payload,
                     CASE WHEN %3$L::boolean
-                        THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', %2$s, 'final_ephemeral_payload', COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) )
+                        THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', %2$s, 'final_ephemeral_payload', CASE WHEN s_data_payload IS NULL THEN t_ephemeral_payload ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) END )
                         ELSE NULL
                     END as trace,
                     CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
