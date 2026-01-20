@@ -1588,7 +1588,8 @@ BEGIN
                 SELECT
                     source_row_id,
                     count(DISTINCT discovered_stable_pk_payload) as match_count,
-                    jsonb_agg(DISTINCT discovered_stable_pk_payload) as conflicting_ids
+                    -- Filter out NULL to avoid [null] result for new entities with no matches
+                    COALESCE(jsonb_agg(DISTINCT discovered_stable_pk_payload) FILTER (WHERE discovered_stable_pk_payload IS NOT NULL), '[]'::jsonb) as conflicting_ids
                 FROM source_rows_with_matches
                 GROUP BY source_row_id
             $SQL$;
