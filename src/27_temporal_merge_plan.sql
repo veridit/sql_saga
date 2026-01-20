@@ -1731,7 +1731,7 @@ BEGIN
             -- CTE 10: all_rows
             v_sql := format($SQL$
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
-                SELECT %1$s /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
+                SELECT %1$s /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
                 UNION ALL
                 SELECT
                     %2$s /* v_non_temporal_tr_qualified_lookup_cols_prefix */
@@ -1745,7 +1745,6 @@ BEGIN
                     true as is_identifiable,
                     false as is_ambiguous,
                     NULL::jsonb as conflicting_ids,
-                    true as temporal_columns_are_consistent,
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             $SQL$,
@@ -1884,7 +1883,6 @@ BEGIN
                     SELECT
                         seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
                         source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
                         source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
                     FROM all_segments seg
                     %1$s
@@ -1966,8 +1964,7 @@ BEGIN
                     CASE WHEN %3$L::boolean
                         THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', %2$s, 'final_ephemeral_payload', CASE WHEN s_data_payload IS NULL THEN t_ephemeral_payload ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) END )
                         ELSE NULL
-                    END as trace,
-                    CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+                    END as trace
                 FROM resolved_atomic_segments_with_propagated_ids
             $SQL$,
                 v_lookup_cols_sans_valid_from_prefix, /* %1$s */

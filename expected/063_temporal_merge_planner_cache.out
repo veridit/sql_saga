@@ -513,7 +513,7 @@ NOTICE:  Executing setup: ANALYZE active_source_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
-                SELECT id,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
+                SELECT id,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
                 UNION ALL
                 SELECT
                     target_row.id,  /* v_non_temporal_tr_qualified_lookup_cols_prefix */
@@ -527,7 +527,6 @@ NOTICE:  Explaining:
                     true as is_identifiable,
                     false as is_ambiguous,
                     NULL::jsonb as conflicting_ids,
-                    true as temporal_columns_are_consistent,
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
@@ -538,7 +537,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=53, local read=2
+NOTICE:    Buffers: shared hit=50, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -553,7 +552,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=28
+NOTICE:    Buffers: shared hit=26
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -729,7 +728,6 @@ NOTICE:  Explaining:
                     SELECT
                         seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
                         source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
                         source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
                     FROM all_segments seg
                     
@@ -900,7 +898,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=58
+NOTICE:    Buffers: shared hit=54
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -919,14 +917,13 @@ NOTICE:  Explaining:
                     CASE WHEN 'f'::boolean
                         THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'final_ephemeral_payload', CASE WHEN s_data_payload IS NULL THEN t_ephemeral_payload ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) END )
                         ELSE NULL
-                    END as trace,
-                    CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+                    END as trace
                 FROM resolved_atomic_segments_with_propagated_ids
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70
+NOTICE:    Buffers: shared hit=66
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -973,7 +970,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56
+NOTICE:    Buffers: shared hit=54
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -1019,7 +1016,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=68
+NOTICE:    Buffers: shared hit=66
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -1863,7 +1860,7 @@ NOTICE:  Executing setup: ANALYZE active_source_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
-                SELECT lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
+                SELECT lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
                 UNION ALL
                 SELECT
                     target_row.lu_id, target_row.type,  /* v_non_temporal_tr_qualified_lookup_cols_prefix */
@@ -1877,7 +1874,6 @@ NOTICE:  Explaining:
                     true as is_identifiable,
                     false as is_ambiguous,
                     NULL::jsonb as conflicting_ids,
-                    true as temporal_columns_are_consistent,
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
@@ -1888,7 +1884,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56, local read=2
+NOTICE:    Buffers: shared hit=53, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -1903,7 +1899,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=30
+NOTICE:    Buffers: shared hit=28
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -2079,7 +2075,6 @@ NOTICE:  Explaining:
                     SELECT
                         seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
                         source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
                         source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
                     FROM all_segments seg
                     
@@ -2250,7 +2245,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=60
+NOTICE:    Buffers: shared hit=56
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -2269,14 +2264,13 @@ NOTICE:  Explaining:
                     CASE WHEN 'f'::boolean
                         THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'final_ephemeral_payload', CASE WHEN s_data_payload IS NULL THEN t_ephemeral_payload ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) END )
                         ELSE NULL
-                    END as trace,
-                    CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+                    END as trace
                 FROM resolved_atomic_segments_with_propagated_ids
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=3.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=72
+NOTICE:    Buffers: shared hit=68
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -2323,7 +2317,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=58
+NOTICE:    Buffers: shared hit=56
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -2369,7 +2363,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=3)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=70
+NOTICE:    Buffers: shared hit=68
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -3248,7 +3242,7 @@ NOTICE:  Executing setup: ANALYZE active_source_rows;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE all_rows ON COMMIT DROP AS
-                SELECT es_id, lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, temporal_columns_are_consistent, canonical_nk_json FROM active_source_rows
+                SELECT es_id, lu_id, type,  /* v_non_temporal_lookup_cols_select_list_no_alias_prefix */ causal_id, valid_from, valid_until, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, natural_identity_column_values_are_null, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM active_source_rows
                 UNION ALL
                 SELECT
                     target_row.es_id, target_row.lu_id, target_row.type,  /* v_non_temporal_tr_qualified_lookup_cols_prefix */
@@ -3262,7 +3256,6 @@ NOTICE:  Explaining:
                     true as is_identifiable,
                     false as is_ambiguous,
                     NULL::jsonb as conflicting_ids,
-                    true as temporal_columns_are_consistent,
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
@@ -3273,7 +3266,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=59, local read=2
+NOTICE:    Buffers: shared hit=56, local read=2
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -3288,7 +3281,7 @@ NOTICE:          Buffers: local hit=1
 NOTICE:    ->  Seq Scan on all_rows all_rows_1 (actual rows=4.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=32
+NOTICE:    Buffers: shared hit=30
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -3465,7 +3458,6 @@ NOTICE:  Explaining:
                     SELECT
                         seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
                         source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.causal_id as s_causal_id, source_payloads.causal_id as direct_source_causal_id,
                         source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
                     FROM all_segments seg
                     
@@ -3636,7 +3628,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=62
+NOTICE:    Buffers: shared hit=58
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -3655,14 +3647,13 @@ NOTICE:  Explaining:
                     CASE WHEN 'f'::boolean
                         THEN trace || jsonb_build_object( 'cte', 'ras', 'propagated_stable_pk_payload', propagated_stable_pk_payload, 'final_data_payload', COALESCE(t_data_payload, '{}'::jsonb) || COALESCE(s_data_payload, '{}'::jsonb), 'final_ephemeral_payload', CASE WHEN s_data_payload IS NULL THEN t_ephemeral_payload ELSE COALESCE(t_ephemeral_payload, '{}'::jsonb) || COALESCE(s_ephemeral_payload, '{}'::jsonb) END )
                         ELSE NULL
-                    END as trace,
-                    CASE WHEN s_data_payload IS NOT NULL THEN 1 ELSE 2 END as priority
+                    END as trace
                 FROM resolved_atomic_segments_with_propagated_ids
             
 NOTICE:  Seq Scan on resolved_atomic_segments_with_propagated_ids (actual rows=6.00 loops=1)
 NOTICE:    Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=74
+NOTICE:    Buffers: shared hit=70
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -3699,7 +3690,7 @@ NOTICE:    ->  Subquery Scan on s1 (actual rows=6.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  WindowAgg (actual rows=6.00 loops=1)
 NOTICE:                Window: w AS (PARTITION BY ras.grouping_key ORDER BY ras.valid_from)
-NOTICE:                Storage: Memory  Maximum Storage: 18kB
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
 NOTICE:                Buffers: local hit=1
 NOTICE:                ->  Sort (actual rows=6.00 loops=1)
 NOTICE:                      Sort Key: ras.grouping_key, ras.valid_from
@@ -3709,7 +3700,7 @@ NOTICE:                      ->  Seq Scan on resolved_atomic_segments ras (actua
 NOTICE:                            Filter: (data_payload IS NOT NULL)
 NOTICE:                            Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=60
+NOTICE:    Buffers: shared hit=58
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -3755,7 +3746,7 @@ NOTICE:                  Sort Method: quicksort  Memory: 25kB
 NOTICE:                  ->  Function Scan on unnest e (actual rows=1.00 loops=6)
 NOTICE:                        Filter: (e IS NOT NULL)
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=72
+NOTICE:    Buffers: shared hit=70
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
