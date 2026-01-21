@@ -575,7 +575,24 @@ BEGIN
                 ),
             ', ') FROM common_data_cols cdc),
             (SELECT string_agg(format('%I', cfi.attname), ', ' ORDER BY cfi.attnum) FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
-            (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ' ORDER BY cfi.attnum) FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            -- For Step 1.3 (historical slices for new entities via jsonb_populate_record):
+            -- NOT NULL DEFAULT columns need COALESCE because jsonb_populate_record returns NULL for missing keys.
+            (SELECT string_agg(
+                CASE
+                    WHEN cfi.attnotnull AND cfi.atthasdef THEN
+                        format('COALESCE(jpr_all.%1$I, %2$s)',
+                            cfi.attname,
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        format('jpr_all.%I', cfi.attname)
+                END,
+                ', ' ORDER BY cfi.attnum
+             )
+             FROM cols_for_insert cfi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+                                    AND ad.adnum = cfi.attnum
+             WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
             (SELECT string_agg(
                 -- For NOT NULL DEFAULT columns, we must coalesce missing payload values with the DB default expression.
                 -- This allows us to include the column in the INSERT (for payload preservation) without risking NULL violation.
