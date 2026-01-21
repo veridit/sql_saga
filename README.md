@@ -199,7 +199,7 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
   - `source_table`: A table (usually temporary) containing the source data.
   - `identity_columns`: An array of column names that form the stable, conceptual entity identifier (e.g., a surrogate primary key like `id`). For SCD Type 2 operations, these columns must be part of a composite key that includes the temporal range (e.g., `PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)`) to allow multiple historical versions of the same entity.
   - `natural_identity_columns`: An array of column names that form a "natural" or "business" key. This key is used to look up existing entities in the target table when the stable identifier in `identity_columns` is not known by the source (e.g., is `NULL` for new entities). This is the primary mechanism for preventing duplicate entities when loading data from external systems.
-  - `ephemeral_columns`: (Optional, Default: `NULL`) An array of column names that should not be considered when comparing for data changes, but whose values should still be updated. This is ideal for metadata like `edit_comment` or `batch_id` that should be attached to a historical record without creating a new version of that record if only the metadata changes. Any synchronized temporal columns (e.g., a `valid_to` column) are automatically treated as ephemeral and do not need to be specified here.
+  - `ephemeral_columns`: (Optional, Default: `NULL`) An array of column names that should not be considered when comparing for data changes, but whose values should still be updated. This is ideal for metadata like `edit_comment` or `batch_id` that should be attached to a historical record without creating a new version of that record if only the metadata changes. Any synchronized temporal columns (e.g., a `valid_to` column) are automatically treated as ephemeral and do not need to be specified here. **Note:** If not provided, `temporal_merge` will auto-discover ephemeral columns from the era's metadata (see `add_era()`).
   - `mode`: Controls the scope and payload semantics of the merge. By default, all modes are non-destructive to the timeline.
     - `'MERGE_ENTITY_PATCH'`: (Default) Merges the source with the target timeline. For overlapping periods, it patches data by applying non-`NULL` values from the source; target data is preserved for any attribute that is `NULL` or absent in the source. This is a stateless operation. It preserves non-overlapping parts of the target timeline.
     - `'MERGE_ENTITY_REPLACE'`: Merges the source timeline with the target entity's full timeline, completely replacing data for overlapping periods with the source data. Preserves non-overlapping parts of the target timeline.
@@ -391,6 +391,42 @@ SELECT sql_saga.add_foreign_key(
     fk_column_names => ARRAY['legal_unit_id'],
     pk_table_oid => 'legal_unit'::regclass,
     pk_column_names => ARRAY['id']
+);
+```
+
+#### Tables with Audit Columns (Ephemeral Columns)
+
+For tables with audit columns like `edit_at` or `edit_by_user_id`, you can configure these as **ephemeral columns** at the era level. Ephemeral columns are excluded from coalescing comparisons, allowing adjacent temporal rows with identical business data but different audit timestamps to be merged into a single row:
+
+```sql
+CREATE TABLE audited_entity (
+  id INTEGER NOT NULL,
+  name VARCHAR NOT NULL,
+  edit_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  edit_by_user_id INTEGER NOT NULL,
+  valid_range daterange NOT NULL,
+  PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+
+-- Register with ephemeral columns - these are excluded from coalescing comparisons
+SELECT sql_saga.add_era(
+    'audited_entity'::regclass,
+    'valid_range',
+    'valid',
+    ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']
+);
+
+-- All views and temporal_merge calls on this era will automatically
+-- inherit the ephemeral_columns setting, enabling proper coalescing.
+SELECT sql_saga.add_for_portion_of_view('audited_entity'::regclass);
+```
+
+You can also configure ephemeral columns after era creation using `set_era_ephemeral_columns()`:
+
+```sql
+SELECT sql_saga.set_era_ephemeral_columns(
+    'existing_table'::regclass,
+    ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']
 );
 ```
 
