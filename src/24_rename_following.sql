@@ -175,72 +175,100 @@ BEGIN
         EXECUTE sql;
     END LOOP;
 
-    --    FOR sql IN
-    --        SELECT format('UPDATE sql_saga.system_time_periods SET infinity_check_constraint = %L WHERE table_name = %L::regclass',
-    --            c.conname, p.table_name)
-    --        FROM sql_saga.era AS p
-    --        JOIN sql_saga.system_time_periods AS stp ON (stp.table_name, stp.era_name) = (p.table_name, p.era_name)
-    --        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = p.table_name
-    --        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = p.table_name
-    --        WHERE stp.infinity_check_constraint <> c.conname
-    --          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I = ''infinity''::%s))', ea.attname, format_type(ea.atttypid, ea.atttypmod))
-    --          AND p.stop_on_column_name = ea.attname
-    --          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (stp.table_name, stp.infinity_check_constraint))
-    --    LOOP
-    --        EXECUTE sql;
-    --    END LOOP;
-    --
-    --    FOR sql IN
-    --        SELECT format('UPDATE sql_saga.system_time_periods SET generated_always_trigger = %L WHERE table_name = %L::regclass',
-    --            t.tgname, stp.table_name)
-    --        FROM sql_saga.system_time_periods AS stp
-    --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
-    --        WHERE t.tgname <> stp.generated_always_trigger
-    --          AND t.tgfoid = 'sql_saga.generated_always_as_row_start_end()'::regprocedure
-    --          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (stp.table_name, stp.generated_always_trigger))
-    --    LOOP
-    --        EXECUTE sql;
-    --    END LOOP;
-    --
-    --    FOR sql IN
-    --        SELECT format('UPDATE sql_saga.system_time_periods SET write_history_trigger = %L WHERE table_name = %L::regclass',
-    --            t.tgname, stp.table_name)
-    --        FROM sql_saga.system_time_periods AS stp
-    --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
-    --        WHERE t.tgname <> stp.write_history_trigger
-    --          AND t.tgfoid = 'sql_saga.write_history()'::regprocedure
-    --          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (stp.table_name, stp.write_history_trigger))
-    --    LOOP
-    --        EXECUTE sql;
-    --    END LOOP;
-    --
-    --    FOR sql IN
-    --        SELECT format('UPDATE sql_saga.system_time_periods SET truncate_trigger = %L WHERE table_name = %L::regclass',
-    --            t.tgname, stp.table_name)
-    --        FROM sql_saga.system_time_periods AS stp
-    --        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = stp.table_name
-    --        WHERE t.tgname <> stp.truncate_trigger
-    --          AND t.tgfoid = 'sql_saga.truncate_era()'::regprocedure
-    --          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (stp.table_name, stp.truncate_trigger))
-    --    LOOP
-    --        EXECUTE sql;
-    --    END LOOP;
+    ---
+    --- system_time_era
+    ---
+
+    -- Follow renames of the infinity_check_constraint.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.system_time_era SET infinity_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            c.conname,
+            ste.table_schema,
+            ste.table_name,
+            ste.era_name
+        )
+        FROM sql_saga.system_time_era AS ste
+        JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (ste.table_schema, ste.table_name, ste.era_name)
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
+        JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
+        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
+        WHERE ste.infinity_check_constraint <> c.conname
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I = ''infinity''::%s))', ea.attname, format_type(ea.atttypid, ea.atttypmod))
+          AND e.valid_until_column_name = ea.attname
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, ste.infinity_check_constraint))
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames of the generated_always_trigger.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.system_time_era SET generated_always_trigger = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            t.tgname,
+            ste.table_schema,
+            ste.table_name,
+            ste.era_name
+        )
+        FROM sql_saga.system_time_era AS ste
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = pc.oid
+        WHERE t.tgname <> ste.generated_always_trigger
+          AND t.tgfoid = 'sql_saga.generated_always_as_row_start_end()'::regprocedure
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (pc.oid, ste.generated_always_trigger))
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames of the write_history_trigger.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.system_time_era SET write_history_trigger = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            t.tgname,
+            ste.table_schema,
+            ste.table_name,
+            ste.era_name
+        )
+        FROM sql_saga.system_time_era AS ste
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = pc.oid
+        WHERE t.tgname <> ste.write_history_trigger
+          AND t.tgfoid = 'sql_saga.write_history()'::regprocedure
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (pc.oid, ste.write_history_trigger))
+    LOOP
+        EXECUTE sql;
+    END LOOP;
+
+    -- Follow renames of the truncate_trigger.
+    FOR sql IN
+        SELECT format('UPDATE sql_saga.system_time_era SET truncate_trigger = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
+            t.tgname,
+            ste.table_schema,
+            ste.table_name,
+            ste.era_name
+        )
+        FROM sql_saga.system_time_era AS ste
+        JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
+        JOIN pg_catalog.pg_trigger AS t ON t.tgrelid = pc.oid
+        WHERE t.tgname <> ste.truncate_trigger
+          AND t.tgfoid = 'sql_saga.truncate_system_versioning()'::regprocedure
+          AND NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS _t WHERE (_t.tgrelid, _t.tgname) = (pc.oid, ste.truncate_trigger))
+    LOOP
+        EXECUTE sql;
+    END LOOP;
 
     /*
      * We can't reliably find out what a column was renamed to, so just error
-     * out in this case.
+     * out in this case. Note: This is also checked in drop_protection.sql.
      */
---    FOR r IN
---        SELECT stp.table_name, u.column_name
---        FROM sql_saga.system_time_periods AS stp
---        CROSS JOIN LATERAL unnest(stp.excluded_column_names) AS u (column_name)
---        WHERE NOT EXISTS (
---            SELECT FROM pg_catalog.pg_attribute AS a
---            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
---    LOOP
---        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from era',
---            r.column_name, r.table_oid;
---    END LOOP;
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, u.column_name
+        FROM sql_saga.system_time_era AS ste
+        CROSS JOIN LATERAL unnest(ste.excluded_column_names) AS u (column_name)
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_attribute AS a
+            WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
+    LOOP
+        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
+            r.column_name, r.table_oid;
+    END LOOP;
 
     ---
     --- updatable_view

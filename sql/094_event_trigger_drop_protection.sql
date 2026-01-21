@@ -127,6 +127,46 @@ SELECT sql_saga.drop_unique_key('dp', ARRAY['id'], 'p');
 SELECT sql_saga.drop_era('dp', 'p');
 ROLLBACK TO SAVEPOINT s11;
 
+SAVEPOINT system_versioning_tests;
+/* system_versioning - test drop protection for system-versioned tables */
+CREATE TABLE dp_sysver (id int PRIMARY KEY, name text);
+SELECT sql_saga.add_system_versioning('dp_sysver');
+
+-- Test that we can't drop the history table directly
+SAVEPOINT sv_history_table;
+DROP TABLE dp_sysver_history; -- should fail
+ROLLBACK TO SAVEPOINT sv_history_table;
+
+-- Test that we can't drop the history view directly
+SAVEPOINT sv_history_view;
+DROP VIEW dp_sysver_with_history; -- should fail
+ROLLBACK TO SAVEPOINT sv_history_view;
+
+-- Test that we can't drop the generated_always trigger
+SAVEPOINT sv_gen_trigger;
+DROP TRIGGER dp_sysver_system_time_generated_always ON dp_sysver; -- should fail
+ROLLBACK TO SAVEPOINT sv_gen_trigger;
+
+-- Test that we can't drop the write_history trigger
+SAVEPOINT sv_write_trigger;
+DROP TRIGGER dp_sysver_system_time_write_history ON dp_sysver; -- should fail
+ROLLBACK TO SAVEPOINT sv_write_trigger;
+
+-- Test that we can't drop the truncate trigger
+SAVEPOINT sv_truncate_trigger;
+DROP TRIGGER dp_sysver_truncate ON dp_sysver; -- should fail
+ROLLBACK TO SAVEPOINT sv_truncate_trigger;
+
+-- Test that we can't drop the infinity check constraint
+SAVEPOINT sv_infinity_check;
+ALTER TABLE dp_sysver DROP CONSTRAINT dp_sysver_system_valid_range_infinity_check; -- should fail
+ROLLBACK TO SAVEPOINT sv_infinity_check;
+
+-- Test proper cleanup works
+SELECT sql_saga.drop_system_versioning('dp_sysver');
+DROP TABLE dp_sysver;
+ROLLBACK TO SAVEPOINT system_versioning_tests;
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql
