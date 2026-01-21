@@ -962,7 +962,7 @@ SELECT id, key_col, data_col, created_at IS NOT NULL as has_created_at, valid_fr
 FROM saga_repro.target_with_audit;
  id | key_col  | data_col  | has_created_at | valid_from | valid_until 
 ----+----------+-----------+----------------+------------+-------------
-  1 | test_key | test_data | t              | 2026-01-20 | infinity
+  1 | test_key | test_data | t              | 2026-01-21 | infinity
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_ephemeral_missing_from_source;
@@ -1050,7 +1050,7 @@ SELECT id, key_col, data_col, created_at IS NOT NULL as has_created_at, valid_fr
 FROM saga_repro.target_with_audit_patch;
  id |    key_col     |    data_col     | has_created_at | valid_from | valid_until 
 ----+----------------+-----------------+----------------+------------+-------------
-  1 | test_key_patch | test_data_patch | t              | 2026-01-20 | infinity
+  1 | test_key_patch | test_data_patch | t              | 2026-01-21 | infinity
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_ephemeral_missing_patch;

@@ -100,6 +100,8 @@ DECLARE
     v_nullable_default_columns TEXT[];
     v_always_exclude_columns TEXT[];
     v_not_null_no_default_columns TEXT[];
+    -- Optimization: mutually_exclusive_columns metadata for performance
+    v_mutually_exclusive_cols name[];
 BEGIN
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
@@ -129,6 +131,17 @@ BEGIN
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
     IF v_range_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
+
+    -- 1.1.1: Query mutually_exclusive_columns metadata for join optimization
+    -- We query the first applicable mutually_exclusive_columns array from unique_keys.
+    -- This is used to generate optimized CASE/WHEN join conditions.
+    SELECT uk.mutually_exclusive_columns INTO v_mutually_exclusive_cols
+    FROM sql_saga.unique_keys uk
+    WHERE uk.table_schema = v_target_schema_name 
+      AND uk.table_name = v_target_table_name_only 
+      AND uk.era_name = temporal_merge_plan.era_name
+      AND uk.mutually_exclusive_columns IS NOT NULL
+    LIMIT 1;
 
     v_temporal_cols := ARRAY[v_range_col];
     IF v_valid_from_col IS NOT NULL THEN v_temporal_cols := v_temporal_cols || v_valid_from_col; END IF;
@@ -656,22 +669,70 @@ BEGIN
                 FROM unnest(v_original_entity_key_cols) AS col
             ));
             -- Build the join condition for existing_segments_with_target.
-            -- For NULLABLE columns, we MUST use the null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
-            -- because NULL = NULL evaluates to NULL (not TRUE), which would fail the join.
-            -- For NOT NULL columns, we can use simple = for better query plan performance (Hash Joins).
-            v_lateral_join_tr_to_seg := (
-                SELECT COALESCE(string_agg(
-                    CASE
-                        WHEN a.attnotnull THEN
-                            format('target_row.%1$I = seg.%1$I', col)
-                        ELSE
-                            format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
-                    END,
-                    ' AND '
-                ), 'true')
-                FROM unnest(v_original_entity_key_cols) AS col
-                LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
-            );
+            -- Optimized: Use mutually_exclusive_columns for CASE/WHEN optimization when available.
+            -- For other NULLABLE columns, use null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
+            -- For NOT NULL columns, use simple = for better query plan performance (Hash Joins).
+            IF v_mutually_exclusive_cols IS NOT NULL 
+               AND v_mutually_exclusive_cols <@ v_original_entity_key_cols::name[] THEN
+                -- Generate optimized CASE/WHEN condition for mutually exclusive columns.
+                -- This avoids expensive (col IS NULL AND col IS NULL) checks when columns
+                -- are known to be mutually exclusive (only one can be non-NULL at a time).
+                v_lateral_join_tr_to_seg := (
+                    WITH me_cols AS (
+                        -- Mutually exclusive columns: generate WHEN clauses
+                        SELECT string_agg(
+                            format(
+                                'WHEN target_row.%1$I IS NOT NULL THEN target_row.%1$I = seg.%1$I%2$s',
+                                col,
+                                -- Add IS NULL checks for other mutually exclusive cols
+                                (SELECT COALESCE(' AND ' || string_agg(format('seg.%I IS NULL', other_col), ' AND '), '')
+                                 FROM unnest(v_mutually_exclusive_cols) other_col WHERE other_col <> col)
+                            ),
+                            ' '
+                        ) AS case_expr
+                        FROM unnest(v_mutually_exclusive_cols) AS col
+                    ),
+                    non_me_cols AS (
+                        -- Non-mutually-exclusive columns: use standard null-safe comparison
+                        SELECT COALESCE(string_agg(
+                            CASE
+                                WHEN a.attnotnull THEN
+                                    format('target_row.%1$I = seg.%1$I', col)
+                                ELSE
+                                    format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
+                            END,
+                            ' AND '
+                        ), '') AS conditions
+                        FROM unnest(v_original_entity_key_cols) AS col
+                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
+                        WHERE col <> ALL(v_mutually_exclusive_cols)
+                    )
+                    SELECT 
+                        CASE 
+                            WHEN me_cols.case_expr IS NOT NULL AND non_me_cols.conditions <> '' THEN
+                                format('(CASE %s ELSE FALSE END) AND %s', me_cols.case_expr, non_me_cols.conditions)
+                            WHEN me_cols.case_expr IS NOT NULL THEN
+                                format('CASE %s ELSE FALSE END', me_cols.case_expr)
+                            ELSE 'true'
+                        END
+                    FROM me_cols, non_me_cols
+                );
+            ELSE
+                -- Use original high-performance logic when no optimization applies
+                v_lateral_join_tr_to_seg := (
+                    SELECT COALESCE(string_agg(
+                        CASE
+                            WHEN a.attnotnull THEN
+                                format('target_row.%1$I = seg.%1$I', col)
+                            ELSE
+                                format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
+                        END,
+                        ' AND '
+                    ), 'true')
+                    FROM unnest(v_original_entity_key_cols) AS col
+                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
+                );
+            END IF;
     
             -- These variables are still built from the lookup columns, as they are used for the initial
             -- entity discovery and propagation steps, which are driven by the lookup keys.
