@@ -52,6 +52,7 @@ DECLARE
     v_valid_from_col_type regtype;
     v_valid_until_col_type regtype;
     v_insert_defaulted_columns TEXT[];
+    v_founding_defaulted_columns TEXT[];
     v_all_cols_from_jsonb TEXT;
     v_founding_all_cols_ident TEXT;
     v_founding_all_cols_from_jsonb TEXT;
@@ -64,6 +65,7 @@ DECLARE
     v_not_null_defaulted_cols TEXT[];
     v_update_statement_seqs INT[];
     v_update_statement_seq INT;
+    v_source_col_names TEXT[];
 BEGIN
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
@@ -76,6 +78,15 @@ BEGIN
     -- Identity and lookup columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.lookup_columns, temporal_merge_execute.identity_columns);
     v_causal_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
+
+    -- Introspect source columns to determine which columns are actually provided.
+    -- This allows us to handle partial source views correctly, especially for defaulted columns.
+    SELECT COALESCE(array_agg(attname::text), '{}')
+    INTO v_source_col_names
+    FROM pg_attribute
+    WHERE attrelid = temporal_merge_execute.source_table
+      AND attnum > 0
+      AND NOT attisdropped;
 
     -- Introspect columns that are NOT NULL and have a DEFAULT. For these columns,
     -- an incoming NULL in UPSERT mode should preserve the existing value rather
@@ -415,7 +426,22 @@ BEGIN
       AND a.attnum > 0
       AND NOT a.attisdropped
       AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '')
-      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attnotnull);
+      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attnotnull AND a.attname = ANY(v_source_col_names));
+
+    -- For founding INSERTs of new entities, exclude ALL columns with defaults.
+    -- New entities have no existing values to preserve, so columns not in the
+    -- payload should use their DEFAULT values. After INSERT, we UPDATE to apply
+    -- any values that ARE in the payload for these columns.
+    -- EXCEPT: Ephemeral columns should NOT be excluded, as they may have values
+    -- in the payload that need to be applied.
+    SELECT COALESCE(array_agg(a.attname), '{}')
+    INTO v_founding_defaulted_columns
+    FROM pg_catalog.pg_attribute a
+    WHERE a.attrelid = temporal_merge_execute.target_table
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '')
+      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attname = ANY(v_source_col_names));
 
     -- Also exclude synchronized columns, as the trigger will populate them.
     IF v_valid_from_col IS NOT NULL THEN
