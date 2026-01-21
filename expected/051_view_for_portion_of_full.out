@@ -1003,6 +1003,107 @@ SELECT sql_saga.drop_for_portion_of_view('null_test'::regclass);
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_12;
+-- Scenario 13: Era-level ephemeral_columns with FOR_PORTION_OF view
+-- Tests that ephemeral_columns set via add_era() are auto-discovered by
+-- add_for_portion_of_view() and enable proper coalescing of adjacent rows
+-- that have identical business data but different audit column values.
+SAVEPOINT scenario_13;
+\echo 'Scenario 13: Era-level ephemeral_columns enables coalescing in FOR_PORTION_OF view'
+Scenario 13: Era-level ephemeral_columns enables coalescing in FOR_PORTION_OF view
+CREATE TABLE ephemeral_test (
+    id int,
+    name text NOT NULL,
+    valid_range daterange,
+    valid_from date,
+    valid_until date,
+    -- Audit columns: will have DIFFERENT values across adjacent rows
+    edit_at timestamptz NOT NULL DEFAULT '2024-01-01 10:00:00+00'::timestamptz,
+    edit_by_user_id int NOT NULL DEFAULT 1
+);
+-- KEY: Set ephemeral_columns at the ERA level via add_era()
+SELECT sql_saga.add_era('ephemeral_test', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
+NOTICE:  sql_saga: Created trigger "ephemeral_test_synchronize_temporal_columns_trigger" on table ephemeral_test to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+-- Verify era has ephemeral_columns set
+\echo '--- Era configuration shows ephemeral_columns ---'
+--- Era configuration shows ephemeral_columns ---
+SELECT era_name, ephemeral_columns FROM sql_saga.era WHERE table_name = 'ephemeral_test';
+ era_name |     ephemeral_columns     
+----------+---------------------------
+ valid    | {edit_at,edit_by_user_id}
+(1 row)
+
+ALTER TABLE ephemeral_test ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
+SELECT sql_saga.add_unique_key('ephemeral_test', ARRAY['id']);
+NOTICE:  sql_saga: altering table public.ephemeral_test to add constraints: ADD CONSTRAINT ephemeral_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+     add_unique_key      
+-------------------------
+ ephemeral_test_id_valid
+(1 row)
+
+-- Create FOR_PORTION_OF view WITHOUT ephemeral_columns parameter
+-- The view should auto-discover ephemeral_columns from the era
+SELECT sql_saga.add_for_portion_of_view('ephemeral_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+-- Insert two adjacent temporal rows for the SAME entity (id=1)
+-- with different names AND different edit_at/edit_by_user_id values
+INSERT INTO ephemeral_test (id, name, valid_from, valid_until, edit_at, edit_by_user_id) VALUES
+    (1, 'Name A', '2024-01-01', '2024-06-01', '2024-01-15 10:00:00+00', 100),
+    (1, 'Name B', '2024-06-01', '2025-01-01', '2024-06-20 14:30:00+00', 200);
+\echo '--- Initial State: Two adjacent rows, different names, different audit values ---'
+--- Initial State: Two adjacent rows, different names, different audit values ---
+SELECT id, name, valid_from, valid_until, edit_at, edit_by_user_id
+FROM ephemeral_test
+ORDER BY valid_from;
+ id |  name  | valid_from | valid_until |        edit_at         | edit_by_user_id 
+----+--------+------------+-------------+------------------------+-----------------
+  1 | Name A | 2024-01-01 | 2024-06-01  | 2024-01-15 02:00:00-08 |             100
+  1 | Name B | 2024-06-01 | 2025-01-01  | 2024-06-20 07:30:00-07 |             200
+(2 rows)
+
+-- Now update BOTH rows to the SAME name via FOR_PORTION_OF view
+-- This should result in ONE coalesced row (since name becomes identical)
+-- The auto-discovered ephemeral_columns should exclude edit_at/edit_by_user_id from comparison
+UPDATE ephemeral_test__for_portion_of_valid
+SET name = 'UNIFIED NAME', valid_from = '2024-01-01', valid_until = '2025-01-01'
+WHERE id = 1;
+\echo '--- After UPDATE: Expected 1 coalesced row ---'
+--- After UPDATE: Expected 1 coalesced row ---
+\echo '--- (era-level ephemeral_columns enables coalescing despite different audit values) ---'
+--- (era-level ephemeral_columns enables coalescing despite different audit values) ---
+SELECT id, name, valid_from, valid_until, edit_at, edit_by_user_id
+FROM ephemeral_test
+ORDER BY valid_from;
+ id |     name     | valid_from | valid_until |        edit_at         | edit_by_user_id 
+----+--------------+------------+-------------+------------------------+-----------------
+  1 | UNIFIED NAME | 2024-01-01 | 2025-01-01  | 2024-06-20 07:30:00-07 |             200
+(1 row)
+
+-- Verification: should be exactly 1 row
+SELECT count(*) as row_count FROM ephemeral_test;
+ row_count 
+-----------
+         1
+(1 row)
+
+SELECT sql_saga.drop_for_portion_of_view('ephemeral_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT scenario_13;
 ROLLBACK;
 DROP ROLE view_test_role;
 \i sql/include/test_teardown.sql

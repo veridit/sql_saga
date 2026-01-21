@@ -355,6 +355,137 @@ SELECT sql_saga.drop_current_view('range_only_employees'::regclass);
 (1 row)
 
 ROLLBACK TO SAVEPOINT scenario_3;
+-- Scenario 4: Era-level ephemeral_columns with CURRENT view
+-- Tests that ephemeral_columns set via add_era() are properly configured
+-- and that temporal_merge operations via FOR_PORTION_OF will use them.
+-- The CURRENT view doesn't directly call temporal_merge with ephemeral_columns
+-- for SCD Type 2 updates (it uses direct SQL), but this test verifies:
+-- 1. Era-level ephemeral_columns can be configured alongside CURRENT view
+-- 2. Combining CURRENT view with FOR_PORTION_OF uses era-level ephemeral_columns
+SAVEPOINT scenario_4;
+\echo 'Scenario 4: Era-level ephemeral_columns with CURRENT view'
+Scenario 4: Era-level ephemeral_columns with CURRENT view
+CREATE TABLE current_ephemeral_test (
+    id int,
+    name text NOT NULL,
+    department text,
+    valid_range daterange,
+    valid_from date,
+    valid_until date,
+    -- Audit columns: will have DIFFERENT values across adjacent rows
+    edit_at timestamptz NOT NULL DEFAULT '2024-01-01 10:00:00+00'::timestamptz,
+    edit_by_user_id int NOT NULL DEFAULT 1
+);
+-- KEY: Set ephemeral_columns at the ERA level via add_era()
+SELECT sql_saga.add_era('current_ephemeral_test', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
+NOTICE:  sql_saga: Created trigger "current_ephemeral_test_synchronize_temporal_columns_trigger" on table current_ephemeral_test to synchronize columns: valid_from, valid_until
+ add_era 
+---------
+ t
+(1 row)
+
+-- Verify era has ephemeral_columns set
+\echo '--- Era configuration shows ephemeral_columns ---'
+--- Era configuration shows ephemeral_columns ---
+SELECT era_name, ephemeral_columns FROM sql_saga.era WHERE table_name = 'current_ephemeral_test';
+ era_name |     ephemeral_columns     
+----------+---------------------------
+ valid    | {edit_at,edit_by_user_id}
+(1 row)
+
+SELECT sql_saga.add_unique_key('current_ephemeral_test', ARRAY['id'], key_type => 'primary');
+NOTICE:  sql_saga: altering table public.current_ephemeral_test to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+         add_unique_key          
+---------------------------------
+ current_ephemeral_test_id_valid
+(1 row)
+
+-- Create CURRENT view (era-level ephemeral_columns are available for any temporal_merge calls)
+SELECT sql_saga.add_current_view('current_ephemeral_test'::regclass, current_func_name := 'test_now()');
+ add_current_view 
+------------------
+ t
+(1 row)
+
+\d current_ephemeral_test__current_valid
+             View "public.current_ephemeral_test__current_valid"
+     Column      |           Type           | Collation | Nullable | Default 
+-----------------+--------------------------+-----------+----------+---------
+ id              | integer                  |           |          | 
+ name            | text                     |           |          | 
+ department      | text                     |           |          | 
+ valid_range     | daterange                |           |          | 
+ valid_from      | date                     |           |          | 
+ valid_until     | date                     |           |          | 
+ edit_at         | timestamp with time zone |           |          | 
+ edit_by_user_id | integer                  |           |          | 
+Triggers:
+    current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON current_ephemeral_test__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
+
+-- Insert initial data via base table (not via CURRENT view to have full control)
+-- Create two adjacent rows with DIFFERENT names and DIFFERENT audit values
+INSERT INTO current_ephemeral_test (id, name, department, valid_from, valid_until, edit_at, edit_by_user_id)
+VALUES
+    (1, 'Name A', 'Engineering', '2024-01-01', '2024-02-29', '2024-01-15 10:00:00+00', 100),
+    (1, 'Name B', 'Engineering', '2024-02-29', 'infinity', '2024-02-20 09:30:00+00', 200);
+\echo '--- Initial State: Two adjacent rows with different names and audit values ---'
+--- Initial State: Two adjacent rows with different names and audit values ---
+SELECT id, name, department, valid_from, valid_until, edit_at, edit_by_user_id
+FROM current_ephemeral_test
+ORDER BY valid_from;
+ id |  name  | department  | valid_from | valid_until |        edit_at         | edit_by_user_id 
+----+--------+-------------+------------+-------------+------------------------+-----------------
+  1 | Name A | Engineering | 2024-01-01 | 2024-02-29  | 2024-01-15 02:00:00-08 |             100
+  1 | Name B | Engineering | 2024-02-29 | infinity    | 2024-02-20 01:30:00-08 |             200
+(2 rows)
+
+-- Add FOR_PORTION_OF view to test coalescing with era-level ephemeral_columns
+SELECT sql_saga.add_for_portion_of_view('current_ephemeral_test'::regclass);
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+-- Update entire timeline to same name - should coalesce to 1 row
+-- (era-level ephemeral_columns excludes edit_at/edit_by_user_id from comparison)
+UPDATE current_ephemeral_test__for_portion_of_valid
+SET name = 'UNIFIED NAME', valid_from = '2024-01-01', valid_until = 'infinity'
+WHERE id = 1;
+\echo '--- After FOR_PORTION_OF unification: Expected 1 coalesced row ---'
+--- After FOR_PORTION_OF unification: Expected 1 coalesced row ---
+\echo '--- (era-level ephemeral_columns enables coalescing despite different audit values) ---'
+--- (era-level ephemeral_columns enables coalescing despite different audit values) ---
+SELECT id, name, department, valid_from, valid_until, edit_at, edit_by_user_id
+FROM current_ephemeral_test
+ORDER BY valid_from;
+ id |     name     | department  | valid_from | valid_until |        edit_at         | edit_by_user_id 
+----+--------------+-------------+------------+-------------+------------------------+-----------------
+  1 | UNIFIED NAME | Engineering | 2024-01-01 | infinity    | 2024-02-20 01:30:00-08 |             200
+(1 row)
+
+-- Verification: should be exactly 1 row
+SELECT count(*) as row_count FROM current_ephemeral_test;
+ row_count 
+-----------
+         1
+(1 row)
+
+SELECT sql_saga.drop_for_portion_of_view('current_ephemeral_test'::regclass);
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_current_view('current_ephemeral_test'::regclass);
+ drop_current_view 
+-------------------
+ t
+(1 row)
+
+ROLLBACK TO SAVEPOINT scenario_4;
 ROLLBACK;
 DROP ROLE view_test_role;
 CALL sql_saga.temporal_merge_drop_cache();
