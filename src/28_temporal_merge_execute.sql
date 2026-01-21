@@ -415,33 +415,30 @@ BEGIN
     END IF;
 
     -- Auto-detect columns that should be excluded from INSERT statements.
-    -- This includes columns with defaults, identity columns, and generated columns.
-    -- EXCEPT: Ephemeral columns with NOT NULL constraints should NOT be excluded,
-    -- because when they have non-NULL values in the payload, we must include them.
-    -- When they're NULL in the payload, the INSERT will use COALESCE with the default.
+    -- We only exclude columns that cannot accept values (GENERATED ALWAYS).
+    -- Columns with DEFAULTs (atthasdef) and IDENTITY BY DEFAULT (attidentity='d') are INCLUDED
+    -- so that we can preserve values from history (payload).
+    -- For these columns, we use COALESCE(payload, default) in the INSERT generation to handle missing values.
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_insert_defaulted_columns
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = temporal_merge_execute.target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
-      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '')
-      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attnotnull AND a.attname = ANY(v_source_col_names));
+      AND (a.attidentity = 'a' OR a.attgenerated <> '');
 
-    -- For founding INSERTs of new entities, exclude ALL columns with defaults.
-    -- New entities have no existing values to preserve, so columns not in the
-    -- payload should use their DEFAULT values. After INSERT, we UPDATE to apply
-    -- any values that ARE in the payload for these columns.
-    -- EXCEPT: Ephemeral columns should NOT be excluded, as they may have values
-    -- in the payload that need to be applied.
+    -- For founding INSERTs of new entities:
+    -- - Exclude IDENTITY BY DEFAULT ('d') so the database generates new IDs (sequences).
+    -- - Exclude GENERATED ALWAYS ('a') and GENERATED columns.
+    -- - INCLUDE columns with standard DEFAULTs (atthasdef) so we can COALESCE(payload, default).
+    --   This allows explicit values from source (if provided) or falls back to default.
     SELECT COALESCE(array_agg(a.attname), '{}')
     INTO v_founding_defaulted_columns
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = temporal_merge_execute.target_table
       AND a.attnum > 0
       AND NOT a.attisdropped
-      AND (a.atthasdef OR a.attidentity IN ('a', 'd') OR a.attgenerated <> '')
-      AND NOT (a.attname = ANY(COALESCE(temporal_merge_execute.ephemeral_columns, '{}')) AND a.attname = ANY(v_source_col_names));
+      AND (a.attidentity IN ('a', 'd') OR a.attgenerated <> '');
 
     -- Also exclude synchronized columns, as the trigger will populate them.
     IF v_valid_from_col IS NOT NULL THEN
@@ -514,12 +511,12 @@ BEGIN
         -- must be able to handle a final payload that contains columns inherited from
         -- the target's history, which may not be present in the source.
         WITH target_cols AS (
-            SELECT pa.attname, pa.atttypid, pa.attgenerated, pa.attidentity, pa.attnum
+            SELECT pa.attname, pa.atttypid, pa.attgenerated, pa.attidentity, pa.attnum, pa.atthasdef, pa.attnotnull
             FROM pg_catalog.pg_attribute pa
             WHERE pa.attrelid = temporal_merge_execute.target_table AND pa.attnum > 0 AND NOT pa.attisdropped
         ),
         common_data_cols AS (
-            SELECT t.attname, t.atttypid
+            SELECT t.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
             FROM target_cols t
             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table AND ad.adnum = t.attnum
             WHERE (v_range_col IS NULL OR t.attname <> v_range_col)
@@ -534,33 +531,33 @@ BEGIN
               AND COALESCE(pg_get_expr(ad.adbin, temporal_merge_execute.target_table), '') NOT ILIKE 'nextval(%'
         ),
         all_available_cols AS (
-            SELECT c.attname, c.atttypid FROM common_data_cols c
+            SELECT c.attname, c.atttypid, c.attnotnull, c.atthasdef, c.attnum FROM common_data_cols c
             UNION
-            SELECT u.attname, t.atttypid
+            SELECT u.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
             FROM unnest(v_lookup_columns) u(attname)
             JOIN target_cols t ON u.attname = t.attname
             UNION
-            SELECT u.attname, t.atttypid
+            SELECT u.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
             FROM unnest(COALESCE(temporal_merge_execute.identity_columns, '{}')) u(attname)
             JOIN target_cols t ON u.attname = t.attname
             UNION
-            SELECT pk.attname, t.atttypid
+            SELECT pk.attname, t.atttypid, t.attnotnull, t.atthasdef, t.attnum
             FROM unnest(v_pk_cols) pk(attname)
             JOIN target_cols t ON pk.attname = t.attname
         ),
         cols_for_insert AS (
             -- All available columns that DON'T have a default...
-            SELECT attname, atttypid FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum FROM all_available_cols WHERE attname <> ALL(v_insert_defaulted_columns)
             UNION
             -- ...plus all identity and lookup columns and primary key columns, which must be provided for SCD-2 inserts.
-            SELECT attname, atttypid FROM all_available_cols WHERE attname = ANY(COALESCE(temporal_merge_execute.identity_columns, '{}')) OR attname = ANY(v_lookup_columns) OR attname = ANY(v_pk_cols)
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum FROM all_available_cols WHERE attname = ANY(COALESCE(temporal_merge_execute.identity_columns, '{}')) OR attname = ANY(v_lookup_columns) OR attname = ANY(v_pk_cols)
         ),
         cols_for_founding_insert AS (
             -- For "founding" INSERTs of new entities, we only include columns that do NOT have a default.
             -- This allows serial/identity columns to be generated by the database.
-            SELECT attname, atttypid
+            SELECT attname, atttypid, attnotnull, atthasdef, attnum
             FROM all_available_cols
-            WHERE attname <> ALL(v_insert_defaulted_columns)
+            WHERE attname <> ALL(v_founding_defaulted_columns)
         )
         SELECT
             (SELECT string_agg(
@@ -577,14 +574,45 @@ BEGIN
                     END
                 ),
             ', ') FROM common_data_cols cdc),
-            (SELECT string_agg(format('%I', cfi.attname), ', ') FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
-            (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ') FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
-            (SELECT string_agg(format('(s.full_data->>%L)::%s', cfi.attname, format_type(cfi.atttypid, -1)), ', ')
+            (SELECT string_agg(format('%I', cfi.attname), ', ' ORDER BY cfi.attnum) FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(format('jpr_all.%I', cfi.attname), ', ' ORDER BY cfi.attnum) FROM cols_for_insert cfi WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(
+                -- For NOT NULL DEFAULT columns, we must coalesce missing payload values with the DB default expression.
+                -- This allows us to include the column in the INSERT (for payload preservation) without risking NULL violation.
+                CASE
+                    WHEN cfi.attnotnull AND cfi.atthasdef THEN
+                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                            cfi.attname,
+                            format_type(cfi.atttypid, -1),
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        format('(s.full_data->>%1$L)::%2$s', cfi.attname, format_type(cfi.atttypid, -1))
+                END,
+                ', ' ORDER BY cfi.attnum
+             )
              FROM cols_for_insert cfi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+                                    AND ad.adnum = cfi.attnum
              WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
-            (SELECT string_agg(format('%I', cffi.attname), ', ') FROM cols_for_founding_insert cffi WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col),
-            (SELECT string_agg(format('(s.full_data->>%L)::%s', cffi.attname, format_type(cffi.atttypid, -1)), ', ')
+            (SELECT string_agg(format('%I', cffi.attname), ', ' ORDER BY cffi.attnum) FROM cols_for_founding_insert cffi WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col),
+            (SELECT string_agg(
+                -- Same logic for founding inserts: Coalesce with default if NOT NULL and has default.
+                CASE
+                    WHEN cffi.attnotnull AND cffi.atthasdef THEN
+                        format('COALESCE((s.full_data->>%1$L)::%2$s, %3$s)',
+                            cffi.attname,
+                            format_type(cffi.atttypid, -1),
+                            pg_get_expr(ad.adbin, ad.adrelid)
+                        )
+                    ELSE
+                        format('(s.full_data->>%1$L)::%2$s', cffi.attname, format_type(cffi.atttypid, -1))
+                END,
+                ', ' ORDER BY cffi.attnum
+             )
              FROM cols_for_founding_insert cffi
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+                                    AND ad.adnum = cffi.attnum
              WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col)
         INTO
             v_update_set_clause,
