@@ -419,6 +419,77 @@ FROM pg_temp.temporal_merge_feedback
 ORDER BY source_row_id;
 ROLLBACK TO SAVEPOINT scenario_16;
 
+SAVEPOINT scenario_17;
+-- Scenario 17: Test era-level `ephemeral_columns` auto-discovery in temporal_merge.
+-- When ephemeral_columns are configured on the era via add_era(), temporal_merge
+-- should automatically discover and use them for coalescing without needing
+-- to pass them explicitly.
+
+-- Create target table with audit columns
+CREATE TABLE tm_era_ephemeral_target (
+    id int,
+    name text,
+    edit_at timestamptz NOT NULL,
+    edit_by_user_id int NOT NULL,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+
+-- Register era WITH ephemeral_columns - these should be auto-discovered by temporal_merge
+SELECT sql_saga.add_era('tm_era_ephemeral_target', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until',
+    ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
+SELECT sql_saga.add_unique_key('tm_era_ephemeral_target', ARRAY['id']);
+
+-- Insert existing data with DIFFERENT audit values for same entity (adjacent periods)
+INSERT INTO tm_era_ephemeral_target (id, name, edit_at, edit_by_user_id, valid_from, valid_until) VALUES
+    (1, 'Name A', '2023-01-15 10:00:00+00', 100, '2023-01-01', '2024-01-01'),
+    (1, 'Name B', '2024-01-20 14:30:00+00', 200, '2024-01-01', '2025-01-01');
+
+\echo '--- Initial State: 2 rows with different names and different audit values ---'
+SELECT id, name, edit_at, edit_by_user_id, valid_from, valid_until 
+FROM tm_era_ephemeral_target ORDER BY valid_from;
+
+-- Create source that updates both rows to the SAME name across the full timeline
+CREATE TEMP TABLE tm_era_ephemeral_source (
+    row_id int,
+    id int,
+    name text,
+    edit_at timestamptz,
+    edit_by_user_id int,
+    valid_from date,
+    valid_until date
+);
+INSERT INTO tm_era_ephemeral_source VALUES
+    (1, 1, 'UNIFIED NAME', '2025-01-01 00:00:00+00', 999, '2023-01-01', '2025-01-01');
+
+-- Call temporal_merge WITHOUT specifying ephemeral_columns
+-- It should auto-discover them from the era metadata
+CALL sql_saga.temporal_merge(
+    target_table              => 'tm_era_ephemeral_target'::regclass,
+    source_table              => 'tm_era_ephemeral_source'::regclass,
+    primary_identity_columns  => ARRAY['id'],
+    mode                      => 'MERGE_ENTITY_REPLACE'
+    -- Note: ephemeral_columns NOT specified - should be auto-discovered from era
+);
+
+-- Verify coalescing worked: should be 1 row, not 2
+-- Without era-level ephemeral_columns, this would produce 2 rows because
+-- the original audit values would prevent coalescing
+\echo '--- Expected Final State: 1 coalesced row (proves era-level ephemeral_columns work) ---'
+SELECT * FROM (VALUES (1, 'UNIFIED NAME', '2025-01-01 00:00:00+00'::timestamptz, 999, '2023-01-01'::date, '2025-01-01'::date))
+    AS t(id, name, edit_at, edit_by_user_id, valid_from, valid_until);
+\echo '--- Actual Final State ---'
+SELECT id, name, edit_at, edit_by_user_id, valid_from, valid_until 
+FROM tm_era_ephemeral_target ORDER BY valid_from;
+
+\echo '--- Verification: Row count should be 1 (coalesced) ---'
+SELECT COUNT(*) AS row_count FROM tm_era_ephemeral_target;
+
+ROLLBACK TO SAVEPOINT scenario_17;
+
 
 ROLLBACK;
 \i sql/include/test_teardown.sql
