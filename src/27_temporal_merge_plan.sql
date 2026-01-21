@@ -655,13 +655,22 @@ BEGIN
                 SELECT COALESCE(string_agg(format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND '), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
             ));
-            -- IMPORTANT: We use simple = instead of (a = b OR (a IS NULL AND b IS NULL)) because:
-            -- 1. target_row columns come from the target table's primary key (always NOT NULL)
-            -- 2. The OR NULL pattern prevents PostgreSQL from using Hash Joins, causing 500x slowdown
-            -- 3. Verified experimentally: both approaches produce identical results for PK columns
+            -- Build the join condition for existing_segments_with_target.
+            -- For NULLABLE columns, we MUST use the null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
+            -- because NULL = NULL evaluates to NULL (not TRUE), which would fail the join.
+            -- For NOT NULL columns, we can use simple = for better query plan performance (Hash Joins).
             v_lateral_join_tr_to_seg := (
-                SELECT COALESCE(string_agg(format('target_row.%1$I = seg.%1$I', col), ' AND '), 'true')
+                SELECT COALESCE(string_agg(
+                    CASE
+                        WHEN a.attnotnull THEN
+                            format('target_row.%1$I = seg.%1$I', col)
+                        ELSE
+                            format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
+                    END,
+                    ' AND '
+                ), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
+                LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
             );
     
             -- These variables are still built from the lookup columns, as they are used for the initial
@@ -1182,23 +1191,46 @@ BEGIN
     
             -- Pre-calculate all expressions to be passed to format() for easier debugging.
             v_target_rows_lookup_cols_expr := (SELECT string_agg(format('t.%I', col), ', ') FROM unnest(v_lookup_columns) as col);
-            -- IMPORTANT: We use simple = instead of IS NOT DISTINCT FROM because:
-            -- 1. target_row columns come from the target table's primary key (always NOT NULL)
-            -- 2. IS NOT DISTINCT FROM prevents PostgreSQL from using Hash Joins, causing 470x slowdown
-            -- 3. Verified experimentally: both approaches produce identical results for PK columns
-            -- 4. Source rows with NULL identity columns simply won't match (correct behavior for new entities)
+            -- Build the join expression for source_rows_with_matches.
+            -- For NULLABLE columns, we MUST use the null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
+            -- because NULL = NULL evaluates to NULL (not TRUE), which would fail the join.
+            -- For NOT NULL columns, we can use simple = for better query plan performance (Hash Joins).
             v_source_rows_exists_join_expr := (
                 SELECT string_agg(
                     format('((%s))', (
-                        SELECT string_agg(format('source_row.%1$I = target_row.%2$I', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END), ' AND ')
+                        SELECT string_agg(
+                            CASE
+                                WHEN a.attnotnull THEN
+                                    -- NOT NULL column: safe to use simple =
+                                    format('source_row.%1$I = target_row.%2$I', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
+                                ELSE
+                                    -- NULLABLE column: must use null-safe comparison
+                                    format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', c, CASE WHEN c = v_valid_from_col THEN 'valid_from'::name WHEN c = v_valid_until_col THEN 'valid_until'::name ELSE c END)
+                            END,
+                            ' AND '
+                        )
                         FROM jsonb_array_elements_text(v_key) AS c
+                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c AND NOT a.attisdropped
                     )),
                 ' OR ')
                 FROM jsonb_array_elements(lookup_keys) AS v_key
             );
 
             IF v_source_rows_exists_join_expr IS NULL THEN
-                v_source_rows_exists_join_expr := (SELECT string_agg(format('source_row.%1$I = target_row.%2$I', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END), ' AND ') FROM unnest(v_identity_columns) as col);
+                -- Fallback to identity columns when no lookup keys provided
+                v_source_rows_exists_join_expr := (
+                    SELECT string_agg(
+                        CASE
+                            WHEN a.attnotnull THEN
+                                format('source_row.%1$I = target_row.%2$I', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
+                            ELSE
+                                format('(source_row.%1$I = target_row.%2$I OR (source_row.%1$I IS NULL AND target_row.%2$I IS NULL))', col, CASE WHEN col = v_valid_from_col THEN 'valid_from'::name WHEN col = v_valid_until_col THEN 'valid_until'::name ELSE col END)
+                        END,
+                        ' AND '
+                    )
+                    FROM unnest(v_identity_columns) as col
+                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
+                );
             END IF;
     
             v_source_rows_exists_join_expr := COALESCE(v_source_rows_exists_join_expr, 'false');
