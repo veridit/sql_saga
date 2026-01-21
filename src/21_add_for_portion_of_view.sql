@@ -1,4 +1,4 @@
-CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid')
+CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', ephemeral_columns name[] DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -97,8 +97,8 @@ BEGIN
                     view_name, /* %I */
                     identifier_columns_quoted /* %s */
                 );
-                INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, generated_columns)
-                    VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name, generated_columns);
+                INSERT INTO sql_saga.updatable_view (view_schema, view_name, view_type, table_schema, table_name, era_name, trigger_name, generated_columns, ephemeral_columns)
+                    VALUES (r.schema_name, view_name, 'for_portion_of', r.schema_name, r.table_name, r.era_name, trigger_name, generated_columns, add_for_portion_of_view.ephemeral_columns);
             END;
         END LOOP;
     END;
@@ -107,6 +107,7 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_for_portion_of_view(regclass, name) IS
-'Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record''s history.';
+COMMENT ON FUNCTION sql_saga.add_for_portion_of_view(regclass, name, name[]) IS
+'Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record''s history.
+The optional ephemeral_columns parameter specifies columns (like audit fields edit_at, edit_by_user_id) that should be excluded from coalescing comparisons, allowing adjacent rows with identical business data but different ephemeral values to be merged.';
 

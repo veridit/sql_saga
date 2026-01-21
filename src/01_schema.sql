@@ -92,12 +92,14 @@ CREATE TABLE sql_saga.era (
     -- delete_trigger name NOT NULL,
     --excluded_column_names name[] NOT NULL DEFAULT '{}',
     -- UNIQUE(...) for each trigger/function name.
+    ephemeral_columns name[] DEFAULT NULL, -- Columns excluded from coalescing comparison (e.g., audit columns)
 
     PRIMARY KEY (table_schema, table_name, era_name),
 
     CHECK (valid_from_column_name <> valid_until_column_name)
 );
 COMMENT ON TABLE sql_saga.era IS 'The main catalog for sql_saga.  All "DDL" operations for periods must first take an exclusive lock on this table.';
+COMMENT ON COLUMN sql_saga.era.ephemeral_columns IS 'Columns excluded from coalescing comparison during temporal_merge operations. These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not prevent adjacent periods from being merged.';
 GRANT SELECT ON TABLE sql_saga.era TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.era', '');
 
@@ -420,6 +422,7 @@ CREATE TABLE sql_saga.updatable_view (
     trigger_name name NOT NULL,
     current_func text, -- Stores the function call, e.g., 'now()' or 'my_test_now()'
     generated_columns name[] NOT NULL, -- List of GENERATED columns to exclude from temp source tables
+    ephemeral_columns name[], -- Columns excluded from coalescing comparison (e.g., audit columns like edit_at)
 
     PRIMARY KEY (view_schema, view_name),
     FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era (table_schema, table_name, era_name) ON DELETE CASCADE,

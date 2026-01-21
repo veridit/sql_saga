@@ -68,9 +68,9 @@ Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON test_schema.schema_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
 TABLE sql_saga.updatable_view;
- view_schema |             view_name             |   view_type    | table_schema | table_name  | era_name |     trigger_name     | current_func | generated_columns 
--------------+-----------------------------------+----------------+--------------+-------------+----------+----------------------+--------------+-------------------
- test_schema | schema_test__for_portion_of_valid | for_portion_of | test_schema  | schema_test | valid    | for_portion_of_valid |              | {}
+ view_schema |             view_name             |   view_type    | table_schema | table_name  | era_name |     trigger_name     | current_func | generated_columns | ephemeral_columns 
+-------------+-----------------------------------+----------------+--------------+-------------+----------+----------------------+--------------+-------------------+-------------------
+ test_schema | schema_test__for_portion_of_valid | for_portion_of | test_schema  | schema_test | valid    | for_portion_of_valid |              | {}                | 
 (1 row)
 
 -- DML must be on the base table now
@@ -129,9 +129,9 @@ Triggers:
     for_portion_of_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON acl_test__for_portion_of_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.for_portion_of_trigger('id')
 
 TABLE sql_saga.updatable_view;
- view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func | generated_columns 
--------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------+-------------------
- public      | acl_test__for_portion_of_valid | for_portion_of | public       | acl_test   | valid    | for_portion_of_valid |              | {}
+ view_schema |           view_name            |   view_type    | table_schema | table_name | era_name |     trigger_name     | current_func | generated_columns | ephemeral_columns 
+-------------+--------------------------------+----------------+--------------+------------+----------+----------------------+--------------+-------------------+-------------------
+ public      | acl_test__for_portion_of_valid | for_portion_of | public       | acl_test   | valid    | for_portion_of_valid |              | {}                | 
 (1 row)
 
 -- Verify that permissions are handled correctly
@@ -232,8 +232,8 @@ SELECT sql_saga.drop_era('drop_test'::regclass, 'valid', 'CASCADE');
 
 -- The view should be gone from the metadata
 TABLE sql_saga.updatable_view;
- view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func | generated_columns 
--------------+-----------+-----------+--------------+------------+----------+--------------+--------------+-------------------
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func | generated_columns | ephemeral_columns 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------+-------------------+-------------------
 (0 rows)
 
 -- DROP TABLE should now succeed
@@ -808,13 +808,13 @@ CREATE TABLE no_era_test (
 SAVEPOINT expect_error_1;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass);
 ERROR:  era "valid" does not exist on table no_era_test
-CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name) line 31 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_1;
 -- Should also fail with explicit non-existent era name
 SAVEPOINT expect_error_2;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass, 'nonexistent');
 ERROR:  era "nonexistent" does not exist on table no_era_test
-CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name) line 31 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 ROLLBACK TO SAVEPOINT scenario_10;
 -- Scenario 11: Range-only table (no synchronized columns)

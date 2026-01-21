@@ -95,7 +95,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
         END AS func_def,
         d.description,
         CASE
-            WHEN p.proname IN ('add_era', 'drop_era') THEN 1
+            WHEN p.proname IN ('add_era', 'drop_era', 'set_era_ephemeral_columns') THEN 1
             WHEN p.proname IN ('add_unique_key', 'drop_unique_key', 'drop_unique_key_by_name') THEN 2
             WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 3
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 4
@@ -106,7 +106,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             WHEN p.proname IN ('get_allen_relation', 'drop_protection', 'rename_following', 'add_synchronize_temporal_columns_trigger', 'drop_synchronize_temporal_columns_trigger') THEN 9
         END AS category_order,
         CASE
-            WHEN p.proname IN ('add_era', 'drop_era') THEN 'Era Management'
+            WHEN p.proname IN ('add_era', 'drop_era', 'set_era_ephemeral_columns') THEN 'Era Management'
             WHEN p.proname IN ('add_unique_key', 'drop_unique_key', 'drop_unique_key_by_name') THEN 'Unique Keys'
             WHEN p.proname IN ('add_foreign_key', 'add_temporal_foreign_key', 'add_regular_foreign_key', 'drop_foreign_key', 'drop_foreign_key_by_name') THEN 'Foreign Keys'
             WHEN p.proname IN ('add_current_view', 'drop_current_view', 'add_for_portion_of_view', 'drop_for_portion_of_view') THEN 'Updatable Views'

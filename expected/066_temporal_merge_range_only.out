@@ -295,7 +295,7 @@ SQL statement "INSERT INTO temporal_merge_plan
         p_log_trace => v_log_trace,
         p_log_sql => v_log_sql
     )"
-PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 166 at SQL statement
+PL/pgSQL function sql_saga.temporal_merge(regclass,regclass,text[],sql_saga.temporal_merge_mode,name,name,name,boolean,text[],sql_saga.temporal_merge_delete_mode,boolean,name,name,name,name,text[],boolean) line 179 at SQL statement
 ROLLBACK TO SAVEPOINT expect_error;
 \echo '--- Workaround: Use a view to compute the range from boundary columns ---'
 --- Workaround: Use a view to compute the range from boundary columns ---

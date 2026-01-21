@@ -10,7 +10,8 @@ CREATE OR REPLACE FUNCTION sql_saga.add_era(
     add_defaults boolean DEFAULT true,
     add_bounds_check boolean DEFAULT true,
     range_type regtype DEFAULT NULL,
-    bounds_check_constraint name DEFAULT NULL)
+    bounds_check_constraint name DEFAULT NULL,
+    ephemeral_columns name[] DEFAULT NULL)
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -516,8 +517,8 @@ BEGIN
             END;
         END IF;
 
-        INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults)
-        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults);
+        INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, valid_to_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint, boundary_check_constraint, trigger_applies_defaults, ephemeral_columns)
+        VALUES (table_schema, table_name, era_name, range_column_name, v_from_col, v_until_col, v_to_col, range_type, v_multirange_type, v_range_subtype, v_range_subtype_category, bounds_check_constraint, boundary_check_constraint, v_trigger_applies_defaults, add_era.ephemeral_columns);
 
         IF v_create_template_trigger THEN
             CALL sql_saga.add_synchronize_temporal_columns_trigger(table_oid, era_name);
@@ -568,4 +569,10 @@ END;
 $function$;
 
 COMMENT ON FUNCTION sql_saga.add_era IS
-'Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.';
+'Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.
+
+Parameters:
+- ephemeral_columns: Columns excluded from coalescing comparison during temporal_merge operations.
+  These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not
+  prevent adjacent periods from being merged. This setting serves as a default for all views
+  and temporal_merge calls on this era.';

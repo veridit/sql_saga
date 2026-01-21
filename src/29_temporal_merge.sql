@@ -58,6 +58,19 @@ BEGIN
     v_log_plan := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_plan', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
 
+    -- Auto-discover ephemeral_columns from era metadata if not explicitly provided.
+    IF temporal_merge.ephemeral_columns IS NULL AND temporal_merge.era_name IS NOT NULL THEN
+        SELECT e.ephemeral_columns INTO temporal_merge.ephemeral_columns
+        FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name) = (
+            SELECT n.nspname, c.relname
+            FROM pg_class c
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE c.oid = temporal_merge.target_table
+        )
+        AND e.era_name = temporal_merge.era_name;
+    END IF;
+
     -- Automatic Discovery of identity columns if they are NULL.
     v_identity_cols_discovered := temporal_merge.primary_identity_columns;
     v_natural_identity_cols_discovered := temporal_merge.natural_identity_columns;

@@ -29,8 +29,8 @@ SET ROLE TO sql_saga_unprivileged_user;
 /* Basic period definitions with dates */
 CREATE TABLE basic (val text, valid daterange, valid_from date, valid_until date);
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name | ephemeral_columns 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', add_defaults := false);
@@ -41,9 +41,9 @@ NOTICE:  sql_saga: Created trigger "basic_synchronize_temporal_columns_trigger" 
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |   sync_temporal_trg_name   | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+----------------------------+---------------------------------+-------------------+------------------
- public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | basic_bp_check          | basic_check               |                      | f                        | basic_bp_sync_temporal_trg | public_basic_bp_template_sync   |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |   sync_temporal_trg_name   | sync_temporal_trg_function_name | audit_schema_name | audit_table_name | ephemeral_columns 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+----------------------------+---------------------------------+-------------------+------------------+-------------------
+ public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | basic_bp_check          | basic_check               |                      | f                        | basic_bp_sync_temporal_trg | public_basic_bp_template_sync   |                   |                  | 
 (1 row)
 
 SELECT sql_saga.drop_era('basic', 'bp');
@@ -53,8 +53,8 @@ SELECT sql_saga.drop_era('basic', 'bp');
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults | sync_temporal_trg_name | sync_temporal_trg_function_name | audit_schema_name | audit_table_name | ephemeral_columns 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+------------------------+---------------------------------+-------------------+------------------+-------------------
 (0 rows)
 
 SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', bounds_check_constraint => 'c', add_defaults => false);
@@ -65,9 +65,9 @@ NOTICE:  sql_saga: Created trigger "basic_synchronize_temporal_columns_trigger" 
 (1 row)
 
 TABLE sql_saga.era;
- table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |   sync_temporal_trg_name   | sync_temporal_trg_function_name | audit_schema_name | audit_table_name 
---------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+----------------------------+---------------------------------+-------------------+------------------
- public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | c                       | basic_check               |                      | f                        | basic_bp_sync_temporal_trg | public_basic_bp_template_sync   |                   | 
+ table_schema | table_name | era_name | range_column_name | valid_from_column_name | valid_until_column_name | range_type | multirange_type | range_subtype | range_subtype_category | bounds_check_constraint | boundary_check_constraint | valid_to_column_name | trigger_applies_defaults |   sync_temporal_trg_name   | sync_temporal_trg_function_name | audit_schema_name | audit_table_name | ephemeral_columns 
+--------------+------------+----------+-------------------+------------------------+-------------------------+------------+-----------------+---------------+------------------------+-------------------------+---------------------------+----------------------+--------------------------+----------------------------+---------------------------------+-------------------+------------------+-------------------
+ public       | basic      | bp       | valid             | valid_from             | valid_until             | daterange  | datemultirange  | date          | D                      | c                       | basic_check               |                      | f                        | basic_bp_sync_temporal_trg | public_basic_bp_template_sync   |                   |                  | 
 (1 row)
 
 /* Test constraints */

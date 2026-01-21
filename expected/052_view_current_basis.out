@@ -85,9 +85,9 @@ Triggers:
     current_valid INSTEAD OF INSERT OR DELETE OR UPDATE ON employees__current_valid FOR EACH ROW EXECUTE FUNCTION sql_saga.current_view_trigger('delete_as_cutoff', 'id')
 
 TABLE sql_saga.updatable_view;
- view_schema |        view_name         | view_type | table_schema | table_name | era_name | trigger_name  | current_func | generated_columns 
--------------+--------------------------+-----------+--------------+------------+----------+---------------+--------------+-------------------
- public      | employees__current_valid | current   | public       | employees  | valid    | current_valid | test_now()   | {}
+ view_schema |        view_name         | view_type | table_schema | table_name | era_name | trigger_name  | current_func | generated_columns | ephemeral_columns 
+-------------+--------------------------+-----------+--------------+------------+----------+---------------+--------------+-------------------+-------------------
+ public      | employees__current_valid | current   | public       | employees  | valid    | current_valid | test_now()   | {}                | 
 (1 row)
 
 -- Test Error Handling for non-time-based eras
@@ -199,8 +199,8 @@ SELECT sql_saga.drop_current_view('employees'::regclass);
 (1 row)
 
 TABLE sql_saga.updatable_view;
- view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func | generated_columns 
--------------+-----------+-----------+--------------+------------+----------+--------------+--------------+-------------------
+ view_schema | view_name | view_type | table_schema | table_name | era_name | trigger_name | current_func | generated_columns | ephemeral_columns 
+-------------+-----------+-----------+--------------+------------+----------+--------------+--------------+-------------------+-------------------
 (0 rows)
 
 -- The view should no longer exist.

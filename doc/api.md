@@ -215,6 +215,12 @@ This document is automatically generated from the database schema by the `80_gen
 ### add_era
 
 > Registers a table as a temporal table using convention-over-configuration. It can create and manage temporal columns, constraints, and synchronization triggers.
+> 
+> Parameters:
+> - ephemeral_columns: Columns excluded from coalescing comparison during temporal_merge operations.
+>   These are typically audit columns (e.g., edit_at, edit_by_user_id) whose changes should not
+>   prevent adjacent periods from being merged. This setting serves as a default for all views
+>   and temporal_merge calls on this era.
 
 ```sql
 FUNCTION add_era(
@@ -229,7 +235,8 @@ FUNCTION add_era(
     add_defaults boolean DEFAULT true,
     add_bounds_check boolean DEFAULT true,
     range_type regtype DEFAULT NULL::regtype,
-    bounds_check_constraint name DEFAULT NULL::name
+    bounds_check_constraint name DEFAULT NULL::name,
+    ephemeral_columns name[] DEFAULT NULL::name[]
 ) RETURNS boolean
 SECURITY DEFINER
 ```
@@ -245,6 +252,26 @@ FUNCTION drop_era(
     drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior,
     cleanup boolean DEFAULT false
 ) RETURNS boolean
+SECURITY DEFINER
+```
+
+### set_era_ephemeral_columns
+
+> Sets the list of ephemeral columns for an era. Ephemeral columns are excluded from coalescing
+> comparison during temporal_merge operations. These are typically audit columns (e.g., edit_at,
+> edit_by_user_id) whose changes should not prevent adjacent periods from being merged.
+> 
+> Parameters:
+> - table_class: The table OID or name
+> - era_name: The era name (defaults to 'valid')
+> - ephemeral_columns: Array of column names to exclude from coalescing, or NULL to clear
+
+```sql
+FUNCTION set_era_ephemeral_columns(
+    table_class regclass,
+    era_name name DEFAULT 'valid'::name,
+    ephemeral_columns name[] DEFAULT NULL::name[]
+) RETURNS void
 SECURITY DEFINER
 ```
 
@@ -407,11 +434,13 @@ SECURITY DEFINER
 ### add_for_portion_of_view
 
 > Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record's history.
+> The optional ephemeral_columns parameter specifies columns (like audit fields edit_at, edit_by_user_id) that should be excluded from coalescing comparisons, allowing adjacent rows with identical business data but different ephemeral values to be merged.
 
 ```sql
 FUNCTION add_for_portion_of_view(
     table_oid regclass,
-    era_name name DEFAULT 'valid'::name
+    era_name name DEFAULT 'valid'::name,
+    ephemeral_columns name[] DEFAULT NULL::name[]
 ) RETURNS boolean
 SECURITY DEFINER
 ```

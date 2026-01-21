@@ -15,7 +15,9 @@ BEGIN
     END IF;
 
     -- Get metadata about the view's underlying table.
+    -- Resolution order for ephemeral_columns: view-level override takes precedence over era-level default.
     SELECT v.table_schema, v.table_name, v.era_name, v.generated_columns,
+           COALESCE(v.ephemeral_columns, e.ephemeral_columns) AS ephemeral_columns,
            e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name,
            e.range_subtype_category, e.range_subtype, e.range_type
     INTO info
@@ -253,7 +255,8 @@ BEGIN
         era_name => info.era_name,
         update_source_with_feedback => true,
         feedback_status_column => 'merge_status',
-        feedback_status_key => 'temporal_merge'
+        feedback_status_key => 'temporal_merge',
+        ephemeral_columns => info.ephemeral_columns
     );
 
     -- Check for errors from the merge operation and raise an exception if any occurred.
