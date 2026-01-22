@@ -169,11 +169,11 @@ ROLLBACK TO SAVEPOINT pristine;
 /* Test protection of synchronize_temporal_columns_trigger */
 ALTER TRIGGER rename_test_p_sync_temporal_trg ON rename_test RENAME TO my_trigger;
 ERROR:  cannot drop or rename trigger "rename_test_p_sync_temporal_trg" on table "rename_test" because it is managed by era "p"
-CONTEXT:  PL/pgSQL function rename_following() line 588 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 587 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER rename_test_ref_q_sync_temporal_trg ON rename_test_ref RENAME TO another_trigger;
 ERROR:  cannot drop or rename trigger "rename_test_ref_q_sync_temporal_trg" on table "rename_test_ref" because it is managed by era "q"
-CONTEXT:  PL/pgSQL function rename_following() line 588 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 587 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |         type         | table_schema |   table_name    |    column_names     | fk_era_name |                   fk_table_columns_snapshot                   |       unique_key_name        | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |                fk_index_name                 
@@ -209,6 +209,97 @@ SELECT sql_saga.drop_era('rename_test_ref','q');
 
 DROP TABLE rename_test_ref;
 ROLLBACK;
+\echo '\n--- System Versioning Rename Following Tests ---'
+
+--- System Versioning Rename Following Tests ---
+CREATE TABLE sv_rename_test (
+    id serial PRIMARY KEY,
+    data text
+);
+SELECT sql_saga.add_system_versioning('sv_rename_test');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+-- Get current constraint/trigger names from metadata
+\echo '--- Initial metadata ---'
+--- Initial metadata ---
+SELECT infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+            infinity_check_constraint             |          generated_always_trigger           |          write_history_trigger           |    truncate_trigger     
+--------------------------------------------------+---------------------------------------------+------------------------------------------+-------------------------
+ sv_rename_test_system_valid_range_infinity_check | sv_rename_test_system_time_generated_always | sv_rename_test_system_time_write_history | sv_rename_test_truncate
+(1 row)
+
+-- Rename the infinity check constraint
+ALTER TABLE sv_rename_test RENAME CONSTRAINT sv_rename_test_system_valid_range_infinity_check TO sv_rename_test_inf_check_renamed;
+\echo '--- After renaming infinity_check_constraint ---'
+--- After renaming infinity_check_constraint ---
+SELECT infinity_check_constraint
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+    infinity_check_constraint     
+----------------------------------
+ sv_rename_test_inf_check_renamed
+(1 row)
+
+-- Rename the generated_always trigger
+ALTER TRIGGER sv_rename_test_system_time_generated_always ON sv_rename_test RENAME TO sv_rename_test_gen_always_renamed;
+\echo '--- After renaming generated_always_trigger ---'
+--- After renaming generated_always_trigger ---
+SELECT generated_always_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+     generated_always_trigger      
+-----------------------------------
+ sv_rename_test_gen_always_renamed
+(1 row)
+
+-- Rename the write_history trigger
+ALTER TRIGGER sv_rename_test_system_time_write_history ON sv_rename_test RENAME TO sv_rename_test_write_hist_renamed;
+\echo '--- After renaming write_history_trigger ---'
+--- After renaming write_history_trigger ---
+SELECT write_history_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+       write_history_trigger       
+-----------------------------------
+ sv_rename_test_write_hist_renamed
+(1 row)
+
+-- Rename the truncate trigger
+ALTER TRIGGER sv_rename_test_truncate ON sv_rename_test RENAME TO sv_rename_test_trunc_renamed;
+\echo '--- After renaming truncate_trigger ---'
+--- After renaming truncate_trigger ---
+SELECT truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+       truncate_trigger       
+------------------------------
+ sv_rename_test_trunc_renamed
+(1 row)
+
+-- Verify all renames tracked
+\echo '--- Final metadata (all renamed) ---'
+--- Final metadata (all renamed) ---
+SELECT infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+    infinity_check_constraint     |     generated_always_trigger      |       write_history_trigger       |       truncate_trigger       
+----------------------------------+-----------------------------------+-----------------------------------+------------------------------
+ sv_rename_test_inf_check_renamed | sv_rename_test_gen_always_renamed | sv_rename_test_write_hist_renamed | sv_rename_test_trunc_renamed
+(1 row)
+
+-- Cleanup
+SELECT sql_saga.drop_system_versioning('sv_rename_test');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+DROP TABLE sv_rename_test;
 \i sql/include/test_teardown.sql
 --
 -- test_teardown.sql

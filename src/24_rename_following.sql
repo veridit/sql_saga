@@ -180,6 +180,7 @@ BEGIN
     ---
 
     -- Follow renames of the infinity_check_constraint.
+    -- The constraint format is: CHECK ((upper(range_column_name) = 'infinity'::timestamp with time zone))
     FOR sql IN
         SELECT format('UPDATE sql_saga.system_time_era SET infinity_check_constraint = %L WHERE (table_schema, table_name, era_name) = (%L, %L, %L)',
             c.conname,
@@ -191,10 +192,8 @@ BEGIN
         JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (ste.table_schema, ste.table_name, ste.era_name)
         JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (ste.table_name, (SELECT oid FROM pg_namespace WHERE nspname = ste.table_schema))
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
-        JOIN pg_catalog.pg_attribute AS ea ON ea.attrelid = pc.oid
         WHERE ste.infinity_check_constraint <> c.conname
-          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((%I = ''infinity''::%s))', ea.attname, format_type(ea.atttypid, ea.atttypmod))
-          AND e.valid_until_column_name = ea.attname
+          AND pg_catalog.pg_get_constraintdef(c.oid) = format('CHECK ((upper(%I) = ''infinity''::timestamp with time zone))', e.range_column_name)
           AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, ste.infinity_check_constraint))
     LOOP
         EXECUTE sql;

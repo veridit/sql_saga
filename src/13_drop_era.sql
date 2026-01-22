@@ -86,13 +86,13 @@ BEGIN
             RAISE EXCEPTION 'era % is used by an updatable view', era_name;
         END IF;
 
---        /* Check for SYSTEM VERSIONING */
---        IF EXISTS (
---            SELECT FROM sql_saga.system_versioning AS sv
---            WHERE (sv.table_oid, sv.era_name) = (table_oid, era_name))
---        THEN
---            RAISE EXCEPTION 'table % has SYSTEM VERSIONING', table_oid;
---        END IF;
+        /* Check for SYSTEM VERSIONING - must use drop_system_versioning() instead */
+        IF EXISTS (
+            SELECT FROM sql_saga.system_versioning AS sv
+            WHERE (sv.table_schema, sv.table_name, sv.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % has SYSTEM VERSIONING, use drop_system_versioning() instead', era_name;
+        END IF;
 
         /* Drop synchronization trigger BEFORE removing from catalog */
         IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
