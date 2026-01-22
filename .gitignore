@@ -16,3 +16,4 @@ results/
 .aider*
 !.aider.conf.yml
 !.aiderignore
+compile_commands.json

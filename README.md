@@ -535,6 +535,15 @@ The test suite uses `pg_regress` and is designed to be fully idempotent, creatin
   make diff-fail-all vim
   ```
 
+### C Development (LSP Setup)
+
+For IDE support when editing C files (`src/*.c`), generate the compilation database:
+
+```bash
+make compile_commands.json
+```
+
+This creates a `compile_commands.json` with PostgreSQL include paths from `pg_config`, enabling clangd and other LSPs to resolve headers correctly.
 
 ## Dependencies
 

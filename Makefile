@@ -188,6 +188,23 @@ renumber-tests-from:
 	done; \
 	echo "Done. Slot $(SLOT) is now available."
 
+# Generate compile_commands.json for LSP (clangd) support.
+# Usage: make compile_commands.json
+compile_commands.json:
+	@echo '[' > $@
+	@echo '  {' >> $@
+	@echo '    "directory": "$(CURDIR)",' >> $@
+	@echo '    "command": "gcc -I$(shell $(PG_CONFIG) --includedir-server) -I$(shell $(PG_CONFIG) --includedir) -c src/sql_saga.c",' >> $@
+	@echo '    "file": "src/sql_saga.c"' >> $@
+	@echo '  },' >> $@
+	@echo '  {' >> $@
+	@echo '    "directory": "$(CURDIR)",' >> $@
+	@echo '    "command": "gcc -I$(shell $(PG_CONFIG) --includedir-server) -I$(shell $(PG_CONFIG) --includedir) -c src/covers_without_gaps.c",' >> $@
+	@echo '    "file": "src/covers_without_gaps.c"' >> $@
+	@echo '  }' >> $@
+	@echo ']' >> $@
+	@echo "Generated $@ for PostgreSQL at $(shell $(PG_CONFIG) --bindir)"
+
 #release:
 #	git archive --format zip --prefix=$(EXTENSION)-$(EXTENSION_VERSION)/ --output $(EXTENSION)-$(EXTENSION_VERSION).zip master
 #
