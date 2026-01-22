@@ -38,6 +38,9 @@ BEGIN
         JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (n.nspname, c.relname))
            OR EXISTS (SELECT 1 FROM sql_saga.updatable_view v JOIN pg_class vc ON vc.relname = v.view_name JOIN pg_namespace vn ON vn.oid = vc.relnamespace AND vn.nspname = v.view_schema WHERE vc.oid = c.oid)
+           -- Also check system_versioning objects (history table, view)
+           OR EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.history_schema_name, sv.history_table_name) = (n.nspname, c.relname))
+           OR EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.view_schema_name, sv.view_table_name) = (n.nspname, c.relname))
     );
 END;
 $function$;
