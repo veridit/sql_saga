@@ -17,6 +17,57 @@ Tasks are checked [x] when done, made brief and moved to the '# Done' section.
 
 # Done
 
+## 2026-01-22: System Time (System Versioning) Feature Complete
+
+**Completed the system_time implementation with full test coverage.**
+
+### New Features Enabled
+
+**Drop Protection (src/23_drop_protection.sql):**
+- History table, history view, query functions protected from accidental drops
+- All system_time_era triggers/constraints protected (infinity_check, generated_always, write_history, truncate)
+
+**Rename Following (src/24_rename_following.sql):**
+- Metadata automatically updated when system_time objects are renamed
+- Fixed bug: infinity_check_constraint pattern was using wrong format
+
+**Health Checks - Privilege/Ownership Propagation (src/25_health_checks.sql):**
+- GRANT SELECT on base table → auto-grants SELECT on history table/view + EXECUTE on query functions
+- REVOKE propagation works similarly
+- ALTER TABLE OWNER → propagates to all history objects
+- Early exit optimization: added system_versioning to managed object check
+
+**Enforcement (src/13_drop_era.sql):**
+- `drop_era()` now rejects system_time eras - must use `drop_system_versioning()` instead
+
+### Era-Level Ephemeral Columns
+
+**New feature to fix statbus coalescing regression:**
+- Added `ephemeral_columns` to `sql_saga.era` table
+- `add_era(..., ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id'])` 
+- `set_era_ephemeral_columns()` function for post-creation configuration
+- Auto-discovery: `temporal_merge` and FOR_PORTION_OF views inherit from era
+- View-level override supported via `add_for_portion_of_view(..., ephemeral_columns => ...)`
+
+### Test Coverage Added
+
+| Test File | New Coverage |
+|-----------|-------------|
+| 023_system_versioning_query_functions.sql | **NEW** - Tests `_as_of`, `_between`, `_between_symmetric`, `_from_to`, `_with_history` |
+| 020_system_versioning.sql | TRUNCATE propagation, cross-schema support, error cases (partitioned tables, views, direct drop_era rejection) |
+| 092_event_trigger_rename_following.sql | System_time rename following for all 4 triggers/constraints |
+| 093_event_trigger_health_checks.sql | GRANT/REVOKE/Ownership propagation for system versioning |
+| 094_event_trigger_drop_protection.sql | Drop protection for all system_time objects |
+| 051_view_for_portion_of_full.sql | Era-level ephemeral_columns inheritance |
+| 053_view_current_full.sql | Era-level ephemeral_columns with CURRENT views |
+| 067_temporal_merge_parameters.sql | Era-level ephemeral_columns auto-discovery |
+| 080_temporal_merge_reported_regressions.sql | Scenarios 10-12: ephemeral_columns via add_era, set_era_ephemeral_columns, view override |
+
+### Code Cleanup
+- Removed obsolete commented-out code from add_era.sql, drop_era.sql
+- Replaced TODO comments with explanatory notes
+- All 77 tests pass
+
 ## 2026-01-21: temporal_merge Executor ANALYZE Optimization
 
 **Added ANALYZE to temporal_merge_plan for 5x faster executor DML.**
