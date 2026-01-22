@@ -437,7 +437,7 @@ char *DatumGetString(Oid elem_oid, RangeBound bound) {
             result = psprintf("%d", DatumGetInt32(bound.val));
             break;
         case INT8OID:
-            result = psprintf("%ld", DatumGetInt64(bound.val));
+            result = psprintf(INT64_FORMAT, DatumGetInt64(bound.val));
             break;
         case DATEOID: {
             char *dateStr = DatumGetCString(DirectFunctionCall1(date_out, bound.val));
