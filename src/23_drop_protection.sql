@@ -136,69 +136,69 @@ BEGIN
             r.object_identity, r.era_name, r.table_oid;
     END LOOP;
 
-    --/* Complain if the infinity CHECK constraint is missing. */
-    --FOR r IN
-    --    SELECT p.table_name, p.infinity_check_constraint
-    --    FROM sql_saga.system_time_periods AS p
-    --    WHERE NOT EXISTS (
-    --        SELECT FROM pg_catalog.pg_constraint AS c
-    --        WHERE (c.conrelid, c.conname) = (p.table_name, p.infinity_check_constraint))
-    --LOOP
-    --    RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.infinity_check_constraint, r.table_oid;
-    --END LOOP;
+    /* Complain if the infinity CHECK constraint is missing. */
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, ste.infinity_check_constraint
+        FROM sql_saga.system_time_era AS ste
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.infinity_check_constraint))
+    LOOP
+        RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in SYSTEM_TIME period',
+            r.infinity_check_constraint, r.table_oid;
+    END LOOP;
 
     /* Complain if the GENERATED ALWAYS AS ROW START/END trigger is missing. */
-    --FOR r IN
-    --    SELECT p.table_name, p.generated_always_trigger
-    --    FROM sql_saga.system_time_periods AS p
-    --    WHERE NOT EXISTS (
-    --        SELECT FROM pg_catalog.pg_trigger AS t
-    --        WHERE (t.tgrelid, t.tgname) = (p.table_name, p.generated_always_trigger))
-    --LOOP
-    --    RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.generated_always_trigger, r.table_oid;
-    --END LOOP;
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, ste.generated_always_trigger
+        FROM sql_saga.system_time_era AS ste
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_trigger AS t
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.generated_always_trigger))
+    LOOP
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
+            r.generated_always_trigger, r.table_oid;
+    END LOOP;
 
     /* Complain if the write_history trigger is missing. */
-    -- FOR r IN
-    --     SELECT p.table_name, p.write_history_trigger
-    --     FROM sql_saga.system_time_periods AS p
-    --     WHERE NOT EXISTS (
-    --         SELECT FROM pg_catalog.pg_trigger AS t
-    --         WHERE (t.tgrelid, t.tgname) = (p.table_name, p.write_history_trigger))
-    -- LOOP
-    --     RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --         r.write_history_trigger, r.table_oid;
-    -- END LOOP;
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, ste.write_history_trigger
+        FROM sql_saga.system_time_era AS ste
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_trigger AS t
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.write_history_trigger))
+    LOOP
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
+            r.write_history_trigger, r.table_oid;
+    END LOOP;
 
     /* Complain if the TRUNCATE trigger is missing. */
-    --FOR r IN
-    --    SELECT p.table_name, p.truncate_trigger
-    --    FROM sql_saga.system_time_periods AS p
-    --    WHERE NOT EXISTS (
-    --        SELECT FROM pg_catalog.pg_trigger AS t
-    --        WHERE (t.tgrelid, t.tgname) = (p.table_name, p.truncate_trigger))
-    --LOOP
-    --    RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-    --        r.truncate_trigger, r.table_oid;
-    --END LOOP;
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, ste.truncate_trigger
+        FROM sql_saga.system_time_era AS ste
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_trigger AS t
+            WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.truncate_trigger))
+    LOOP
+        RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
+            r.truncate_trigger, r.table_oid;
+    END LOOP;
 
     /*
      * We can't reliably find out what a column was renamed to, so just error
      * out in this case.
      */
---    FOR r IN
---        SELECT stp.table_name, u.column_name
---        FROM sql_saga.era AS stp
---        CROSS JOIN LATERAL unnest(stp.excluded_column_names) AS u (column_name)
---        WHERE NOT EXISTS (
---            SELECT FROM pg_catalog.pg_attribute AS a
---            WHERE (a.attrelid, a.attname) = (stp.table_name, u.column_name))
---    LOOP
---        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from an era',
---            r.column_name, r.table_oid;
---    END LOOP;
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, u.column_name
+        FROM sql_saga.system_time_era AS ste
+        CROSS JOIN LATERAL unnest(ste.excluded_column_names) AS u (column_name)
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_attribute AS a
+            WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
+    LOOP
+        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
+            r.column_name, r.table_oid;
+    END LOOP;
 
     ---
     --- updatable_view
@@ -401,41 +401,44 @@ BEGIN
     --- system_versioning
     ---
 
---    FOR r IN
---        SELECT dobj.object_identity, sv.table_name
---        FROM sql_saga.system_versioning AS sv
---        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
---                ON dobj.objid = sv.audit_table_name
---        WHERE dobj.object_type = 'table'
---        ORDER BY dobj.ordinality
---    LOOP
---        RAISE EXCEPTION 'cannot drop table "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_oid;
---    END LOOP;
---
---    FOR r IN
---        SELECT dobj.object_identity, sv.table_name
---        FROM sql_saga.system_versioning AS sv
---        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
---                ON dobj.objid = sv.view_oid
---        WHERE dobj.object_type = 'view'
---        ORDER BY dobj.ordinality
---    LOOP
---        RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_oid;
---    END LOOP;
---
---    FOR r IN
---        SELECT dobj.object_identity, sv.table_name
---        FROM sql_saga.system_versioning AS sv
---        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
---                ON dobj.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])
---        WHERE dobj.object_type = 'function'
---        ORDER BY dobj.ordinality
---    LOOP
---        RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',
---            r.object_identity, r.table_oid;
---    END LOOP;
+    /* Reject dropping the history table directly. */
+    FOR r IN
+        SELECT dobj.object_identity, format('%I.%I', sv.table_schema, sv.table_name)::regclass AS table_oid
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
+                ON dobj.object_type = 'table'
+                AND (dobj.address_names[1], dobj.address_names[2]) = (sv.history_schema_name, sv.history_table_name)
+        ORDER BY dobj.ordinality
+    LOOP
+        RAISE EXCEPTION 'cannot drop table "%" because it is used in SYSTEM VERSIONING for table "%"',
+            r.object_identity, r.table_oid;
+    END LOOP;
+
+    /* Reject dropping the history view directly. */
+    FOR r IN
+        SELECT dobj.object_identity, format('%I.%I', sv.table_schema, sv.table_name)::regclass AS table_oid
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
+                ON dobj.object_type = 'view'
+                AND (dobj.address_names[1], dobj.address_names[2]) = (sv.view_schema_name, sv.view_table_name)
+        ORDER BY dobj.ordinality
+    LOOP
+        RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
+            r.object_identity, r.table_oid;
+    END LOOP;
+
+    /* Reject dropping the query functions directly. */
+    FOR r IN
+        SELECT dobj.object_identity, format('%I.%I', sv.table_schema, sv.table_name)::regclass AS table_oid
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
+                ON dobj.object_type = 'function'
+                AND dobj.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])
+        ORDER BY dobj.ordinality
+    LOOP
+        RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',
+            r.object_identity, r.table_oid;
+    END LOOP;
 END;
 $function$;
 

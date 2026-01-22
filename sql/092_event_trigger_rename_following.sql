@@ -75,4 +75,61 @@ DROP TABLE rename_test_ref;
 
 ROLLBACK;
 
+\echo '\n--- System Versioning Rename Following Tests ---'
+
+CREATE TABLE sv_rename_test (
+    id serial PRIMARY KEY,
+    data text
+);
+
+SELECT sql_saga.add_system_versioning('sv_rename_test');
+
+-- Get current constraint/trigger names from metadata
+\echo '--- Initial metadata ---'
+SELECT infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Rename the infinity check constraint
+ALTER TABLE sv_rename_test RENAME CONSTRAINT sv_rename_test_system_valid_range_infinity_check TO sv_rename_test_inf_check_renamed;
+
+\echo '--- After renaming infinity_check_constraint ---'
+SELECT infinity_check_constraint
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Rename the generated_always trigger
+ALTER TRIGGER sv_rename_test_system_time_generated_always ON sv_rename_test RENAME TO sv_rename_test_gen_always_renamed;
+
+\echo '--- After renaming generated_always_trigger ---'
+SELECT generated_always_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Rename the write_history trigger
+ALTER TRIGGER sv_rename_test_system_time_write_history ON sv_rename_test RENAME TO sv_rename_test_write_hist_renamed;
+
+\echo '--- After renaming write_history_trigger ---'
+SELECT write_history_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Rename the truncate trigger
+ALTER TRIGGER sv_rename_test_truncate ON sv_rename_test RENAME TO sv_rename_test_trunc_renamed;
+
+\echo '--- After renaming truncate_trigger ---'
+SELECT truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Verify all renames tracked
+\echo '--- Final metadata (all renamed) ---'
+SELECT infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger
+FROM sql_saga.system_time_era
+WHERE table_name = 'sv_rename_test';
+
+-- Cleanup
+SELECT sql_saga.drop_system_versioning('sv_rename_test');
+DROP TABLE sv_rename_test;
+
 \i sql/include/test_teardown.sql

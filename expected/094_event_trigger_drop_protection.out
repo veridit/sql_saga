@@ -254,6 +254,69 @@ SELECT sql_saga.drop_era('dp', 'p');
 (1 row)
 
 ROLLBACK TO SAVEPOINT s11;
+SAVEPOINT system_versioning_tests;
+/* system_versioning - test drop protection for system-versioned tables */
+CREATE TABLE dp_sysver (id int PRIMARY KEY, name text);
+SELECT sql_saga.add_system_versioning('dp_sysver');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+-- Test that we can't drop the history table directly
+SAVEPOINT sv_history_table;
+DROP TABLE dp_sysver_history; -- should fail
+ERROR:  cannot drop table dp_sysver_history because other objects depend on it
+DETAIL:  view dp_sysver_with_history depends on table dp_sysver_history
+function dp_sysver__as_of(timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__between(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__between_symmetric(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__from_to(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ROLLBACK TO SAVEPOINT sv_history_table;
+-- Test that we can't drop the history view directly
+SAVEPOINT sv_history_view;
+DROP VIEW dp_sysver_with_history; -- should fail
+ERROR:  cannot drop view dp_sysver_with_history because other objects depend on it
+DETAIL:  function dp_sysver__as_of(timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__between(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__between_symmetric(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+function dp_sysver__from_to(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
+HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+ROLLBACK TO SAVEPOINT sv_history_view;
+-- Test that we can't drop the generated_always trigger
+SAVEPOINT sv_gen_trigger;
+DROP TRIGGER dp_sysver_system_time_generated_always ON dp_sysver; -- should fail
+ERROR:  cannot drop trigger "dp_sysver_system_time_generated_always" on table "dp_sysver" because it is used in SYSTEM_TIME period
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 154 at RAISE
+ROLLBACK TO SAVEPOINT sv_gen_trigger;
+-- Test that we can't drop the write_history trigger
+SAVEPOINT sv_write_trigger;
+DROP TRIGGER dp_sysver_system_time_write_history ON dp_sysver; -- should fail
+ERROR:  cannot drop trigger "dp_sysver_system_time_write_history" on table "dp_sysver" because it is used in SYSTEM_TIME period
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 166 at RAISE
+ROLLBACK TO SAVEPOINT sv_write_trigger;
+-- Test that we can't drop the truncate trigger
+SAVEPOINT sv_truncate_trigger;
+DROP TRIGGER dp_sysver_truncate ON dp_sysver; -- should fail
+ERROR:  cannot drop trigger "dp_sysver_truncate" on table "dp_sysver" because it is used in SYSTEM_TIME period
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 178 at RAISE
+ROLLBACK TO SAVEPOINT sv_truncate_trigger;
+-- Test that we can't drop the infinity check constraint
+SAVEPOINT sv_infinity_check;
+ALTER TABLE dp_sysver DROP CONSTRAINT dp_sysver_system_valid_range_infinity_check; -- should fail
+ERROR:  cannot drop constraint "dp_sysver_system_valid_range_infinity_check" on table "dp_sysver" because it is used in SYSTEM_TIME period
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 142 at RAISE
+ROLLBACK TO SAVEPOINT sv_infinity_check;
+-- Test proper cleanup works
+SELECT sql_saga.drop_system_versioning('dp_sysver');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+DROP TABLE dp_sysver;
+ROLLBACK TO SAVEPOINT system_versioning_tests;
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

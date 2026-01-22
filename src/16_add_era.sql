@@ -334,56 +334,10 @@ BEGIN
         END IF;
     END;
 
--- TODO: Ensure that infinity is the default.
---    /*
---     * Find and appropriate a CHECK constraint to make sure that end = 'infinity'.
---     * Create one if necessary.
---     *
---     * SQL:2016 4.15.2.2
---     */
---    DECLARE
---        condef CONSTANT text := format('CHECK ((%I = ''infinity''::timestamp with time zone))', valid_until_column_name);
---        context text;
---    BEGIN
---        IF infinity_check_constraint IS NOT NULL THEN
---            /* We were given a name, does it exist? */
---            SELECT pg_catalog.pg_get_constraintdef(c.oid)
---            INTO context
---            FROM pg_catalog.pg_constraint AS c
---            WHERE (c.conrelid, c.conname) = (table_class, infinity_check_constraint)
---              AND c.contype = 'c';
---
---            IF FOUND THEN
---                /* Does it match? */
---                IF context <> condef THEN
---                    RAISE EXCEPTION 'constraint "%" on table "%" does not match', infinity_check_constraint, table_class;
---                END IF;
---            ELSE
---                /* If it doesn't exist, we'll use the name for the one we create. */
---                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
---            END IF;
---        ELSE
---            /* No name given, can we appropriate one? */
---            SELECT c.conname
---            INTO infinity_check_constraint
---            FROM pg_catalog.pg_constraint AS c
---            WHERE c.conrelid = table_class
---              AND c.contype = 'c'
---              AND pg_catalog.pg_get_constraintdef(c.oid) = condef;
---
---            /* Make our own then */
---            IF NOT FOUND THEN
---                SELECT c.relname
---                INTO table_name
---                FROM pg_catalog.pg_class AS c
---                WHERE c.oid = table_class;
---
---                infinity_check_constraint := sql_saga._make_name(ARRAY[table_name, valid_until_column_name], 'infinity_check');
---                alter_commands := alter_commands || format('ADD CONSTRAINT %I %s', infinity_check_constraint, condef);
---            END IF;
---        END IF;
---    END;
-
+    -- Note: Unlike system_time eras, regular eras do NOT enforce valid_until = infinity.
+    -- Users can have closed date ranges for regular temporal data. The infinity check
+    -- constraint (SQL:2016 4.15.2.2) is only applied to system_time eras via
+    -- __internal_add_system_time_era().
 
     /* If we've created any work for ourselves, do it now */
     IF alter_commands <> '{}' THEN
@@ -525,44 +479,6 @@ BEGIN
             RAISE NOTICE 'sql_saga: Created trigger "%" on table % to synchronize columns: %', v_trigger_name, table_oid, v_sync_cols_text;
         END IF;
     END;
-
-    -- Code for creation of triggers, when extending the era api
-    --        /* Make sure all the excluded columns exist */
-    --    FOR excluded_column_name IN
-    --        SELECT u.name
-    --        FROM unnest(excluded_column_names) AS u (name)
-    --        WHERE NOT EXISTS (
-    --            SELECT FROM pg_catalog.pg_attribute AS a
-    --            WHERE (a.attrelid, a.attname) = (table_class, u.name))
-    --    LOOP
-    --        RAISE EXCEPTION 'column "%" does not exist', excluded_column_name;
-    --    END LOOP;
-    --
-    --    /* Don't allow system columns to be excluded either */
-    --    FOR excluded_column_name IN
-    --        SELECT u.name
-    --        FROM unnest(excluded_column_names) AS u (name)
-    --        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_class, u.name)
-    --        WHERE a.attnum < 0
-    --    LOOP
-    --        RAISE EXCEPTION 'cannot exclude system column "%"', excluded_column_name;
-    --    END LOOP;
-    --
-    --    generated_always_trigger := coalesce(
-    --        generated_always_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'system_time_generated_always'));
-    --    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger, table_class);
-    --
-    --    write_history_trigger := coalesce(
-    --        write_history_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'system_time_write_history'));
-    --    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger, table_class);
-    --
-    --    truncate_trigger := coalesce(
-    --        truncate_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'truncate'));
-    --    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_era()', truncate_trigger, table_class);
-
 
     RETURN true;
 END;

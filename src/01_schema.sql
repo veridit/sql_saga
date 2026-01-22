@@ -84,14 +84,8 @@ CREATE TABLE sql_saga.era (
     trigger_applies_defaults boolean NOT NULL DEFAULT false,
     sync_temporal_trg_name name,
     sync_temporal_trg_function_name name,
-    -- infinity_check_constraint name NOT NULL,
-    -- generated_always_trigger name NOT NULL,
     audit_schema_name name,
     audit_table_name name,
-    -- audit_trigger name NOT NULL,
-    -- delete_trigger name NOT NULL,
-    --excluded_column_names name[] NOT NULL DEFAULT '{}',
-    -- UNIQUE(...) for each trigger/function name.
     ephemeral_columns name[] DEFAULT NULL, -- Columns excluded from coalescing comparison (e.g., audit columns)
 
     PRIMARY KEY (table_schema, table_name, era_name),
