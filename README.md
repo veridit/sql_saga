@@ -30,6 +30,95 @@ In the context of this extension, a **Saga** represents the complete history of 
   SET client_min_messages = LOG;          -- Show LOG output in psql
   ```
 
+## Temporal Tables at a Glance
+
+A simplified example to illustrate the concept.
+A temporal table has `valid_from` and `valid_until` columns, which define a `[)` period (inclusive start, exclusive end).
+The currently valid row has `infinity` in the `valid_until` column.
+
+### Example: Establishment History
+
+```
+TABLE establishment (
+    id,
+    valid_from date,
+    valid_until date,
+    name
+)
+```
+```
+------+------------+-------------+-------------------------------------
+id    | valid_from | valid_until |  name
+------+------------+-------------+-------------------------------------
+01    | 2023-01-01 |  2023-07-01 |  AutoParts LLC
+01    | 2023-07-01 |  2024-01-01 |  AutoSpareParts INC
+01    | 2024-01-01 |  infinity   |  SpareParts Corporation
+02    | 2022-01-01 |  2022-07-01 |  Gasoline Refinement LLC
+02    | 2022-07-01 |  2023-01-01 |  Gasoline and Diesel Refinement LLC
+02    | 2023-01-01 |  infinity   |  General Refinement LLC
+------+------------+-------------+-------------------------------------
+```
+
+### Example: Non-Temporal Reference Table
+
+A regular table of statistical definitions (no temporal tracking needed):
+```
+TABLE stat_definition (
+    code,
+    stat_type,
+    frequency,
+    name
+)
+```
+```
+-----------+-----------+-----------+---------------------------
+code       | stat_type | frequency |  name
+-----------+-----------+-----------+---------------------------
+employees  |   int     |   yearly  |  Number of people employed
+turnover   |   int     |   yearly  |  Turnover (Local Currency)
+-----------+-----------+-----------+---------------------------
+```
+
+### Example: Temporal Foreign Keys
+
+A table tracking measured values over time, with a temporal foreign key to `establishment.id`:
+```
+TABLE stat_for_unit (
+    id,
+    stat_definition_id,
+    valid_from,
+    valid_until,
+    establishment_id,
+    value
+)
+```
+```
+-----------+------------+-------------+--------+------------
+ stat_def  | valid_from | valid_until | est_id | value
+-----------+------------+-------------+--------+------------
+ employees | 2020-01-01 |  2024-01-01 |  01    |         90
+ employees | 2024-01-01 |  infinity   |  01    |        130
+ turnover  | 2023-01-01 |  2024-01-01 |  01    | 10 000 000
+ turnover  | 2024-01-01 |  infinity   |  01    | 30 000 000
+ employees | 2022-01-01 |  2023-01-01 |  02    |         20
+ employees | 2023-01-01 |  infinity   |  02    |         80
+ turnover  | 2022-01-01 |  2023-01-01 |  02    | 40 000 000
+ turnover  | 2023-01-01 |  infinity   |  02    | 70 000 000
+-----------+------------+-------------+--------+------------
+```
+
+**The key insight:** For temporal foreign keys, the referenced table must have the foreign key value available for the *entire* period `[valid_from, valid_until)`. Multiple rows can satisfy this - the periods do not need to align between tables.
+
+For example, this `stat_for_unit` row covering `[2022-01-01, 2023-01-01)`:
+```
+turnover  | 2022-01-01 | 2023-01-01 |  02    | 40 000 000
+```
+is covered by these two *contiguous* `establishment` rows:
+```
+02    | 2022-01-01 |  2022-07-01 |  Gasoline Refinement LLC
+02    | 2022-07-01 |  2023-01-01 |  Gasoline and Diesel Refinement LLC
+```
+
 ## Installation
 
 ### With Docker
