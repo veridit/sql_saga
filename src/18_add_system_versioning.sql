@@ -108,7 +108,8 @@ BEGIN
     EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I && tstzrange($1, $2)' $$, table_schema /* %1$I */, function_from_to_name /* %2$I */, view_name /* %3$I */, era_row.range_column_name /* %4$I */);
     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_from_to_name /* %2$I */, table_owner /* %3$I */);
 
-    -- TODO: Set privileges on history objects
+    -- Note: Privileges on history objects are propagated automatically by the
+    -- health_checks() event trigger when GRANT/REVOKE is issued on the base table.
 
     INSERT INTO sql_saga.system_versioning (table_schema, table_name, era_name, history_schema_name, history_table_name, view_schema_name, view_table_name, func_as_of, func_between, func_between_symmetric, func_from_to)
     VALUES (

@@ -526,44 +526,6 @@ BEGIN
         END IF;
     END;
 
-    -- Code for creation of triggers, when extending the era api
-    --        /* Make sure all the excluded columns exist */
-    --    FOR excluded_column_name IN
-    --        SELECT u.name
-    --        FROM unnest(excluded_column_names) AS u (name)
-    --        WHERE NOT EXISTS (
-    --            SELECT FROM pg_catalog.pg_attribute AS a
-    --            WHERE (a.attrelid, a.attname) = (table_class, u.name))
-    --    LOOP
-    --        RAISE EXCEPTION 'column "%" does not exist', excluded_column_name;
-    --    END LOOP;
-    --
-    --    /* Don't allow system columns to be excluded either */
-    --    FOR excluded_column_name IN
-    --        SELECT u.name
-    --        FROM unnest(excluded_column_names) AS u (name)
-    --        JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_class, u.name)
-    --        WHERE a.attnum < 0
-    --    LOOP
-    --        RAISE EXCEPTION 'cannot exclude system column "%"', excluded_column_name;
-    --    END LOOP;
-    --
-    --    generated_always_trigger := coalesce(
-    --        generated_always_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'system_time_generated_always'));
-    --    EXECUTE format('CREATE TRIGGER %I BEFORE INSERT OR UPDATE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.generated_always_as_row_start_end()', generated_always_trigger, table_class);
-    --
-    --    write_history_trigger := coalesce(
-    --        write_history_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'system_time_write_history'));
-    --    EXECUTE format('CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %s FOR EACH ROW EXECUTE PROCEDURE sql_saga.write_history()', write_history_trigger, table_class);
-    --
-    --    truncate_trigger := coalesce(
-    --        truncate_trigger,
-    --        sql_saga._make_name(ARRAY[table_name], 'truncate'));
-    --    EXECUTE format('CREATE TRIGGER %I AFTER TRUNCATE ON %s FOR EACH STATEMENT EXECUTE PROCEDURE sql_saga.truncate_era()', truncate_trigger, table_class);
-
-
     RETURN true;
 END;
 $function$;
