@@ -277,6 +277,8 @@ RESET client_min_messages;
 **1. Informational Notices (RAISE NOTICE):**
 Use `RAISE NOTICE` to inform callers about side effects that may be surprising. The message must describe exactly what action was performed.
 
+**Message format:** All RAISE NOTICE messages must include the `sql_saga: ` prefix to clearly identify the subsystem generating the message.
+
 **When to use:**
 - Table creation, modification, or deletion
 - Index creation or rebuilds
@@ -286,10 +288,10 @@ Use `RAISE NOTICE` to inform callers about side effects that may be surprising. 
 
 **Examples:**
 ```sql
--- Good: Describes the exact side effect
-RAISE NOTICE 'Created temporal foreign key constraint % on table %', constraint_name, table_name;
-RAISE NOTICE 'Rebuilt unique constraint % to include temporal dimensions', constraint_name;
-RAISE NOTICE 'Migrated % rows from % to new temporal format', row_count, table_name;
+-- Good: Describes the exact side effect with sql_saga prefix
+RAISE NOTICE 'sql_saga: Created temporal foreign key constraint % on table %', constraint_name, table_name;
+RAISE NOTICE 'sql_saga: Rebuilt unique constraint % to include temporal dimensions', constraint_name;
+RAISE NOTICE 'sql_saga: Migrated % rows from % to new temporal format', row_count, table_name;
 
 -- Bad: Vague or internal detail
 RAISE NOTICE 'Processing constraint...';

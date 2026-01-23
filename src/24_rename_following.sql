@@ -416,7 +416,7 @@ BEGIN
         AND uk.check_constraint <> c.conname
         AND c.contype = 'c'
         AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.check_constraint))
-        AND pg_get_constraintdef(c.oid) = format('CHECK (((%s) = 1))', (SELECT string_agg(format('(CASE WHEN %I IS NOT NULL THEN 1 ELSE 0 END)', col), ' + ') FROM unnest(uk.mutually_exclusive_columns) as col))
+        AND pg_get_constraintdef(c.oid) = format('CHECK (((%s) = 1))', format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(uk.mutually_exclusive_columns) as col)))
     LOOP
         EXECUTE sql;
     END LOOP;

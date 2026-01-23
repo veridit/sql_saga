@@ -64,7 +64,7 @@ NOTICE:  sql_saga: Created trigger "internals_target_synchronize_temporal_column
 (1 row)
 
 SELECT sql_saga.add_unique_key('internals_target', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: altering table public.internals_target to add constraints: ADD CONSTRAINT internals_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table internals_target: ADD CONSTRAINT internals_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  internals_target_id_valid

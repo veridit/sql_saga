@@ -49,14 +49,14 @@ NOTICE:  sql_saga: Created trigger "units_synchronize_temporal_columns_trigger" 
 -- are added automatically by the function.
 ALTER TABLE repro.units ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table repro.units to add constraints: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table repro.units: ALTER COLUMN id SET NOT NULL
  add_unique_key 
 ----------------
  units_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('repro.units', ARRAY['org_nr'], key_type => 'natural');
-NOTICE:  sql_saga: altering table repro.units to add constraints: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT units_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table repro.units: ADD CONSTRAINT units_org_nr_valid_uniq UNIQUE (org_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT units_org_nr_valid_pk_consistency_excl EXCLUDE USING gist (org_nr WITH =, id WITH <>)
    add_unique_key   
 --------------------
  units_org_nr_valid

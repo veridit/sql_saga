@@ -405,7 +405,7 @@ BEGIN
             check_sql := format(
                 'ADD CONSTRAINT %I CHECK ((%s) = 1)',
                 check_constraint_name,
-                (SELECT string_agg(format('(CASE WHEN %I IS NOT NULL THEN 1 ELSE 0 END)', col), ' + ') FROM unnest(mutually_exclusive_columns) as col)
+                format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(mutually_exclusive_columns) as col))
             );
             alter_cmds := alter_cmds || check_sql;
 
@@ -442,8 +442,9 @@ BEGIN
                             (SELECT string_agg(quote_ident(c), ', ') FROM unnest(non_xor_cols || xor_col) AS u(c)),
                             where_clause_for_index
                         );
-                        RAISE NOTICE 'sql_saga: creating partial performance index: %', partial_index_sql;
+
                         EXECUTE partial_index_sql;
+                        RAISE NOTICE 'sql_saga: Created partial performance index % on table %', partial_index_name, table_oid;
                         partial_index_names := partial_index_names || partial_index_name;
 
                         -- 2. Create the correctness EXCLUDE constraint.
@@ -452,11 +453,18 @@ BEGIN
                         INTO withs
                         FROM unnest(non_xor_cols || xor_col) AS column_name;
 
-                        withs := withs || format('%I(%I, %I) WITH &&',
-                            era_row.range_type,
-                            era_row.valid_from_column_name,
-                            era_row.valid_until_column_name
-                        );
+                        -- Use range column directly if individual columns aren't available
+                        IF era_row.valid_from_column_name IS NOT NULL AND era_row.valid_until_column_name IS NOT NULL THEN
+                            withs := withs || format('%I(%I, %I) WITH &&',
+                                era_row.range_type,
+                                era_row.valid_from_column_name,
+                                era_row.valid_until_column_name
+                            );
+                        ELSE
+                            withs := withs || format('%I WITH &&',
+                                era_row.range_column_name
+                            );
+                        END IF;
 
                         -- The WHERE clause for a partial constraint must be enclosed in parentheses.
                         where_clause_partial := format('WHERE (%I IS NOT NULL AND (%s))',
@@ -557,7 +565,7 @@ BEGIN
     END IF;
 
     IF alter_cmds <> '{}' THEN
-        RAISE NOTICE 'sql_saga: altering table %.% to add constraints: %', table_schema, table_name, array_to_string(alter_cmds, ', ');
+
         SELECT format('ALTER TABLE %I.%I %s', n.nspname /* %I */, c.relname /* %I */, array_to_string(alter_cmds, ', ') /* %s */)
         INTO sql
         FROM pg_catalog.pg_class AS c
@@ -565,6 +573,7 @@ BEGIN
         WHERE c.oid = table_oid;
 
         EXECUTE sql;
+        RAISE NOTICE 'sql_saga: Added constraints to table %: %', table_oid, array_to_string(alter_cmds, '; ');
     END IF;
 
     /* If we don't already have a unique_constraint, it must be the one with the highest oid */
@@ -676,7 +685,7 @@ BEGIN
                     END LOOP;
 
                     IF consistency_cmds IS NOT NULL AND array_length(consistency_cmds, 1) > 0 THEN
-                        RAISE NOTICE 'sql_saga: retroactively applying pk consistency for table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, ', ');
+                        RAISE NOTICE 'sql_saga: Applied retroactive primary key consistency constraints to table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, '; ');
                         EXECUTE format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', '));
                     END IF;
                 END IF;

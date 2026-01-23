@@ -35,7 +35,7 @@ NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger"
 (1 row)
 
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -56,7 +56,7 @@ NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" 
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -70,7 +70,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Test overloaded drop_foreign_key for temporal-to-temporal
 SELECT sql_saga.drop_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q');
-NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
+NOTICE:  sql_saga: Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key 
 ------------------
  
@@ -83,7 +83,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Test original drop_foreign_key (with positional and named arguments)
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -97,7 +97,7 @@ TABLE sql_saga.foreign_keys;
 
 -- by name (positional)
 SELECT sql_saga.drop_foreign_key_by_name('child'::regclass, 'child_parent_id_q');
-NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
+NOTICE:  sql_saga: Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -110,7 +110,7 @@ TABLE sql_saga.foreign_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_temporal_foreign_key('child'::regclass, ARRAY['parent_id']::name[], 'q', 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child. Creating new index: CREATE INDEX child_parent_id_q_gist_idx ON child USING GIST (parent_id, valid)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_q
@@ -124,7 +124,7 @@ TABLE sql_saga.foreign_keys;
 
 -- by name (named)
 SELECT sql_saga.drop_foreign_key_by_name(table_oid => 'child'::regclass, key_name => 'child_parent_id_q');
-NOTICE:  Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
+NOTICE:  sql_saga: Dropping automatically created index "child_parent_id_q_gist_idx" for foreign key "child_parent_id_q"
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -138,7 +138,7 @@ TABLE sql_saga.foreign_keys;
 -- Test overloaded drop_foreign_key for regular-to-temporal
 CREATE TABLE regular_child(id int, parent_id int);
 SELECT sql_saga.add_regular_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[], 'parent_id_p');
-NOTICE:  No compatible index found for foreign key on table regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON regular_child USING BTREE (parent_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON regular_child USING BTREE (parent_id)
    add_regular_foreign_key    
 ------------------------------
  regular_child_parent_id_fkey
@@ -151,7 +151,7 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('regular_child'::regclass, ARRAY['parent_id']::name[]);
-NOTICE:  Dropping automatically created index "regular_child_parent_id_idx" for foreign key "regular_child_parent_id_fkey"
+NOTICE:  sql_saga: Dropping automatically created index "regular_child_parent_id_idx" for foreign key "regular_child_parent_id_fkey"
  drop_foreign_key 
 ------------------
  
@@ -183,7 +183,7 @@ TABLE sql_saga.unique_keys;
 
 -- Test original drop_unique_key (with positional and named arguments)
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p
@@ -209,7 +209,7 @@ TABLE sql_saga.unique_keys;
 
 -- Re-create to test named arguments
 SELECT sql_saga.add_unique_key('parent'::regclass, ARRAY['id']::name[], 'p', key_type => 'natural');
-NOTICE:  sql_saga: altering table public.parent to add constraints: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent: ADD CONSTRAINT parent_id_p_uniq UNIQUE (id, valid WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_id_p

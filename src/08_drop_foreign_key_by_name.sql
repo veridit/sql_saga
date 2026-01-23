@@ -45,7 +45,7 @@ BEGIN
 
         -- Drop the auto-created index if it exists and requested.
         IF drop_index AND foreign_key_row.fk_index_name IS NOT NULL THEN
-            RAISE NOTICE 'Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
+            RAISE NOTICE 'sql_saga: Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
             EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
         END IF;
         fk_table_oid := format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;

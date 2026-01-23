@@ -63,7 +63,7 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Creat
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'shifts', column_names => ARRAY['job_id','worker_id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: altering table public.shifts to add constraints: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: Added constraints to table shifts: ADD CONSTRAINT shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  shifts_job_id_worker_id_valid
@@ -77,7 +77,7 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Creat
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'houses', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: altering table public.houses to add constraints: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: Added constraints to table houses: ADD CONSTRAINT houses_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  houses_id_valid
@@ -91,7 +91,7 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Crea
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'rooms', column_names => ARRAY['id'], era_name => 'valid', key_type => 'natural');
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: altering table public.rooms to add constraints: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:12: NOTICE:  sql_saga: Added constraints to table rooms: ADD CONSTRAINT rooms_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  rooms_id_valid
@@ -103,7 +103,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'houses_id_valid'
 );
-psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:18: NOTICE:  sql_saga: No compatible index found for foreign key on table rooms. Creating new index: CREATE INDEX rooms_house_id_valid_gist_idx ON rooms USING GIST (house_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  rooms_house_id_valid

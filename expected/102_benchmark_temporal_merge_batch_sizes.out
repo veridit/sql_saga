@@ -59,14 +59,14 @@ SELECT sql_saga.add_era('establishment_tm_bs_on'::regclass, 'valid_range', 'vali
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_bs_on', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.legal_unit_tm_bs_on to add constraints: ADD CONSTRAINT legal_unit_tm_bs_on_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table legal_unit_tm_bs_on: ADD CONSTRAINT legal_unit_tm_bs_on_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key        
 ------------------------------
  legal_unit_tm_bs_on_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_bs_on', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.establishment_tm_bs_on to add constraints: ADD CONSTRAINT establishment_tm_bs_on_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table establishment_tm_bs_on: ADD CONSTRAINT establishment_tm_bs_on_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  establishment_tm_bs_on_id_valid
@@ -80,7 +80,7 @@ SELECT sql_saga.add_foreign_key(
     fk_era_name => 'valid',
     create_index => true
 );
-NOTICE:  No compatible index found for foreign key on table establishment_tm_bs_on. Creating new index: CREATE INDEX establishment_tm_bs_on_legal_unit_id_valid_gist_idx ON establishment_tm_bs_on USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table establishment_tm_bs_on. Creating new index: CREATE INDEX establishment_tm_bs_on_legal_unit_id_valid_gist_idx ON establishment_tm_bs_on USING GIST (legal_unit_id, valid_range)
               add_foreign_key               
 --------------------------------------------
  establishment_tm_bs_on_legal_unit_id_valid
@@ -104,14 +104,14 @@ SELECT sql_saga.add_era('establishment_tm_bs_off'::regclass, 'valid_range', 'val
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'legal_unit_tm_bs_off', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.legal_unit_tm_bs_off to add constraints: ADD CONSTRAINT legal_unit_tm_bs_off_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table legal_unit_tm_bs_off: ADD CONSTRAINT legal_unit_tm_bs_off_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  legal_unit_tm_bs_off_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'establishment_tm_bs_off', column_names => ARRAY['id'], era_name => 'valid');
-NOTICE:  sql_saga: altering table public.establishment_tm_bs_off to add constraints: ADD CONSTRAINT establishment_tm_bs_off_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table establishment_tm_bs_off: ADD CONSTRAINT establishment_tm_bs_off_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
           add_unique_key          
 ----------------------------------
  establishment_tm_bs_off_id_valid
@@ -125,7 +125,7 @@ SELECT sql_saga.add_foreign_key(
     fk_era_name => 'valid',
     create_index => true
 );
-NOTICE:  No compatible index found for foreign key on table establishment_tm_bs_off. Creating new index: CREATE INDEX establishment_tm_bs_off_legal_unit_id_valid_gist_idx ON establishment_tm_bs_off USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table establishment_tm_bs_off. Creating new index: CREATE INDEX establishment_tm_bs_off_legal_unit_id_valid_gist_idx ON establishment_tm_bs_off USING GIST (legal_unit_id, valid_range)
                add_foreign_key               
 ---------------------------------------------
  establishment_tm_bs_off_legal_unit_id_valid
@@ -276,7 +276,7 @@ SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_t
 
 -- Teardown for batch size benchmark tables
 SELECT sql_saga.drop_foreign_key('establishment_tm_bs_on', ARRAY['legal_unit_id'], 'valid');
-NOTICE:  Dropping automatically created index "establishment_tm_bs_on_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_bs_on_legal_unit_id_valid"
+NOTICE:  sql_saga: Dropping automatically created index "establishment_tm_bs_on_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_bs_on_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  
@@ -307,7 +307,7 @@ SELECT sql_saga.drop_era('legal_unit_tm_bs_on', cleanup => true);
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('establishment_tm_bs_off', ARRAY['legal_unit_id'], 'valid');
-NOTICE:  Dropping automatically created index "establishment_tm_bs_off_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_bs_off_legal_unit_id_valid"
+NOTICE:  sql_saga: Dropping automatically created index "establishment_tm_bs_off_legal_unit_id_valid_gist_idx" for foreign key "establishment_tm_bs_off_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  

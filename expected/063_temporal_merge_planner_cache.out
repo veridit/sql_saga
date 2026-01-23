@@ -59,7 +59,7 @@ CREATE TABLE tmpc.source1 (row_id int, id int NOT NULL, valid_from date, valid_u
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
 --- Setting up tables with indexes and data for a realistic plan ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target'::regclass, column_names => ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table tmpc.target to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmpc.target: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
  add_unique_key  
 -----------------
  target_id_valid
@@ -1414,7 +1414,7 @@ CREATE TABLE tmpc.source_nk_not_null (row_id int, type text NOT NULL, lu_id int 
 \echo '--- Setting up tables with indexes and data for a realistic plan ---'
 --- Setting up tables with indexes and data for a realistic plan ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk_not_null'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table tmpc.target_nk_not_null to add constraints: ALTER COLUMN type SET NOT NULL, ALTER COLUMN lu_id SET NOT NULL, ADD PRIMARY KEY (type, lu_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmpc.target_nk_not_null: ALTER COLUMN type SET NOT NULL; ALTER COLUMN lu_id SET NOT NULL; ADD PRIMARY KEY (type, lu_id, valid_range WITHOUT OVERLAPS)
            add_unique_key            
 -------------------------------------
  target_nk_not_null_type_lu_id_valid
@@ -2767,14 +2767,14 @@ CREATE TABLE tmpc.source_nk (row_id int, type text NOT NULL, lu_id int, es_id in
 \echo '--- Setting up natural key tables with partial indexes and data ---'
 --- Setting up natural key tables with partial indexes and data ---
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'lu_id'], key_type => 'predicated', predicate => 'es_id IS NULL');
-NOTICE:  sql_saga: altering table tmpc.target_nk to add constraints: ADD CONSTRAINT target_nk_type_lu_id_valid_excl EXCLUDE USING gist (type WITH =, lu_id WITH =, valid_range WITH &&) WHERE (es_id IS NULL) DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table tmpc.target_nk: ADD CONSTRAINT target_nk_type_lu_id_valid_excl EXCLUDE USING gist (type WITH =, lu_id WITH =, valid_range WITH &&) WHERE (es_id IS NULL) DEFERRABLE
        add_unique_key       
 ----------------------------
  target_nk_type_lu_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'tmpc.target_nk'::regclass, column_names => ARRAY['type', 'es_id'], key_type => 'predicated', predicate => 'lu_id IS NULL');
-NOTICE:  sql_saga: altering table tmpc.target_nk to add constraints: ADD CONSTRAINT target_nk_type_es_id_valid_excl EXCLUDE USING gist (type WITH =, es_id WITH =, valid_range WITH &&) WHERE (lu_id IS NULL) DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table tmpc.target_nk: ADD CONSTRAINT target_nk_type_es_id_valid_excl EXCLUDE USING gist (type WITH =, es_id WITH =, valid_range WITH &&) WHERE (lu_id IS NULL) DEFERRABLE
        add_unique_key       
 ----------------------------
  target_nk_type_es_id_valid

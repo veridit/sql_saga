@@ -61,7 +61,7 @@ NOTICE:  sql_saga: Created trigger "tm_gen_col_target_synchronize_temporal_colum
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_gen_col_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_gen_col_target to add constraints: ADD CONSTRAINT tm_gen_col_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_gen_col_target: ADD CONSTRAINT tm_gen_col_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  tm_gen_col_target_id_valid
@@ -114,7 +114,7 @@ NOTICE:  sql_saga: Created trigger "tm_mix_bug_target_synchronize_temporal_colum
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_mix_bug_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_mix_bug_target to add constraints: ADD CONSTRAINT tm_mix_bug_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_mix_bug_target: ADD CONSTRAINT tm_mix_bug_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  tm_mix_bug_target_id_valid
@@ -275,7 +275,7 @@ NOTICE:  sql_saga: Created trigger "tm_custom_rowid_target_synchronize_temporal_
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_custom_rowid_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_custom_rowid_target to add constraints: ADD CONSTRAINT tm_custom_rowid_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_custom_rowid_target: ADD CONSTRAINT tm_custom_rowid_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  tm_custom_rowid_target_id_valid
@@ -378,7 +378,7 @@ NOTICE:  sql_saga: Created trigger "tm_weird_names_synchronize_temporal_columns_
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_weird_names', ARRAY['unit_pk'], 'timeline');
-NOTICE:  sql_saga: altering table public.tm_weird_names to add constraints: ADD CONSTRAINT tm_weird_names_unit_pk_timeline_uniq UNIQUE (unit_pk, period_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_weird_names: ADD CONSTRAINT tm_weird_names_unit_pk_timeline_uniq UNIQUE (unit_pk, period_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  tm_weird_names_unit_pk_timeline
@@ -452,7 +452,7 @@ NOTICE:  sql_saga: Created trigger "tm_no_data_cols_target_synchronize_temporal_
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_no_data_cols_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_no_data_cols_target to add constraints: ADD CONSTRAINT tm_no_data_cols_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_no_data_cols_target: ADD CONSTRAINT tm_no_data_cols_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  tm_no_data_cols_target_id_valid
@@ -520,7 +520,7 @@ NOTICE:  sql_saga: Created trigger "tm_extra_cols_target_synchronize_temporal_co
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_extra_cols_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_extra_cols_target to add constraints: ADD CONSTRAINT tm_extra_cols_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_extra_cols_target: ADD CONSTRAINT tm_extra_cols_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  tm_extra_cols_target_id_valid
@@ -581,7 +581,7 @@ NOTICE:  sql_saga: Created trigger "tm_founding_target_synchronize_temporal_colu
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_founding_target', ARRAY['entity_ident']);
-NOTICE:  sql_saga: altering table public.tm_founding_target to add constraints: ADD CONSTRAINT tm_founding_target_entity_ident_valid_uniq UNIQUE (entity_ident, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_founding_target_entity_ident_valid_pk_consistency_excl EXCLUDE USING gist (entity_ident WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table tm_founding_target: ADD CONSTRAINT tm_founding_target_entity_ident_valid_uniq UNIQUE (entity_ident, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT tm_founding_target_entity_ident_valid_pk_consistency_excl EXCLUDE USING gist (entity_ident WITH =, id WITH <>)
             add_unique_key             
 ---------------------------------------
  tm_founding_target_entity_ident_valid
@@ -681,7 +681,7 @@ NOTICE:  sql_saga: Created trigger "tm_era_ephemeral_target_synchronize_temporal
 (1 row)
 
 SELECT sql_saga.add_unique_key('tm_era_ephemeral_target', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.tm_era_ephemeral_target to add constraints: ADD CONSTRAINT tm_era_ephemeral_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tm_era_ephemeral_target: ADD CONSTRAINT tm_era_ephemeral_target_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
           add_unique_key          
 ----------------------------------
  tm_era_ephemeral_target_id_valid

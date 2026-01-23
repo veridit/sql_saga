@@ -195,7 +195,7 @@ NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trig
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.legal_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'legal_unit_id_valid');
-NOTICE:  sql_saga: altering table etl.legal_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table etl.legal_unit: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  legal_unit_id_valid
@@ -232,7 +232,7 @@ NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'location_id_valid');
-NOTICE:  sql_saga: altering table etl.location to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table etl.location: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  location_id_valid
@@ -241,7 +241,7 @@ NOTICE:  sql_saga: altering table etl.location to add constraints: ALTER COLUMN 
 -- A legal unit can only have one 'physical' address at any given time.
 -- This is a predicated natural key.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.location'::regclass, column_names => ARRAY['legal_unit_id', 'type'], key_type => 'predicated', predicate => 'type = ''physical''', unique_key_name => 'location_legal_unit_id_type_valid');
-NOTICE:  sql_saga: altering table etl.location to add constraints: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, valid_range WITH &&) WHERE (type = 'physical') DEFERRABLE
+NOTICE:  sql_saga: Added constraints to table etl.location: ADD CONSTRAINT location_legal_unit_id_type_valid_excl EXCLUDE USING gist (legal_unit_id WITH =, type WITH =, valid_range WITH &&) WHERE (type = 'physical') DEFERRABLE
           add_unique_key           
 -----------------------------------
  location_legal_unit_id_type_valid
@@ -270,7 +270,7 @@ NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_t
 (1 row)
 
 SELECT sql_saga.add_unique_key(table_oid => 'etl.stat_for_unit'::regclass, column_names => ARRAY['id'], key_type => 'primary', unique_key_name => 'stat_for_unit_id_valid');
-NOTICE:  sql_saga: altering table etl.stat_for_unit to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table etl.stat_for_unit: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  stat_for_unit_id_valid
@@ -282,7 +282,7 @@ SELECT sql_saga.add_foreign_key(
     pk_table_oid => 'etl.legal_unit'::regclass,
     pk_column_names => ARRAY['id']
 );
-NOTICE:  No compatible index found for foreign key on table etl.stat_for_unit. Creating new index: CREATE INDEX stat_for_unit_legal_unit_id_valid_gist_idx ON etl.stat_for_unit USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table etl.stat_for_unit. Creating new index: CREATE INDEX stat_for_unit_legal_unit_id_valid_gist_idx ON etl.stat_for_unit USING GIST (legal_unit_id, valid_range)
           add_foreign_key          
 -----------------------------------
  stat_for_unit_legal_unit_id_valid
@@ -308,7 +308,7 @@ NOTICE:  sql_saga: Created trigger "activity_synchronize_temporal_columns_trigge
 
 -- The "unique key" for a natural-key table is the set of natural key columns.
 SELECT sql_saga.add_unique_key(table_oid => 'etl.activity'::regclass, column_names => ARRAY['legal_unit_id', 'activity_type_id'], key_type => 'primary', unique_key_name => 'activity_legal_unit_id_activity_type_id_valid');
-NOTICE:  sql_saga: altering table etl.activity to add constraints: ALTER COLUMN legal_unit_id SET NOT NULL, ALTER COLUMN activity_type_id SET NOT NULL, ADD PRIMARY KEY (legal_unit_id, activity_type_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table etl.activity: ALTER COLUMN legal_unit_id SET NOT NULL; ALTER COLUMN activity_type_id SET NOT NULL; ADD PRIMARY KEY (legal_unit_id, activity_type_id, valid_range WITHOUT OVERLAPS)
                 add_unique_key                 
 -----------------------------------------------
  activity_legal_unit_id_activity_type_id_valid

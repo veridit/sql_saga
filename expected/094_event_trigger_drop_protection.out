@@ -190,7 +190,7 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => 'dp_pk_consistency_nk_valid'
 );
-NOTICE:  sql_saga: altering table public.dp_pk_consistency to add constraints: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS), ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table dp_pk_consistency: ADD CONSTRAINT dp_pk_consistency_nk_valid_uniq UNIQUE (nk, v WITHOUT OVERLAPS); ADD CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl EXCLUDE USING gist (nk WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  dp_pk_consistency_nk_valid
@@ -226,7 +226,7 @@ NOTICE:  sql_saga: Created trigger "dp_ref_synchronize_temporal_columns_trigger"
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('dp_ref', ARRAY['id'], 'p', 'k', foreign_key_name => 'f');
-NOTICE:  No compatible index found for foreign key on table dp_ref. Creating new index: CREATE INDEX dp_ref_id_p_gist_idx ON dp_ref USING GIST (id, v)
+NOTICE:  sql_saga: No compatible index found for foreign key on table dp_ref. Creating new index: CREATE INDEX dp_ref_id_p_gist_idx ON dp_ref USING GIST (id, v)
  add_temporal_foreign_key 
 --------------------------
  f
@@ -234,7 +234,7 @@ NOTICE:  No compatible index found for foreign key on table dp_ref. Creating new
 
 -- Note: In the new API with native PostgreSQL 18 temporal FKs, there are no FK triggers to test dropping.
 SELECT sql_saga.drop_foreign_key('dp_ref', ARRAY['id'], 'p');
-NOTICE:  Dropping automatically created index "dp_ref_id_p_gist_idx" for foreign key "f"
+NOTICE:  sql_saga: Dropping automatically created index "dp_ref_id_p_gist_idx" for foreign key "f"
  drop_foreign_key 
 ------------------
  

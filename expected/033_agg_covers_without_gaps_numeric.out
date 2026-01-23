@@ -39,7 +39,7 @@ SELECT sql_saga.add_era('numeric_shifts', 'valid_range');
 (1 row)
 
 SELECT sql_saga.add_unique_key('numeric_shifts', ARRAY['job_id', 'worker_id']);
-NOTICE:  sql_saga: altering table public.numeric_shifts to add constraints: ADD CONSTRAINT numeric_shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table numeric_shifts: ADD CONSTRAINT numeric_shifts_job_id_worker_id_valid_uniq UNIQUE (job_id, worker_id, valid_range WITHOUT OVERLAPS)
             add_unique_key             
 ---------------------------------------
  numeric_shifts_job_id_worker_id_valid

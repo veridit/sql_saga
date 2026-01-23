@@ -59,14 +59,14 @@ NOTICE:  sql_saga: Created trigger "my_stat_for_unit_synchronize_temporal_column
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.my_stat_for_unit: ADD CONSTRAINT my_stat_for_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  my_stat_for_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.my_stat_for_unit'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.my_stat_for_unit to add constraints: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table tmrb.my_stat_for_unit: ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT my_stat_for_unit_legal_unit_id_valid_pk_consistency_excl EXCLUDE USING gist (legal_unit_id WITH =, id WITH <>)
             add_unique_key            
 --------------------------------------
  my_stat_for_unit_legal_unit_id_valid
@@ -499,7 +499,7 @@ NOTICE:  sql_saga: Created trigger "bug_repro_1_synchronize_temporal_columns_tri
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.bug_repro_1'::regclass, '{legal_unit_id}');
-NOTICE:  sql_saga: altering table tmrb.bug_repro_1 to add constraints: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.bug_repro_1: ADD CONSTRAINT bug_repro_1_legal_unit_id_valid_uniq UNIQUE (legal_unit_id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  bug_repro_1_legal_unit_id_valid
@@ -623,7 +623,7 @@ NOTICE:  sql_saga: Created trigger "legal_unit_kranloft_synchronize_temporal_col
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_kranloft'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.legal_unit_kranloft to add constraints: ADD CONSTRAINT legal_unit_kranloft_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.legal_unit_kranloft: ADD CONSTRAINT legal_unit_kranloft_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key        
 ------------------------------
  legal_unit_kranloft_id_valid
@@ -685,7 +685,7 @@ NOTICE:  sql_saga: Created trigger "ephemeral_validation_synchronize_temporal_co
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.ephemeral_validation'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.ephemeral_validation to add constraints: ADD CONSTRAINT ephemeral_validation_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.ephemeral_validation: ADD CONSTRAINT ephemeral_validation_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
         add_unique_key         
 -------------------------------
  ephemeral_validation_id_valid
@@ -752,7 +752,7 @@ NOTICE:  sql_saga: Created trigger "legal_unit_fk_bug_synchronize_temporal_colum
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.legal_unit_fk_bug'::regclass, '{id}', unique_key_name => 'legal_unit_fk_bug_id_valid');
-NOTICE:  sql_saga: altering table tmrb.legal_unit_fk_bug to add constraints: ADD CONSTRAINT legal_unit_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.legal_unit_fk_bug: ADD CONSTRAINT legal_unit_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  legal_unit_fk_bug_id_valid
@@ -771,7 +771,7 @@ NOTICE:  sql_saga: Created trigger "activity_fk_bug_synchronize_temporal_columns
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.activity_fk_bug'::regclass, '{id}', unique_key_name => 'activity_fk_bug_id_valid');
-NOTICE:  sql_saga: altering table tmrb.activity_fk_bug to add constraints: ADD CONSTRAINT activity_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.activity_fk_bug: ADD CONSTRAINT activity_fk_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key      
 --------------------------
  activity_fk_bug_id_valid
@@ -783,7 +783,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'legal_unit_fk_bug_id_valid'
 );
-NOTICE:  No compatible index found for foreign key on table tmrb.activity_fk_bug. Creating new index: CREATE INDEX activity_fk_bug_legal_unit_id_valid_gist_idx ON tmrb.activity_fk_bug USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table tmrb.activity_fk_bug. Creating new index: CREATE INDEX activity_fk_bug_legal_unit_id_valid_gist_idx ON tmrb.activity_fk_bug USING GIST (legal_unit_id, valid_range)
       add_temporal_foreign_key       
 -------------------------------------
  activity_fk_bug_legal_unit_id_valid
@@ -844,7 +844,7 @@ NOTICE:  sql_saga: Created trigger "unit_default_bug_synchronize_temporal_column
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.unit_default_bug'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.unit_default_bug to add constraints: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.unit_default_bug: ADD CONSTRAINT unit_default_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  unit_default_bug_id_valid
@@ -911,7 +911,7 @@ NOTICE:  sql_saga: Created trigger "coalesce_bug_synchronize_temporal_columns_tr
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmrb.coalesce_bug'::regclass, '{id}');
-NOTICE:  sql_saga: altering table tmrb.coalesce_bug to add constraints: ADD CONSTRAINT coalesce_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmrb.coalesce_bug: ADD CONSTRAINT coalesce_bug_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key     
 -----------------------
  coalesce_bug_id_valid

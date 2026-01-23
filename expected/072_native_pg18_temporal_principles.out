@@ -874,7 +874,7 @@ NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger"
 (1 row)
 
 SELECT sql_saga.add_unique_key('ss.parent', '{id}', unique_key_name => 'parent_uk');
-NOTICE:  sql_saga: altering table ss.parent to add constraints: ADD CONSTRAINT parent_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table ss.parent: ADD CONSTRAINT parent_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  parent_uk
@@ -895,7 +895,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => 'parent_uk'
 );
-NOTICE:  No compatible index found for foreign key on table ss.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON ss.child USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table ss.child. Creating new index: CREATE INDEX child_parent_id_valid_gist_idx ON ss.child USING GIST (parent_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  child_parent_id_valid

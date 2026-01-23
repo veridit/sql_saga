@@ -43,7 +43,7 @@ NOTICE:  sql_saga: Created trigger "schema_test_synchronize_temporal_columns_tri
 (1 row)
 
 SELECT sql_saga.add_unique_key('test_schema.schema_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table test_schema.schema_test to add constraints: ADD CONSTRAINT schema_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table test_schema.schema_test: ADD CONSTRAINT schema_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  schema_test_id_valid
@@ -100,7 +100,7 @@ NOTICE:  sql_saga: Created trigger "acl_test_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key('acl_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.acl_test to add constraints: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table acl_test: ADD CONSTRAINT acl_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  acl_test_id_valid
@@ -286,7 +286,7 @@ NOTICE:  sql_saga: Created trigger "no_pk_test_synchronize_temporal_columns_trig
 (1 row)
 
 SELECT sql_saga.add_unique_key('no_pk_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.no_pk_test to add constraints: ADD CONSTRAINT no_pk_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table no_pk_test: ADD CONSTRAINT no_pk_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  no_pk_test_id_valid
@@ -492,7 +492,7 @@ NOTICE:  sql_saga: Created trigger "fk_parent_synchronize_temporal_columns_trigg
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_parent', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_parent to add constraints: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table fk_parent: ADD CONSTRAINT fk_parent_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  fk_parent_id_valid
@@ -521,7 +521,7 @@ NOTICE:  sql_saga: Created trigger "fk_child_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key('fk_child', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.fk_child to add constraints: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table fk_child: ADD CONSTRAINT fk_child_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  fk_child_id_valid
@@ -531,7 +531,7 @@ SELECT sql_saga.add_foreign_key(
     'fk_child'::regclass, ARRAY['parent_id'],
     'fk_parent'::regclass, ARRAY['id']
 );
-NOTICE:  No compatible index found for foreign key on table fk_child. Creating new index: CREATE INDEX fk_child_parent_id_valid_gist_idx ON fk_child USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table fk_child. Creating new index: CREATE INDEX fk_child_parent_id_valid_gist_idx ON fk_child USING GIST (parent_id, valid_range)
      add_foreign_key      
 --------------------------
  fk_child_parent_id_valid
@@ -729,7 +729,7 @@ NOTICE:  sql_saga: Created trigger "statbus_repro_synchronize_temporal_columns_t
 (1 row)
 
 SELECT sql_saga.add_unique_key('statbus_repro', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.statbus_repro to add constraints: ADD CONSTRAINT statbus_repro_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table statbus_repro: ADD CONSTRAINT statbus_repro_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  statbus_repro_id_valid
@@ -836,7 +836,7 @@ SELECT sql_saga.add_era('range_only_test', 'valid_range');
 (1 row)
 
 SELECT sql_saga.add_unique_key('range_only_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.range_only_test to add constraints: ADD CONSTRAINT range_only_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table range_only_test: ADD CONSTRAINT range_only_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
       add_unique_key      
 --------------------------
  range_only_test_id_valid
@@ -929,7 +929,7 @@ NOTICE:  sql_saga: Created trigger "null_test_synchronize_temporal_columns_trigg
 (1 row)
 
 SELECT sql_saga.add_unique_key('null_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.null_test to add constraints: ADD CONSTRAINT null_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table null_test: ADD CONSTRAINT null_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  null_test_id_valid
@@ -1042,7 +1042,7 @@ SELECT era_name, ephemeral_columns FROM sql_saga.era WHERE table_name = 'ephemer
 
 ALTER TABLE ephemeral_test ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('ephemeral_test', ARRAY['id']);
-NOTICE:  sql_saga: altering table public.ephemeral_test to add constraints: ADD CONSTRAINT ephemeral_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table ephemeral_test: ADD CONSTRAINT ephemeral_test_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key      
 -------------------------
  ephemeral_test_id_valid

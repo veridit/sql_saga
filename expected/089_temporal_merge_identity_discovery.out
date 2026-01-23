@@ -50,21 +50,21 @@ NOTICE:  sql_saga: Created trigger "person_synchronize_temporal_columns_trigger"
 
 ALTER TABLE identity_discovery.person ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS);
 SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['id'], 'valid', key_type => 'primary');
-NOTICE:  sql_saga: altering table identity_discovery.person to add constraints: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ALTER COLUMN id SET NOT NULL
  add_unique_key  
 -----------------
  person_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['employee_nr'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: altering table identity_discovery.person to add constraints: ADD CONSTRAINT person_employee_nr_valid_uniq UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT person_employee_nr_valid_pk_consistency_excl EXCLUDE USING gist (employee_nr WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_employee_nr_valid_uniq UNIQUE (employee_nr, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_employee_nr_valid_pk_consistency_excl EXCLUDE USING gist (employee_nr WITH =, id WITH <>)
       add_unique_key      
 --------------------------
  person_employee_nr_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('identity_discovery.person', ARRAY['ssn'], 'valid', key_type => 'natural');
-NOTICE:  sql_saga: altering table identity_discovery.person to add constraints: ADD CONSTRAINT person_ssn_valid_uniq UNIQUE (ssn, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT person_ssn_valid_pk_consistency_excl EXCLUDE USING gist (ssn WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table identity_discovery.person: ADD CONSTRAINT person_ssn_valid_uniq UNIQUE (ssn, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT person_ssn_valid_pk_consistency_excl EXCLUDE USING gist (ssn WITH =, id WITH <>)
   add_unique_key  
 ------------------
  person_ssn_valid

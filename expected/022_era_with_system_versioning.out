@@ -41,7 +41,7 @@ NOTICE:  sql_saga: Created trigger "temporal_and_versioned_synchronize_temporal_
 (1 row)
 
 SELECT sql_saga.add_unique_key('temporal_and_versioned', '{id}');
-NOTICE:  sql_saga: altering table public.temporal_and_versioned to add constraints: ADD CONSTRAINT temporal_and_versioned_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table temporal_and_versioned: ADD CONSTRAINT temporal_and_versioned_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
          add_unique_key          
 ---------------------------------
  temporal_and_versioned_id_valid

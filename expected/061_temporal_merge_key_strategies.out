@@ -74,7 +74,7 @@ NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trig
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.legal_unit', ARRAY['id'], 'valid', unique_key_name => 'tm_legal_unit_uk');
-NOTICE:  sql_saga: altering table tmtc.legal_unit to add constraints: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmtc.legal_unit: ADD CONSTRAINT tm_legal_unit_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  tm_legal_unit_uk
@@ -93,7 +93,7 @@ NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.establishment', ARRAY['id'], 'valid', unique_key_name => 'tm_establishment_uk');
-NOTICE:  sql_saga: altering table tmtc.establishment to add constraints: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmtc.establishment: ADD CONSTRAINT tm_establishment_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  tm_establishment_uk
@@ -119,7 +119,7 @@ NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_t
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit', ARRAY['stat_definition_id', 'establishment_id'], 'valid', key_type => 'primary', unique_key_name => 'tm_sfu_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit to add constraints: ALTER COLUMN stat_definition_id SET NOT NULL, ALTER COLUMN establishment_id SET NOT NULL, ADD PRIMARY KEY (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmtc.stat_for_unit: ALTER COLUMN stat_definition_id SET NOT NULL; ALTER COLUMN establishment_id SET NOT NULL; ADD PRIMARY KEY (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS)
  add_unique_key 
 ----------------
  tm_sfu_uk
@@ -147,7 +147,7 @@ NOTICE:  sql_saga: Created trigger "stat_for_unit_id_pk_synchronize_temporal_col
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_pk', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_id_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_pk to add constraints: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_sfu_id_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table tmtc.stat_for_unit_id_pk: ADD CONSTRAINT tm_sfu_id_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT tm_sfu_id_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
  add_unique_key 
 ----------------
  tm_sfu_id_uk
@@ -175,10 +175,10 @@ NOTICE:  sql_saga: Created trigger "stat_for_unit_id_gen_synchronize_temporal_co
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definition_id', 'establishment_id'], 'valid', unique_key_name => 'tm_sfu_identity_uk');
-NOTICE:  sql_saga: altering table tmtc.stat_for_unit_id_gen to add constraints: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table tmtc.stat_for_unit_id_gen: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
 ERROR:  relation "stat_for_unit__stat_definitio_establishment__valid_range_idx" already exists
 CONTEXT:  SQL statement "CREATE INDEX stat_for_unit__stat_definitio_establishment__valid_range_idx ON tmtc.stat_for_unit_id_gen (stat_definition_id, establishment_id, valid_range)"
-PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 563 at EXECUTE
+PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 572 at EXECUTE
 -- Target table with non-PK surrogate key
 CREATE SEQUENCE tmtc.stat_for_unit_no_pk_id_seq;
 ERROR:  current transaction is aborted, commands ignored until end of transaction block

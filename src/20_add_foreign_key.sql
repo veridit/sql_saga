@@ -83,7 +83,7 @@ BEGIN
     END IF;
 
     IF p_create_index THEN
-        RAISE NOTICE 'No compatible index found for foreign key on table %. Creating new index: %', p_fk_table_oid::text, v_index_def;
+        RAISE NOTICE 'sql_saga: No compatible index found for foreign key on table %. Creating new index: %', p_fk_table_oid::text, v_index_def;
         EXECUTE v_index_def;
         RETURN v_index_name;
     ELSE
