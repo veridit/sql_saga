@@ -40,7 +40,7 @@ SELECT add_era('parent_t'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_t: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -58,7 +58,7 @@ SELECT add_foreign_key(
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
     foreign_key_name => 'child_parent_fk_1'
 );
-NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
   add_foreign_key  
 -------------------
  child_parent_fk_1
@@ -87,7 +87,7 @@ Foreign-key constraints:
 \echo '-> Dropping FK should also drop the auto-created index'
 -> Dropping FK should also drop the auto-created index
 SELECT drop_foreign_key_by_name('child_t'::regclass, 'child_parent_fk_1');
-NOTICE:  Dropping automatically created index "child_t_parent_id_valid_gist_idx" for foreign key "child_parent_fk_1"
+NOTICE:  sql_saga: Dropping automatically created index "child_t_parent_id_valid_gist_idx" for foreign key "child_parent_fk_1"
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -114,7 +114,7 @@ SELECT add_era('parent_t'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_t: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -174,7 +174,7 @@ SELECT add_era('parent_t'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_t: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -235,7 +235,7 @@ SELECT add_era('parent_t'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_t'::regclass, ARRAY['id'], unique_key_name => 'parent_t_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_t to add constraints: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_t: ADD CONSTRAINT parent_t_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_t_id_valid
@@ -253,7 +253,7 @@ SELECT add_foreign_key(
     pk_table_oid => 'parent_t'::regclass, pk_column_names => ARRAY['id'],
     foreign_key_name => 'child_parent_fk_4'
 );
-NOTICE:  No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child_t. Creating new index: CREATE INDEX child_t_parent_id_valid_gist_idx ON child_t USING GIST (parent_id, valid_range)
   add_foreign_key  
 -------------------
  child_parent_fk_4
@@ -309,7 +309,7 @@ SELECT add_era('parent_r'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_r: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -321,7 +321,7 @@ SELECT add_foreign_key(
     pk_table_oid => 'parent_r'::regclass, pk_column_names => ARRAY['id'],
     foreign_key_name => 'child_parent_r_fk_1'
 );
-NOTICE:  No compatible index found for foreign key on table child_r. Creating new index: CREATE INDEX child_r_parent_id_idx ON child_r USING BTREE (parent_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table child_r. Creating new index: CREATE INDEX child_r_parent_id_idx ON child_r USING BTREE (parent_id)
    add_foreign_key   
 ---------------------
  child_parent_r_fk_1
@@ -347,7 +347,7 @@ Check constraints:
 \echo '-> Dropping FK should also drop the auto-created index'
 -> Dropping FK should also drop the auto-created index
 SELECT drop_foreign_key_by_name('child_r'::regclass, 'child_parent_r_fk_1');
-NOTICE:  Dropping automatically created index "child_r_parent_id_idx" for foreign key "child_parent_r_fk_1"
+NOTICE:  sql_saga: Dropping automatically created index "child_r_parent_id_idx" for foreign key "child_parent_r_fk_1"
  drop_foreign_key_by_name 
 --------------------------
  t
@@ -371,7 +371,7 @@ SELECT add_era('parent_r'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_r: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid
@@ -422,7 +422,7 @@ SELECT add_era('parent_r'::regclass, 'valid_range');
 (1 row)
 
 SELECT add_unique_key('parent_r'::regclass, ARRAY['id'], unique_key_name => 'parent_r_id_valid');
-NOTICE:  sql_saga: altering table fk_idx.parent_r to add constraints: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table parent_r: ADD CONSTRAINT parent_r_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  parent_r_id_valid

@@ -406,8 +406,8 @@ BEGIN
             END IF;
         END IF;
 
-        -- If any columns are to be synchronized, create the trigger.
-        IF v_from_col IS NOT NULL OR v_to_col IS NOT NULL THEN
+        -- If synchronization is enabled and any columns are to be synchronized, create the trigger.
+        IF synchronize_columns AND (v_from_col IS NOT NULL OR v_to_col IS NOT NULL) THEN
             DECLARE
                 sync_cols name[] := ARRAY[]::name[];
                 subtype_is_discrete boolean;

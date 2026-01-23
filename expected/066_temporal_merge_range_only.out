@@ -59,7 +59,7 @@ SELECT sql_saga.add_era('tmro.target_date', 'valid_range');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmro.target_date', ARRAY['id']);
-NOTICE:  sql_saga: altering table tmro.target_date to add constraints: ADD CONSTRAINT target_date_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmro.target_date: ADD CONSTRAINT target_date_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  target_date_id_valid
@@ -149,7 +149,7 @@ SELECT sql_saga.add_era('tmro.target_tstz', 'valid_range');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmro.target_tstz', ARRAY['id']);
-NOTICE:  sql_saga: altering table tmro.target_tstz to add constraints: ADD CONSTRAINT target_tstz_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmro.target_tstz: ADD CONSTRAINT target_tstz_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
     add_unique_key    
 ----------------------
  target_tstz_id_valid
@@ -345,7 +345,7 @@ SELECT sql_saga.add_era('tmro.target_int', 'valid_range');
 (1 row)
 
 SELECT sql_saga.add_unique_key('tmro.target_int', ARRAY['id']);
-NOTICE:  sql_saga: altering table tmro.target_int to add constraints: ADD CONSTRAINT target_int_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table tmro.target_int: ADD CONSTRAINT target_int_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  target_int_id_valid

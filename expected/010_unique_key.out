@@ -38,16 +38,16 @@ NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on 
 
 -- Adopt an existing primary key
 SELECT sql_saga.add_unique_key('uk'::regclass, ARRAY['id'], 'p', key_type => 'primary', unique_key_name => 'uk_id_p', unique_constraint => 'uk_pkey');
-NOTICE:  sql_saga: altering table public.uk to add constraints: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table uk: ALTER COLUMN id SET NOT NULL
  add_unique_key 
 ----------------
  uk_id_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- uk_id_p         | public       | uk         | primary  | {id}         | p        | uk_pkey           |                    |                  |           |                            |                     |                                  | 
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ uk_id_p         | public       | uk         | primary  | {id}         | p        | uk_pkey           |                    |                  |           |                            | 
 (1 row)
 
 INSERT INTO uk (id, valid_range) VALUES (100, int4range(2, 4)), (100, int4range(4, 5)), (100, int4range(5, 11)); -- success
@@ -69,7 +69,7 @@ SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p',
     foreign_key_name => 'fk_uk_id_q',
     uk_update_trigger => 'uku',
     uk_delete_trigger => 'ukd');
-NOTICE:  No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -82,14 +82,14 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
-NOTICE:  Dropping automatically created index "fk_uk_id_q_gist_idx" for foreign key "fk_uk_id_q"
+NOTICE:  sql_saga: Dropping automatically created index "fk_uk_id_q_gist_idx" for foreign key "fk_uk_id_q"
  drop_foreign_key 
 ------------------
  
 (1 row)
 
 SELECT sql_saga.add_temporal_foreign_key('fk', ARRAY['uk_id'], 'q', 'uk_id_p', foreign_key_name => 'fk_uk_id_q');
-NOTICE:  No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table fk. Creating new index: CREATE INDEX fk_uk_id_q_gist_idx ON fk USING GIST (uk_id, valid_range)
  add_temporal_foreign_key 
 --------------------------
  fk_uk_id_q
@@ -138,7 +138,7 @@ DETAIL:  Key (id, valid_range)=(100, [4,5)) is still referenced from table "fk".
 ROLLBACK TO SAVEPOINT delete_test;
 DELETE FROM uk WHERE (id, valid_range) = (200, int4range(4, 5)); -- success (not referenced)
 SELECT sql_saga.drop_foreign_key('fk', ARRAY['uk_id'], 'q');
-NOTICE:  Dropping automatically created index "fk_uk_id_q_gist_idx" for foreign key "fk_uk_id_q"
+NOTICE:  sql_saga: Dropping automatically created index "fk_uk_id_q_gist_idx" for foreign key "fk_uk_id_q"
  drop_foreign_key 
 ------------------
  
@@ -174,7 +174,7 @@ NOTICE:  sql_saga: Created trigger "pk_test_synchronize_temporal_columns_trigger
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_test', '{id}', key_type => 'primary');
-NOTICE:  sql_saga: altering table public.pk_test to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_test: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  pk_test_id_valid
@@ -198,9 +198,9 @@ Triggers:
     pk_test_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_test FOR EACH ROW EXECUTE FUNCTION sql_saga.public_pk_test_valid_template_sync()
 
 TABLE sql_saga.unique_keys;
- unique_key_name  | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- pk_test_id_valid | public       | pk_test    | primary  | {id}         | valid    | pk_test_pkey      |                    |                  |           |                            |                     |                                  | 
+ unique_key_name  | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ pk_test_id_valid | public       | pk_test    | primary  | {id}         | valid    | pk_test_pkey      |                    |                  |           |                            | 
 (1 row)
 
 SELECT sql_saga.drop_unique_key('pk_test', '{id}');
@@ -238,7 +238,7 @@ SAVEPOINT expect_error;
 Attempting to add a temporal primary key to a table with a simple primary key (should fail)
 SELECT sql_saga.add_unique_key('public.simple_pk', '{id}', key_type => 'primary');
 ERROR:  table "simple_pk" has a simple PRIMARY KEY that does not include the temporal range column ("valid_range"); this is incompatible with SCD Type 2 history
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 160 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 159 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 DROP TABLE public.simple_pk;
 \echo '--- Test: add_unique_key validation for GENERATED ALWAYS identity column ---'
@@ -265,7 +265,7 @@ SAVEPOINT expect_error_2;
 Attempting to add a temporal primary key to a table with a GENERATED ALWAYS identity (should fail)
 SELECT sql_saga.add_unique_key('public.generated_always', '{id}', key_type => 'primary');
 ERROR:  table "generated_always" has a GENERATED ALWAYS AS IDENTITY column ("id"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 141 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 140 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 DROP TABLE public.generated_always;
 ROLLBACK;

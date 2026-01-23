@@ -59,7 +59,7 @@ NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_t
 
 -- The conceptual key for the entity
 SELECT sql_saga.add_unique_key('tmisd.establishment', ARRAY['id'], 'valid', key_type => 'primary', unique_key_name => 'tmisd_establishment_uk');
-NOTICE:  sql_saga: altering table tmisd.establishment to add constraints: ALTER COLUMN id SET NOT NULL
+NOTICE:  sql_saga: Added constraints to table tmisd.establishment: ALTER COLUMN id SET NOT NULL
      add_unique_key     
 ------------------------
  tmisd_establishment_uk

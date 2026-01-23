@@ -26,10 +26,10 @@ Explaining:
                     daterange(valid_from, valid_until) as valid_range
                 FROM source_data;
             
-Seq Scan on legal_unit_source source_table  (cost=0.00..110.50 rows=2500 width=152) (actual time=0.011..2.387 rows=2500.00 loops=1)
+Seq Scan on legal_unit_source source_table  (cost=0.00..110.50 rows=2500 width=152) (actual time=0.014..2.458 rows=2500.00 loops=1)
   Buffers: local hit=23
-Planning Time: 0.034 ms
-Execution Time: 4.102 ms
+Planning Time: 0.032 ms
+Execution Time: 4.410 ms
 ---
 Executing setup: CREATE INDEX ON source_initial (source_row_id);
 ---
@@ -64,17 +64,17 @@ Explaining:
                         s2.source_row_id > s1.source_row_id
                 ) eclipse_info;
             
-Nested Loop  (cost=56.05..140257.75 rows=2500 width=135) (actual time=0.216..195.987 rows=2500.00 loops=1)
+Nested Loop  (cost=56.05..140257.75 rows=2500 width=135) (actual time=0.239..227.165 rows=2500.00 loops=1)
   Buffers: local hit=66863 read=8 written=8
-  ->  Seq Scan on source_initial s1  (cost=0.00..89.00 rows=2500 width=102) (actual time=0.002..0.110 rows=2500.00 loops=1)
+  ->  Seq Scan on source_initial s1  (cost=0.00..89.00 rows=2500 width=102) (actual time=0.003..0.112 rows=2500.00 loops=1)
         Buffers: local hit=64
-  ->  Aggregate  (cost=56.05..56.06 rows=1 width=33) (actual time=0.078..0.078 rows=1.00 loops=2500)
+  ->  Aggregate  (cost=56.05..56.06 rows=1 width=33) (actual time=0.091..0.091 rows=1.00 loops=2500)
         Buffers: local hit=66799 read=8 written=8
-        ->  Sort  (cost=56.03..56.04 rows=1 width=22) (actual time=0.078..0.078 rows=0.00 loops=2500)
+        ->  Sort  (cost=56.03..56.04 rows=1 width=22) (actual time=0.090..0.090 rows=0.00 loops=2500)
               Sort Key: s2.valid_from
               Sort Method: quicksort  Memory: 25kB
               Buffers: local hit=66799 read=8 written=8
-              ->  Index Scan using source_initial_source_row_id_idx on source_initial s2  (cost=0.28..56.02 rows=1 width=22) (actual time=0.077..0.077 rows=0.00 loops=2500)
+              ->  Index Scan using source_initial_source_row_id_idx on source_initial s2  (cost=0.28..56.02 rows=1 width=22) (actual time=0.090..0.090 rows=0.00 loops=2500)
                     Index Cond: (source_row_id > s1.source_row_id)
                     Filter: (((NOT s1.lookup_columns_unavailable) AND (NOT (s1.id IS DISTINCT FROM id))) OR (s1.lookup_columns_unavailable AND (s1.causal_id = causal_id)))
                     Rows Removed by Filter: 1250
@@ -82,8 +82,8 @@ Nested Loop  (cost=56.05..140257.75 rows=2500 width=135) (actual time=0.216..195
                     Buffers: local hit=66799 read=8 written=8
 Planning:
   Buffers: shared hit=43, local read=3 written=3
-Planning Time: 0.115 ms
-Execution Time: 198.256 ms
+Planning Time: 0.367 ms
+Execution Time: 233.729 ms
 ---
                     Index Cond: (id = source_row.id)
                     Index Searches: 2500
@@ -93,9 +93,9 @@ Execution Time: 198.256 ms
                     Index Searches: 2500
                     Buffers: local hit=4999 read=1 written=1
 Planning:
-  Buffers: shared hit=44, local read=1 written=1
-Planning Time: 0.090 ms
-Execution Time: 5.250 ms
+  Buffers: shared hit=59, local read=1 written=1
+Planning Time: 0.141 ms
+Execution Time: 5.876 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows_with_aggregates ON COMMIT DROP AS
@@ -130,41 +130,41 @@ Explaining:
                         )
                     ) AS t  /* v_target_rows_filter */
             
-Subquery Scan on unnamed_subquery  (cost=24979.52..25008.93 rows=200 width=144) (actual time=72.111..75.341 rows=2500.00 loops=1)
+Subquery Scan on unnamed_subquery  (cost=24979.52..25008.93 rows=200 width=144) (actual time=79.898..83.702 rows=2500.00 loops=1)
   Buffers: shared hit=74503, local hit=64
-  ->  Unique  (cost=24979.52..25005.43 rows=200 width=68) (actual time=72.096..72.744 rows=2500.00 loops=1)
+  ->  Unique  (cost=24979.52..25005.43 rows=200 width=68) (actual time=79.883..80.590 rows=2500.00 loops=1)
         Buffers: shared hit=74503, local hit=64
-        ->  Unique  (cost=24979.52..25003.90 rows=306 width=68) (actual time=72.096..72.466 rows=2500.00 loops=1)
+        ->  Unique  (cost=24979.52..25003.90 rows=306 width=68) (actual time=79.882..80.291 rows=2500.00 loops=1)
               Buffers: shared hit=74503, local hit=64
-              ->  Sort  (cost=24979.52..24987.64 rows=3251 width=68) (actual time=72.095..72.164 rows=2500.00 loops=1)
+              ->  Sort  (cost=24979.52..24987.64 rows=3251 width=68) (actual time=79.882..79.969 rows=2500.00 loops=1)
                     Sort Key: inner_t.id, inner_t.valid_range
                     Sort Method: quicksort  Memory: 229kB
                     Buffers: shared hit=74503, local hit=64
-                    ->  Nested Loop  (cost=100.58..24789.87 rows=3251 width=68) (actual time=0.380..71.708 rows=2500.00 loops=1)
+                    ->  Nested Loop  (cost=100.58..24789.87 rows=3251 width=68) (actual time=0.420..79.425 rows=2500.00 loops=1)
                           Buffers: shared hit=74503, local hit=64
-                          ->  HashAggregate  (cost=95.25..120.25 rows=2500 width=4) (actual time=0.317..0.583 rows=2500.00 loops=1)
+                          ->  HashAggregate  (cost=95.25..120.25 rows=2500 width=4) (actual time=0.347..0.726 rows=2500.00 loops=1)
                                 Group Key: si.id
                                 Batches: 1  Memory Usage: 153kB
                                 Buffers: local hit=64
-                                ->  Seq Scan on source_initial si  (cost=0.00..89.00 rows=2500 width=4) (actual time=0.004..0.103 rows=2500.00 loops=1)
+                                ->  Seq Scan on source_initial si  (cost=0.00..89.00 rows=2500 width=4) (actual time=0.004..0.113 rows=2500.00 loops=1)
                                       Buffers: local hit=64
-                          ->  Bitmap Heap Scan on legal_unit_tm inner_t  (cost=5.33..9.72 rows=15 width=68) (actual time=0.028..0.028 rows=1.00 loops=2500)
+                          ->  Bitmap Heap Scan on legal_unit_tm inner_t  (cost=5.33..9.72 rows=15 width=68) (actual time=0.031..0.031 rows=1.00 loops=2500)
                                 Recheck Cond: ((si.id = id) OR (id IS NULL))
                                 Filter: ((si.id = id) OR ((si.id IS NULL) AND (id IS NULL)))
                                 Heap Blocks: exact=4500
                                 Buffers: shared hit=74503
-                                ->  BitmapOr  (cost=5.33..5.33 rows=31 width=0) (actual time=0.027..0.027 rows=0.00 loops=2500)
+                                ->  BitmapOr  (cost=5.33..5.33 rows=31 width=0) (actual time=0.029..0.029 rows=0.00 loops=2500)
                                       Buffers: shared hit=70003
                                       ->  Bitmap Index Scan on legal_unit_tm_id_valid_uniq  (cost=0.00..0.30 rows=15 width=0) (actual time=0.003..0.003 rows=1.80 loops=2500)
                                             Index Cond: (id = si.id)
                                             Index Searches: 2500
                                             Buffers: shared hit=5003
-                                      ->  Bitmap Index Scan on legal_unit_tm_id_valid_uniq  (cost=0.00..4.26 rows=15 width=0) (actual time=0.023..0.023 rows=0.00 loops=2500)
+                                      ->  Bitmap Index Scan on legal_unit_tm_id_valid_uniq  (cost=0.00..4.26 rows=15 width=0) (actual time=0.025..0.025 rows=0.00 loops=2500)
                                             Index Cond: (id IS NULL)
                                             Index Searches: 2500
                                             Buffers: shared hit=65000
-Planning Time: 0.115 ms
-Execution Time: 77.382 ms
+Planning Time: 0.118 ms
+Execution Time: 86.209 ms
 ---
 Executing setup: CREATE INDEX ON target_rows (id);
 ---
@@ -181,9 +181,9 @@ Explaining:
                 FROM source_with_eclipsed_flag source_row
                 LEFT JOIN target_rows target_row ON ((((source_row.id = target_row.id OR (source_row.id IS NULL AND target_row.id IS NULL)))) /* v_source_rows_exists_join_expr */)
             
-Nested Loop Left Join  (cost=5.22..22554.05 rows=2432 width=214) (actual time=0.031..3.528 rows=2500.00 loops=1)
+Nested Loop Left Join  (cost=5.22..22554.05 rows=2432 width=214) (actual time=0.042..3.890 rows=2500.00 loops=1)
   Buffers: local hit=12556 read=8 written=4
-  ->  Seq Scan on source_with_eclipsed_flag source_row  (cost=0.00..88.32 rows=2432 width=185) (actual time=0.003..0.092 rows=2500.00 loops=1)
+  ->  Seq Scan on source_with_eclipsed_flag source_row  (cost=0.00..88.32 rows=2432 width=185) (actual time=0.004..0.108 rows=2500.00 loops=1)
         Buffers: local hit=64
   ->  Bitmap Heap Scan on target_rows target_row  (cost=5.22..9.23 rows=1 width=29) (actual time=0.001..0.001 rows=1.00 loops=2500)
         Recheck Cond: ((source_row.id = id) OR (id IS NULL))
@@ -193,19 +193,19 @@ Nested Loop Left Join  (cost=5.22..22554.05 rows=2432 width=214) (actual time=0.
         ->  BitmapOr  (cost=5.22..5.22 rows=1 width=0) (actual time=0.001..0.001 rows=0.00 loops=2500)
               Buffers: local hit=9992 read=8 written=4
               ->  Bitmap Index Scan on target_rows_id_idx  (cost=0.00..0.30 rows=1 width=0) (actual time=0.000..0.000 rows=1.00 loops=2500)
-GroupAggregate  (cost=197.12..220.10 rows=200 width=44) (actual time=0.339..1.676 rows=2500.00 loops=1)
+GroupAggregate  (cost=197.12..220.10 rows=200 width=44) (actual time=0.743..2.142 rows=2500.00 loops=1)
   Group Key: source_row_id
   Buffers: local hit=64
-  ->  Sort  (cost=197.12..202.24 rows=2048 width=36) (actual time=0.333..0.392 rows=2500.00 loops=1)
+  ->  Sort  (cost=197.12..202.24 rows=2048 width=36) (actual time=0.731..0.793 rows=2500.00 loops=1)
         Sort Key: source_row_id, discovered_stable_pk_payload
         Sort Method: quicksort  Memory: 214kB
         Buffers: local hit=64
-        ->  Seq Scan on source_rows_with_matches  (cost=0.00..84.48 rows=2048 width=36) (actual time=0.003..0.205 rows=2500.00 loops=1)
+        ->  Seq Scan on source_rows_with_matches  (cost=0.00..84.48 rows=2048 width=36) (actual time=0.004..0.508 rows=2500.00 loops=1)
               Buffers: local hit=64
 Planning:
   Buffers: shared hit=38
-Planning Time: 0.036 ms
-Execution Time: 2.723 ms
+Planning Time: 0.056 ms
+Execution Time: 3.647 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows_with_discovery ON COMMIT DROP AS
@@ -217,25 +217,25 @@ Explaining:
                 FROM source_rows_with_matches m
                 JOIN source_rows_with_aggregates a ON m.source_row_id = a.source_row_id
             
-Merge Join  (cost=478.99..1137.22 rows=37028 width=262) (actual time=0.475..1.066 rows=2500.00 loops=1)
+Merge Join  (cost=478.99..1137.22 rows=37028 width=262) (actual time=0.504..1.109 rows=2500.00 loops=1)
   Merge Cond: (m.source_row_id = a.source_row_id)
   Buffers: local hit=96
-  ->  Sort  (cost=197.12..202.24 rows=2048 width=221) (actual time=0.189..0.244 rows=2500.00 loops=1)
+  ->  Sort  (cost=197.12..202.24 rows=2048 width=221) (actual time=0.199..0.255 rows=2500.00 loops=1)
         Sort Key: m.source_row_id
         Sort Method: quicksort  Memory: 483kB
         Buffers: local hit=64
-        ->  Seq Scan on source_rows_with_matches m  (cost=0.00..84.48 rows=2048 width=221) (actual time=0.002..0.106 rows=2500.00 loops=1)
+        ->  Seq Scan on source_rows_with_matches m  (cost=0.00..84.48 rows=2048 width=221) (actual time=0.003..0.112 rows=2500.00 loops=1)
               Buffers: local hit=64
-  ->  Sort  (cost=281.87..290.91 rows=3616 width=44) (actual time=0.283..0.339 rows=2500.00 loops=1)
+  ->  Sort  (cost=281.87..290.91 rows=3616 width=44) (actual time=0.302..0.359 rows=2500.00 loops=1)
         Sort Key: a.source_row_id
         Sort Method: quicksort  Memory: 253kB
         Buffers: local hit=32
-        ->  Seq Scan on source_rows_with_aggregates a  (cost=0.00..68.16 rows=3616 width=44) (actual time=0.003..0.130 rows=2500.00 loops=1)
+        ->  Seq Scan on source_rows_with_aggregates a  (cost=0.00..68.16 rows=3616 width=44) (actual time=0.002..0.141 rows=2500.00 loops=1)
               Buffers: local hit=32
 Planning:
   Buffers: shared hit=10
-Planning Time: 0.045 ms
-Execution Time: 3.295 ms
+Planning Time: 0.050 ms
+Execution Time: 3.620 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows ON COMMIT DROP AS
@@ -251,37 +251,37 @@ Explaining:
                 FROM source_rows_with_discovery p
                 ORDER BY p.source_row_id, p.discovered_stable_pk_payload
             
-Unique  (cost=375.43..393.35 rows=200 width=219) (actual time=0.714..0.920 rows=2500.00 loops=1)
+Unique  (cost=375.43..393.35 rows=200 width=219) (actual time=0.769..0.985 rows=2500.00 loops=1)
   Buffers: local hit=128
-  ->  Sort  (cost=375.43..384.39 rows=3584 width=219) (actual time=0.714..0.768 rows=2500.00 loops=1)
+  ->  Sort  (cost=375.43..384.39 rows=3584 width=219) (actual time=0.768..0.825 rows=2500.00 loops=1)
         Sort Key: source_row_id, discovered_stable_pk_payload
         Sort Method: quicksort  Memory: 542kB
         Buffers: local hit=128
-        ->  Seq Scan on source_rows_with_discovery p  (cost=0.00..163.84 rows=3584 width=219) (actual time=0.004..0.303 rows=2500.00 loops=1)
+        ->  Seq Scan on source_rows_with_discovery p  (cost=0.00..163.84 rows=3584 width=219) (actual time=0.007..0.330 rows=2500.00 loops=1)
               Buffers: local hit=128
 Planning:
   Buffers: shared hit=42
-Planning Time: 0.044 ms
-Execution Time: 2.953 ms
+Planning Time: 0.043 ms
+Execution Time: 3.466 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows_with_new_flag ON COMMIT DROP AS
                 SELECT *, NOT target_entity_exists as is_new_entity
                 FROM source_rows
             
-Seq Scan on source_rows  (cost=0.00..87.68 rows=2368 width=188) (actual time=0.002..0.249 rows=2500.00 loops=1)
+Seq Scan on source_rows  (cost=0.00..87.68 rows=2368 width=188) (actual time=0.004..0.278 rows=2500.00 loops=1)
   Buffers: local hit=64
 Planning:
   Buffers: shared hit=36
-Planning Time: 0.026 ms
-Execution Time: 1.794 ms
+Planning Time: 0.037 ms
+Execution Time: 2.189 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows_with_nk_json ON COMMIT DROP AS
                 SELECT source_row.*, jsonb_strip_nulls(jsonb_build_object('id', source_row.id)) /* v_lookup_keys_as_jsonb_expr */ as nk_json, ARRAY(SELECT e FROM unnest(ARRAY[CASE WHEN source_row.id IS NOT NULL THEN 'id' END]::TEXT[]) e WHERE e IS NOT NULL ORDER BY e) /* v_lookup_keys_as_array_expr */ as nk_non_null_keys_array
                 FROM source_rows_with_new_flag source_row
             
-Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..164.64 rows=2368 width=252) (actual time=0.019..3.722 rows=2500.00 loops=1)
+Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..164.64 rows=2368 width=252) (actual time=0.023..3.967 rows=2500.00 loops=1)
   Buffers: local hit=64
   SubPlan 1
     ->  Sort  (cost=0.02..0.03 rows=1 width=32) (actual time=0.001..0.001 rows=1.00 loops=2500)
@@ -291,8 +291,8 @@ Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..164.64 rows=2368 w
                 Filter: (e IS NOT NULL)
 Planning:
   Buffers: shared hit=38
-Planning Time: 0.040 ms
-Execution Time: 5.997 ms
+Planning Time: 0.063 ms
+Execution Time: 6.789 ms
 ---
 Executing setup: CREATE INDEX ON source_rows_with_nk_json USING GIN (nk_json);
 ---
@@ -322,9 +322,9 @@ Explaining:
                     ) s2 ON true
                 ) s
             
-Nested Loop Left Join  (cost=76.02..190312.88 rows=2500 width=268) (actual time=0.007..1.673 rows=2500.00 loops=1)
+Nested Loop Left Join  (cost=76.02..190312.88 rows=2500 width=268) (actual time=0.013..1.703 rows=2500.00 loops=1)
   Buffers: local hit=128
-  ->  Seq Scan on source_rows_with_nk_json s1  (cost=0.00..153.00 rows=2500 width=211) (actual time=0.003..0.183 rows=2500.00 loops=1)
+  ->  Seq Scan on source_rows_with_nk_json s1  (cost=0.00..153.00 rows=2500 width=211) (actual time=0.005..0.143 rows=2500.00 loops=1)
         Buffers: local hit=128
   ->  Limit  (cost=76.02..76.02 rows=1 width=93) (actual time=0.000..0.000 rows=0.00 loops=2500)
         ->  Sort  (cost=76.02..76.02 rows=1 width=93) (actual time=0.000..0.000 rows=0.00 loops=2500)
@@ -340,8 +340,8 @@ Nested Loop Left Join  (cost=76.02..190312.88 rows=2500 width=268) (actual time=
                                 Index Searches: 0
 Planning:
   Buffers: shared hit=64, local hit=1
-Planning Time: 0.143 ms
-Execution Time: 4.365 ms
+Planning Time: 0.159 ms
+Execution Time: 4.790 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE source_rows_with_early_feedback ON COMMIT DROP AS
@@ -360,12 +360,12 @@ Explaining:
                     END as early_feedback
                 FROM source_rows_with_canonical_key s
             
-Seq Scan on source_rows_with_canonical_key s  (cost=0.00..238.40 rows=2944 width=348) (actual time=0.003..0.338 rows=2500.00 loops=1)
+Seq Scan on source_rows_with_canonical_key s  (cost=0.00..238.40 rows=2944 width=348) (actual time=0.005..0.390 rows=2500.00 loops=1)
   Buffers: local hit=128
 Planning:
   Buffers: shared hit=46
-Planning Time: 0.041 ms
-Execution Time: 2.498 ms
+Planning Time: 0.058 ms
+Execution Time: 3.023 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE active_source_rows ON COMMIT DROP AS
@@ -384,13 +384,13 @@ Explaining:
                     ELSE false
                 END
             
-Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..154.88 rows=13 width=348) (actual time=0.002..0.286 rows=2500.00 loops=1)
+Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..154.88 rows=13 width=348) (actual time=0.003..0.294 rows=2500.00 loops=1)
   Filter: (early_feedback IS NULL)
   Buffers: local hit=128
 Planning:
   Buffers: shared hit=48
-Planning Time: 0.034 ms
-Execution Time: 2.167 ms
+Planning Time: 0.046 ms
+Execution Time: 2.368 ms
 ---
 Executing setup: CREATE INDEX ON active_source_rows (id);
 ---
@@ -424,16 +424,16 @@ Explaining:
                     target_row.canonical_nk_json
                 FROM target_rows target_row
             
-Append  (cost=0.00..267.00 rows=5000 width=107) (actual time=0.003..0.659 rows=5000.00 loops=1)
+Append  (cost=0.00..267.00 rows=5000 width=107) (actual time=0.005..0.744 rows=5000.00 loops=1)
   Buffers: local hit=192
-  ->  Seq Scan on active_source_rows  (cost=0.00..153.00 rows=2500 width=111) (actual time=0.002..0.276 rows=2500.00 loops=1)
+  ->  Seq Scan on active_source_rows  (cost=0.00..153.00 rows=2500 width=111) (actual time=0.005..0.341 rows=2500.00 loops=1)
         Buffers: local hit=128
-  ->  Seq Scan on target_rows target_row  (cost=0.00..89.00 rows=2500 width=103) (actual time=0.003..0.188 rows=2500.00 loops=1)
+  ->  Seq Scan on target_rows target_row  (cost=0.00..89.00 rows=2500 width=103) (actual time=0.006..0.196 rows=2500.00 loops=1)
         Buffers: local hit=64
 Planning:
   Buffers: shared hit=50, local read=2 written=2
-Planning Time: 0.071 ms
-Execution Time: 3.208 ms
+Planning Time: 0.099 ms
+Execution Time: 3.690 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE time_points_raw ON COMMIT DROP AS
@@ -441,16 +441,16 @@ Explaining:
                 UNION ALL
                 SELECT id, causal_id, valid_until AS point, is_new_entity, stable_pk_payload, stable_identity_columns_are_null, lookup_columns_unavailable, is_identifiable, is_ambiguous, conflicting_ids, canonical_nk_json FROM all_rows
             
-Append  (cost=0.00..471.04 rows=14336 width=113) (actual time=0.003..1.266 rows=10000.00 loops=1)
+Append  (cost=0.00..471.04 rows=14336 width=113) (actual time=0.003..1.195 rows=10000.00 loops=1)
   Buffers: local hit=256
-  ->  Seq Scan on all_rows  (cost=0.00..199.68 rows=7168 width=113) (actual time=0.003..0.490 rows=5000.00 loops=1)
+  ->  Seq Scan on all_rows  (cost=0.00..199.68 rows=7168 width=113) (actual time=0.003..0.394 rows=5000.00 loops=1)
         Buffers: local hit=128
-  ->  Seq Scan on all_rows all_rows_1  (cost=0.00..199.68 rows=7168 width=113) (actual time=0.004..0.379 rows=5000.00 loops=1)
+  ->  Seq Scan on all_rows all_rows_1  (cost=0.00..199.68 rows=7168 width=113) (actual time=0.004..0.395 rows=5000.00 loops=1)
         Buffers: local hit=128
 Planning:
   Buffers: shared hit=26
-Planning Time: 0.047 ms
-Execution Time: 5.378 ms
+Planning Time: 0.053 ms
+Execution Time: 5.507 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE time_points_unified ON COMMIT DROP AS
@@ -481,29 +481,29 @@ Explaining:
             END ORDER BY causal_id ASC NULLS FIRST) as unified_canonical_nk_json
                 FROM time_points_raw
             
-WindowAgg  (cost=1255.25..2470.55 rows=10944 width=213) (actual time=9.046..19.920 rows=10000.00 loops=1)
+WindowAgg  (cost=1255.25..2470.55 rows=10944 width=213) (actual time=9.970..21.294 rows=10000.00 loops=1)
   Window: w2 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
   Storage: Memory  Maximum Storage: 17kB
   Buffers: local hit=192
-  ->  Incremental Sort  (cost=1255.16..2060.15 rows=10944 width=209) (actual time=9.043..17.023 rows=10000.00 loops=1)
+  ->  Incremental Sort  (cost=1255.16..2060.15 rows=10944 width=209) (actual time=9.967..18.258 rows=10000.00 loops=1)
         Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id
         Presorted Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END)
         Full-sort Groups: 313  Sort Method: quicksort  Average Memory: 30kB  Peak Memory: 30kB
         Buffers: local hit=192
-        ->  WindowAgg  (cost=1254.57..1719.66 rows=10944 width=209) (actual time=9.010..13.069 rows=10000.00 loops=1)
+        ->  WindowAgg  (cost=1254.57..1719.66 rows=10944 width=209) (actual time=9.931..14.119 rows=10000.00 loops=1)
               Window: w1 AS (PARTITION BY (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END) ORDER BY causal_id)
               Storage: Memory  Maximum Storage: 17kB
               Buffers: local hit=192
-              ->  Sort  (cost=1254.54..1281.90 rows=10944 width=145) (actual time=9.001..9.231 rows=10000.00 loops=1)
+              ->  Sort  (cost=1254.54..1281.90 rows=10944 width=145) (actual time=9.923..10.164 rows=10000.00 loops=1)
                     Sort Key: (CASE WHEN is_new_entity THEN ('new_entity__'::text || CASE WHEN ((canonical_nk_json IS NOT NULL) AND (canonical_nk_json <> '{}'::jsonb)) THEN COALESCE((canonical_nk_json ->> 'id'::text), '_NULL_'::text) ELSE COALESCE((id)::text, '_NULL_'::text) END) ELSE ('existing_entity__'::text || COALESCE((id)::text, '_NULL_'::text)) END), causal_id NULLS FIRST
                     Sort Method: quicksort  Memory: 1555kB
                     Buffers: local hit=192
-                    ->  Seq Scan on time_points_raw  (cost=0.00..520.32 rows=10944 width=145) (actual time=0.004..1.122 rows=10000.00 loops=1)
+                    ->  Seq Scan on time_points_raw  (cost=0.00..520.32 rows=10944 width=145) (actual time=0.006..1.266 rows=10000.00 loops=1)
                           Buffers: local hit=192
 Planning:
   Buffers: shared hit=24
-Planning Time: 0.063 ms
-Execution Time: 25.239 ms
+Planning Time: 0.067 ms
+Execution Time: 26.914 ms
 ---
                             Buckets: 1024  Batches: 1  Memory Usage: 9kB
                             ->  CTE Scan on ordered_sources s  (cost=0.00..0.02 rows=1 width=88) (actual time=0.000..0.000 rows=1.00 loops=2500)
@@ -524,12 +524,12 @@ Explaining:
                     tpu.unified_canonical_nk_json as canonical_nk_json
                 FROM time_points_unified tpu
             
-Seq Scan on time_points_unified tpu  (cost=0.00..403.84 rows=8448 width=145) (actual time=0.006..1.754 rows=10000.00 loops=1)
+Seq Scan on time_points_unified tpu  (cost=0.00..403.84 rows=8448 width=145) (actual time=0.006..1.989 rows=10000.00 loops=1)
   Buffers: local hit=256
 Planning:
   Buffers: shared hit=32
-Planning Time: 0.045 ms
-Execution Time: 6.248 ms
+Planning Time: 0.047 ms
+Execution Time: 6.443 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE time_points ON COMMIT DROP AS
@@ -537,18 +537,18 @@ Explaining:
                 FROM time_points_with_unified_ids
                 ORDER BY grouping_key, point, causal_id DESC NULLS LAST
             
-Unique  (cost=875.10..942.78 rows=902 width=145) (actual time=4.915..5.873 rows=5000.00 loops=1)
+Unique  (cost=875.10..942.78 rows=902 width=145) (actual time=4.900..5.850 rows=5000.00 loops=1)
   Buffers: local hit=192
-  ->  Sort  (cost=875.10..897.66 rows=9024 width=145) (actual time=4.915..5.147 rows=10000.00 loops=1)
+  ->  Sort  (cost=875.10..897.66 rows=9024 width=145) (actual time=4.900..5.127 rows=10000.00 loops=1)
         Sort Key: grouping_key, point, causal_id DESC NULLS LAST
         Sort Method: quicksort  Memory: 1670kB
         Buffers: local hit=192
-        ->  Seq Scan on time_points_with_unified_ids  (cost=0.00..282.24 rows=9024 width=145) (actual time=0.003..0.402 rows=10000.00 loops=1)
+        ->  Seq Scan on time_points_with_unified_ids  (cost=0.00..282.24 rows=9024 width=145) (actual time=0.003..0.360 rows=10000.00 loops=1)
               Buffers: local hit=192
 Planning:
   Buffers: shared hit=26
-Planning Time: 0.043 ms
-Execution Time: 8.238 ms
+Planning Time: 0.049 ms
+Execution Time: 8.397 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE atomic_segments ON COMMIT DROP AS
@@ -559,24 +559,24 @@ Explaining:
                 ) with_lead
                 WHERE point IS NOT NULL AND next_point IS NOT NULL AND point < next_point
             
-Subquery Scan on with_lead  (cost=565.82..761.32 rows=1985 width=149) (actual time=1.367..3.106 rows=2500.00 loops=1)
+Subquery Scan on with_lead  (cost=565.82..761.32 rows=1985 width=149) (actual time=1.405..3.143 rows=2500.00 loops=1)
   Filter: ((with_lead.point IS NOT NULL) AND (with_lead.next_point IS NOT NULL) AND (with_lead.point < with_lead.next_point))
   Rows Removed by Filter: 2500
   Buffers: local hit=128
-  ->  WindowAgg  (cost=565.82..686.12 rows=6016 width=149) (actual time=1.366..2.834 rows=5000.00 loops=1)
+  ->  WindowAgg  (cost=565.82..686.12 rows=6016 width=149) (actual time=1.403..2.863 rows=5000.00 loops=1)
         Window: w1 AS (PARTITION BY time_points.grouping_key ORDER BY time_points.point)
         Storage: Memory  Maximum Storage: 17kB
         Buffers: local hit=128
-        ->  Sort  (cost=565.80..580.84 rows=6016 width=145) (actual time=1.359..1.477 rows=5000.00 loops=1)
+        ->  Sort  (cost=565.80..580.84 rows=6016 width=145) (actual time=1.397..1.509 rows=5000.00 loops=1)
               Sort Key: time_points.grouping_key, time_points.point
               Sort Method: quicksort  Memory: 847kB
               Buffers: local hit=128
-              ->  Seq Scan on time_points  (cost=0.00..188.16 rows=6016 width=145) (actual time=0.003..0.496 rows=5000.00 loops=1)
+              ->  Seq Scan on time_points  (cost=0.00..188.16 rows=6016 width=145) (actual time=0.003..0.486 rows=5000.00 loops=1)
                     Buffers: local hit=128
 Planning:
   Buffers: shared hit=26
-Planning Time: 0.063 ms
-Execution Time: 4.939 ms
+Planning Time: 0.061 ms
+Execution Time: 4.961 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
@@ -592,12 +592,12 @@ Explaining:
                     AND daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)
                 WHERE NOT seg.is_new_entity
             
-Nested Loop Left Join  (cost=0.15..982.56 rows=1472 width=253) (actual time=0.058..570.043 rows=2500.00 loops=1)
+Nested Loop Left Join  (cost=0.15..982.56 rows=1472 width=253) (actual time=0.047..581.070 rows=2500.00 loops=1)
   Buffers: local hit=160009 read=55 written=15
-  ->  Seq Scan on atomic_segments seg  (cost=0.00..93.44 rows=1472 width=149) (actual time=0.004..0.653 rows=2500.00 loops=1)
+  ->  Seq Scan on atomic_segments seg  (cost=0.00..93.44 rows=1472 width=149) (actual time=0.003..0.445 rows=2500.00 loops=1)
         Filter: (NOT is_new_entity)
         Buffers: local hit=64
-  ->  Index Scan using target_rows_daterange_idx on target_rows target_row  (cost=0.15..0.59 rows=1 width=76) (actual time=0.119..0.227 rows=1.00 loops=2500)
+  ->  Index Scan using target_rows_daterange_idx on target_rows target_row  (cost=0.15..0.59 rows=1 width=76) (actual time=0.122..0.232 rows=1.00 loops=2500)
         Index Cond: (daterange(valid_from, valid_until) @> daterange(seg.valid_from, seg.valid_until))
         Filter: ((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL)))
         Rows Removed by Filter: 2499
@@ -605,8 +605,8 @@ Nested Loop Left Join  (cost=0.15..982.56 rows=1472 width=253) (actual time=0.05
         Buffers: local hit=159945 read=55 written=15
 Planning:
   Buffers: shared hit=39
-Planning Time: 0.101 ms
-Execution Time: 573.118 ms
+Planning Time: 0.097 ms
+Execution Time: 584.179 ms
 ---
                                   Storage: Memory  Maximum Storage: 17kB
         ->  Sort  (cost=0.28..0.30 rows=11 width=120) (actual time=0.006..0.006 rows=1.00 loops=2500)
@@ -624,12 +624,12 @@ Explaining:
                 FROM atomic_segments seg
                 WHERE seg.is_new_entity
             
-Seq Scan on atomic_segments seg  (cost=0.00..93.44 rows=1472 width=285) (actual time=0.124..0.124 rows=0.00 loops=1)
+Seq Scan on atomic_segments seg  (cost=0.00..93.44 rows=1472 width=285) (actual time=0.132..0.132 rows=0.00 loops=1)
   Filter: is_new_entity
   Rows Removed by Filter: 2500
   Buffers: local hit=64
-Planning Time: 0.027 ms
-Execution Time: 1.008 ms
+Planning Time: 0.026 ms
+Execution Time: 0.994 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
@@ -690,18 +690,18 @@ Explaining:
                     END
                 ) with_base_payload
             
-Nested Loop Left Join  (cost=23.92..86109.17 rows=3588 width=425) (actual time=0.091..16.729 rows=2500.00 loops=1)
+Nested Loop Left Join  (cost=23.92..86109.17 rows=3588 width=425) (actual time=0.066..17.744 rows=2500.00 loops=1)
   Filter: ((running_payload.data_payload IS NOT NULL) OR (existing_segments_with_target.t_data_payload IS NOT NULL))
   Buffers: local hit=17606 read=22 written=21
-  ->  Append  (cost=0.00..191.82 rows=3588 width=285) (actual time=0.008..0.261 rows=2500.00 loops=1)
+  ->  Append  (cost=0.00..191.82 rows=3588 width=285) (actual time=0.003..0.255 rows=2500.00 loops=1)
         Buffers: local hit=128
-        ->  Seq Scan on existing_segments_with_target  (cost=0.00..161.28 rows=3328 width=285) (actual time=0.008..0.157 rows=2500.00 loops=1)
+        ->  Seq Scan on existing_segments_with_target  (cost=0.00..161.28 rows=3328 width=285) (actual time=0.003..0.147 rows=2500.00 loops=1)
               Buffers: local hit=128
         ->  Seq Scan on new_segments_no_target  (cost=0.00..12.60 rows=260 width=285) (actual time=0.004..0.004 rows=0.00 loops=1)
-  ->  Limit  (cost=23.92..23.93 rows=1 width=120) (actual time=0.006..0.006 rows=1.00 loops=2500)
+  ->  Limit  (cost=23.92..23.93 rows=1 width=120) (actual time=0.007..0.007 rows=1.00 loops=2500)
         Buffers: local hit=17478 read=22 written=21
         CTE ordered_sources
-          ->  WindowAgg  (cost=20.42..20.44 rows=1 width=63) (actual time=0.003..0.003 rows=1.00 loops=2500)
+          ->  WindowAgg  (cost=20.42..20.44 rows=1 width=63) (actual time=0.004..0.004 rows=1.00 loops=2500)
                 Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
                 Storage: Memory  Maximum Storage: 17kB
                 Buffers: local hit=17478 read=22 written=21
@@ -731,7 +731,7 @@ Nested Loop Left Join  (cost=23.92..86109.17 rows=3588 width=425) (actual time=0
                                               Index Searches: 2500
                                               Buffers: local hit=4999 read=1 written=1
         CTE running_payload
-          ->  Recursive Union  (cost=0.00..3.21 rows=11 width=120) (actual time=0.004..0.005 rows=1.00 loops=2500)
+          ->  Recursive Union  (cost=0.00..3.21 rows=11 width=120) (actual time=0.004..0.006 rows=1.00 loops=2500)
                 Storage: Memory  Maximum Storage: 33kB
                 Buffers: local hit=17478 read=22 written=21
               ->  CTE Scan on running_payload  (cost=0.00..0.22 rows=11 width=120) (actual time=0.004..0.006 rows=1.00 loops=2500)
@@ -739,8 +739,8 @@ Nested Loop Left Join  (cost=23.92..86109.17 rows=3588 width=425) (actual time=0
                     Buffers: local hit=17478 read=22 written=21
 Planning:
   Buffers: shared hit=95
-Planning Time: 0.361 ms
-Execution Time: 19.673 ms
+Planning Time: 0.317 ms
+Execution Time: 27.381 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -770,60 +770,60 @@ Explaining:
                     FROM resolved_atomic_segments_with_payloads /* v_resolver_from */
                 ) with_grp
             
-WindowAgg  (cost=287.93..821.67 rows=2304 width=513) (actual time=1.522..12.532 rows=2500.00 loops=1)
+WindowAgg  (cost=287.93..821.67 rows=2304 width=513) (actual time=1.587..12.982 rows=2500.00 loops=1)
   Window: w3 AS (PARTITION BY with_grp.grouping_key ORDER BY with_grp.valid_from)
   Storage: Memory  Maximum Storage: 17kB
   Buffers: local hit=128
-  ->  Incremental Sort  (cost=287.70..781.35 rows=2304 width=521) (actual time=1.519..11.498 rows=2500.00 loops=1)
+  ->  Incremental Sort  (cost=287.70..781.35 rows=2304 width=521) (actual time=1.583..11.912 rows=2500.00 loops=1)
         Sort Key: with_grp.grouping_key, with_grp.valid_from
         Presorted Key: with_grp.grouping_key
         Full-sort Groups: 79  Sort Method: quicksort  Average Memory: 38kB  Peak Memory: 38kB
         Buffers: local hit=128
-        ->  WindowAgg  (cost=285.38..707.93 rows=2304 width=521) (actual time=1.384..10.122 rows=2500.00 loops=1)
+        ->  WindowAgg  (cost=285.38..707.93 rows=2304 width=521) (actual time=1.441..10.481 rows=2500.00 loops=1)
               Window: w2 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp)
               Storage: Memory  Maximum Storage: 17kB
               Buffers: local hit=128
-              ->  Incremental Sort  (cost=283.72..650.33 rows=2304 width=481) (actual time=1.381..8.770 rows=2500.00 loops=1)
+              ->  Incremental Sort  (cost=283.72..650.33 rows=2304 width=481) (actual time=1.438..9.075 rows=2500.00 loops=1)
                     Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_behind_grp
                     Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
                     Full-sort Groups: 79  Sort Method: quicksort  Average Memory: 36kB  Peak Memory: 36kB
                     Buffers: local hit=128
-                    ->  WindowAgg  (cost=282.27..578.63 rows=2304 width=481) (actual time=1.282..7.465 rows=2500.00 loops=1)
+                    ->  WindowAgg  (cost=282.27..578.63 rows=2304 width=481) (actual time=1.336..7.723 rows=2500.00 loops=1)
                           Window: w1 AS (PARTITION BY with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp)
                           Storage: Memory  Maximum Storage: 17kB
                           Buffers: local hit=128
-                          ->  Incremental Sort  (cost=281.11..521.03 rows=2304 width=441) (actual time=1.279..6.150 rows=2500.00 loops=1)
+                          ->  Incremental Sort  (cost=281.11..521.03 rows=2304 width=441) (actual time=1.332..6.360 rows=2500.00 loops=1)
                                 Sort Key: with_grp.grouping_key, with_grp.t_valid_from, with_grp.look_ahead_grp
                                 Presorted Key: with_grp.grouping_key, with_grp.t_valid_from
                                 Full-sort Groups: 79  Sort Method: quicksort  Average Memory: 35kB  Peak Memory: 35kB
                                 Buffers: local hit=128
-                                ->  Subquery Scan on with_grp  (cost=280.21..449.34 rows=2304 width=441) (actual time=1.214..4.896 rows=2500.00 loops=1)
+                                ->  Subquery Scan on with_grp  (cost=280.21..449.34 rows=2304 width=441) (actual time=1.264..5.059 rows=2500.00 loops=1)
                                       Buffers: local hit=128
-                                      ->  WindowAgg  (cost=280.21..449.34 rows=2304 width=441) (actual time=1.213..4.716 rows=2500.00 loops=1)
+                                      ->  WindowAgg  (cost=280.21..449.34 rows=2304 width=441) (actual time=1.263..4.868 rows=2500.00 loops=1)
                                             Window: w2 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
                                             Storage: Memory  Maximum Storage: 17kB
                                             Buffers: local hit=128
-                                            ->  Incremental Sort  (cost=280.13..403.26 rows=2304 width=433) (actual time=1.211..3.592 rows=2500.00 loops=1)
+                                            ->  Incremental Sort  (cost=280.13..403.26 rows=2304 width=433) (actual time=1.261..3.707 rows=2500.00 loops=1)
                                                   Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from
                                                   Presorted Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from
                                                   Full-sort Groups: 79  Sort Method: quicksort  Average Memory: 35kB  Peak Memory: 35kB
                                                   Buffers: local hit=128
-                                                  ->  WindowAgg  (cost=279.74..331.56 rows=2304 width=433) (actual time=1.178..2.331 rows=2500.00 loops=1)
+                                                  ->  WindowAgg  (cost=279.74..331.56 rows=2304 width=433) (actual time=1.223..2.418 rows=2500.00 loops=1)
                                                         Window: w1 AS (PARTITION BY resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from ORDER BY resolved_atomic_segments_with_payloads.valid_from)
-Execution Time: 4.894 ms
+Execution Time: 5.220 ms
 ---
                                                         Storage: Memory  Maximum Storage: 17kB
                                                         Buffers: local hit=128
-                                                        ->  Sort  (cost=279.72..285.48 rows=2304 width=425) (actual time=1.172..1.229 rows=2500.00 loops=1)
+                                                        ->  Sort  (cost=279.72..285.48 rows=2304 width=425) (actual time=1.215..1.273 rows=2500.00 loops=1)
                                                               Sort Key: resolved_atomic_segments_with_payloads.grouping_key, resolved_atomic_segments_with_payloads.t_valid_from, resolved_atomic_segments_with_payloads.valid_from DESC
                                                               Sort Method: quicksort  Memory: 900kB
                                                               Buffers: local hit=128
-                                                              ->  Seq Scan on resolved_atomic_segments_with_payloads  (cost=0.00..151.04 rows=2304 width=425) (actual time=0.003..0.414 rows=2500.00 loops=1)
+                                                              ->  Seq Scan on resolved_atomic_segments_with_payloads  (cost=0.00..151.04 rows=2304 width=425) (actual time=0.003..0.411 rows=2500.00 loops=1)
                                                                     Buffers: local hit=128
 Planning:
   Buffers: shared hit=54
-Planning Time: 0.120 ms
-Execution Time: 16.223 ms
+Planning Time: 0.123 ms
+Execution Time: 16.783 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -845,12 +845,12 @@ Explaining:
                     END as trace
                 FROM resolved_atomic_segments_with_propagated_ids
             
-Seq Scan on resolved_atomic_segments_with_propagated_ids  (cost=0.00..444.00 rows=2880 width=394) (actual time=0.021..3.413 rows=2500.00 loops=1)
+Seq Scan on resolved_atomic_segments_with_propagated_ids  (cost=0.00..444.00 rows=2880 width=394) (actual time=0.025..3.576 rows=2500.00 loops=1)
   Buffers: local hit=192
 Planning:
   Buffers: shared hit=66
-Planning Time: 0.118 ms
-Execution Time: 6.130 ms
+Planning Time: 0.125 ms
+Execution Time: 6.475 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE island_group ON COMMIT DROP AS
@@ -879,35 +879,35 @@ Explaining:
                     ) s1
                 ) s2
             
-WindowAgg  (cost=288.41..415.38 rows=2420 width=474) (actual time=1.139..3.935 rows=2500.00 loops=1)
+WindowAgg  (cost=288.41..415.38 rows=2420 width=474) (actual time=1.181..3.969 rows=2500.00 loops=1)
   Window: w1 AS (PARTITION BY s1.grouping_key ORDER BY s1.valid_from)
   Storage: Memory  Maximum Storage: 17kB
   Buffers: local hit=128
-  ->  Subquery Scan on s1  (cost=288.36..348.83 rows=2420 width=462) (actual time=1.134..2.192 rows=2500.00 loops=1)
+  ->  Subquery Scan on s1  (cost=288.36..348.83 rows=2420 width=462) (actual time=1.176..2.243 rows=2500.00 loops=1)
         Buffers: local hit=128
-        ->  WindowAgg  (cost=288.36..348.83 rows=2420 width=462) (actual time=1.134..2.014 rows=2500.00 loops=1)
+        ->  WindowAgg  (cost=288.36..348.83 rows=2420 width=462) (actual time=1.175..2.063 rows=2500.00 loops=1)
               Window: w AS (PARTITION BY ras.grouping_key ORDER BY ras.valid_from)
               Storage: Memory  Maximum Storage: 17kB
               Buffers: local hit=128
-              ->  Sort  (cost=288.33..294.38 rows=2420 width=394) (actual time=1.130..1.186 rows=2500.00 loops=1)
+              ->  Sort  (cost=288.33..294.38 rows=2420 width=394) (actual time=1.171..1.226 rows=2500.00 loops=1)
                     Sort Key: ras.grouping_key, ras.valid_from
                     Sort Method: quicksort  Memory: 934kB
                     Buffers: local hit=128
-                    ->  Seq Scan on resolved_atomic_segments ras  (cost=0.00..152.32 rows=2420 width=394) (actual time=0.003..0.391 rows=2500.00 loops=1)
+                    ->  Seq Scan on resolved_atomic_segments ras  (cost=0.00..152.32 rows=2420 width=394) (actual time=0.004..0.412 rows=2500.00 loops=1)
                           Filter: (data_payload IS NOT NULL)
                           Buffers: local hit=128
 Planning:
   Buffers: shared hit=54
 Planning Time: 0.100 ms
-Execution Time: 6.784 ms
+Execution Time: 6.938 ms
 ---
         Storage: Memory  Maximum Storage: 17kB
         Buffers: local hit=128
-        ->  Sort  (cost=344.42..352.42 rows=3200 width=305) (actual time=5.110..5.168 rows=2500.00 loops=1)
-                    ->  CTE Scan on ordered_plan o  (cost=0.00..64.00 rows=3200 width=301) (actual time=2.476..2.739 rows=2500.00 loops=1)
+        ->  Sort  (cost=344.42..352.42 rows=3200 width=305) (actual time=5.494..5.552 rows=2500.00 loops=1)
+                    ->  CTE Scan on ordered_plan o  (cost=0.00..64.00 rows=3200 width=301) (actual time=2.660..2.941 rows=2500.00 loops=1)
                           Storage: Memory  Maximum Storage: 692kB
                           Buffers: local hit=128
-                    ->  Hash  (cost=0.22..0.22 rows=11 width=16) (actual time=1.690..1.690 rows=0.00 loops=1)
+                    ->  Hash  (cost=0.22..0.22 rows=11 width=16) (actual time=1.821..1.821 rows=0.00 loops=1)
                           Buckets: 1024  Batches: 1  Memory Usage: 8kB
 Explaining: 
                 CREATE TEMP TABLE coalesced_final_segments ON COMMIT DROP AS
@@ -936,14 +936,14 @@ Explaining:
                 FROM island_group
                 GROUP BY grouping_key, island_group_id
             
-GroupAggregate  (cost=261.12..7028.52 rows=205 width=262) (actual time=1.017..13.485 rows=2500.00 loops=1)
+GroupAggregate  (cost=261.12..7028.52 rows=205 width=262) (actual time=1.049..13.713 rows=2500.00 loops=1)
   Group Key: island_group.grouping_key, island_group.island_group_id
   Buffers: local hit=128
-  ->  Sort  (cost=261.12..266.24 rows=2048 width=262) (actual time=0.990..1.054 rows=2500.00 loops=1)
+  ->  Sort  (cost=261.12..266.24 rows=2048 width=262) (actual time=1.022..1.089 rows=2500.00 loops=1)
         Sort Key: island_group.grouping_key, island_group.island_group_id, island_group.valid_from
         Sort Method: quicksort  Memory: 649kB
         Buffers: local hit=128
-        ->  Seq Scan on island_group  (cost=0.00..148.48 rows=2048 width=262) (actual time=0.004..0.381 rows=2500.00 loops=1)
+        ->  Seq Scan on island_group  (cost=0.00..148.48 rows=2048 width=262) (actual time=0.003..0.393 rows=2500.00 loops=1)
               Buffers: local hit=128
   SubPlan 1
     ->  Aggregate  (cost=0.32..0.33 rows=1 width=32) (actual time=0.001..0.001 rows=1.00 loops=2500)
@@ -954,8 +954,8 @@ GroupAggregate  (cost=261.12..7028.52 rows=205 width=262) (actual time=1.017..13
                       Filter: (e IS NOT NULL)
 Planning:
   Buffers: shared hit=66
-Planning Time: 0.104 ms
-Execution Time: 16.177 ms
+Planning Time: 0.102 ms
+Execution Time: 16.392 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE diff ON COMMIT DROP AS
@@ -979,25 +979,25 @@ Explaining:
                 FROM coalesced_final_segments AS final_seg
                 FULL OUTER JOIN target_rows AS target_seg ON final_seg.grouping_key = ('existing_entity__' || COALESCE(target_seg.id::text, '_NULL_')) AND final_seg.ancestor_valid_from = target_seg.valid_from
             
-Merge Full Join  (cost=605.52..923.02 rows=3584 width=294) (actual time=3.148..4.380 rows=2500.00 loops=1)
+Merge Full Join  (cost=605.52..923.02 rows=3584 width=294) (actual time=3.243..4.573 rows=2500.00 loops=1)
   Merge Cond: ((final_seg.grouping_key = (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text)))) AND (final_seg.ancestor_valid_from = target_seg.valid_from))
   Buffers: local hit=171 read=21
-  ->  Sort  (cost=375.43..384.39 rows=3584 width=222) (actual time=0.939..0.992 rows=2500.00 loops=1)
+  ->  Sort  (cost=375.43..384.39 rows=3584 width=222) (actual time=0.936..0.993 rows=2500.00 loops=1)
         Sort Key: final_seg.grouping_key, final_seg.ancestor_valid_from
         Sort Method: quicksort  Memory: 618kB
         Buffers: local hit=128
-        ->  Seq Scan on coalesced_final_segments final_seg  (cost=0.00..163.84 rows=3584 width=222) (actual time=0.004..0.341 rows=2500.00 loops=1)
+        ->  Seq Scan on coalesced_final_segments final_seg  (cost=0.00..163.84 rows=3584 width=222) (actual time=0.003..0.326 rows=2500.00 loops=1)
               Buffers: local hit=128
-  ->  Sort  (cost=230.10..236.35 rows=2500 width=55) (actual time=2.201..2.254 rows=2500.00 loops=1)
+  ->  Sort  (cost=230.10..236.35 rows=2500 width=55) (actual time=2.299..2.357 rows=2500.00 loops=1)
         Sort Key: (('existing_entity__'::text || COALESCE((target_seg.id)::text, '_NULL_'::text))), target_seg.valid_from
         Sort Method: quicksort  Memory: 326kB
         Buffers: local hit=43 read=21
-        ->  Seq Scan on target_rows target_seg  (cost=0.00..89.00 rows=2500 width=55) (actual time=0.005..0.290 rows=2500.00 loops=1)
+        ->  Seq Scan on target_rows target_seg  (cost=0.00..89.00 rows=2500 width=55) (actual time=0.006..0.307 rows=2500.00 loops=1)
               Buffers: local hit=43 read=21
 Planning:
   Buffers: shared hit=42
-Planning Time: 0.150 ms
-Execution Time: 7.009 ms
+Planning Time: 0.178 ms
+Execution Time: 7.272 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE diff_ranked ON COMMIT DROP AS
@@ -1018,19 +1018,19 @@ Explaining:
                     END as update_rank
                 FROM diff d
             
-WindowAgg  (cost=378.33..530.30 rows=3200 width=310) (actual time=1.346..2.410 rows=2500.00 loops=1)
+WindowAgg  (cost=378.33..530.30 rows=3200 width=310) (actual time=1.421..2.534 rows=2500.00 loops=1)
   Window: w1 AS (PARTITION BY grouping_key, t_from ORDER BY (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_payload - '{}'::text[]) IS DISTINCT FROM (t_payload - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until ROWS UNBOUNDED PRECEDING)
   Storage: Memory  Maximum Storage: 17kB
   Buffers: local hit=128
-  ->  Sort  (cost=378.30..386.30 rows=3200 width=302) (actual time=1.343..1.400 rows=2500.00 loops=1)
+  ->  Sort  (cost=378.30..386.30 rows=3200 width=302) (actual time=1.417..1.474 rows=2500.00 loops=1)
         Sort Key: grouping_key, t_from, (CASE WHEN (f_from = t_from) THEN 1 ELSE 2 END), (CASE WHEN (NOT ((f_payload - '{}'::text[]) IS DISTINCT FROM (t_payload - '{}'::text[]))) THEN 1 ELSE 2 END), f_from, f_until
         Sort Method: quicksort  Memory: 760kB
         Buffers: local hit=128
-        ->  Seq Scan on diff d  (cost=0.00..192.00 rows=3200 width=302) (actual time=0.005..0.683 rows=2500.00 loops=1)
+        ->  Seq Scan on diff d  (cost=0.00..192.00 rows=3200 width=302) (actual time=0.006..0.726 rows=2500.00 loops=1)
               Buffers: local hit=128
 Planning:
   Buffers: shared hit=46
-Planning Time: 0.071 ms
+Planning Time: 0.072 ms
 Explaining: 
                 CREATE TEMP TABLE plan_with_op ON COMMIT DROP AS
                 (
@@ -1133,19 +1133,19 @@ Explaining:
                     )
                 )
             
-Append  (cost=0.00..547.73 rows=5732 width=293) (actual time=0.011..3.790 rows=2500.00 loops=1)
+Append  (cost=0.00..547.73 rows=5732 width=293) (actual time=0.013..3.969 rows=2500.00 loops=1)
   Buffers: local hit=128 read=128 written=108
-  ->  Seq Scan on diff_ranked d  (cost=0.00..250.50 rows=3057 width=293) (actual time=0.011..3.004 rows=2500.00 loops=1)
+  ->  Seq Scan on diff_ranked d  (cost=0.00..250.50 rows=3057 width=293) (actual time=0.012..3.157 rows=2500.00 loops=1)
         Filter: (((f_row_ids IS NOT NULL) OR (t_payload IS NOT NULL)) AND (CASE WHEN is_ambiguous THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (is_new_entity AND (NOT is_identifiable)) THEN 'ERROR'::sql_saga.temporal_merge_plan_action WHEN (t_from IS NULL) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (f_from IS NULL) THEN 'DELETE'::sql_saga.temporal_merge_plan_action WHEN (update_rank = 1) THEN 'UPDATE'::sql_saga.temporal_merge_plan_action WHEN (update_rank > 1) THEN 'INSERT'::sql_saga.temporal_merge_plan_action WHEN (update_rank IS NULL) THEN CASE WHEN unaffected_target_only_segment THEN NULL::sql_saga.temporal_merge_plan_action ELSE 'SKIP_IDENTICAL'::sql_saga.temporal_merge_plan_action END ELSE 'ERROR'::sql_saga.temporal_merge_plan_action END IS NOT NULL))
         Buffers: local hit=128
-  ->  Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..268.57 rows=2675 width=293) (actual time=0.687..0.687 rows=0.00 loops=1)
+  ->  Seq Scan on source_rows_with_early_feedback source_row  (cost=0.00..268.57 rows=2675 width=293) (actual time=0.710..0.710 rows=0.00 loops=1)
         Filter: (early_feedback IS NOT NULL)
         Rows Removed by Filter: 2500
         Buffers: local read=128 written=108
 Planning:
   Buffers: shared hit=50
-Planning Time: 0.135 ms
-Execution Time: 6.377 ms
+Planning Time: 0.157 ms
+Execution Time: 7.145 ms
 ---
 Explaining: 
                 CREATE TEMP TABLE plan ON COMMIT DROP AS
@@ -1167,30 +1167,30 @@ Explaining:
                 FROM plan_with_op p
                 LEFT JOIN source_rows_with_new_flag source_row ON source_row.source_row_id = p.row_ids[1]
             
-Merge Right Join  (cost=566.70..1809.90 rows=37888 width=297) (actual time=1.338..2.008 rows=2500.00 loops=1)
+Merge Right Join  (cost=566.70..1809.90 rows=37888 width=297) (actual time=1.451..2.161 rows=2500.00 loops=1)
   Merge Cond: (source_row.source_row_id = (p.row_ids[1]))
   Buffers: local hit=128 read=64 written=48
-  ->  Sort  (cost=220.40..226.32 rows=2368 width=4) (actual time=0.409..0.461 rows=2500.00 loops=1)
+  ->  Sort  (cost=220.40..226.32 rows=2368 width=4) (actual time=0.444..0.499 rows=2500.00 loops=1)
         Sort Key: source_row.source_row_id
         Sort Method: quicksort  Memory: 97kB
         Buffers: local read=64 written=48
-        ->  Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..87.68 rows=2368 width=4) (actual time=0.012..0.344 rows=2500.00 loops=1)
+        ->  Seq Scan on source_rows_with_new_flag source_row  (cost=0.00..87.68 rows=2368 width=4) (actual time=0.014..0.373 rows=2500.00 loops=1)
               Buffers: local read=64 written=48
-  ->  Sort  (cost=346.30..354.30 rows=3200 width=293) (actual time=0.927..0.980 rows=2500.00 loops=1)
+  ->  Sort  (cost=346.30..354.30 rows=3200 width=293) (actual time=1.003..1.061 rows=2500.00 loops=1)
         Sort Key: (p.row_ids[1])
         Sort Method: quicksort  Memory: 679kB
         Buffers: local hit=128
-        ->  Seq Scan on plan_with_op p  (cost=0.00..160.00 rows=3200 width=293) (actual time=0.004..0.336 rows=2500.00 loops=1)
+        ->  Seq Scan on plan_with_op p  (cost=0.00..160.00 rows=3200 width=293) (actual time=0.005..0.364 rows=2500.00 loops=1)
               Buffers: local hit=128
 Planning:
   Buffers: shared hit=42
-Planning Time: 0.080 ms
-Execution Time: 4.426 ms
+Planning Time: 0.082 ms
+Execution Time: 4.742 ms
 ---
               Sort Key: ((CASE WHEN (o.operation = 'DELETE'::sql_saga.temporal_merge_plan_action) THEN '1'::bigint WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = ANY ('{NONE,SHRINK}'::sql_saga.temporal_merge_update_effect[]))) THEN '2'::bigint WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect)) THEN (3 + COALESCE(mb.move_batch, '0'::bigint)) WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = 'GROW'::sql_saga.temporal_merge_update_effect)) THEN '1000000'::bigint WHEN (o.operation = 'INSERT'::sql_saga.temporal_merge_plan_action) THEN '2000000'::bigint ELSE '3000000'::bigint END)::integer)
               Sort Method: quicksort  Memory: 679kB
               Buffers: local hit=128
-              ->  Hash Left Join  (cost=0.36..158.12 rows=3200 width=305) (actual time=4.169..4.662 rows=2500.00 loops=1)
+              ->  Hash Left Join  (cost=0.36..158.12 rows=3200 width=305) (actual time=4.486..5.014 rows=2500.00 loops=1)
                     Hash Cond: (o.plan_op_seq = mb.plan_op_seq)
                     Buffers: local hit=128
 Explaining: 
@@ -1291,36 +1291,36 @@ Explaining:
                 FROM with_statement_seq
                 ORDER BY plan_op_seq;
             
-Sort  (cost=1633.20..1641.20 rows=3200 width=513) (actual time=9.495..9.549 rows=2500.00 loops=1)
+Sort  (cost=1633.20..1641.20 rows=3200 width=513) (actual time=10.113..10.170 rows=2500.00 loops=1)
   Sort Key: o.plan_op_seq
   Sort Method: quicksort  Memory: 854kB
   Buffers: local hit=128
   CTE ordered_plan
-    ->  WindowAgg  (cost=386.34..538.30 rows=3200 width=329) (actual time=2.474..3.000 rows=2500.00 loops=1)
+    ->  WindowAgg  (cost=386.34..538.30 rows=3200 width=329) (actual time=2.658..3.210 rows=2500.00 loops=1)
           Window: w1 AS (ORDER BY p.grouping_key, p.id, (CASE p.operation WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), p.update_effect, (CASE WHEN (p.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect) THEN 1 ELSE 0 END), (CASE WHEN (p.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect) THEN COALESCE(p.old_valid_from, p.new_valid_from) ELSE NULL::date END), (COALESCE(p.old_valid_from, p.new_valid_from)), (p.row_ids[1]) ROWS UNBOUNDED PRECEDING)
           Storage: Memory  Maximum Storage: 17kB
           Buffers: local hit=128
-          ->  Sort  (cost=386.30..394.30 rows=3200 width=321) (actual time=2.473..2.524 rows=2500.00 loops=1)
+          ->  Sort  (cost=386.30..394.30 rows=3200 width=321) (actual time=2.654..2.712 rows=2500.00 loops=1)
                 Sort Key: p.grouping_key, p.id, (CASE p.operation WHEN 'DELETE'::sql_saga.temporal_merge_plan_action THEN 1 WHEN 'UPDATE'::sql_saga.temporal_merge_plan_action THEN 2 WHEN 'INSERT'::sql_saga.temporal_merge_plan_action THEN 3 ELSE 4 END), p.update_effect NULLS FIRST, (CASE WHEN (p.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect) THEN 1 ELSE 0 END), (CASE WHEN (p.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect) THEN COALESCE(p.old_valid_from, p.new_valid_from) ELSE NULL::date END) DESC NULLS LAST, (COALESCE(p.old_valid_from, p.new_valid_from)), (p.row_ids[1])
                 Sort Method: quicksort  Memory: 710kB
                 Buffers: local hit=128
-                ->  Seq Scan on plan p  (cost=0.00..200.00 rows=3200 width=321) (actual time=0.004..0.388 rows=2500.00 loops=1)
+                ->  Seq Scan on plan p  (cost=0.00..200.00 rows=3200 width=321) (actual time=0.005..0.427 rows=2500.00 loops=1)
                       Buffers: local hit=128
   CTE moves_ordered
-    ->  WindowAgg  (cost=80.05..80.09 rows=2 width=64) (actual time=1.689..1.689 rows=0.00 loops=1)
+    ->  WindowAgg  (cost=80.05..80.09 rows=2 width=64) (actual time=1.820..1.820 rows=0.00 loops=1)
           Window: w1 AS (PARTITION BY o_1.grouping_key ORDER BY o_1.plan_op_seq ROWS UNBOUNDED PRECEDING)
-          ->  Incremental Sort  (cost=80.01..80.06 rows=2 width=56) (actual time=1.689..1.689 rows=0.00 loops=1)
+          ->  Incremental Sort  (cost=80.01..80.06 rows=2 width=56) (actual time=1.820..1.820 rows=0.00 loops=1)
                 Sort Key: o_1.grouping_key, o_1.plan_op_seq
                 Presorted Key: o_1.grouping_key
                 Full-sort Groups: 1  Sort Method: quicksort  Average Memory: 25kB  Peak Memory: 25kB
-                ->  CTE Scan on ordered_plan o_1  (cost=0.00..80.00 rows=1 width=56) (actual time=1.688..1.688 rows=0.00 loops=1)
+                ->  CTE Scan on ordered_plan o_1  (cost=0.00..80.00 rows=1 width=56) (actual time=1.818..1.818 rows=0.00 loops=1)
                       Filter: ((operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect))
                       Rows Removed by Filter: 2500
                       Storage: Memory  Maximum Storage: 692kB
   CTE moves_with_batch
-    ->  Recursive Union  (cost=0.00..4.08 rows=11 width=104) (actual time=1.690..1.690 rows=0.00 loops=1)
+    ->  Recursive Union  (cost=0.00..4.08 rows=11 width=104) (actual time=1.821..1.821 rows=0.00 loops=1)
           Storage: Memory  Maximum Storage: 33kB
-          ->  CTE Scan on moves_ordered  (cost=0.00..0.05 rows=1 width=104) (actual time=1.689..1.689 rows=0.00 loops=1)
+          ->  CTE Scan on moves_ordered  (cost=0.00..0.05 rows=1 width=104) (actual time=1.820..1.820 rows=0.00 loops=1)
                 Filter: (move_seq = 1)
                 Storage: Memory  Maximum Storage: 17kB
           ->  Hash Join  (cost=0.07..0.39 rows=1 width=104) (actual time=0.000..0.001 rows=0.00 loops=1)
@@ -1329,11 +1329,11 @@ Sort  (cost=1633.20..1641.20 rows=3200 width=513) (actual time=9.495..9.549 rows
                 ->  Hash  (cost=0.04..0.04 rows=2 width=64) (never executed)
                       ->  CTE Scan on moves_ordered m  (cost=0.00..0.04 rows=2 width=64) (never executed)
                             Storage: Memory  Maximum Storage: 17kB
-  ->  WindowAgg  (cost=344.44..824.42 rows=3200 width=513) (actual time=5.127..8.914 rows=2500.00 loops=1)
+  ->  WindowAgg  (cost=344.44..824.42 rows=3200 width=513) (actual time=5.515..9.492 rows=2500.00 loops=1)
         Window: w1 AS (ORDER BY ((CASE WHEN (o.operation = 'DELETE'::sql_saga.temporal_merge_plan_action) THEN '1'::bigint WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = ANY ('{NONE,SHRINK}'::sql_saga.temporal_merge_update_effect[]))) THEN '2'::bigint WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = 'MOVE'::sql_saga.temporal_merge_update_effect)) THEN (3 + COALESCE(mb.move_batch, '0'::bigint)) WHEN ((o.operation = 'UPDATE'::sql_saga.temporal_merge_plan_action) AND (o.update_effect = 'GROW'::sql_saga.temporal_merge_update_effect)) THEN '1000000'::bigint WHEN (o.operation = 'INSERT'::sql_saga.temporal_merge_plan_action) THEN '2000000'::bigint ELSE '3000000'::bigint END)::integer) ROWS UNBOUNDED PRECEDING)
-                          ->  CTE Scan on moves_with_batch mb  (cost=0.00..0.22 rows=11 width=16) (actual time=1.690..1.690 rows=0.00 loops=1)
+                          ->  CTE Scan on moves_with_batch mb  (cost=0.00..0.22 rows=11 width=16) (actual time=1.821..1.821 rows=0.00 loops=1)
                                 Storage: Memory  Maximum Storage: 17kB
 Planning:
   Buffers: shared hit=40
-Planning Time: 0.220 ms
-Execution Time: 9.831 ms
+Planning Time: 0.258 ms
+Execution Time: 10.475 ms

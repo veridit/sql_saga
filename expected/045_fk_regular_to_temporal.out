@@ -62,7 +62,7 @@ SELECT sql_saga.add_unique_key(
     column_names => ARRAY['id'],
     unique_key_name => 'temporal_pk_id_key'
 );
-NOTICE:  sql_saga: altering table public.temporal_pk to add constraints: ADD CONSTRAINT temporal_pk_id_key_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table temporal_pk: ADD CONSTRAINT temporal_pk_id_key_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key   
 --------------------
  temporal_pk_id_key
@@ -74,7 +74,7 @@ SELECT sql_saga.add_regular_foreign_key(
     fk_column_names => ARRAY['pk_id'],
     unique_key_name => 'temporal_pk_id_key'
 );
-NOTICE:  No compatible index found for foreign key on table regular_fk. Creating new index: CREATE INDEX regular_fk_pk_id_idx ON regular_fk USING BTREE (pk_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table regular_fk. Creating new index: CREATE INDEX regular_fk_pk_id_idx ON regular_fk USING BTREE (pk_id)
  add_regular_foreign_key 
 -------------------------
  regular_fk_pk_id_fkey
@@ -210,7 +210,7 @@ ROLLBACK TO SAVEPOINT before_ddl2;
 \echo "--- Drop Foreign Key ---"
 "--- Drop Foreign Key ---"
 SELECT sql_saga.drop_foreign_key('regular_fk'::regclass, ARRAY['pk_id']);
-NOTICE:  Dropping automatically created index "regular_fk_pk_id_idx" for foreign key "regular_fk_pk_id_fkey"
+NOTICE:  sql_saga: Dropping automatically created index "regular_fk_pk_id_idx" for foreign key "regular_fk_pk_id_fkey"
  drop_foreign_key 
 ------------------
  

@@ -90,28 +90,28 @@ TABLE sql_saga.era;
 (2 rows)
 
 SELECT sql_saga.add_unique_key('legal_unit', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table legal_unit: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('location', ARRAY['id'], 'valid');
-NOTICE:  sql_saga: altering table public.location to add constraints: ADD CONSTRAINT location_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table location: ADD CONSTRAINT location_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  location_id_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-   unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint     | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
----------------------+--------------+------------+----------+--------------+----------+--------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- legal_unit_id_valid | public       | legal_unit | natural  | {id}         | valid    | legal_unit_id_valid_uniq |                    |                  |           |                            |                     |                                  | {}
- location_id_valid   | public       | location   | natural  | {id}         | valid    | location_id_valid_uniq   |                    |                  |           |                            |                     |                                  | {}
+   unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint     | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+---------------------+--------------+------------+----------+--------------+----------+--------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ legal_unit_id_valid | public       | legal_unit | natural  | {id}         | valid    | legal_unit_id_valid_uniq |                    |                  |           |                            | {}
+ location_id_valid   | public       | location   | natural  | {id}         | valid    | location_id_valid_uniq   |                    |                  |           |                            | {}
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('location', ARRAY['legal_unit_id'], 'valid', 'legal_unit_id_valid');
-NOTICE:  No compatible index found for foreign key on table location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON location USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table location. Creating new index: CREATE INDEX location_legal_unit_id_valid_gist_idx ON location USING GIST (legal_unit_id, valid_range)
    add_temporal_foreign_key   
 ------------------------------
  location_legal_unit_id_valid
@@ -259,7 +259,7 @@ TABLE location;
 
 -- Teardown
 SELECT sql_saga.drop_foreign_key('location', ARRAY['legal_unit_id'], 'valid');
-NOTICE:  Dropping automatically created index "location_legal_unit_id_valid_gist_idx" for foreign key "location_legal_unit_id_valid"
+NOTICE:  sql_saga: Dropping automatically created index "location_legal_unit_id_valid_gist_idx" for foreign key "location_legal_unit_id_valid"
  drop_foreign_key 
 ------------------
  
@@ -283,8 +283,8 @@ SELECT sql_saga.drop_unique_key('location',ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
 (0 rows)
 
 SELECT sql_saga.drop_era('legal_unit');

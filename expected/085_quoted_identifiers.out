@@ -94,16 +94,16 @@ SELECT sql_saga.add_unique_key(
     key_type => 'natural',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  sql_saga: altering table public."quoted" table to add constraints: ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS), ADD CONSTRAINT """my "" uk""_pk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, """id""" WITH <>)
+NOTICE:  sql_saga: Added constraints to table """quoted"" table": ADD CONSTRAINT """my "" uk""_uniq" UNIQUE ("""id""", """product "" code""", """valid range""" WITHOUT OVERLAPS); ADD CONSTRAINT """my "" uk""_pk_consistency_excl" EXCLUDE USING gist ("""id""" WITH =, """product "" code""" WITH =, """id""" WITH <>)
  add_unique_key 
 ----------------
  "my " uk"
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names |   pk_consistency_constraint_names    
------------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+--------------------------------------
- "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    |                    |                  |           |                            |                     |                                  | {"\"my \" uk\"_pk_consistency_excl"}
+ unique_key_name | table_schema |   table_name   | key_type |           column_names           | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns |   pk_consistency_constraint_names    
+-----------------+--------------+----------------+----------+----------------------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+--------------------------------------
+ "my " uk"       | public       | "quoted" table | natural  | {"\"id\"","\"product \" code\""} | valid    | "my " uk"_uniq    |                    |                  |           |                            | {"\"my \" uk\"_pk_consistency_excl"}
 (1 row)
 
 -- 4. Create referencing table with quoted names
@@ -131,7 +131,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     fk_era_name => 'valid',
     unique_key_name => '"my " uk"'
 );
-NOTICE:  No compatible index found for foreign key on table """fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON """fk "" test""" USING GIST ("""ref "" id""", """product""", """range""")
+NOTICE:  sql_saga: No compatible index found for foreign key on table """fk "" test""". Creating new index: CREATE INDEX """fk "" test""_""ref "" id""_""product""_valid_gist_idx" ON """fk "" test""" USING GIST ("""ref "" id""", """product""", """range""")
         add_temporal_foreign_key        
 ----------------------------------------
  "fk " test"_"ref " id"_"product"_valid

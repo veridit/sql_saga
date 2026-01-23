@@ -1,15 +1,15 @@
                event                | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 ------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                              |         0 | 0 ms            |                | 0 rows    | 
- Synced Parent INSERT               |      1000 | 1 secs          | 37 ms          | 1000 rows | ~27254 rows/s
- Synced Parent UPDATE Key           |      1000 | 1 secs          | 56 ms          | 1000 rows | ~18003 rows/s
- Synced Parent UPDATE Non-Key       |      1000 | 1 secs          | 14 ms          | 1000 rows | ~72223 rows/s
- Synced Parent DELETE (no children) |      1000 | 1 secs          | 12 ms          | 1000 rows | ~86483 rows/s
- Synced Child INSERT                |      1000 | 1 secs          | 48 ms          | 1000 rows | ~21034 rows/s
- Synced Child UPDATE Key            |      1000 | 1 secs          | 46 ms          | 1000 rows | ~21757 rows/s
- Synced Child UPDATE Non-Key        |      1000 | 1 secs          | 14 ms          | 1000 rows | ~71561 rows/s
- Synced Child DELETE                |      1000 | 1 secs          | 1 ms           | 1000 rows | ~0 rows/s
- Synced temporal_merge Parent       |      1000 | 2 secs          | 605 ms         | 1000 rows | ~1653 rows/s
- Synced temporal_merge Child        |      1000 | 2 secs          | 386 ms         | 1000 rows | ~2593 rows/s
+ Synced Parent INSERT               |      1000 | 1 secs          | 39 ms          | 1000 rows | ~25700 rows/s
+ Synced Parent UPDATE Key           |      1000 | 1 secs          | 59 ms          | 1000 rows | ~17028 rows/s
+ Synced Parent UPDATE Non-Key       |      1000 | 1 secs          | 14 ms          | 1000 rows | ~71174 rows/s
+ Synced Parent DELETE (no children) |      1000 | 1 secs          | 12 ms          | 1000 rows | ~84681 rows/s
+ Synced Child INSERT                |      1000 | 1 secs          | 51 ms          | 1000 rows | ~19753 rows/s
+ Synced Child UPDATE Key            |      1000 | 1 secs          | 48 ms          | 1000 rows | ~20921 rows/s
+ Synced Child UPDATE Non-Key        |      1000 | 1 secs          | 14 ms          | 1000 rows | ~70607 rows/s
+ Synced Child DELETE                |      1000 | 1 secs          | 1 ms           | 1000 rows | ~888099 rows/s
+ Synced temporal_merge Parent       |      1000 | 2 secs          | 628 ms         | 1000 rows | ~1592 rows/s
+ Synced temporal_merge Child        |      1000 | 2 secs          | 424 ms         | 1000 rows | ~2360 rows/s
 (11 rows)
 

@@ -47,16 +47,16 @@ NOTICE:  sql_saga: Created trigger "pk_first_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.pk_first', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table pk_consistency.pk_first to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.pk_first: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  pk_first_id_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name  |  table_schema  | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
--------------------+----------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- pk_first_id_valid | pk_consistency | pk_first   | primary  | {id}         | valid    | pk_first_pkey     |                    |                  |           |                            |                     |                                  | 
+  unique_key_name  |  table_schema  | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-------------------+----------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ pk_first_id_valid | pk_consistency | pk_first   | primary  | {id}         | valid    | pk_first_pkey     |                    |                  |           |                            | 
 (1 row)
 
 \echo '--- Constraints after PK only ---'
@@ -80,17 +80,17 @@ Triggers:
     pk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.pk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_pk_first_valid_template_sync()
 
 SELECT sql_saga.add_unique_key('pk_consistency.pk_first', ARRAY['natural_key']); -- Use default enforcement
-NOTICE:  sql_saga: altering table pk_consistency.pk_first to add constraints: ADD CONSTRAINT pk_first_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT pk_first_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.pk_first: ADD CONSTRAINT pk_first_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT pk_first_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
        add_unique_key       
 ----------------------------
  pk_first_natural_key_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names |         pk_consistency_constraint_names          
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+--------------------------------------------------
- pk_first_id_valid          | pk_consistency | pk_first   | primary  | {id}          | valid    | pk_first_pkey                   |                    |                  |           |                            |                     |                                  | 
- pk_first_natural_key_valid | pk_consistency | pk_first   | natural  | {natural_key} | valid    | pk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {pk_first_natural_key_valid_pk_consistency_excl}
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns |         pk_consistency_constraint_names          
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+--------------------------------------------------
+ pk_first_id_valid          | pk_consistency | pk_first   | primary  | {id}          | valid    | pk_first_pkey                   |                    |                  |           |                            | 
+ pk_first_natural_key_valid | pk_consistency | pk_first   | natural  | {natural_key} | valid    | pk_first_natural_key_valid_uniq |                    |                  |           |                            | {pk_first_natural_key_valid_pk_consistency_excl}
 (2 rows)
 
 \echo '--- Constraints after NK ---'
@@ -139,16 +139,16 @@ NOTICE:  sql_saga: Created trigger "nk_first_synchronize_temporal_columns_trigge
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.nk_first', ARRAY['natural_key']); -- Enforcement is requested by default
-NOTICE:  sql_saga: altering table pk_consistency.nk_first to add constraints: ADD CONSTRAINT nk_first_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.nk_first: ADD CONSTRAINT nk_first_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
        add_unique_key       
 ----------------------------
  nk_first_natural_key_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {}
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            | {}
 (1 row)
 
 \echo '--- Constraints after NK only ---'
@@ -172,18 +172,18 @@ Triggers:
     nk_first_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON pk_consistency.nk_first FOR EACH ROW EXECUTE FUNCTION sql_saga.pk_consistency_nk_first_valid_template_sync()
 
 SELECT sql_saga.add_unique_key('pk_consistency.nk_first', ARRAY['id'], key_type => 'primary'); -- This should retroactively apply the constraint
-NOTICE:  sql_saga: altering table pk_consistency.nk_first to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
-NOTICE:  sql_saga: retroactively applying pk consistency for table pk_consistency.nk_first: ADD CONSTRAINT nk_first_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.nk_first: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Applied retroactive primary key consistency constraints to table pk_consistency.nk_first: ADD CONSTRAINT nk_first_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
   add_unique_key   
 -------------------
  nk_first_id_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {}
- nk_first_id_valid          | pk_consistency | nk_first   | primary  | {id}          | valid    | nk_first_pkey                   |                    |                  |           |                            |                     |                                  | 
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            | {}
+ nk_first_id_valid          | pk_consistency | nk_first   | primary  | {id}          | valid    | nk_first_pkey                   |                    |                  |           |                            | 
 (2 rows)
 
 \echo '--- Constraints after PK ---'
@@ -239,24 +239,24 @@ NOTICE:  sql_saga: Created trigger "opt_out_synchronize_temporal_columns_trigger
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.opt_out', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table pk_consistency.opt_out to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.opt_out: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  opt_out_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.opt_out', ARRAY['natural_key'], enforce_consistency_with_primary_key => false);
-NOTICE:  sql_saga: altering table pk_consistency.opt_out to add constraints: ADD CONSTRAINT opt_out_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.opt_out: ADD CONSTRAINT opt_out_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
       add_unique_key       
 ---------------------------
  opt_out_natural_key_valid
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name      |  table_schema  | table_name | key_type | column_names  | era_name |       unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
----------------------------+----------------+------------+----------+---------------+----------+--------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- opt_out_id_valid          | pk_consistency | opt_out    | primary  | {id}          | valid    | opt_out_pkey                   |                    |                  |           |                            |                     |                                  | 
- opt_out_natural_key_valid | pk_consistency | opt_out    | natural  | {natural_key} | valid    | opt_out_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | 
+      unique_key_name      |  table_schema  | table_name | key_type | column_names  | era_name |       unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+---------------------------+----------------+------------+----------+---------------+----------+--------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ opt_out_id_valid          | pk_consistency | opt_out    | primary  | {id}          | valid    | opt_out_pkey                   |                    |                  |           |                            | 
+ opt_out_natural_key_valid | pk_consistency | opt_out    | natural  | {natural_key} | valid    | opt_out_natural_key_valid_uniq |                    |                  |           |                            | 
 (2 rows)
 
 \echo '--- Constraints after opting out ---'
@@ -316,7 +316,7 @@ NOTICE:  sql_saga: Created trigger "composite_pk_a_synchronize_temporal_columns_
 
 SAVEPOINT expect_error;
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_a', ARRAY['natural_key']); -- fails
-NOTICE:  sql_saga: altering table pk_consistency.composite_pk_a to add constraints: ADD CONSTRAINT composite_pk_a_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.composite_pk_a: ADD CONSTRAINT composite_pk_a_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
           add_unique_key          
 ----------------------------------
  composite_pk_a_natural_key_valid
@@ -345,7 +345,7 @@ NOTICE:  sql_saga: Created trigger "composite_pk_b_synchronize_temporal_columns_
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_b', ARRAY['natural_key']);
-NOTICE:  sql_saga: altering table pk_consistency.composite_pk_b to add constraints: ADD CONSTRAINT composite_pk_b_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.composite_pk_b: ADD CONSTRAINT composite_pk_b_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
           add_unique_key          
 ----------------------------------
  composite_pk_b_natural_key_valid
@@ -353,9 +353,9 @@ NOTICE:  sql_saga: altering table pk_consistency.composite_pk_b to add constrain
 
 SAVEPOINT expect_error;
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_b', ARRAY['org_id', 'unit_id'], key_type => 'primary'); -- fails
-NOTICE:  sql_saga: altering table pk_consistency.composite_pk_b to add constraints: ALTER COLUMN org_id SET NOT NULL, ALTER COLUMN unit_id SET NOT NULL, ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.composite_pk_b: ALTER COLUMN org_id SET NOT NULL; ALTER COLUMN unit_id SET NOT NULL; ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
 ERROR:  cannot add primary key (org_id, unit_id) to table "pk_consistency.composite_pk_b" because its stable part (org_id, unit_id) is composite, which is not supported for consistency enforcement required by existing natural keys
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 590 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 545 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4b;
 -- Scenario 5: API Symmetry (Drop Key)
@@ -379,14 +379,14 @@ NOTICE:  sql_saga: Created trigger "drop_nk_synchronize_temporal_columns_trigger
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.drop_nk', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table pk_consistency.drop_nk to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.drop_nk: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
   add_unique_key  
 ------------------
  drop_nk_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.drop_nk', ARRAY['natural_key']);
-NOTICE:  sql_saga: altering table pk_consistency.drop_nk to add constraints: ADD CONSTRAINT drop_nk_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS), ADD CONSTRAINT drop_nk_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.drop_nk: ADD CONSTRAINT drop_nk_natural_key_valid_uniq UNIQUE (natural_key, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT drop_nk_natural_key_valid_pk_consistency_excl EXCLUDE USING gist (natural_key WITH =, id WITH <>)
       add_unique_key       
 ---------------------------
  drop_nk_natural_key_valid
@@ -467,22 +467,22 @@ NOTICE:  sql_saga: Created trigger "drop_pk_synchronize_temporal_columns_trigger
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.drop_pk', ARRAY['nk1']);
-NOTICE:  sql_saga: altering table pk_consistency.drop_pk to add constraints: ADD CONSTRAINT drop_pk_nk1_valid_uniq UNIQUE (nk1, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.drop_pk: ADD CONSTRAINT drop_pk_nk1_valid_uniq UNIQUE (nk1, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  drop_pk_nk1_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.drop_pk', ARRAY['nk2']);
-NOTICE:  sql_saga: altering table pk_consistency.drop_pk to add constraints: ADD CONSTRAINT drop_pk_nk2_valid_uniq UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.drop_pk: ADD CONSTRAINT drop_pk_nk2_valid_uniq UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
   add_unique_key   
 -------------------
  drop_pk_nk2_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('pk_consistency.drop_pk', ARRAY['id'], key_type => 'primary');
-NOTICE:  sql_saga: altering table pk_consistency.drop_pk to add constraints: ALTER COLUMN id SET NOT NULL, ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
-NOTICE:  sql_saga: retroactively applying pk consistency for table pk_consistency.drop_pk: ADD CONSTRAINT drop_pk_nk1_valid_pk_consistency_excl EXCLUDE USING gist (nk1 WITH =, id WITH <>), ADD CONSTRAINT drop_pk_nk2_valid_pk_consistency_excl EXCLUDE USING gist (nk2 WITH =, id WITH <>)
+NOTICE:  sql_saga: Added constraints to table pk_consistency.drop_pk: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Applied retroactive primary key consistency constraints to table pk_consistency.drop_pk: ADD CONSTRAINT drop_pk_nk1_valid_pk_consistency_excl EXCLUDE USING gist (nk1 WITH =, id WITH <>); ADD CONSTRAINT drop_pk_nk2_valid_pk_consistency_excl EXCLUDE USING gist (nk2 WITH =, id WITH <>)
   add_unique_key  
 ------------------
  drop_pk_id_valid

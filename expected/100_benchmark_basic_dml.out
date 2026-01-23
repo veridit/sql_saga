@@ -126,14 +126,14 @@ SELECT sql_saga.add_era('establishment'::regclass, 'valid_range', 'valid');
 (1 row)
 
 SELECT sql_saga.add_unique_key('legal_unit'::regclass, column_names => ARRAY['id'], unique_key_name => 'legal_unit_id_valid');
-NOTICE:  sql_saga: altering table public.legal_unit to add constraints: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table legal_unit: ADD CONSTRAINT legal_unit_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
    add_unique_key    
 ---------------------
  legal_unit_id_valid
 (1 row)
 
 SELECT sql_saga.add_unique_key('establishment'::regclass, column_names => ARRAY['id']);
-NOTICE:  sql_saga: altering table public.establishment to add constraints: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table establishment: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  establishment_id_valid
@@ -148,7 +148,7 @@ HINT:  Consider creating this index: CREATE INDEX establishment_legal_unit_id_va
 (1 row)
 
 SELECT sql_saga.add_foreign_key('projects', ARRAY['legal_unit_id'], 'legal_unit', ARRAY['id']);
-NOTICE:  No compatible index found for foreign key on table projects. Creating new index: CREATE INDEX projects_legal_unit_id_idx ON projects USING BTREE (legal_unit_id)
+NOTICE:  sql_saga: No compatible index found for foreign key on table projects. Creating new index: CREATE INDEX projects_legal_unit_id_idx ON projects USING BTREE (legal_unit_id)
        add_foreign_key       
 -----------------------------
  projects_legal_unit_id_fkey
@@ -340,7 +340,7 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temp
 Performance regression detected: EXPLAIN plan contains a Seq Scan on establishment
 -- Teardown sql_saga constraints
 SELECT sql_saga.drop_foreign_key('projects', ARRAY['legal_unit_id']);
-NOTICE:  Dropping automatically created index "projects_legal_unit_id_idx" for foreign key "projects_legal_unit_id_fkey"
+NOTICE:  sql_saga: Dropping automatically created index "projects_legal_unit_id_idx" for foreign key "projects_legal_unit_id_fkey"
  drop_foreign_key 
 ------------------
  

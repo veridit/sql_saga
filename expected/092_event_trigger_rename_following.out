@@ -108,24 +108,24 @@ SELECT sql_saga.drop_for_portion_of_view('rename_test', 'p');
 ALTER TABLE rename_test DROP COLUMN id;
 /* unique_keys */
 SELECT sql_saga.add_unique_key('rename_test', ARRAY['col2', 'col1', 'col3'], 'p');
-NOTICE:  sql_saga: altering table public.rename_test to add constraints: ADD CONSTRAINT rename_test_col2_col1_col3_p_uniq UNIQUE (col2, col1, col3, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table rename_test: ADD CONSTRAINT rename_test_col2_col1_col3_p_uniq UNIQUE (col2, col1, col3, valid_range WITHOUT OVERLAPS)
         add_unique_key        
 ------------------------------
  rename_test_col2_col1_col3_p
 (1 row)
 
 TABLE sql_saga.unique_keys;
-       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |         unique_constraint         | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-------------------------------+--------------+-------------+----------+------------------+----------+-----------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_p_uniq |                    |                  |           |                            |                     |                                  | {}
+       unique_key_name        | table_schema | table_name  | key_type |   column_names   | era_name |         unique_constraint         | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+------------------------------+--------------+-------------+----------+------------------+----------+-----------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,col1,col3} | p        | rename_test_col2_col1_col3_p_uniq |                    |                  |           |                            | {}
 (1 row)
 
 ALTER TABLE rename_test RENAME COLUMN col1 TO "COLUMN1";
 ALTER TABLE rename_test RENAME CONSTRAINT rename_test_col2_col1_col3_p_uniq TO unconst;
 TABLE sql_saga.unique_keys;
-       unique_key_name        | table_schema | table_name  | key_type |    column_names     | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-------------------------------+--------------+-------------+----------+---------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,COLUMN1,col3} | p        | unconst           |                    |                  |           |                            |                     |                                  | {}
+       unique_key_name        | table_schema | table_name  | key_type |    column_names     | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+------------------------------+--------------+-------------+----------+---------------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ rename_test_col2_col1_col3_p | public       | rename_test | natural  | {col2,COLUMN1,col3} | p        | unconst           |                    |                  |           |                            | {}
 (1 row)
 
 /* foreign_keys */
@@ -145,7 +145,7 @@ TABLE sql_saga.era;
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q', 'rename_test_col2_col1_col3_p');
-NOTICE:  No compatible index found for foreign key on table rename_test_ref. Creating new index: CREATE INDEX "rename_test_ref_col2_COLUMN1_col3_q_gist_idx" ON rename_test_ref USING GIST (col2, "COLUMN1", col3, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table rename_test_ref. Creating new index: CREATE INDEX "rename_test_ref_col2_COLUMN1_col3_q_gist_idx" ON rename_test_ref USING GIST (col2, "COLUMN1", col3, valid_range)
       add_temporal_foreign_key       
 -------------------------------------
  rename_test_ref_col2_COLUMN1_col3_q
@@ -169,11 +169,11 @@ ROLLBACK TO SAVEPOINT pristine;
 /* Test protection of synchronize_temporal_columns_trigger */
 ALTER TRIGGER rename_test_p_sync_temporal_trg ON rename_test RENAME TO my_trigger;
 ERROR:  cannot drop or rename trigger "rename_test_p_sync_temporal_trg" on table "rename_test" because it is managed by era "p"
-CONTEXT:  PL/pgSQL function rename_following() line 587 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 601 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER rename_test_ref_q_sync_temporal_trg ON rename_test_ref RENAME TO another_trigger;
 ERROR:  cannot drop or rename trigger "rename_test_ref_q_sync_temporal_trg" on table "rename_test_ref" because it is managed by era "q"
-CONTEXT:  PL/pgSQL function rename_following() line 587 at RAISE
+CONTEXT:  PL/pgSQL function rename_following() line 601 at RAISE
 ROLLBACK TO SAVEPOINT pristine;
 TABLE sql_saga.foreign_keys;
           foreign_key_name           |         type         | table_schema |   table_name    |    column_names     | fk_era_name |                   fk_table_columns_snapshot                   |       unique_key_name        | match_type | update_action | delete_action | fk_check_constraint | fk_helper_function | uk_update_trigger | uk_delete_trigger |                fk_index_name                 
@@ -182,7 +182,7 @@ TABLE sql_saga.foreign_keys;
 (1 row)
 
 SELECT sql_saga.drop_foreign_key('rename_test_ref', ARRAY['col2', 'COLUMN1', 'col3'], 'q');
-NOTICE:  Dropping automatically created index "rename_test_ref_col2_COLUMN1_col3_q_gist_idx" for foreign key "rename_test_ref_col2_COLUMN1_col3_q"
+NOTICE:  sql_saga: Dropping automatically created index "rename_test_ref_col2_COLUMN1_col3_q_gist_idx" for foreign key "rename_test_ref_col2_COLUMN1_col3_q"
  drop_foreign_key 
 ------------------
  
