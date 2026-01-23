@@ -268,6 +268,96 @@ SET client_min_messages TO DEBUG;
 RESET client_min_messages;
 ```
 
+## RAISE NOTICE Usage Guidelines
+
+**Core Principle:** "When we do a side effect, we inform the caller about this, since that may be surprising, and the informational text matches EXACTLY what was done."
+
+### Three Types of Messages
+
+**1. Informational Notices (RAISE NOTICE):**
+Use `RAISE NOTICE` to inform callers about side effects that may be surprising. The message must describe exactly what action was performed.
+
+**When to use:**
+- Table creation, modification, or deletion
+- Index creation or rebuilds
+- Constraint additions or modifications
+- Data migrations or transformations
+- Any operation that changes system state beyond the primary function purpose
+
+**Examples:**
+```sql
+-- Good: Describes the exact side effect
+RAISE NOTICE 'Created temporal foreign key constraint % on table %', constraint_name, table_name;
+RAISE NOTICE 'Rebuilt unique constraint % to include temporal dimensions', constraint_name;
+RAISE NOTICE 'Migrated % rows from % to new temporal format', row_count, table_name;
+
+-- Bad: Vague or internal detail
+RAISE NOTICE 'Processing constraint...';
+RAISE NOTICE 'Step 3 of migration completed';
+```
+
+**2. Debug Messages (RAISE DEBUG):**
+Use `RAISE DEBUG` for internal diagnostics, troubleshooting, and development information that normal users don't need to see.
+
+**When to use:**
+- Tracing execution flow
+- Logging intermediate calculations
+- Debugging query plans or performance
+- Internal state inspection
+- Development diagnostics
+
+**Examples:**
+```sql
+-- Good: Internal diagnostic information
+RAISE DEBUG 'Query plan selected % segments for merge', segment_count;
+RAISE DEBUG 'Temporal merge trace: %', trace_data;
+RAISE DEBUG 'Function entered with parameters: table=%, period=%', table_name, time_period;
+
+-- Bad: User-relevant side effects (should be NOTICE)
+RAISE DEBUG 'Created index on table %', table_name;
+```
+
+### Rationale
+
+**Why distinguish these message types:**
+- **Side effects can be surprising:** Users calling a function may not expect schema changes, constraint additions, or data migrations
+- **Exact description builds trust:** When the message precisely matches the action, users can verify the operation succeeded as intended
+- **Clean separation of concerns:** User-facing notifications vs. developer diagnostics serve different audiences
+- **Debugging flexibility:** `client_min_messages` can control debug output without hiding important user notifications
+
+**Message content requirements:**
+- **NOTICE messages:** Must be user-friendly and match exactly what was done
+- **DEBUG messages:** Can include technical details, trace data, and development artifacts
+- **WARNING messages:** Should identify the problematic condition and provide actionable guidance
+- **All types:** Should include relevant identifiers (table names, constraint names, counts) for context
+
+**3. Warning Messages (RAISE WARNING):**
+Use `RAISE WARNING` to alert users about assumption violations, suboptimal configurations, or potentially problematic usage patterns that don't prevent operation but may cause issues.
+
+**When to use:**
+- Schema incompatibilities or suboptimal design patterns
+- Performance problems or missing indexes
+- Data type mismatches that force skipping features
+- Configuration issues that violate best practices
+- Situations where user assumptions may be incorrect
+
+**Examples:**
+```sql
+-- Good: Schema compatibility warnings
+RAISE WARNING 'Table "%" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.', table_name;
+RAISE WARNING 'Table "%" has a GENERATED ALWAYS AS IDENTITY column ("%"). This schema is incompatible with SCD Type 2 history.', table_name, column_name;
+
+-- Good: Performance warnings with specific guidance
+RAISE WARNING 'Performance warning: The source relation % lacks a GIST index on its temporal columns.', table_name
+USING HINT = 'For better performance, consider creating an index, e.g., CREATE INDEX ON tablename USING GIST (range_column);';
+
+-- Good: Data quality/configuration issues
+RAISE WARNING 'Synchronization column "%" on table % has an incompatible data type (%). It must match the era subtype (%). Skipping synchronization.', col_name, table_name, actual_type, expected_type;
+
+-- Bad: Side effects (should be NOTICE)
+RAISE WARNING 'Created index on table %', table_name;
+```
+
 **temporal_merge tracing (advanced):**
 ```sql
 SET sql_saga.temporal_merge.enable_trace = true;
