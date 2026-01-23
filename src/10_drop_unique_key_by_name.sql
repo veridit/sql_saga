@@ -71,20 +71,7 @@ BEGIN
                         alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.check_constraint);
                     END IF;
 
-                    -- 2. Drop all partial indexes and constraints.
-                    IF unique_key_row.partial_exclude_constraint_names IS NOT NULL THEN
-                        FOREACH object_name IN ARRAY unique_key_row.partial_exclude_constraint_names
-                        LOOP
-                            alter_parts := alter_parts || format('DROP CONSTRAINT %I', object_name);
-                        END LOOP;
-                    END IF;
-
-                    IF unique_key_row.partial_index_names IS NOT NULL THEN
-                        FOREACH object_name IN ARRAY unique_key_row.partial_index_names
-                        LOOP
-                            EXECUTE format('DROP INDEX %I.%I', unique_key_row.table_schema, object_name);
-                        END LOOP;
-                    END IF;
+                    -- 2. No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT
 
                     -- 3. Execute the ALTER TABLE command for all constraints.
                     IF cardinality(alter_parts) > 0 THEN

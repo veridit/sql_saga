@@ -677,8 +677,8 @@ SELECT * FROM sql_saga.era WHERE table_schema = 'readme';
 (0 rows)
 
 SELECT * FROM sql_saga.unique_keys WHERE table_schema = 'readme';
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
 (0 rows)
 
 SELECT * FROM sql_saga.foreign_keys WHERE table_schema = 'readme';

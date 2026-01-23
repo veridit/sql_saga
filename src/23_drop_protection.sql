@@ -286,37 +286,7 @@ BEGIN
                     r.check_constraint, r.table_oid, r.unique_key_name;
             END IF;
 
-            -- Mutually exclusive keys also have multiple partial indexes and constraints.
-            IF r.partial_exclude_constraint_names IS NOT NULL THEN
-                DECLARE
-                    v_constraint_name name;
-                BEGIN
-                    FOREACH v_constraint_name IN ARRAY r.partial_exclude_constraint_names
-                    LOOP
-                        IF NOT EXISTS (
-                            SELECT FROM pg_catalog.pg_constraint AS c
-                            WHERE (c.conrelid, c.conname) = (r.table_oid, v_constraint_name)
-                        ) THEN
-                            RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-                                v_constraint_name, r.table_oid, r.unique_key_name;
-                        END IF;
-                    END LOOP;
-                END;
-            END IF;
-
-            IF r.partial_index_names IS NOT NULL THEN
-                DECLARE
-                    v_index_name name;
-                BEGIN
-                    FOREACH v_index_name IN ARRAY r.partial_index_names
-                    LOOP
-                        IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, v_index_name)) IS NULL THEN
-                            RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
-                                v_index_name, r.table_oid, r.unique_key_name;
-                        END IF;
-                    END LOOP;
-                END;
-            END IF;
+            -- XOR keys now use a unified UNIQUE constraint (no partial constraints)
         ELSIF r.predicate IS NOT NULL THEN
             IF r.unique_constraint IS NOT NULL THEN
                 -- Predicated keys use a unique index, not a constraint.

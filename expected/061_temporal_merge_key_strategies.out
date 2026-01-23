@@ -178,7 +178,7 @@ SELECT sql_saga.add_unique_key('tmtc.stat_for_unit_id_gen', ARRAY['stat_definiti
 NOTICE:  sql_saga: Added constraints to table tmtc.stat_for_unit_id_gen: ADD CONSTRAINT tm_sfu_identity_uk_uniq UNIQUE (stat_definition_id, establishment_id, valid_range WITHOUT OVERLAPS); ADD CONSTRAINT tm_sfu_identity_uk_pk_consistency_excl EXCLUDE USING gist (stat_definition_id WITH =, establishment_id WITH =, id WITH <>)
 ERROR:  relation "stat_for_unit__stat_definitio_establishment__valid_range_idx" already exists
 CONTEXT:  SQL statement "CREATE INDEX stat_for_unit__stat_definitio_establishment__valid_range_idx ON tmtc.stat_for_unit_id_gen (stat_definition_id, establishment_id, valid_range)"
-PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 572 at EXECUTE
+PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 518 at EXECUTE
 -- Target table with non-PK surrogate key
 CREATE SEQUENCE tmtc.stat_for_unit_no_pk_id_seq;
 ERROR:  current transaction is aborted, commands ignored until end of transaction block

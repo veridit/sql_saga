@@ -161,7 +161,7 @@ SELECT sql_saga.add_unique_key(
 SAVEPOINT s7;
 ALTER TABLE dp DROP CONSTRAINT u; -- fails
 ERROR:  cannot drop constraint "u" on table "dp" because it is used in era unique key "k"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 329 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 299 at RAISE
 ROLLBACK TO SAVEPOINT s7;
 SAVEPOINT s9;
 ALTER TABLE dp DROP CONSTRAINT dp_p_check; -- fails (bounds check constraint)
@@ -199,7 +199,7 @@ NOTICE:  sql_saga: Added constraints to table dp_pk_consistency: ADD CONSTRAINT 
 SAVEPOINT expect_error;
 ALTER TABLE dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl; -- fails
 ERROR:  cannot drop constraint "dp_pk_consistency_nk_valid_pk_consistency_excl" on table "dp_pk_consistency" because it is used in era unique key "dp_pk_consistency_nk_valid"
-CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 354 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.drop_protection() line 324 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 SELECT sql_saga.drop_unique_key('dp_pk_consistency', ARRAY['nk'], 'p');
 NOTICE:  sql_saga: dropping constraint: ALTER TABLE public.dp_pk_consistency DROP CONSTRAINT dp_pk_consistency_nk_valid_pk_consistency_excl

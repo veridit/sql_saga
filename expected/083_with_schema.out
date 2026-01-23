@@ -122,10 +122,10 @@ NOTICE:  sql_saga: Added constraints to table hidden.staff: ADD CONSTRAINT staff
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint    | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
---------------------+--------------+------------+----------+--------------+----------+-------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_uniq |                    |                  |           |                            |                     |                                  | {}
- staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_uniq     |                    |                  |           |                            |                     |                                  | {}
+  unique_key_name   | table_schema | table_name | key_type | column_names | era_name |    unique_constraint    | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+--------------------+--------------+------------+----------+--------------+----------+-------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ employees_id_valid | exposed      | employees  | natural  | {id}         | valid    | employees_id_valid_uniq |                    |                  |           |                            | {}
+ staff_id_valid     | hidden       | staff      | natural  | {id}         | valid    | staff_id_valid_uniq     |                    |                  |           |                            | {}
 (2 rows)
 
 SELECT sql_saga.add_temporal_foreign_key('hidden.staff', ARRAY['employee_id'], 'valid', 'employees_id_valid');
@@ -259,8 +259,8 @@ SELECT sql_saga.drop_unique_key('hidden.staff',ARRAY['id'], 'valid');
 (1 row)
 
 TABLE sql_saga.unique_keys;
- unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
------------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
+ unique_key_name | table_schema | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-----------------+--------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
 (0 rows)
 
 SELECT sql_saga.drop_era('exposed.employees');

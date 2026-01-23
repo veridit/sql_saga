@@ -329,20 +329,21 @@ BEGIN
         EXECUTE sql;
     END LOOP;
 
-    -- Follow renames for columns in XOR unique keys by inspecting partial indexes
+    -- Follow renames for columns in XOR unique keys by inspecting the unified constraint
     FOR sql IN
         WITH new_xor_cols AS (
             SELECT
                 uk.unique_key_name,
                 array_agg(DISTINCT a.attname ORDER BY a.attname) AS new_column_names
             FROM sql_saga.unique_keys uk
+            JOIN sql_saga.era AS e ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
             JOIN pg_class pc ON (pc.relname, pc.relnamespace) = (uk.table_name, (SELECT oid FROM pg_namespace WHERE nspname = uk.table_schema))
-            CROSS JOIN unnest(uk.partial_index_names) AS pin(name)
-            JOIN pg_class i ON i.relname = pin.name AND i.relnamespace = pc.relnamespace
-            JOIN pg_index pi ON pi.indexrelid = i.oid
-            CROSS JOIN unnest(pi.indkey::smallint[]) WITH ORDINALITY AS u(attnum, ord)
-            JOIN pg_attribute a ON (a.attrelid, a.attnum) = (pi.indrelid, u.attnum)
+            JOIN pg_catalog.pg_constraint AS c ON (c.conrelid, c.conname) = (pc.oid, uk.unique_constraint)
+            CROSS JOIN unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord)
+            JOIN pg_attribute a ON (a.attrelid, a.attnum) = (pc.oid, u.attnum)
             WHERE uk.mutually_exclusive_columns IS NOT NULL
+              AND uk.unique_constraint IS NOT NULL
+              AND a.attname NOT IN (e.range_column_name) -- Exclude temporal column
             GROUP BY uk.unique_key_name
         )
         SELECT format('UPDATE sql_saga.unique_keys SET column_names = %L WHERE unique_key_name = %L',
@@ -368,13 +369,26 @@ BEGIN
         JOIN pg_catalog.pg_constraint AS c ON c.conrelid = pc.oid
         WHERE uk.unique_constraint IS NOT NULL AND uk.unique_constraint <> c.conname
           AND NOT EXISTS (SELECT FROM pg_constraint AS _c WHERE (_c.conrelid, _c.conname) = (pc.oid, uk.unique_constraint))
-          AND pg_get_constraintdef(c.oid) = (
-            SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
-                CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END,
-                string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
-                e.range_column_name
+          AND (
+            -- Match traditional constraint format
+            pg_get_constraintdef(c.oid) = (
+                SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+                    CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END,
+                    string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
+                    e.range_column_name
+                )
+                FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
             )
-            FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
+            OR
+            -- Match NULLS NOT DISTINCT constraint format
+            pg_get_constraintdef(c.oid) = (
+                SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+                    CASE WHEN uk.key_type = 'primary' THEN 'PRIMARY KEY NULLS NOT DISTINCT' ELSE 'UNIQUE NULLS NOT DISTINCT' END,
+                    string_agg(quote_ident(u.name), ', ' ORDER BY u.ordinality),
+                    e.range_column_name
+                )
+                FROM unnest(uk.column_names) WITH ORDINALITY AS u(name, ordinality)
+            )
           )
     LOOP
         EXECUTE sql;

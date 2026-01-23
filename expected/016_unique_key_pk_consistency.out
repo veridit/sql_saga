@@ -54,9 +54,9 @@ NOTICE:  sql_saga: Added constraints to table pk_consistency.pk_first: ALTER COL
 (1 row)
 
 TABLE sql_saga.unique_keys;
-  unique_key_name  |  table_schema  | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
--------------------+----------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- pk_first_id_valid | pk_consistency | pk_first   | primary  | {id}         | valid    | pk_first_pkey     |                    |                  |           |                            |                     |                                  | 
+  unique_key_name  |  table_schema  | table_name | key_type | column_names | era_name | unique_constraint | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+-------------------+----------------+------------+----------+--------------+----------+-------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ pk_first_id_valid | pk_consistency | pk_first   | primary  | {id}         | valid    | pk_first_pkey     |                    |                  |           |                            | 
 (1 row)
 
 \echo '--- Constraints after PK only ---'
@@ -87,10 +87,10 @@ NOTICE:  sql_saga: Added constraints to table pk_consistency.pk_first: ADD CONST
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names |         pk_consistency_constraint_names          
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+--------------------------------------------------
- pk_first_id_valid          | pk_consistency | pk_first   | primary  | {id}          | valid    | pk_first_pkey                   |                    |                  |           |                            |                     |                                  | 
- pk_first_natural_key_valid | pk_consistency | pk_first   | natural  | {natural_key} | valid    | pk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {pk_first_natural_key_valid_pk_consistency_excl}
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns |         pk_consistency_constraint_names          
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+--------------------------------------------------
+ pk_first_id_valid          | pk_consistency | pk_first   | primary  | {id}          | valid    | pk_first_pkey                   |                    |                  |           |                            | 
+ pk_first_natural_key_valid | pk_consistency | pk_first   | natural  | {natural_key} | valid    | pk_first_natural_key_valid_uniq |                    |                  |           |                            | {pk_first_natural_key_valid_pk_consistency_excl}
 (2 rows)
 
 \echo '--- Constraints after NK ---'
@@ -146,9 +146,9 @@ NOTICE:  sql_saga: Added constraints to table pk_consistency.nk_first: ADD CONST
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {}
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            | {}
 (1 row)
 
 \echo '--- Constraints after NK only ---'
@@ -180,10 +180,10 @@ NOTICE:  sql_saga: Applied retroactive primary key consistency constraints to ta
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
-----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | {}
- nk_first_id_valid          | pk_consistency | nk_first   | primary  | {id}          | valid    | nk_first_pkey                   |                    |                  |           |                            |                     |                                  | 
+      unique_key_name       |  table_schema  | table_name | key_type | column_names  | era_name |        unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+----------------------------+----------------+------------+----------+---------------+----------+---------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ nk_first_natural_key_valid | pk_consistency | nk_first   | natural  | {natural_key} | valid    | nk_first_natural_key_valid_uniq |                    |                  |           |                            | {}
+ nk_first_id_valid          | pk_consistency | nk_first   | primary  | {id}          | valid    | nk_first_pkey                   |                    |                  |           |                            | 
 (2 rows)
 
 \echo '--- Constraints after PK ---'
@@ -253,10 +253,10 @@ NOTICE:  sql_saga: Added constraints to table pk_consistency.opt_out: ADD CONSTR
 (1 row)
 
 TABLE sql_saga.unique_keys;
-      unique_key_name      |  table_schema  | table_name | key_type | column_names  | era_name |       unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | partial_index_names | partial_exclude_constraint_names | pk_consistency_constraint_names 
----------------------------+----------------+------------+----------+---------------+----------+--------------------------------+--------------------+------------------+-----------+----------------------------+---------------------+----------------------------------+---------------------------------
- opt_out_id_valid          | pk_consistency | opt_out    | primary  | {id}          | valid    | opt_out_pkey                   |                    |                  |           |                            |                     |                                  | 
- opt_out_natural_key_valid | pk_consistency | opt_out    | natural  | {natural_key} | valid    | opt_out_natural_key_valid_uniq |                    |                  |           |                            |                     |                                  | 
+      unique_key_name      |  table_schema  | table_name | key_type | column_names  | era_name |       unique_constraint        | exclude_constraint | check_constraint | predicate | mutually_exclusive_columns | pk_consistency_constraint_names 
+---------------------------+----------------+------------+----------+---------------+----------+--------------------------------+--------------------+------------------+-----------+----------------------------+---------------------------------
+ opt_out_id_valid          | pk_consistency | opt_out    | primary  | {id}          | valid    | opt_out_pkey                   |                    |                  |           |                            | 
+ opt_out_natural_key_valid | pk_consistency | opt_out    | natural  | {natural_key} | valid    | opt_out_natural_key_valid_uniq |                    |                  |           |                            | 
 (2 rows)
 
 \echo '--- Constraints after opting out ---'
@@ -355,7 +355,7 @@ SAVEPOINT expect_error;
 SELECT sql_saga.add_unique_key('pk_consistency.composite_pk_b', ARRAY['org_id', 'unit_id'], key_type => 'primary'); -- fails
 NOTICE:  sql_saga: Added constraints to table pk_consistency.composite_pk_b: ALTER COLUMN org_id SET NOT NULL; ALTER COLUMN unit_id SET NOT NULL; ADD PRIMARY KEY (org_id, unit_id, valid_range WITHOUT OVERLAPS)
 ERROR:  cannot add primary key (org_id, unit_id) to table "pk_consistency.composite_pk_b" because its stable part (org_id, unit_id) is composite, which is not supported for consistency enforcement required by existing natural keys
-CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 599 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[]) line 545 at RAISE
 ROLLBACK TO SAVEPOINT expect_error;
 ROLLBACK TO SAVEPOINT s4b;
 -- Scenario 5: API Symmetry (Drop Key)

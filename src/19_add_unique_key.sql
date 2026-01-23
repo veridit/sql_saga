@@ -79,8 +79,7 @@ DECLARE
     unique_sql text;
     exclude_sql text;
     where_clause text;
-    partial_index_names name[];
-    partial_exclude_constraint_names name[];
+
     v_pk_consistency_constraint_names name[];
     v_enforce_consistency_original boolean := enforce_consistency_with_primary_key;
     v_stable_cols_to_store name[];
@@ -264,12 +263,30 @@ BEGIN
                 -- Users migrating from trigger-based FKs may have DEFERRABLE PKs which must be changed.
                 -- The with_temporary_temporal_gaps strategy (DELETE→UPDATE→INSERT) creates temporary
                 -- gaps (tolerated by DEFERRABLE FKs) rather than overlaps (which would violate this constraint).
-                IF pg_catalog.pg_get_constraintdef(constraint_record.oid) <> unique_sql THEN
-                     RAISE EXCEPTION E'constraint "%" does not match.\nExpected: "%"\nFound: "%"\n\nPostgreSQL 18 Temporal FK Requirement:\nUnique constraints with WITHOUT OVERLAPS must be NOT DEFERRABLE to be referenceable by native temporal foreign keys. The DELETE→UPDATE→INSERT execution strategy avoids overlaps while tolerating temporary gaps through DEFERRABLE FK checks.\n\nSee AGENTS.md section "PostgreSQL 18 Temporal Constraints and Foreign Keys" for details.',
-                        unique_constraint,
-                        unique_sql,
-                        pg_catalog.pg_get_constraintdef(constraint_record.oid);
-                END IF;
+                DECLARE
+                    unique_sql_nulls_not_distinct text;
+                    actual_def text;
+                BEGIN
+                    -- Generate the NULLS NOT DISTINCT variant for comparison
+                    SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+                        CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY NULLS NOT DISTINCT' ELSE 'UNIQUE NULLS NOT DISTINCT' END,
+                        string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality),
+                        era_row.range_column_name
+                    )
+                    INTO unique_sql_nulls_not_distinct
+                    FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
+                    
+                    actual_def := pg_catalog.pg_get_constraintdef(constraint_record.oid);
+                    
+                    -- Check if constraint matches either traditional or NULLS NOT DISTINCT format
+                    IF actual_def <> unique_sql AND actual_def <> unique_sql_nulls_not_distinct THEN
+                        RAISE EXCEPTION E'constraint "%" does not match expected format.\nExpected (traditional): "%"\nExpected (NULLS NOT DISTINCT): "%"\nFound: "%"\n\nPostgreSQL 18 Temporal FK Requirement:\nUnique constraints with WITHOUT OVERLAPS must be NOT DEFERRABLE to be referenceable by native temporal foreign keys. The DELETE→UPDATE→INSERT execution strategy avoids overlaps while tolerating temporary gaps through DEFERRABLE FK checks.\n\nSee AGENTS.md section "PostgreSQL 18 Temporal Constraints and Foreign Keys" for details.',
+                            unique_constraint,
+                            unique_sql,
+                            unique_sql_nulls_not_distinct,
+                            actual_def;
+                    END IF;
+                END;
 
                 /* Looks good, let's use it. */
             END IF;
@@ -392,97 +409,26 @@ BEGIN
             END IF;
             alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(exclude_constraint) || ' ' || exclude_sql);
         END IF;
-    ELSE -- mutually_exclusive_columns IS NOT NULL
-        DECLARE
-            check_constraint_name name;
-            check_sql text;
+    ELSE -- mutually_exclusive_columns IS NOT NULL (XOR keys)
         BEGIN
-            -- Generate and add the CHECK constraint for XOR logic
-            check_constraint_name := unique_key_name || '_xor_check';
-            -- For XOR keys, we store the check constraint's name in the `check_constraint` column for metadata purposes.
-            v_check_constraint := check_constraint_name;
-            unique_constraint := NULL; -- No single unique constraint for XOR keys.
-            check_sql := format(
-                'ADD CONSTRAINT %I CHECK ((%s) = 1)',
-                check_constraint_name,
-                format('num_nonnulls(%s)', (SELECT string_agg(format('%I', col), ', ') FROM unnest(mutually_exclusive_columns) as col))
+            -- XOR keys now use a single UNIQUE constraint with NULLS NOT DISTINCT
+            -- This replaces the complex CHECK + partial indexes + partial EXCLUDE constraints
+            
+            -- For XOR keys, we use the unified unique constraint approach
+            IF unique_constraint IS NULL THEN
+                unique_constraint := unique_key_name;
+            END IF;
+
+            -- Generate UNIQUE constraint with NULLS NOT DISTINCT to handle XOR columns
+            unique_sql := format('UNIQUE NULLS NOT DISTINCT (%s, %I WITHOUT OVERLAPS)',
+                (SELECT string_agg(format('%I', column_name), ', ') FROM unnest(column_names) AS column_name),
+                era_row.range_column_name
             );
-            alter_cmds := alter_cmds || check_sql;
-
-            -- For each mutually exclusive case, create two things:
-            -- 1. A partial B-Tree index for fast lookups (performance).
-            -- 2. A partial EXCLUDE constraint for temporal uniqueness (correctness).
-            DECLARE
-                non_xor_cols name[];
-                xor_col name;
-            BEGIN
-                non_xor_cols := ARRAY(SELECT c FROM unnest(column_names) AS c WHERE c <> ALL(mutually_exclusive_columns));
-                FOREACH xor_col IN ARRAY mutually_exclusive_columns
-                LOOP
-                    DECLARE
-                        partial_constraint_name name;
-                        partial_index_name name;
-                        withs text[];
-                        where_clause_partial text;
-                        partial_exclude_sql text;
-                        partial_index_sql text;
-                        where_clause_for_index text;
-                    BEGIN
-                        -- 1. Create the performance B-Tree index. This is NOT unique; uniqueness is handled by the EXCLUDE constraint.
-                        partial_index_name := unique_key_name || '_' || xor_col || '_idx';
-                        where_clause_for_index := format('WHERE %I IS NOT NULL AND (%s)',
-                            xor_col,
-                            (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col)
-                        );
-                        partial_index_sql := format(
-                            'CREATE INDEX %I ON %I.%I (%s) %s',
-                            partial_index_name,
-                            table_schema,
-                            table_name,
-                            (SELECT string_agg(quote_ident(c), ', ') FROM unnest(non_xor_cols || xor_col) AS u(c)),
-                            where_clause_for_index
-                        );
-
-                        EXECUTE partial_index_sql;
-                        RAISE NOTICE 'sql_saga: Created partial performance index % on table %', partial_index_name, table_oid;
-                        partial_index_names := partial_index_names || partial_index_name;
-
-                        -- 2. Create the correctness EXCLUDE constraint.
-                        partial_constraint_name := unique_key_name || '_' || xor_col || '_excl';
-                        SELECT array_agg(format('%I WITH =', column_name))
-                        INTO withs
-                        FROM unnest(non_xor_cols || xor_col) AS column_name;
-
-                        -- Use range column directly if individual columns aren't available
-                        IF era_row.valid_from_column_name IS NOT NULL AND era_row.valid_until_column_name IS NOT NULL THEN
-                            withs := withs || format('%I(%I, %I) WITH &&',
-                                era_row.range_type,
-                                era_row.valid_from_column_name,
-                                era_row.valid_until_column_name
-                            );
-                        ELSE
-                            withs := withs || format('%I WITH &&',
-                                era_row.range_column_name
-                            );
-                        END IF;
-
-                        -- The WHERE clause for a partial constraint must be enclosed in parentheses.
-                        where_clause_partial := format('WHERE (%I IS NOT NULL AND (%s))',
-                            xor_col,
-                            (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col)
-                        );
-
-                        partial_exclude_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s) %s DEFERRABLE',
-                            partial_constraint_name,
-                            array_to_string(withs, ', '),
-                            where_clause_partial
-                        );
-                        alter_cmds := alter_cmds || partial_exclude_sql;
-                        partial_exclude_constraint_names := partial_exclude_constraint_names || partial_constraint_name;
-                    END;
-                END LOOP;
-            END;
-            -- The single, broad exclude_constraint is not used for XOR keys.
+            
+            alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+            
+            -- Clear XOR-specific metadata (no longer using partial constraints)
+            v_check_constraint := NULL;
             exclude_constraint := NULL;
         END;
     END IF;
@@ -588,10 +534,10 @@ BEGIN
 
     RAISE DEBUG 'add_unique_key: about to insert with v_stable_cols_to_store=%', v_stable_cols_to_store;
 
-    RAISE DEBUG 'add_unique_key: Inserting into sql_saga.unique_keys: name=%, table=%.%, key_type=%, cols=%, era=%, u_constraint=%, ex_constraint=%, check_constraint=%, predicate=%, mut_ex_cols=%, partial_indices=%, partial_constraints=%, pk_consistency_constraints=%',
-        unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names;
-    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, pk_consistency_constraint_names)
-    VALUES (unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, partial_index_names, partial_exclude_constraint_names, v_pk_consistency_constraint_names);
+    RAISE DEBUG 'add_unique_key: Inserting into sql_saga.unique_keys: name=%, table=%.%, key_type=%, cols=%, era=%, u_constraint=%, ex_constraint=%, check_constraint=%, predicate=%, mut_ex_cols=%, pk_consistency_constraints=%',
+        unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, v_pk_consistency_constraint_names;
+    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, pk_consistency_constraint_names)
+    VALUES (unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, v_pk_consistency_constraint_names);
 
     -- Create compound index for efficient exact match queries (needed by temporal_merge)
     -- This index helps UPDATE/DELETE operations that need to find rows by both
