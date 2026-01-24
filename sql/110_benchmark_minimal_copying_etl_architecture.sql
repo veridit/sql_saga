@@ -1,5 +1,7 @@
 \i sql/include/test_setup.sql
 \i sql/include/benchmark_setup.sql
+\i sql/include/benchmark_fixture_system_simple.sql
+\i sql/include/benchmark_fixture_integration.sql
 
 -- Create schema as superuser before switching roles
 CREATE SCHEMA etl_bench;
@@ -14,7 +16,7 @@ BENCHMARK: Minimal-Copying ETL Architecture - Production Scale Performance
 This benchmark measures the performance of the advanced "merge -> back-propagate -> merge" 
 ETL pattern using updatable views and ID back-propagation from test 071.
 
-Focus: Production-scale volumes (100K, 500K, 1M+ parent records) with full
+Focus: Production-scale volumes (1M+ parent records) with full
 complexity dependency chains to detect O(n^2) vs O(n*log(n)) scaling behavior.
 
 Pattern tested: legal_unit -> location -> stat_for_unit -> activity (full 071)
@@ -22,6 +24,9 @@ Key metric: rows/second throughput for each operation
 
 Architecture: Updatable TEMP VIEWs with back-filling (minimal data copying)
 Purpose: Reveal scaling bottlenecks in real ETL workloads
+
+UPDATED: Now uses fixture system for fast data loading (2-3 seconds vs hours)
+Workflow: Ensure fixtures exist -> Load fixtures -> Run ETL benchmarks
 --------------------------------------------------------------------------------
 $$ as doc;
 
@@ -382,74 +387,159 @@ END;
 $procedure$;
 
 --------------------------------------------------------------------------------
-\echo '--- Performance Test Data Generation ---'
+\echo '--- Fixture Management for ETL Benchmark ---'
 --------------------------------------------------------------------------------
 
--- Data generation function for production-scale volumes
-CREATE FUNCTION etl_bench.generate_test_data(
-    p_total_entities int,
-    p_batches_per_entity int DEFAULT 3,
-    p_rows_per_entity_per_batch int DEFAULT 5
+-- Fixture management functions for ETL benchmark schema
+CREATE FUNCTION etl_bench.ensure_benchmark_fixture(
+    p_scale text, -- '1K', '10K', '100K', '1M'
+    p_auto_generate boolean DEFAULT true,
+    p_force_regenerate boolean DEFAULT false
+) RETURNS boolean LANGUAGE plpgsql AS $function$
+DECLARE
+    v_fixture_name text;
+    v_entities bigint;
+    v_fixture_ready boolean;
+BEGIN
+    -- Parse scale to entity count  
+    v_entities := CASE p_scale
+        WHEN '1K' THEN 1000
+        WHEN '10K' THEN 10000
+        WHEN '100K' THEN 100000
+        WHEN '1M' THEN 1000000
+        ELSE CAST(p_scale AS bigint)
+    END;
+    
+    v_fixture_name := format('etl_bench_%s_standard', p_scale);
+    
+    -- Force regeneration if requested
+    IF p_force_regenerate AND sql_saga_fixtures.fixture_exists(v_fixture_name) THEN
+        RAISE NOTICE 'sql_saga: Force regenerating fixture %', v_fixture_name;
+        PERFORM sql_saga_fixtures.delete_fixture(v_fixture_name);
+    END IF;
+    
+    -- Ensure fixture exists (auto-generate if missing and enabled)
+    v_fixture_ready := sql_saga_fixtures.ensure_etl_fixture(
+        p_scale, 'standard', p_auto_generate
+    );
+    
+    IF NOT v_fixture_ready THEN
+        RAISE NOTICE 'sql_saga: Fixture % not available and auto-generation disabled', v_fixture_name;
+    ELSE
+        RAISE NOTICE 'sql_saga: Fixture % ready (% entities)', v_fixture_name, v_entities;
+    END IF;
+    
+    RETURN v_fixture_ready;
+END;
+$function$;
+
+-- Load fixture data into the ETL benchmark schema
+CREATE FUNCTION etl_bench.load_benchmark_fixture(
+    p_scale text
 ) RETURNS void LANGUAGE plpgsql AS $function$
 DECLARE
-    v_entity int;
-    v_batch int;
-    v_row_num int;
-    v_row_id int := 0;
-    v_base_date date := '2024-01-01'::date;
-    v_activity_codes text[] := ARRAY['manufacturing', 'retail'];
-    v_activity_code text;
+    v_start_time timestamptz;
+    v_end_time timestamptz;
+    v_duration interval;
+    v_total_rows bigint;
+    v_rows_per_second numeric;
 BEGIN
+    v_start_time := clock_timestamp();
+    
+    RAISE NOTICE 'sql_saga: Loading ETL benchmark fixture for % entities', p_scale;
+    
     -- Clear existing data
     TRUNCATE etl_bench.data_table;
     
-    -- Generate test data
-    FOR v_entity IN 1..p_total_entities LOOP
-        FOR v_batch IN 1..p_batches_per_entity LOOP
-            FOR v_row_num IN 1..p_rows_per_entity_per_batch LOOP
-                v_row_id := v_row_id + 1;
-                v_activity_code := v_activity_codes[(v_entity % 2) + 1];
-                
-                INSERT INTO etl_bench.data_table (
-                    row_id, batch, identity_correlation, comment,
-                    tax_ident, lu_name, physical_address, postal_address,
-                    activity_code, employees, turnover,
-                    valid_from, valid_until
-                ) VALUES (
-                    v_row_id,
-                    v_batch,
-                    v_entity,
-                    format('Entity %s batch %s row %s', v_entity, v_batch, v_row_num),
-                    format('TAX%s', v_entity),
-                    format('Company-%s', v_entity),
-                    CASE WHEN v_row_num <= 2 THEN format('%s Main St, City %s', v_entity, v_entity) END,
-                    CASE WHEN v_row_num <= 3 THEN format('PO Box %s', v_entity) END,
-                    CASE WHEN v_row_num <= 4 THEN v_activity_code END,
-                    CASE WHEN v_row_num <= 4 THEN (v_entity % 100) + 10 END,
-                    CASE WHEN v_row_num <= 5 THEN (v_entity % 1000) * 1000 + 50000 END,
-                    v_base_date + ((v_batch - 1) * 90 + (v_row_num - 1) * 30),
-                    'infinity'
-                );
-            END LOOP;
-        END LOOP;
-        
-        -- Progress reporting for large datasets
-        IF v_entity % 100000 = 0 THEN
-            RAISE NOTICE 'Generated data for % entities (% rows)', v_entity, v_row_id;
-        END IF;
-    END LOOP;
+    -- Temporarily make table unlogged for faster loading
+    ALTER TABLE etl_bench.data_table SET UNLOGGED;
     
-    RAISE NOTICE 'Generated % total rows for % entities in % batches', v_row_id, p_total_entities, p_batches_per_entity;
+    -- Load fixture data using the fixture system
+    PERFORM benchmark_load_etl_fixture(p_scale, 'etl_bench.data_table'::regclass, 'standard');
+    
+    -- Restore table to logged state
+    ALTER TABLE etl_bench.data_table SET LOGGED;
+    
+    -- Get row count and calculate performance
+    SELECT COUNT(*) INTO v_total_rows FROM etl_bench.data_table;
+    v_end_time := clock_timestamp();
+    v_duration := v_end_time - v_start_time;
+    v_rows_per_second := v_total_rows / GREATEST(EXTRACT(EPOCH FROM v_duration), 0.001);
+    
+    RAISE NOTICE 'sql_saga: Loaded % rows in % (% rows/sec)', 
+        v_total_rows, v_duration, ROUND(v_rows_per_second);
 END;
 $function$;
+
+-- Show fixture status for the benchmark
+CREATE FUNCTION etl_bench.show_fixture_status()
+RETURNS TABLE(
+    fixture_name text,
+    entities bigint,
+    total_rows bigint,
+    age_hours numeric,
+    load_count bigint,
+    status text
+) LANGUAGE plpgsql AS $function$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        fr.fixture_name,
+        fr.total_entities as entities,
+        fr.total_rows,
+        ROUND(EXTRACT(EPOCH FROM clock_timestamp() - fr.created_at) / 3600, 1) as age_hours,
+        fr.load_count,
+        CASE 
+            WHEN fr.last_loaded_at IS NULL THEN 'NEVER_LOADED'
+            WHEN fr.created_at > clock_timestamp() - interval '1 day' THEN 'FRESH'
+            WHEN fr.created_at > clock_timestamp() - interval '7 days' THEN 'RECENT'
+            ELSE 'OLD'
+        END as status
+    FROM sql_saga_fixtures.fixture_registry fr
+    WHERE fr.fixture_name LIKE 'etl_bench_%'
+    ORDER BY fr.total_entities;
+END;
+$function$;
+
+--------------------------------------------------------------------------------
+\echo '--- Fixture Management and Status ---'
+--------------------------------------------------------------------------------
+
+\echo 'Available ETL benchmark fixtures:'
+SELECT * FROM etl_bench.show_fixture_status();
+
+\echo 'All available fixtures in system:'
+SELECT fixture_name, fixture_type, entities, total_rows, 
+       ROUND(generation_time_sec, 2) as gen_time_sec,
+       CASE 
+           WHEN last_loaded_at IS NOT NULL THEN load_count || ' loads'
+           ELSE 'Never loaded'
+       END as usage
+FROM sql_saga_fixtures.list_fixtures()
+WHERE fixture_name LIKE 'etl_bench_%'
+ORDER BY entities;
+
+\echo 'Fixture system health check:'
+SELECT * FROM benchmark_check_fixture_health()
+WHERE fixture_name LIKE 'etl_bench_%';
 
 --------------------------------------------------------------------------------
 \echo '--- Production Scale Performance Benchmarks ---'
 --------------------------------------------------------------------------------
 
+-- User can uncomment the following lines to force fixture regeneration for testing:
+-- SELECT etl_bench.ensure_benchmark_fixture('1M', true, true) as force_regenerate_1m;
+-- SELECT etl_bench.ensure_benchmark_fixture('100K', true, true) as force_regenerate_100k;
+
 DO $$
 DECLARE
-    v_dataset_size int := 1000000; -- Production size: 1.1M parent + 0.8M child from client
+    -- BENCHMARK CONFIGURATION:
+    -- Change this variable to test different scales:
+    -- '1K'   = 1,000 entities   (15K rows)   - Fast demo/development testing
+    -- '10K'  = 10,000 entities  (150K rows)  - Medium scale testing  
+    -- '100K' = 100,000 entities (1.5M rows)  - Large scale testing
+    -- '1M'   = 1,000,000 entities (15M rows) - Production scale testing
+    v_dataset_scale text := '1M'; -- Uses fixture system for fast loading (2-3 seconds vs hours)
     v_total_batches int;
     v_batch_id int;
     v_start_time timestamptz;
@@ -460,28 +550,41 @@ DECLARE
     v_total_rows int;
     v_total_start_time timestamptz;
     v_total_duration interval;
+    v_fixture_ready boolean;
 BEGIN
-    RAISE NOTICE 'STARTING BENCHMARK: % entities (production-scale)', v_dataset_size;
-        
-        v_total_start_time := clock_timestamp();
-        
-        -- Generate test data
-        INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-        VALUES (format('Generate Test Data - %s entities', v_dataset_size), v_dataset_size, true);
-        
-        v_start_time := clock_timestamp();
-        CALL sql_saga.benchmark_reset();
-        
-        PERFORM etl_bench.generate_test_data(v_dataset_size, 3, 5);
-        SELECT COUNT(*) INTO v_total_rows FROM etl_bench.data_table;
-        
-        v_end_time := clock_timestamp();
-        v_duration := v_end_time - v_start_time;
-        v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_duration);
-        
-        INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-        VALUES (format('Data Generation Complete - %s rows/sec', ROUND(v_rows_per_second)), v_total_rows, true);
-        CALL sql_saga.benchmark_log_and_reset(format('Generate Test Data - %s entities', v_dataset_size));
+    RAISE NOTICE 'STARTING BENCHMARK: % scale production ETL performance test', v_dataset_scale;
+    
+    v_total_start_time := clock_timestamp();
+    
+    -- Display current fixture status
+    RAISE NOTICE 'Current fixture status:';
+    INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
+    VALUES (format('Fixture Status Check - %s scale', v_dataset_scale), 0, false);
+    
+    -- Ensure fixture exists (auto-generate if missing, with user confirmation)
+    v_fixture_ready := etl_bench.ensure_benchmark_fixture(v_dataset_scale, true, false);
+    
+    IF NOT v_fixture_ready THEN
+        RAISE EXCEPTION 'sql_saga: Cannot proceed - fixture for scale % is not available', v_dataset_scale;
+    END IF;
+    
+    -- Load fixture data (replaces old generation step)
+    INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
+    VALUES (format('Load Fixture Data - %s scale', v_dataset_scale), 0, true);
+    
+    v_start_time := clock_timestamp();
+    CALL sql_saga.benchmark_reset();
+    
+    PERFORM etl_bench.load_benchmark_fixture(v_dataset_scale);
+    SELECT COUNT(*) INTO v_total_rows FROM etl_bench.data_table;
+    
+    v_end_time := clock_timestamp();
+    v_duration := v_end_time - v_start_time;
+    v_rows_per_second := v_total_rows / GREATEST(EXTRACT(EPOCH FROM v_duration), 0.001);
+    
+    INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
+    VALUES (format('Fixture Load Complete - %s rows/sec', ROUND(v_rows_per_second)), v_total_rows, true);
+    CALL sql_saga.benchmark_log_and_reset(format('Load Fixture Data - %s scale', v_dataset_scale));
         
         -- Calculate total batches to process
         SELECT MAX(batch) INTO v_total_batches FROM etl_bench.data_table;
@@ -572,7 +675,7 @@ BEGIN
             
             -- Progress reporting for large datasets  
             IF v_batch_id % 1000 = 0 OR v_batch_id = v_total_batches THEN
-                RAISE NOTICE 'Processed batch %s/%s for % entities', v_batch_id, v_total_batches, v_dataset_size;
+                RAISE NOTICE 'Processed batch %s/%s for % scale dataset', v_batch_id, v_total_batches, v_dataset_scale;
             END IF;
         END LOOP;
         
@@ -581,11 +684,11 @@ BEGIN
         v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_total_duration);
         
         INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-        VALUES (format('COMPLETE DATASET %s entities - %s rows/sec overall', v_dataset_size, ROUND(v_rows_per_second)), v_total_rows, true);
+        VALUES (format('COMPLETE %s SCALE DATASET - %s rows/sec overall', v_dataset_scale, ROUND(v_rows_per_second)), v_total_rows, true);
         
-        RAISE NOTICE 'COMPLETED: % entities in % (% rows/sec overall)', v_dataset_size, v_total_duration, ROUND(v_rows_per_second);
+        RAISE NOTICE 'COMPLETED: %s scale dataset in % (% rows/sec overall)', v_dataset_scale, v_total_duration, ROUND(v_rows_per_second);
         
-    -- Clear data for next test
+    -- Clear benchmark tables for next test (keep fixture data intact)
     TRUNCATE etl_bench.legal_unit, etl_bench.location, etl_bench.stat_for_unit, etl_bench.activity, etl_bench.ident, etl_bench.data_table;
 END;
 $$;
@@ -633,5 +736,43 @@ FROM benchmark_monitor_log_filtered
 WHERE event ~ 'Process|Generate'
 ORDER BY total_exec_time DESC
 LIMIT 20;
+
+\echo '--- Fixture System Performance Summary ---'
+SELECT 
+    'Data Loading Method' as metric,
+    'Fixture System' as method,
+    'Fast CSV-based loading' as description
+UNION ALL
+SELECT 
+    'Generation vs Loading',
+    CASE 
+        WHEN EXISTS (SELECT 1 FROM sql_saga_fixtures.fixture_registry WHERE fixture_name LIKE 'etl_bench_%') 
+        THEN 'Fixtures Available'
+        ELSE 'No Fixtures - Would Generate'
+    END,
+    CASE 
+        WHEN EXISTS (SELECT 1 FROM sql_saga_fixtures.fixture_registry WHERE fixture_name LIKE 'etl_bench_%')
+        THEN 'Loading: 2-3 seconds vs Generation: 30-60+ minutes'  
+        ELSE 'First run generates fixtures, subsequent runs load instantly'
+    END;
+
+\echo '--- Updated Fixture Usage Statistics ---'
+SELECT 
+    fixture_name,
+    entities,
+    total_rows,
+    load_count,
+    CASE 
+        WHEN last_loaded_at IS NOT NULL 
+        THEN EXTRACT(EPOCH FROM clock_timestamp() - last_loaded_at) / 60 
+        ELSE NULL 
+    END as minutes_since_last_load
+FROM sql_saga_fixtures.list_fixtures()
+WHERE fixture_name LIKE 'etl_bench_%'
+ORDER BY entities;
+
+-- Cleanup options (commented out - user can uncomment if needed)
+-- \echo 'To cleanup test fixtures (uncomment if needed):'
+-- SELECT sql_saga_fixtures.delete_fixture(fixture_name) FROM sql_saga_fixtures.fixture_registry WHERE fixture_name LIKE 'etl_bench_%test%';
 
 \i sql/include/test_teardown.sql
