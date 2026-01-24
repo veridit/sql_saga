@@ -1,13 +1,13 @@
                    event                    | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 --------------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                                      |         0 | 0 ms            |                | 0 rows    | 
- Temporal Merge SEED Parent                 |         0 | 42 ms           | 42 ms          | 0 rows    | 
- Temporal Merge SEED Parent                 |      2000 | 410 ms          | 368 ms         | 2000 rows | ~5431 rows/s
- Temporal Merge SEED Child                  |         0 | 410 ms          | 0 ms           | 0 rows    | 
- Temporal Merge SEED Child                  |      2000 | 816 ms          | 406 ms         | 2000 rows | ~4932 rows/s
- Temporal Merge 20% INSERT 80% PATCH Parent |         0 | 866 ms          | 50 ms          | 0 rows    | 
- Temporal Merge 20% INSERT 80% PATCH Parent |      2500 | 2 secs          | 947 ms         | 2500 rows | ~2640 rows/s
+ Temporal Merge SEED Parent                 |         0 | 43 ms           | 43 ms          | 0 rows    | 
+ Temporal Merge SEED Parent                 |      2000 | 409 ms          | 365 ms         | 2000 rows | ~5474 rows/s
+ Temporal Merge SEED Child                  |         0 | 409 ms          | 0 ms           | 0 rows    | 
+ Temporal Merge SEED Child                  |      2000 | 797 ms          | 388 ms         | 2000 rows | ~5154 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Parent |         0 | 842 ms          | 45 ms          | 0 rows    | 
+ Temporal Merge 20% INSERT 80% PATCH Parent |      2500 | 2 secs          | 904 ms         | 2500 rows | ~2764 rows/s
  Temporal Merge 20% INSERT 80% PATCH Child  |         0 | 3 secs          | 1 secs         | 0 rows    | 
- Temporal Merge 20% INSERT 80% PATCH Child  |      2500 | 4 secs          | 941 ms         | 2500 rows | ~2656 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Child  |      2500 | 4 secs          | 952 ms         | 2500 rows | ~2626 rows/s
 (9 rows)
 
