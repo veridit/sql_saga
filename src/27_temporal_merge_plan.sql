@@ -2011,6 +2011,11 @@ BEGIN
                 mode                                     /* %2$L */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            -- PERFORMANCE: Analyze temp table for accurate cardinality estimates
+            -- This prevents O(n²) behavior in lateral joins by providing proper statistics
+            v_sql := 'ANALYZE resolved_atomic_segments_with_payloads;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             v_resolver_from := 'resolved_atomic_segments_with_payloads';
     
@@ -2021,6 +2026,11 @@ BEGIN
                     FROM %s
                 $$, v_resolver_from);
                 v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+                -- PERFORMANCE: Analyze temp table for accurate cardinality estimates
+                v_sql := 'ANALYZE resolved_atomic_segments_with_flag;';
+                v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
                 v_resolver_from := 'resolved_atomic_segments_with_flag';
             END IF;
     

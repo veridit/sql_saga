@@ -113,6 +113,7 @@ SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column temporal_merge_test.establishment.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2468,6 +2469,7 @@ SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column temporal_merge_test.establishment.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2582,6 +2584,7 @@ SELECT sql_saga.add_era('temporal_merge_test_vt.test_target', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_vt.test_target to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_target_valid_range_gist_idx" on column temporal_merge_test_vt.test_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2697,6 +2700,7 @@ SELECT sql_saga.add_era('temporal_merge_test_me.test_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_me.test_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_target_valid_range_gist_idx" on column temporal_merge_test_me.test_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2829,6 +2833,7 @@ SELECT sql_saga.add_era('temporal_merge_test.establishment', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table temporal_merge_test.establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column temporal_merge_test.establishment.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2959,6 +2964,7 @@ SELECT sql_saga.add_era('temporal_merge_test_serial.test_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_serial.test_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_target_valid_range_gist_idx" on column temporal_merge_test_serial.test_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -3075,6 +3081,7 @@ SELECT sql_saga.add_era('temporal_merge_test_multi_insert.test_target', 'valid_r
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table temporal_merge_test_multi_insert.test_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_target_valid_range_gist_idx" on column temporal_merge_test_multi_insert.test_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -3206,6 +3213,7 @@ SELECT sql_saga.add_era('tm_44_not_null_test.test_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_unit_synchronize_temporal_columns_trigger" on table tm_44_not_null_test.test_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_unit_valid_range_gist_idx" on column tm_44_not_null_test.test_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -3318,6 +3326,7 @@ SELECT sql_saga.add_era('tm_47_surgical_patch.test_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_target_synchronize_temporal_columns_trigger" on table tm_47_surgical_patch.test_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_target_valid_range_gist_idx" on column tm_47_surgical_patch.test_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t

@@ -68,6 +68,7 @@ SELECT sql_saga.add_era('tmtc.legal_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table tmtc.legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column tmtc.legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -87,6 +88,7 @@ SELECT sql_saga.add_era('tmtc.establishment', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table tmtc.establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column tmtc.establishment.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -113,6 +115,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_valid_range_gist_idx" on column tmtc.stat_for_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -141,6 +144,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_pk', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "stat_for_unit_id_pk_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_id_pk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_id_pk_valid_range_gist_idx" on column tmtc.stat_for_unit_id_pk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -169,6 +173,7 @@ SELECT sql_saga.add_era('tmtc.stat_for_unit_id_gen', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "stat_for_unit_id_gen_synchronize_temporal_columns_trigger" on table tmtc.stat_for_unit_id_gen to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_id_gen_valid_range_gist_idx" on column tmtc.stat_for_unit_id_gen.valid_range for temporal_merge performance
  add_era 
 ---------
  t

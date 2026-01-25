@@ -31,6 +31,7 @@ CREATE TABLE defaults_date (val text, valid_range daterange, valid_from date, va
 -- For synchronized tables, the trigger handles defaults, not the table DDL.
 SELECT sql_saga.add_era('defaults_date', 'valid_range');
 NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_trigger" on table defaults_date to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "defaults_date_valid_range_gist_idx" on column public.defaults_date.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -45,6 +46,8 @@ NOTICE:  sql_saga: Created trigger "defaults_date_synchronize_temporal_columns_t
  valid_from  | date      |           |          | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "defaults_date_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "defaults_date_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -65,6 +68,7 @@ DROP TABLE defaults_date;
 CREATE TABLE defaults_ts (val text, valid_range tstzrange, valid_from timestamptz, valid_until timestamptz);
 SELECT sql_saga.add_era('defaults_ts','valid_range');
 NOTICE:  sql_saga: Created trigger "defaults_ts_synchronize_temporal_columns_trigger" on table defaults_ts to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "defaults_ts_valid_range_gist_idx" on column public.defaults_ts.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -78,6 +82,8 @@ NOTICE:  sql_saga: Created trigger "defaults_ts_synchronize_temporal_columns_tri
  valid_range | tstzrange                |           | not null | 
  valid_from  | timestamp with time zone |           |          | 
  valid_until | timestamp with time zone |           |          | 
+Indexes:
+    "defaults_ts_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "defaults_ts_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -94,6 +100,7 @@ DROP TABLE defaults_ts;
 CREATE TABLE defaults_numeric (val text, valid_range numrange, valid_from numeric, valid_until numeric);
 SELECT sql_saga.add_era('defaults_numeric', 'valid_range');
 NOTICE:  sql_saga: Created trigger "defaults_numeric_synchronize_temporal_columns_trigger" on table defaults_numeric to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "defaults_numeric_valid_range_gist_idx" on column public.defaults_numeric.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -107,6 +114,8 @@ NOTICE:  sql_saga: Created trigger "defaults_numeric_synchronize_temporal_column
  valid_range | numrange |           | not null | 
  valid_from  | numeric  |           |          | 
  valid_until | numeric  |           |          | 
+Indexes:
+    "defaults_numeric_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "defaults_numeric_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -137,6 +146,7 @@ DROP TABLE defaults_numeric;
 CREATE TABLE no_neg_inf (val text, valid_range daterange, valid_from date, valid_until date);
 SELECT sql_saga.add_era('no_neg_inf', 'valid_range');
 NOTICE:  sql_saga: Created trigger "no_neg_inf_synchronize_temporal_columns_trigger" on table no_neg_inf to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "no_neg_inf_valid_range_gist_idx" on column public.no_neg_inf.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -150,6 +160,8 @@ NOTICE:  sql_saga: Created trigger "no_neg_inf_synchronize_temporal_columns_trig
  valid_range | daterange |           | not null | 
  valid_from  | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "no_neg_inf_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "no_neg_inf_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -164,6 +176,7 @@ DROP TABLE no_neg_inf;
 CREATE TABLE defaults_int (val text, valid_range int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('defaults_int', 'valid_range');
 NOTICE:  sql_saga: Created trigger "defaults_int_synchronize_temporal_columns_trigger" on table defaults_int to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "defaults_int_valid_range_gist_idx" on column public.defaults_int.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -177,6 +190,8 @@ NOTICE:  sql_saga: Created trigger "defaults_int_synchronize_temporal_columns_tr
  valid_range | int4range |           | not null | 
  valid_from  | integer   |           |          | 
  valid_until | integer   |           |          | 
+Indexes:
+    "defaults_int_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "defaults_int_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -200,6 +215,7 @@ CREATE TABLE flags_test (val text, valid_range daterange, valid_from date, valid
 SAVEPOINT test_no_defaults;
 SELECT sql_saga.add_era('flags_test', 'valid_range', add_defaults => false);
 NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trigger" on table flags_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "flags_test_valid_range_gist_idx" on column public.flags_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -213,6 +229,8 @@ NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trig
  valid_range | daterange |           | not null | 
  valid_from  | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "flags_test_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "flags_test_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -229,6 +247,7 @@ ROLLBACK TO SAVEPOINT test_no_defaults;
 SAVEPOINT test_no_bounds_check;
 SELECT sql_saga.add_era('flags_test', 'valid_range', add_bounds_check => false);
 NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trigger" on table flags_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "flags_test_valid_range_gist_idx" on column public.flags_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -242,6 +261,8 @@ NOTICE:  sql_saga: Created trigger "flags_test_synchronize_temporal_columns_trig
  valid_range | daterange |           | not null | 
  valid_from  | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "flags_test_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Triggers:
     flags_test_valid_sync_temporal_trg BEFORE INSERT OR UPDATE OF valid_range, valid_from, valid_until ON flags_test FOR EACH ROW EXECUTE FUNCTION sql_saga.public_flags_test_valid_template_sync()
 

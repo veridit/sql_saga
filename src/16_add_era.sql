@@ -480,6 +480,30 @@ BEGIN
         END IF;
     END;
 
+    -- Create performance indexes for temporal operations
+    DECLARE
+        v_temporal_index_name name;
+        v_temporal_index_sql text;
+    BEGIN
+        -- Create GIST index on temporal range column for fast temporal queries
+        v_temporal_index_name := format('%s_%s_gist_idx', table_name, range_column_name);
+        
+        -- Check if index already exists
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            WHERE i.indrelid = table_oid
+            AND c.relname = v_temporal_index_name
+        ) THEN
+            v_temporal_index_sql := format('CREATE INDEX %I ON %I.%I USING GIST (%I) WITH (fillfactor = 90)',
+                v_temporal_index_name, table_schema, table_name, range_column_name);
+            
+            EXECUTE v_temporal_index_sql;
+            RAISE NOTICE 'sql_saga: Created GIST index "%" on column % for temporal_merge performance', 
+                v_temporal_index_name, format('%I.%I.%I', table_schema, table_name, range_column_name);
+        END IF;
+    END;
+
     RETURN true;
 END;
 $function$;

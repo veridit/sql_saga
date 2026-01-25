@@ -72,6 +72,7 @@ SELECT sql_saga.add_era('saga_repro.target_units_a', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_a_synchronize_temporal_columns_trigger" on table saga_repro.target_units_a to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_a_valid_range_gist_idx" on column saga_repro.target_units_a.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -90,6 +91,7 @@ SELECT sql_saga.add_era('saga_repro.target_units_b', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_b_synchronize_temporal_columns_trigger" on table saga_repro.target_units_b to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_b_valid_range_gist_idx" on column saga_repro.target_units_b.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -108,6 +110,7 @@ SELECT sql_saga.add_era('saga_repro.target_units_c', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_c_synchronize_temporal_columns_trigger" on table saga_repro.target_units_c to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_c_valid_range_gist_idx" on column saga_repro.target_units_c.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -314,6 +317,7 @@ SELECT sql_saga.add_era('saga_repro.target_units_coalesce', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_coalesce_synchronize_temporal_columns_trigger" on table saga_repro.target_units_coalesce to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_coalesce_valid_range_gist_idx" on column saga_repro.target_units_coalesce.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -403,6 +407,7 @@ SELECT sql_saga.add_era('saga_repro.target_units_ephemeral', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.target_units_ephemeral to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_ephemeral_valid_range_gist_idx" on column saga_repro.target_units_ephemeral.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -609,6 +614,7 @@ SELECT sql_saga.add_era('saga_repro.target_not_null_default', 'valid_range',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_not_null_default_synchronize_temporal_columns_trigger" on table saga_repro.target_not_null_default to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_not_null_default_valid_range_gist_idx" on column saga_repro.target_not_null_default.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -696,6 +702,7 @@ SELECT sql_saga.add_era('saga_repro.legal_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table saga_repro.legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column saga_repro.legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -793,6 +800,7 @@ SELECT sql_saga.add_era('saga_repro.audited_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "audited_unit_synchronize_temporal_columns_trigger" on table saga_repro.audited_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "audited_unit_valid_range_gist_idx" on column saga_repro.audited_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -906,6 +914,7 @@ SELECT sql_saga.add_era('saga_repro.target_with_audit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_with_audit_synchronize_temporal_columns_trigger" on table saga_repro.target_with_audit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_with_audit_valid_range_gist_idx" on column saga_repro.target_with_audit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -994,6 +1003,7 @@ SELECT sql_saga.add_era('saga_repro.target_with_audit_patch', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_with_audit_patch_synchronize_temporal_columns_trigger" on table saga_repro.target_with_audit_patch to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_with_audit_patch_valid_range_gist_idx" on column saga_repro.target_with_audit_patch.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1090,6 +1100,7 @@ SELECT sql_saga.add_era('saga_repro.target_mixed_ephemeral', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_mixed_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.target_mixed_ephemeral to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_mixed_ephemeral_valid_range_gist_idx" on column saga_repro.target_mixed_ephemeral.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1197,6 +1208,7 @@ SELECT sql_saga.add_era('saga_repro.target_batch_ephemeral', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_batch_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.target_batch_ephemeral to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_batch_ephemeral_valid_range_gist_idx" on column saga_repro.target_batch_ephemeral.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1310,6 +1322,7 @@ SELECT sql_saga.add_era('saga_repro.target_temp_view_test', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_temp_view_test_synchronize_temporal_columns_trigger" on table saga_repro.target_temp_view_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_temp_view_test_valid_range_gist_idx" on column saga_repro.target_temp_view_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1460,6 +1473,7 @@ SELECT sql_saga.add_era('saga_repro.target_statbus', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_statbus_synchronize_temporal_columns_trigger" on table saga_repro.target_statbus to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_statbus_valid_range_gist_idx" on column saga_repro.target_statbus.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1593,6 +1607,7 @@ SELECT sql_saga.add_era('saga_repro.target_step13', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_step13_synchronize_temporal_columns_trigger" on table saga_repro.target_step13 to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_step13_valid_range_gist_idx" on column saga_repro.target_step13.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1716,6 +1731,7 @@ SELECT sql_saga.add_era('saga_repro.target_default_preservation', 'valid_range',
     valid_from_column_name => 'valid_from', 
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_default_preservation_synchronize_temporal_columns_trigge" on table saga_repro.target_default_preservation to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_default_preservation_valid_range_gist_idx" on column saga_repro.target_default_preservation.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1815,6 +1831,7 @@ SELECT sql_saga.add_era('saga_repro.target_ephemeral_split', 'valid_range',
     valid_from_column_name => 'valid_from', 
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_ephemeral_split_synchronize_temporal_columns_trigger" on table saga_repro.target_ephemeral_split to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_ephemeral_split_valid_range_gist_idx" on column saga_repro.target_ephemeral_split.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1948,6 +1965,7 @@ SELECT sql_saga.add_era('saga_repro.target_ephemeral_replace', 'valid_range',
     valid_from_column_name => 'valid_from', 
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_ephemeral_replace_synchronize_temporal_columns_trigger" on table saga_repro.target_ephemeral_replace to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_ephemeral_replace_valid_range_gist_idx" on column saga_repro.target_ephemeral_replace.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2087,6 +2105,7 @@ SELECT sql_saga.add_era('saga_repro.target_null_nk', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_null_nk_synchronize_temporal_columns_trigger" on table saga_repro.target_null_nk to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_null_nk_valid_range_gist_idx" on column saga_repro.target_null_nk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2234,6 +2253,7 @@ SELECT sql_saga.add_era('saga_repro.lu_era_ephemeral', 'valid_range',
     valid_until_column_name => 'valid_until',
     ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
 NOTICE:  sql_saga: Created trigger "lu_era_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.lu_era_ephemeral to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "lu_era_ephemeral_valid_range_gist_idx" on column saga_repro.lu_era_ephemeral.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2360,6 +2380,7 @@ SELECT sql_saga.add_era('saga_repro.lu_set_ephemeral', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "lu_set_ephemeral_synchronize_temporal_columns_trigger" on table saga_repro.lu_set_ephemeral to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "lu_set_ephemeral_valid_range_gist_idx" on column saga_repro.lu_set_ephemeral.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2525,6 +2546,7 @@ SELECT sql_saga.add_era('saga_repro.lu_override_test', 'valid_range',
     valid_until_column_name => 'valid_until',
     ephemeral_columns => ARRAY['edit_at']);  -- Only edit_at is ephemeral at era level
 NOTICE:  sql_saga: Created trigger "lu_override_test_synchronize_temporal_columns_trigger" on table saga_repro.lu_override_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "lu_override_test_valid_range_gist_idx" on column saga_repro.lu_override_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t

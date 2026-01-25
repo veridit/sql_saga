@@ -32,6 +32,7 @@ SELECT sql_saga.add_era('uk', 'valid_range', 'p',
     valid_from_column_name => 'f',
     valid_until_column_name => 'u');
 NOTICE:  sql_saga: Created trigger "uk_synchronize_temporal_columns_trigger" on table uk to synchronize columns: f, u
+NOTICE:  sql_saga: Created GIST index "uk_valid_range_gist_idx" on column public.uk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -50,6 +51,7 @@ SELECT sql_saga.add_era('fk', 'valid_range', 'q',
     valid_from_column_name => 'f',
     valid_until_column_name => 'u');
 NOTICE:  sql_saga: Created trigger "fk_synchronize_temporal_columns_trigger" on table fk to synchronize columns: f, u
+NOTICE:  sql_saga: Created GIST index "fk_valid_range_gist_idx" on column public.fk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -226,6 +228,7 @@ SELECT sql_saga.add_era('t_uk', 'valid_range', 'valid',
     valid_from_column_name => 'valid_after',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "t_uk_synchronize_temporal_columns_trigger" on table t_uk to synchronize columns: valid_after, valid_until
+NOTICE:  sql_saga: Created GIST index "t_uk_valid_range_gist_idx" on column public.t_uk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -250,6 +253,7 @@ SELECT sql_saga.add_era('t_fk', 'valid_range', 'valid',
     valid_from_column_name => 'valid_after',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "t_fk_synchronize_temporal_columns_trigger" on table t_fk to synchronize columns: valid_after, valid_until
+NOTICE:  sql_saga: Created GIST index "t_fk_valid_range_gist_idx" on column public.t_fk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -305,6 +309,7 @@ SELECT sql_saga.add_era('t_uk_gen', 'valid_range', 'valid',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_end_date');
 NOTICE:  sql_saga: Created trigger "t_uk_gen_synchronize_temporal_columns_trigger" on table t_uk_gen to synchronize columns: valid_end_date, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "t_uk_gen_valid_range_gist_idx" on column public.t_uk_gen.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -330,6 +335,7 @@ SELECT sql_saga.add_era('t_fk_gen', 'valid_range', 'valid',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_end_date');
 NOTICE:  sql_saga: Created trigger "t_fk_gen_synchronize_temporal_columns_trigger" on table t_fk_gen to synchronize columns: valid_end_date, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "t_fk_gen_valid_range_gist_idx" on column public.t_fk_gen.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -384,6 +390,7 @@ SELECT sql_saga.add_era('legal_unit_bug', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "legal_unit_bug_synchronize_temporal_columns_trigger" on table legal_unit_bug to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_bug_valid_range_gist_idx" on column public.legal_unit_bug.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -409,6 +416,7 @@ SELECT sql_saga.add_era('establishment_bug', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "establishment_bug_synchronize_temporal_columns_trigger" on table establishment_bug to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_bug_valid_range_gist_idx" on column public.establishment_bug.valid_range for temporal_merge performance
  add_era 
 ---------
  t

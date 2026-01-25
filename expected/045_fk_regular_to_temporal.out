@@ -51,6 +51,7 @@ CREATE TABLE regular_fk (
 );
 -- 2. Add a unique key to the temporal table.
 SELECT sql_saga.add_era('temporal_pk', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "temporal_pk_valid_range_gist_idx" on column public.temporal_pk.valid_range for temporal_merge performance
  add_era 
 ---------
  t

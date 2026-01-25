@@ -74,6 +74,7 @@ SELECT sql_saga.add_era('"""quoted"" table"', '"valid range"',
     valid_from_column_name => '"valid from"',
     valid_until_column_name => '"valid until"');
 NOTICE:  sql_saga: Created trigger ""quoted" table_synchronize_temporal_columns_trigger" on table """quoted"" table" to synchronize columns: "valid from", "valid until"
+NOTICE:  sql_saga: Created GIST index ""quoted" table_"valid range"_gist_idx" on column public."""quoted"" table"."""valid range""" for temporal_merge performance
  add_era 
 ---------
  t
@@ -118,6 +119,7 @@ SELECT sql_saga.add_era('"""fk "" test"""', '"range"',
     valid_from_column_name => '"from"',
     valid_until_column_name => '"until"');
 NOTICE:  sql_saga: Created trigger ""fk " test"_synchronize_temporal_columns_trigger" on table """fk "" test""" to synchronize columns: "from", "until"
+NOTICE:  sql_saga: Created GIST index ""fk " test"_"range"_gist_idx" on column public."""fk "" test"""."""range""" for temporal_merge performance
  add_era 
 ---------
  t

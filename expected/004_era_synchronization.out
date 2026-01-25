@@ -39,6 +39,7 @@ CREATE TABLE sync_test_default (id int, valid_range daterange, valid_from date, 
 -- This will auto-detect all conventional columns: valid_from, valid_to, valid_until
 SELECT sql_saga.add_era('sync_test_default', 'valid_range');
 NOTICE:  sql_saga: Created trigger "sync_test_default_synchronize_temporal_columns_trigger" on table sync_test_default to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_default_valid_range_gist_idx" on column public.sync_test_default.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -59,6 +60,8 @@ TABLE sql_saga.era;
  valid_from  | date      |           |          | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_default_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_default_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -248,6 +251,7 @@ SAVEPOINT test_2;
 CREATE TABLE sync_test_disabled (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 -- Note: synchronize_columns is set to false to disable all synchronization.
 SELECT sql_saga.add_era('sync_test_disabled', 'valid_range', synchronize_columns => false);
+NOTICE:  sql_saga: Created GIST index "sync_test_disabled_valid_range_gist_idx" on column public.sync_test_disabled.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -268,6 +272,8 @@ TABLE sql_saga.era;
  valid_from  | date      |           |          | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_disabled_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_disabled_valid_check" CHECK (NOT isempty(valid_range))
 
@@ -280,6 +286,8 @@ Check constraints:
  valid_from  | date      |           |          | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_disabled_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_disabled_valid_check" CHECK (NOT isempty(valid_range))
 
@@ -298,6 +306,7 @@ SAVEPOINT test_3;
 CREATE TABLE sync_test_custom_name (id int, date_range daterange, start_date date, until_date date, to_date date);
 SELECT sql_saga.add_era('sync_test_custom_name', 'date_range', valid_from_column_name => 'start_date', valid_until_column_name => 'until_date', valid_to_column_name => 'to_date');
 NOTICE:  sql_saga: Created trigger "sync_test_custom_name_synchronize_temporal_columns_trigger" on table sync_test_custom_name to synchronize columns: to_date, start_date, until_date
+NOTICE:  sql_saga: Created GIST index "sync_test_custom_name_date_range_gist_idx" on column public.sync_test_custom_name.date_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -318,6 +327,8 @@ TABLE sql_saga.era;
  start_date | date      |           | not null | 
  until_date | date      |           |          | 
  to_date    | date      |           |          | 
+Indexes:
+    "sync_test_custom_name_date_range_gist_idx" gist (date_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_custom_name_check" CHECK (start_date < until_date AND start_date > '-infinity'::date)
     "sync_test_custom_name_valid_check" CHECK (NOT isempty(date_range))
@@ -502,6 +513,7 @@ CREATE TABLE sync_test_generated (id int, valid_range daterange, valid_from date
 -- Auto-detection should find from/until but skip the generated `valid_to`
 SELECT sql_saga.add_era('sync_test_generated', 'valid_range');
 NOTICE:  sql_saga: Created trigger "sync_test_generated_synchronize_temporal_columns_trigger" on table sync_test_generated to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_generated_valid_range_gist_idx" on column public.sync_test_generated.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -522,6 +534,8 @@ TABLE sql_saga.era;
  valid_from  | date      |           |          | 
  valid_until | date      |           |          | 
  valid_to    | date      |           |          | generated always as ((valid_until - '@ 1 day'::interval)) stored
+Indexes:
+    "sync_test_generated_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_generated_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -682,6 +696,7 @@ CREATE TABLE sync_test_wrong_type (id int, valid_range daterange, valid_from dat
 SELECT sql_saga.add_era('sync_test_wrong_type', 'valid_range');
 WARNING:  sql_saga: Synchronization column "valid_to" on table sync_test_wrong_type has an incompatible data type (text). It must match the era subtype (date). Skipping synchronization.
 NOTICE:  sql_saga: Created trigger "sync_test_wrong_type_synchronize_temporal_columns_trigger" on table sync_test_wrong_type to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_wrong_type_valid_range_gist_idx" on column public.sync_test_wrong_type.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -696,6 +711,8 @@ NOTICE:  sql_saga: Created trigger "sync_test_wrong_type_synchronize_temporal_co
  valid_from  | date      |           |          | 
  valid_to    | text      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_wrong_type_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_wrong_type_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -719,6 +736,7 @@ SAVEPOINT test_6a;
 CREATE TABLE sync_test_not_null (id int, valid_range daterange, valid_from date, valid_to date NOT NULL, valid_until date);
 SELECT sql_saga.add_era('sync_test_not_null', 'valid_range');
 NOTICE:  sql_saga: Created trigger "sync_test_not_null_synchronize_temporal_columns_trigger" on table sync_test_not_null to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_not_null_valid_range_gist_idx" on column public.sync_test_not_null.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -735,6 +753,8 @@ NOTICE:  sql_saga: Created trigger "sync_test_not_null_synchronize_temporal_colu
  valid_from  | date      |           |          | 
  valid_to    | date      |           | not null | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_not_null_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_not_null_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -758,6 +778,7 @@ CREATE TABLE sync_test_no_defaults (id int, valid_range daterange, valid_from da
 -- This prevents the trigger from defaulting valid_until to 'infinity'.
 SELECT sql_saga.add_era('sync_test_no_defaults', 'valid_range', add_defaults => false);
 NOTICE:  sql_saga: Created trigger "sync_test_no_defaults_synchronize_temporal_columns_trigger" on table sync_test_no_defaults to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_no_defaults_valid_range_gist_idx" on column public.sync_test_no_defaults.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -775,6 +796,7 @@ CREATE TABLE sync_test_nullable_with_defaults (id int, valid_range daterange, va
 -- Note: add_defaults => true (default)
 SELECT sql_saga.add_era('sync_test_nullable_with_defaults', 'valid_range');
 NOTICE:  sql_saga: Created trigger "sync_test_nullable_with_defaults_synchronize_temporal_columns_t" on table sync_test_nullable_with_defaults to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_nullable_with_defaults_valid_range_gist_idx" on column public.sync_test_nullable_with_defaults.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -789,6 +811,8 @@ NOTICE:  sql_saga: Created trigger "sync_test_nullable_with_defaults_synchronize
  valid_from  | date      |           | not null | 
  valid_to    | date      |           |          | 
  valid_until | date      |           |          | 
+Indexes:
+    "sync_test_nullable_with_defaults_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "sync_test_nullable_with_defaults_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -811,6 +835,7 @@ SAVEPOINT test_7_top;
 CREATE TABLE sync_test_null_update (id int, valid_range daterange, valid_from date, valid_to date, valid_until date);
 SELECT sql_saga.add_era('sync_test_null_update', 'valid_range', add_defaults => false);
 NOTICE:  sql_saga: Created trigger "sync_test_null_update_synchronize_temporal_columns_trigger" on table sync_test_null_update to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "sync_test_null_update_valid_range_gist_idx" on column public.sync_test_null_update.valid_range for temporal_merge performance
  add_era 
 ---------
  t

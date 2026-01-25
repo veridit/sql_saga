@@ -55,6 +55,7 @@ SELECT sql_saga.add_era('tm_gen_col_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_gen_col_target_synchronize_temporal_columns_trigger" on table tm_gen_col_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_gen_col_target_valid_range_gist_idx" on column public.tm_gen_col_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -108,6 +109,7 @@ SELECT sql_saga.add_era('tm_mix_bug_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_mix_bug_target_synchronize_temporal_columns_trigger" on table tm_mix_bug_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_mix_bug_target_valid_range_gist_idx" on column public.tm_mix_bug_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -180,6 +182,7 @@ SELECT sql_saga.add_era('tm_bad_params_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_bad_params_target_synchronize_temporal_columns_trigger" on table tm_bad_params_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_bad_params_target_valid_range_gist_idx" on column public.tm_bad_params_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -224,6 +227,7 @@ SELECT sql_saga.add_era('tm_bad_cols_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_bad_cols_target_synchronize_temporal_columns_trigger" on table tm_bad_cols_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_bad_cols_target_valid_range_gist_idx" on column public.tm_bad_cols_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -269,6 +273,7 @@ SELECT sql_saga.add_era('tm_custom_rowid_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_custom_rowid_target_synchronize_temporal_columns_trigger" on table tm_custom_rowid_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_custom_rowid_target_valid_range_gist_idx" on column public.tm_custom_rowid_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -337,6 +342,7 @@ SELECT sql_saga.add_era('tm_no_rowid_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_no_rowid_target_synchronize_temporal_columns_trigger" on table tm_no_rowid_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_no_rowid_target_valid_range_gist_idx" on column public.tm_no_rowid_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -372,6 +378,7 @@ SELECT sql_saga.add_era('tm_weird_names', 'period_range',
     valid_until_column_name => 'period_ends',
     era_name => 'timeline');
 NOTICE:  sql_saga: Created trigger "tm_weird_names_synchronize_temporal_columns_trigger" on table tm_weird_names to synchronize columns: period_begins, period_ends
+NOTICE:  sql_saga: Created GIST index "tm_weird_names_period_range_gist_idx" on column public.tm_weird_names.period_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -446,6 +453,7 @@ SELECT sql_saga.add_era('tm_no_data_cols_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_no_data_cols_target_synchronize_temporal_columns_trigger" on table tm_no_data_cols_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_no_data_cols_target_valid_range_gist_idx" on column public.tm_no_data_cols_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -514,6 +522,7 @@ SELECT sql_saga.add_era('tm_extra_cols_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_extra_cols_target_synchronize_temporal_columns_trigger" on table tm_extra_cols_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_extra_cols_target_valid_range_gist_idx" on column public.tm_extra_cols_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -575,6 +584,7 @@ SELECT sql_saga.add_era('tm_founding_target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "tm_founding_target_synchronize_temporal_columns_trigger" on table tm_founding_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_founding_target_valid_range_gist_idx" on column public.tm_founding_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -675,6 +685,7 @@ SELECT sql_saga.add_era('tm_era_ephemeral_target', 'valid_range',
     valid_until_column_name => 'valid_until',
     ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
 NOTICE:  sql_saga: Created trigger "tm_era_ephemeral_target_synchronize_temporal_columns_trigger" on table tm_era_ephemeral_target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "tm_era_ephemeral_target_valid_range_gist_idx" on column public.tm_era_ephemeral_target.valid_range for temporal_merge performance
  add_era 
 ---------
  t

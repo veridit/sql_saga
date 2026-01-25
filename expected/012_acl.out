@@ -50,6 +50,7 @@ CREATE VIEW show_owners AS
 CREATE TABLE owner_test (col text, v daterange, f date, u date, PRIMARY KEY (col, v WITHOUT OVERLAPS));
 ALTER TABLE owner_test OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('owner_test', 'v', 'p');
+NOTICE:  sql_saga: Created GIST index "owner_test_v_gist_idx" on column public.owner_test.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -127,6 +128,7 @@ CREATE VIEW show_acls AS
 CREATE TABLE fpacl (col text, v daterange, f date, u date, PRIMARY KEY (col, v WITHOUT OVERLAPS));
 ALTER TABLE fpacl OWNER TO periods_acl_1;
 SELECT sql_saga.add_era('fpacl', 'v', 'p');
+NOTICE:  sql_saga: Created GIST index "fpacl_v_gist_idx" on column public.fpacl.v for temporal_merge performance
  add_era 
 ---------
  t

@@ -868,6 +868,7 @@ SELECT sql_saga.add_era('ss.parent', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table ss.parent to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "parent_valid_range_gist_idx" on column ss.parent.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -884,6 +885,7 @@ SELECT sql_saga.add_era('ss.child', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table ss.child to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "child_valid_range_gist_idx" on column ss.child.valid_range for temporal_merge performance
  add_era 
 ---------
  t

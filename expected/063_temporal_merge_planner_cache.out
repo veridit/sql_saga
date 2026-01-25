@@ -50,6 +50,7 @@ SELECT sql_saga.add_era('tmpc.target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_synchronize_temporal_columns_trigger" on table tmpc.target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_valid_range_gist_idx" on column tmpc.target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -82,6 +83,7 @@ Indexes:
     "target_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "target_id_idx" btree (id)
     "target_id_valid_range_idx" btree (id, valid_range)
+    "target_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "target_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_valid_check" CHECK (NOT isempty(valid_range))
@@ -166,7 +168,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 44 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -823,6 +825,8 @@ NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=95
 NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
                 SELECT
@@ -900,7 +904,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=54
+NOTICE:    Buffers: shared hit=80
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -1405,6 +1409,7 @@ SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_nk_not_null_synchronize_temporal_columns_trigger" on table tmpc.target_nk_not_null to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_nk_not_null_valid_range_gist_idx" on column tmpc.target_nk_not_null.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1440,6 +1445,7 @@ Indexes:
     "target_nk_not_null_pkey" PRIMARY KEY (type, lu_id, valid_range WITHOUT OVERLAPS)
     "target_nk_not_null_type_lu_id_idx" btree (type, lu_id)
     "target_nk_not_null_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
+    "target_nk_not_null_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "target_nk_not_null_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_nk_not_null_valid_check" CHECK (NOT isempty(valid_range))
@@ -1515,7 +1521,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 44 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -2172,6 +2178,8 @@ NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=99
 NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
                 SELECT
@@ -2249,7 +2257,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56
+NOTICE:    Buffers: shared hit=83
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -2756,6 +2764,7 @@ SELECT sql_saga.add_era('tmpc.target_nk', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_nk_synchronize_temporal_columns_trigger" on table tmpc.target_nk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_nk_valid_range_gist_idx" on column tmpc.target_nk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2806,6 +2815,7 @@ Indexes:
     "target_nk_type_lu_id_idx" btree (type, lu_id)
     "target_nk_type_lu_id_valid_excl" EXCLUDE USING gist (type WITH =, lu_id WITH =, valid_range WITH &&) WHERE (es_id IS NULL) DEFERRABLE
     "target_nk_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
+    "target_nk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "lu_or_es_id_check" CHECK (lu_id IS NOT NULL AND es_id IS NULL OR lu_id IS NULL AND es_id IS NOT NULL)
     "target_nk_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -2885,7 +2895,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 44 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -3556,6 +3566,8 @@ NOTICE:                      Buffers: local hit=6
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=103
 NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
                 SELECT
@@ -3633,7 +3645,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=58
+NOTICE:    Buffers: shared hit=86
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS

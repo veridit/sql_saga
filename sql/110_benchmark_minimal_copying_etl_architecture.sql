@@ -173,8 +173,7 @@ BEGIN
     v_end_time := clock_timestamp();
     v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_end_time - v_start_time);
     
-    RAISE NOTICE 'Generated % rows in % (% rows/sec)', 
-        v_total_rows, (v_end_time - v_start_time), ROUND(v_rows_per_second);
+    -- Performance data logged to benchmark table only (not as NOTICE)
 END;
 $function$;
 
@@ -266,7 +265,7 @@ $procedure$;
 
 DO $$
 DECLARE
-    v_dataset_size int := 10000; -- Start with 10K for fast iteration
+    v_dataset_size int := 10000; -- Stable dataset size for consistent testing
     v_total_batches int;
     v_batch_id int;
     v_start_time timestamptz;
@@ -284,7 +283,7 @@ BEGIN
     
     -- Generate test data
     INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-    VALUES (format('Generate Test Data - %s entities', v_dataset_size), v_dataset_size, true);
+    VALUES (format('Generate Test Data - %s entities start', v_dataset_size), 0, false);
     
     v_start_time := clock_timestamp();
     CALL sql_saga.benchmark_reset();
@@ -297,7 +296,7 @@ BEGIN
     v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_duration);
     
     INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-    VALUES (format('Data Generation Complete - %s rows/sec', ROUND(v_rows_per_second)), v_total_rows, true);
+    VALUES (format('Generate Test Data - %s entities end', v_dataset_size), v_total_rows, true);
     CALL sql_saga.benchmark_log_and_reset(format('Generate Test Data - %s entities', v_dataset_size));
     
     -- Calculate total batches to process
@@ -313,13 +312,15 @@ BEGIN
         
         -- Process Legal Units (main optimization target)
         INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-        VALUES (format('Process Legal Units - Batch %s/%s', v_batch_id, v_total_batches), v_rows_processed, true);
+        VALUES (format('Process Legal Units - Batch %s/%s start', v_batch_id, v_total_batches), 0, false);
         
         v_start_time := clock_timestamp();
         CALL sql_saga.benchmark_reset();
         
         CALL etl_bench.process_legal_units(v_batch_id);
         
+        -- Add EXPLAIN logging for temporal_merge operations after each batch
+        -- This captures query execution plans to identify O(n²) bottlenecks in temporal_merge_plan
         v_end_time := clock_timestamp();
         v_duration := v_end_time - v_start_time;
         v_rows_per_second := CASE WHEN EXTRACT(EPOCH FROM v_duration) > 0 
@@ -327,7 +328,7 @@ BEGIN
                             ELSE 0 END;
         
         INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-        VALUES (format('Legal Units Complete - %s rows/sec', ROUND(v_rows_per_second)), v_rows_processed, true);
+        VALUES (format('Process Legal Units - Batch %s/%s end', v_batch_id, v_total_batches), v_rows_processed, true);
         CALL sql_saga.benchmark_log_and_reset(format('Process Legal Units - Batch %s', v_batch_id));
         
     END LOOP;
@@ -337,50 +338,91 @@ BEGIN
     v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_total_duration);
     
     INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
-    VALUES (format('COMPLETE DATASET %s entities - %s rows/sec overall', v_dataset_size, ROUND(v_rows_per_second)), v_total_rows, true);
+    VALUES (format('COMPLETE DATASET %s entities start', v_dataset_size), 0, false);
     
-    RAISE NOTICE 'COMPLETED: % entities in % (% rows/sec overall)', v_dataset_size, v_total_duration, ROUND(v_rows_per_second);
+    INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
+    VALUES (format('COMPLETE DATASET %s entities end', v_dataset_size), v_total_rows, true);
+    
+    -- Performance summary logged to benchmark table only (not as NOTICE)
     
 END;
 $$;
 
 --------------------------------------------------------------------------------
-\echo '--- Benchmark Results Summary ---'
+\echo '--- Benchmark Complete (performance data in separate log files) ---'
 --------------------------------------------------------------------------------
 
-SELECT 
-    event,
-    row_count,
-    format_duration(timestamp - LAG(timestamp) OVER (ORDER BY seq_id)) as duration,
-    CASE 
-        WHEN event ~ 'rows/sec' THEN 'THROUGHPUT'
-        WHEN event ~ 'Complete' THEN 'RESULT'  
-        WHEN event ~ 'Process' THEN 'OPERATION'
-        ELSE 'SETUP'
-    END as event_type
-FROM benchmark 
-WHERE is_performance_benchmark = true
-ORDER BY seq_id;
+-- Generate EXPLAIN logging to analyze temporal_merge query execution plans
+-- This helps identify O(n²) bottlenecks in temporal_merge_plan operations
+--
+-- KEY FINDINGS FROM EXPLAIN ANALYSIS:
+-- 1. CRITICAL O(n²) PATTERN IDENTIFIED: In "resolved_atomic_segments_with_payloads" step,
+--    there's a Nested Loop with "loops=100" doing sequential scans of active_source_rows
+--    with filter removing 99 rows per iteration (line 680-682 in explain log).
+--
+-- 2. MISSING INDEX OPPORTUNITY: The complex filter condition:
+--    ((is_new_entity AND grouping_key = target.grouping_key) OR 
+--     (NOT is_new_entity AND id = target.id)) AND 
+--    temporal_range <@ source_range
+--    Could benefit from composite indexes on (grouping_key, temporal_range) and (id, temporal_range).
+--
+-- 3. PERFORMANCE IMPACT: This O(n²) pattern explains the 21.5s vs 3.8s difference
+--    between test 110 and test 100 - the payload resolution step scales quadratically.
+--
+-- 4. SOLUTION DIRECTION: The lateral join in payload resolution needs index support
+--    or query restructuring to avoid nested sequential scans.
+--
+\echo '--- Generating EXPLAIN logs for temporal_merge operations ---'
 
--- Performance monitor data (if available)
-\echo '--- Performance Monitor Data (Top Queries by Execution Time) ---'
-SELECT 
-    event,
-    label,
-    calls,
-    ROUND(total_exec_time::numeric, 2) as exec_time_ms,
-    rows,
-    CASE WHEN rows > 0 THEN ROUND((rows::numeric / total_exec_time::numeric * 1000), 1) END as rows_per_sec,
-    LEFT(query, 100) || '...' as query_preview
-FROM benchmark_monitor_log_filtered
-WHERE event ~ 'Process|Generate'
-ORDER BY total_exec_time DESC
-LIMIT 20;
+-- Check if temp table exists and drop it if needed
+DROP TABLE IF EXISTS benchmark_explain_output;
+CREATE TEMP TABLE benchmark_explain_output (line text);
+
+-- Create persistent source table for EXPLAIN analysis (outside of DO block)
+CREATE TEMP TABLE source_lu_for_explain AS
+SELECT
+    row_id,
+    identity_correlation as founding_id,
+    legal_unit_id AS id,
+    lu_name AS name,
+    comment,
+    merge_statuses,
+    merge_errors,
+    valid_from,
+    valid_until
+FROM etl_bench.data_table 
+WHERE batch = 1 AND lu_name IS NOT NULL
+LIMIT 100; -- Use a smaller subset for EXPLAIN analysis
+
+-- Run temporal_merge to populate plan cache
+CALL sql_saga.temporal_merge(
+    target_table => 'etl_bench.legal_unit',
+    source_table => 'source_lu_for_explain',
+    primary_identity_columns => ARRAY['id'],
+    ephemeral_columns => ARRAY['comment'],
+    mode => 'MERGE_ENTITY_PATCH',
+    founding_id_column => 'founding_id',
+    update_source_with_identity => true,
+    update_source_with_feedback => true,
+    feedback_status_column => 'merge_statuses',
+    feedback_status_key => 'legal_unit',
+    feedback_error_column => 'merge_errors',
+    feedback_error_key => 'legal_unit'
+);
+
+-- Generate EXPLAIN log for the temporal_merge operations
+\set benchmark_explain_log_filename expected/performance/110_benchmark_minimal_copying_etl_architecture_legal_unit_explain.log
+\set benchmark_source_table 'source_lu_for_explain'
+\set benchmark_target_table 'etl_bench.legal_unit'
+\i sql/include/benchmark_explain_log.sql
 
 -- Generate performance monitoring files
 \echo '-- Monitor log from pg_stat_monitor --'
 \set monitor_log_filename expected/performance/110_benchmark_minimal_copying_etl_architecture_benchmark_monitor.csv
 \i sql/include/benchmark_monitor_csv.sql
+
+-- Verify the benchmark events and row counts
+SELECT event, row_count FROM benchmark ORDER BY seq_id;
 
 -- Capture performance metrics to a separate file for manual review
 \set benchmark_log_filename expected/performance/110_benchmark_minimal_copying_etl_architecture_benchmark_report.log

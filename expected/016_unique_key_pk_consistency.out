@@ -41,6 +41,7 @@ CREATE TABLE pk_consistency.pk_first (
 );
 SELECT sql_saga.add_era('pk_consistency.pk_first','valid_range');
 NOTICE:  sql_saga: Created trigger "pk_first_synchronize_temporal_columns_trigger" on table pk_consistency.pk_first to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "pk_first_valid_range_gist_idx" on column pk_consistency.pk_first.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -74,6 +75,7 @@ Indexes:
     "pk_first_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "pk_first_id_idx" btree (id)
     "pk_first_id_valid_range_idx" btree (id, valid_range)
+    "pk_first_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -112,6 +114,7 @@ Indexes:
     "pk_first_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
     "pk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "pk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+    "pk_first_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "pk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -133,6 +136,7 @@ CREATE TABLE pk_consistency.nk_first (
 );
 SELECT sql_saga.add_era('pk_consistency.nk_first','valid_range');
 NOTICE:  sql_saga: Created trigger "nk_first_synchronize_temporal_columns_trigger" on table pk_consistency.nk_first to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "nk_first_valid_range_gist_idx" on column pk_consistency.nk_first.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -166,6 +170,7 @@ Indexes:
     "nk_first_natural_key_idx" btree (natural_key)
     "nk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "nk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+    "nk_first_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -205,6 +210,7 @@ Indexes:
     "nk_first_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
     "nk_first_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "nk_first_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+    "nk_first_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "nk_first_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -233,6 +239,7 @@ CREATE TABLE pk_consistency.opt_out (
 );
 SELECT sql_saga.add_era('pk_consistency.opt_out','valid_range');
 NOTICE:  sql_saga: Created trigger "opt_out_synchronize_temporal_columns_trigger" on table pk_consistency.opt_out to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "opt_out_valid_range_gist_idx" on column pk_consistency.opt_out.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -277,6 +284,7 @@ Indexes:
     "opt_out_natural_key_idx" btree (natural_key)
     "opt_out_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "opt_out_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+    "opt_out_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "opt_out_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -309,6 +317,7 @@ SELECT sql_saga.add_era('pk_consistency.composite_pk_a','valid_range');
 WARNING:  Table "pk_consistency.composite_pk_a" has a simple PRIMARY KEY that does not include temporal columns. This schema is incompatible with SCD Type 2 history.
 HINT:  If you plan to use a temporal primary key for this era, you must use a composite primary key that includes a temporal column (e.g., PRIMARY KEY (id, your_range_column)).
 NOTICE:  sql_saga: Created trigger "composite_pk_a_synchronize_temporal_columns_trigger" on table pk_consistency.composite_pk_a to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "composite_pk_a_valid_range_gist_idx" on column pk_consistency.composite_pk_a.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -339,6 +348,7 @@ CREATE TABLE pk_consistency.composite_pk_b (
 );
 SELECT sql_saga.add_era('pk_consistency.composite_pk_b','valid_range');
 NOTICE:  sql_saga: Created trigger "composite_pk_b_synchronize_temporal_columns_trigger" on table pk_consistency.composite_pk_b to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "composite_pk_b_valid_range_gist_idx" on column pk_consistency.composite_pk_b.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -373,6 +383,7 @@ CREATE TABLE pk_consistency.drop_nk (
 );
 SELECT sql_saga.add_era('pk_consistency.drop_nk','valid_range');
 NOTICE:  sql_saga: Created trigger "drop_nk_synchronize_temporal_columns_trigger" on table pk_consistency.drop_nk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "drop_nk_valid_range_gist_idx" on column pk_consistency.drop_nk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -411,6 +422,7 @@ Indexes:
     "drop_nk_natural_key_valid_pk_consistency_excl" EXCLUDE USING gist (natural_key WITH =, id WITH <>)
     "drop_nk_natural_key_valid_range_idx" btree (natural_key, valid_range)
     "drop_nk_natural_key_valid_uniq" UNIQUE (natural_key, valid_range WITHOUT OVERLAPS)
+    "drop_nk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -440,6 +452,7 @@ Indexes:
     "drop_nk_id_valid_range_idx" btree (id, valid_range)
     "drop_nk_natural_key_idx" btree (natural_key)
     "drop_nk_natural_key_valid_range_idx" btree (natural_key, valid_range)
+    "drop_nk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "drop_nk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -461,6 +474,7 @@ CREATE TABLE pk_consistency.drop_pk (
 );
 SELECT sql_saga.add_era('pk_consistency.drop_pk','valid_range');
 NOTICE:  sql_saga: Created trigger "drop_pk_synchronize_temporal_columns_trigger" on table pk_consistency.drop_pk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "drop_pk_valid_range_gist_idx" on column pk_consistency.drop_pk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -512,6 +526,7 @@ Indexes:
     "drop_pk_nk2_valid_pk_consistency_excl" EXCLUDE USING gist (nk2 WITH =, id WITH <>)
     "drop_pk_nk2_valid_range_idx" btree (nk2, valid_range)
     "drop_pk_nk2_valid_uniq" UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
+    "drop_pk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:
@@ -546,6 +561,7 @@ Indexes:
     "drop_pk_nk2_valid_pk_consistency_excl" EXCLUDE USING gist (nk2 WITH =, id WITH <>)
     "drop_pk_nk2_valid_range_idx" btree (nk2, valid_range)
     "drop_pk_nk2_valid_uniq" UNIQUE (nk2, valid_range WITHOUT OVERLAPS)
+    "drop_pk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "drop_pk_valid_check" CHECK (NOT isempty(valid_range))
 Triggers:

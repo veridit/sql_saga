@@ -83,6 +83,7 @@ SELECT sql_saga.add_era('exposed.employees', 'valid_range', 'valid',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table exposed.employees to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "employees_valid_range_gist_idx" on column exposed.employees.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -94,6 +95,7 @@ SELECT sql_saga.add_era('hidden.staff', 'valid_range', 'valid',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "staff_synchronize_temporal_columns_trigger" on table hidden.staff to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "staff_valid_range_gist_idx" on column hidden.staff.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -158,6 +160,7 @@ Indexes:
     "employees_id_idx" btree (id)
     "employees_id_valid_range_idx" btree (id, valid_range)
     "employees_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    "employees_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "employees_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "employees_valid_check" CHECK (NOT isempty(valid_range))
@@ -183,6 +186,7 @@ Indexes:
     "staff_id_idx" btree (id)
     "staff_id_valid_range_idx" btree (id, valid_range)
     "staff_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    "staff_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "staff_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "staff_valid_check" CHECK (NOT isempty(valid_range))
@@ -296,6 +300,7 @@ Indexes:
     "employees_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "employees_id_idx" btree (id)
     "employees_id_valid_range_idx" btree (id, valid_range)
+    "employees_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 
 \d hidden.staff
                       Table "hidden.staff"
@@ -312,6 +317,7 @@ Indexes:
     "staff_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "staff_id_idx" btree (id)
     "staff_id_valid_range_idx" btree (id, valid_range)
+    "staff_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

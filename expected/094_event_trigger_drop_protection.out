@@ -41,6 +41,7 @@ CREATE TABLE dp (
 /* era */
 SELECT sql_saga.add_era('dp', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 NOTICE:  sql_saga: Created trigger "dp_synchronize_temporal_columns_trigger" on table dp to synchronize columns: s, e
+NOTICE:  sql_saga: Created GIST index "dp_v_gist_idx" on column public.dp.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -103,6 +104,7 @@ CREATE TABLE dp_current (
 ALTER TABLE dp_current ADD CONSTRAINT dp_current_pkey PRIMARY KEY (id, v WITHOUT OVERLAPS);
 SELECT sql_saga.add_era('dp_current', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 NOTICE:  sql_saga: Created trigger "dp_current_synchronize_temporal_columns_trigger" on table dp_current to synchronize columns: s, e
+NOTICE:  sql_saga: Created GIST index "dp_current_v_gist_idx" on column public.dp_current.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -177,6 +179,7 @@ CREATE TABLE dp_pk_consistency (
 );
 SELECT sql_saga.add_era('dp_pk_consistency', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 NOTICE:  sql_saga: Created trigger "dp_pk_consistency_synchronize_temporal_columns_trigger" on table dp_pk_consistency to synchronize columns: s, e
+NOTICE:  sql_saga: Created GIST index "dp_pk_consistency_v_gist_idx" on column public.dp_pk_consistency.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -220,6 +223,7 @@ SAVEPOINT s11;
 CREATE TABLE dp_ref (LIKE dp);
 SELECT sql_saga.add_era('dp_ref', 'v', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 NOTICE:  sql_saga: Created trigger "dp_ref_synchronize_temporal_columns_trigger" on table dp_ref to synchronize columns: s, e
+NOTICE:  sql_saga: Created GIST index "dp_ref_v_gist_idx" on column public.dp_ref.v for temporal_merge performance
  add_era 
 ---------
  t

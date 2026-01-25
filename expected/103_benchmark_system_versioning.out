@@ -97,12 +97,14 @@ CREATE TABLE establishment_era_history (
 );
 -- Enable Eras and System Versioning
 SELECT sql_saga.add_era('legal_unit_era_history'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "legal_unit_era_history_valid_range_gist_idx" on column public.legal_unit_era_history.valid_range for temporal_merge performance
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_era('establishment_era_history'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "establishment_era_history_valid_range_gist_idx" on column public.establishment_era_history.valid_range for temporal_merge performance
  add_era 
 ---------
  t

@@ -29,6 +29,7 @@ BEGIN;
 CREATE TABLE parent(id int, valid int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('parent'::regclass, 'valid', 'p');
 NOTICE:  sql_saga: Created trigger "parent_synchronize_temporal_columns_trigger" on table parent to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "parent_valid_gist_idx" on column public.parent.valid for temporal_merge performance
  add_era 
 ---------
  t
@@ -50,6 +51,7 @@ TABLE sql_saga.unique_keys;
 CREATE TABLE child(id int, parent_id int, valid int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('child'::regclass, 'valid', 'q');
 NOTICE:  sql_saga: Created trigger "child_synchronize_temporal_columns_trigger" on table child to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "child_valid_gist_idx" on column public.child.valid for temporal_merge performance
  add_era 
 ---------
  t
@@ -243,6 +245,7 @@ CREATE TABLE era_symmetry_test(id int);
 
 -- 1. Create era and columns together
 SELECT sql_saga.add_era(table_oid => 'era_symmetry_test'::regclass, range_column_name => 'v', create_columns => true, range_type => 'tstzrange'::regtype);
+NOTICE:  sql_saga: Created GIST index "era_symmetry_test_v_gist_idx" on column public.era_symmetry_test.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -254,6 +257,8 @@ SELECT sql_saga.add_era(table_oid => 'era_symmetry_test'::regclass, range_column
 --------+-----------+-----------+----------+---------
  id     | integer   |           |          | 
  v      | tstzrange |           | not null | 
+Indexes:
+    "era_symmetry_test_v_gist_idx" gist (v) WITH (fillfactor='90')
 Check constraints:
     "era_symmetry_test_valid_check" CHECK (NOT isempty(v))
 
@@ -279,6 +284,7 @@ ROLLBACK TO SAVEPOINT before_fail;
 -- 4. Create columns manually, then add era
 ALTER TABLE era_symmetry_test ADD COLUMN v tstzrange;
 SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
+NOTICE:  sql_saga: Created GIST index "era_symmetry_test_v_gist_idx" on column public.era_symmetry_test.v for temporal_merge performance
  add_era 
 ---------
  t
@@ -290,6 +296,8 @@ SELECT sql_saga.add_era('era_symmetry_test'::regclass, 'v');
 --------+-----------+-----------+----------+---------
  id     | integer   |           |          | 
  v      | tstzrange |           | not null | 
+Indexes:
+    "era_symmetry_test_v_gist_idx" gist (v) WITH (fillfactor='90')
 Check constraints:
     "era_symmetry_test_valid_check" CHECK (NOT isempty(v))
 
@@ -306,6 +314,8 @@ SELECT sql_saga.drop_era('era_symmetry_test'::regclass);
 --------+-----------+-----------+----------+---------
  id     | integer   |           |          | 
  v      | tstzrange |           | not null | 
+Indexes:
+    "era_symmetry_test_v_gist_idx" gist (v) WITH (fillfactor='90')
 
 DROP TABLE era_symmetry_test;
 -- Note: The FK and UK were already dropped in the earlier parts of this test.

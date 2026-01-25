@@ -30,6 +30,7 @@ SAVEPOINT natural_key_target;
 -- 1. Setup: Temporal parent and child tables, and a regular child table.
 CREATE TABLE parent_natural(id int, valid_range int4range);
 SELECT sql_saga.add_era('parent_natural'::regclass, 'valid_range', 'p');
+NOTICE:  sql_saga: Created GIST index "parent_natural_valid_range_gist_idx" on column public.parent_natural.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -44,6 +45,7 @@ NOTICE:  sql_saga: Added constraints to table parent_natural: ADD CONSTRAINT par
 
 CREATE TABLE temporal_child_natural(id int, parent_id int, valid_range int4range);
 SELECT sql_saga.add_era('temporal_child_natural'::regclass, 'valid_range', 'q');
+NOTICE:  sql_saga: Created GIST index "temporal_child_natural_valid_range_gist_idx" on column public.temporal_child_natural.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -125,6 +127,7 @@ CREATE TABLE parent_pk(
     PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
 SELECT sql_saga.add_era('parent_pk'::regclass, 'valid_range', 'p');
+NOTICE:  sql_saga: Created GIST index "parent_pk_valid_range_gist_idx" on column public.parent_pk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -139,6 +142,7 @@ NOTICE:  sql_saga: Added constraints to table parent_pk: ALTER COLUMN id SET NOT
 
 CREATE TABLE temporal_child_pk(id int, parent_id int, valid_range int4range);
 SELECT sql_saga.add_era('temporal_child_pk'::regclass, 'valid_range', 'q');
+NOTICE:  sql_saga: Created GIST index "temporal_child_pk_valid_range_gist_idx" on column public.temporal_child_pk.valid_range for temporal_merge performance
  add_era 
 ---------
  t

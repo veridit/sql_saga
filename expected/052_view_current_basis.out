@@ -37,6 +37,7 @@ CREATE TABLE employees (
 -- Register era and unique key
 SELECT sql_saga.add_era('employees', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "employees_synchronize_temporal_columns_trigger" on table employees to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "employees_valid_range_gist_idx" on column public.employees.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -95,6 +96,7 @@ SAVEPOINT before_failure_setup;
 CREATE TABLE widgets (id int, valid_range int4range, valid_from int, valid_until int);
 SELECT sql_saga.add_era('widgets', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "widgets_synchronize_temporal_columns_trigger" on table widgets to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "widgets_valid_range_gist_idx" on column public.widgets.valid_range for temporal_merge performance
  add_era 
 ---------
  t
