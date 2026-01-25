@@ -33,6 +33,7 @@ CREATE TABLE bigint_shifts (
 );
 -- Add era and unique key via sql_saga
 SELECT sql_saga.add_era('bigint_shifts', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "bigint_shifts_valid_range_gist_idx" on column public.bigint_shifts.valid_range for temporal_merge performance
  add_era 
 ---------
  t

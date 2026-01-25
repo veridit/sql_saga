@@ -41,6 +41,7 @@ SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
     valid_until_column_name => 'valid_until',
     valid_to_column_name => 'valid_to');
 NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_to, valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on column public.target_units.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -109,6 +110,7 @@ SELECT sql_saga.add_era('target_units', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_units_synchronize_temporal_columns_trigger" on table target_units to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_units_valid_range_gist_idx" on column public.target_units.valid_range for temporal_merge performance
  add_era 
 ---------
  t

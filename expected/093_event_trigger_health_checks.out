@@ -41,6 +41,7 @@ ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_range', 'p', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until'); -- passes
 NOTICE:  sql_saga: Created trigger "log_synchronize_temporal_columns_trigger" on table log to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "log_valid_range_gist_idx" on column public.log.valid_range for temporal_merge performance
  add_era 
 ---------
  t

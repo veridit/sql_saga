@@ -189,6 +189,7 @@ SELECT sql_saga.add_era('etl.legal_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table etl.legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column etl.legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -226,6 +227,7 @@ SELECT sql_saga.add_era('etl.location', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table etl.location to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "location_valid_range_gist_idx" on column etl.location.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -264,6 +266,7 @@ SELECT sql_saga.add_era('etl.stat_for_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_trigger" on table etl.stat_for_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_valid_range_gist_idx" on column etl.stat_for_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -301,6 +304,7 @@ SELECT sql_saga.add_era('etl.activity', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "activity_synchronize_temporal_columns_trigger" on table etl.activity to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "activity_valid_range_gist_idx" on column etl.activity.valid_range for temporal_merge performance
  add_era 
 ---------
  t

@@ -38,6 +38,7 @@ DROP TABLE unrelated;
 CREATE TABLE rename_test(col1 text, col2 bigint, col3 time, valid_range int4range NOT NULL, s integer, e integer);
 SELECT sql_saga.add_era('rename_test', 'valid_range', 'p', valid_from_column_name => 's', valid_until_column_name => 'e');
 NOTICE:  sql_saga: Created trigger "rename_test_synchronize_temporal_columns_trigger" on table rename_test to synchronize columns: s, e
+NOTICE:  sql_saga: Created GIST index "rename_test_valid_range_gist_idx" on column public.rename_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -132,6 +133,7 @@ TABLE sql_saga.unique_keys;
 CREATE TABLE rename_test_ref (LIKE rename_test);
 SELECT sql_saga.add_era('rename_test_ref', 'valid_range', 'q', valid_from_column_name => 's < e', valid_until_column_name => 'embedded " symbols');
 NOTICE:  sql_saga: Created trigger "rename_test_ref_synchronize_temporal_columns_trigger" on table rename_test_ref to synchronize columns: s < e, embedded " symbols
+NOTICE:  sql_saga: Created GIST index "rename_test_ref_valid_range_gist_idx" on column public.rename_test_ref.valid_range for temporal_merge performance
  add_era 
 ---------
  t

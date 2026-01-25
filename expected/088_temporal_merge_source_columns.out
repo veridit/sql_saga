@@ -38,6 +38,7 @@ SELECT sql_saga.add_era('repro.units', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "units_synchronize_temporal_columns_trigger" on table repro.units to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "units_valid_range_gist_idx" on column repro.units.valid_range for temporal_merge performance
  add_era 
 ---------
  t

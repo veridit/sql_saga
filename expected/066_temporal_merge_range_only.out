@@ -53,6 +53,7 @@ CREATE TABLE tmro.target_date (
     PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
 SELECT sql_saga.add_era('tmro.target_date', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "target_date_valid_range_gist_idx" on column tmro.target_date.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -143,6 +144,7 @@ CREATE TABLE tmro.target_tstz (
     PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
 SELECT sql_saga.add_era('tmro.target_tstz', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "target_tstz_valid_range_gist_idx" on column tmro.target_tstz.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -339,6 +341,7 @@ CREATE TABLE tmro.target_int (
     PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
 );
 SELECT sql_saga.add_era('tmro.target_int', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "target_int_valid_range_gist_idx" on column tmro.target_int.valid_range for temporal_merge performance
  add_era 
 ---------
  t

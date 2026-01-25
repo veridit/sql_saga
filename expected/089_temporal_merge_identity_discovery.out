@@ -43,6 +43,7 @@ SELECT sql_saga.add_era('identity_discovery.person', 'valid_range', 'valid',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "person_synchronize_temporal_columns_trigger" on table identity_discovery.person to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "person_valid_range_gist_idx" on column identity_discovery.person.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -94,6 +95,7 @@ Indexes:
     "person_ssn_valid_pk_consistency_excl" EXCLUDE USING gist (ssn WITH =, id WITH <>)
     "person_ssn_valid_range_idx" btree (ssn, valid_range)
     "person_ssn_valid_uniq" UNIQUE (ssn, valid_range WITHOUT OVERLAPS)
+    "person_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "person_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "person_valid_check" CHECK (NOT isempty(valid_range))

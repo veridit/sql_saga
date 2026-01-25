@@ -44,6 +44,7 @@ SELECT sql_saga.add_era('tmd.target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_synchronize_temporal_columns_trigger" on table tmd.target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_valid_range_gist_idx" on column tmd.target.valid_range for temporal_merge performance
  add_era 
 ---------
  t

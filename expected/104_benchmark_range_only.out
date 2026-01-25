@@ -49,12 +49,14 @@ CREATE TABLE child_range_only (
 );
 -- Add eras (range-only, no synchronization)
 SELECT sql_saga.add_era('parent_range_only'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "parent_range_only_valid_range_gist_idx" on column public.parent_range_only.valid_range for temporal_merge performance
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_era('child_range_only'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "child_range_only_valid_range_gist_idx" on column public.child_range_only.valid_range for temporal_merge performance
  add_era 
 ---------
  t

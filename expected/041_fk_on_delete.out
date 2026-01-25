@@ -57,6 +57,7 @@ CREATE TABLE rooms (
 --
 SELECT sql_saga.add_era(table_oid => 'shifts', range_column_name => 'valid_range');
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created trigger "shifts_synchronize_temporal_columns_trigger" on table shifts to synchronize columns: valid_from, valid_until
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:5: NOTICE:  sql_saga: Created GIST index "shifts_valid_range_gist_idx" on column public.shifts.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -71,6 +72,7 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:6: NOTICE:  sql_saga: Added
 
 SELECT sql_saga.add_era(table_oid => 'houses', range_column_name => 'valid_range', era_name => 'valid', add_bounds_check := false);
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created trigger "houses_synchronize_temporal_columns_trigger" on table houses to synchronize columns: valid_from, valid_until
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:8: NOTICE:  sql_saga: Created GIST index "houses_valid_range_gist_idx" on column public.houses.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -85,6 +87,7 @@ psql:sql/support/shifts_houses_rooms_enable_saga.sql:9: NOTICE:  sql_saga: Added
 
 SELECT sql_saga.add_era(table_oid => 'rooms', range_column_name => 'valid_range', add_bounds_check := false);
 psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created trigger "rooms_synchronize_temporal_columns_trigger" on table rooms to synchronize columns: valid_from, valid_until
+psql:sql/support/shifts_houses_rooms_enable_saga.sql:11: NOTICE:  sql_saga: Created GIST index "rooms_valid_range_gist_idx" on column public.rooms.valid_range for temporal_merge performance
  add_era 
 ---------
  t

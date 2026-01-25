@@ -50,6 +50,7 @@ SELECT sql_saga.add_era('tmpc.target', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_synchronize_temporal_columns_trigger" on table tmpc.target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_valid_range_gist_idx" on column tmpc.target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -82,6 +83,7 @@ Indexes:
     "target_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "target_id_idx" btree (id)
     "target_id_valid_range_idx" btree (id, valid_range)
+    "target_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "target_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_valid_check" CHECK (NOT isempty(valid_range))
@@ -166,7 +168,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 50 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -201,52 +203,82 @@ NOTICE:  Executing setup: CREATE INDEX ON source_initial (id);
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (id, source_row_id);
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id, source_row_id);
+NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE source_initial;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
-                SELECT
-                    s1.*,
-                    eclipse_info.is_eclipsed,
-                    eclipse_info.eclipsed_by
-                FROM source_initial s1
-                CROSS JOIN LATERAL (
+                SELECT * FROM (
+                    -- Path 1: Existing Entities (Window Function on Lookup Keys)
                     SELECT
-                        -- OPTIMIZATION: Use pre-computed valid_range instead of repeated daterange() calls
-                        -- Combined with composite index, this provides 30-40 percent total performance improvement
-                        COALESCE(sql_saga.covers_without_gaps(s2.valid_range, s1.valid_range ORDER BY s2.valid_from), false) as is_eclipsed,
-                        array_agg(s2.source_row_id) as eclipsed_by
-                    FROM source_initial s2
-                    WHERE
-                        (
-                            (NOT s1.lookup_columns_unavailable AND (false))
-                            OR
-                            (s1.lookup_columns_unavailable AND s1.causal_id = s2.causal_id)
-                        )
-                        AND
-                        -- Only consider newer rows (higher row_id) as potential eclipsers.
-                        s2.source_row_id > s1.source_row_id
-                ) eclipse_info;
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE NOT s1.lookup_columns_unavailable
+
+                    UNION ALL
+
+                    -- Path 2: New Entities (Window Function on Causal ID)
+                    SELECT
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY causal_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY causal_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE s1.lookup_columns_unavailable
+                ) t;
             
-NOTICE:  Nested Loop (actual rows=1.00 loops=1)
+NOTICE:  Append (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1.00 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=0.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1.id ORDER BY s1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Sort (actual rows=0.00 loops=1)
-NOTICE:                Sort Key: s2.valid_from
+NOTICE:                Sort Key: s1.id, s1.source_row_id DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Result (actual rows=0.00 loops=1)
-NOTICE:                      One-Time Filter: s1.lookup_columns_unavailable
+NOTICE:                ->  Seq Scan on source_initial s1 (actual rows=0.00 loops=1)
+NOTICE:                      Filter: (NOT lookup_columns_unavailable)
+NOTICE:                      Rows Removed by Filter: 1
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=1)
-NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
-NOTICE:                            Rows Removed by Filter: 1
-NOTICE:                            Buffers: local hit=1
+NOTICE:    ->  WindowAgg (actual rows=1.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1_1.causal_id ORDER BY s1_1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
+NOTICE:          Buffers: local hit=1
+NOTICE:          ->  Sort (actual rows=1.00 loops=1)
+NOTICE:                Sort Key: s1_1.causal_id, s1_1.source_row_id DESC
+NOTICE:                Sort Method: quicksort  Memory: 25kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=1.00 loops=1)
+NOTICE:                      Filter: lookup_columns_unavailable
+NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=43, local read=3
+NOTICE:    Buffers: shared hit=41, local read=5
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -671,6 +703,10 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=26
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE atomic_segments;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
                 SELECT
@@ -678,61 +714,15 @@ NOTICE:  Explaining:
                     target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
                     target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
                     target_row.stable_pk_payload as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
                     NULL::jsonb as trace
                 FROM atomic_segments seg
                 LEFT JOIN target_rows target_row 
                     ON target_row.id = seg.id 
                     AND daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)
-                WHERE NOT seg.is_new_entity
-            
-NOTICE:  Hash Left Join (actual rows=3.00 loops=1)
-NOTICE:    Hash Cond: (seg.id = target_row.id)
-NOTICE:    Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until))
-NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
-NOTICE:          Filter: (NOT is_new_entity)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1.00 loops=1)
-NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=39
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
-                SELECT
-                    seg.grouping_key, seg.canonical_nk_json, seg.id, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
-                    NULL::date as t_valid_from, NULL::date as t_valid_until,
-                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
-                    NULL::jsonb as target_stable_pk_payload,
-                    NULL::jsonb as trace
-                FROM atomic_segments seg
-                WHERE seg.is_new_entity
-            
-NOTICE:  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
-NOTICE:    Filter: is_new_entity
-NOTICE:    Rows Removed by Filter: 3
-NOTICE:    Buffers: local hit=1
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
-                WITH all_segments AS (
-                    SELECT * FROM existing_segments_with_target
-                    UNION ALL
-                    SELECT * FROM new_segments_no_target
-                )
-                SELECT
-                    with_base_payload.*,
-                    with_base_payload.stable_pk_payload as propagated_stable_pk_payload
-                FROM (
-                    SELECT
-                        seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
-                        source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
-                    FROM all_segments seg
-                    
+                
                         LEFT JOIN LATERAL (
                             WITH RECURSIVE ordered_sources AS (
                                 SELECT
@@ -740,11 +730,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE 
-                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
-                OR
-                (NOT seg.is_new_entity AND (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))))
-             -- v_lateral_join_sr_to_seg
+                                WHERE (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -765,24 +751,21 @@ NOTICE:  Explaining:
                             LIMIT 1
                         ) source_payloads ON true
                     
-                    WHERE (source_payloads.data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
-                    AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
-                        WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        ELSE true
-                    END
-                ) with_base_payload
+                WHERE NOT seg.is_new_entity
             
 NOTICE:  Nested Loop Left Join (actual rows=3.00 loops=1)
-NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (existing_segments_with_target.t_data_payload IS NOT NULL))
-NOTICE:    Buffers: local hit=4
-NOTICE:    ->  Append (actual rows=3.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on existing_segments_with_target (actual rows=3.00 loops=1)
+NOTICE:    Buffers: local hit=5
+NOTICE:    ->  Nested Loop Left Join (actual rows=3.00 loops=1)
+NOTICE:          Join Filter: ((target_row.id = seg.id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
+NOTICE:          Buffers: local hit=2
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
+NOTICE:                Filter: (NOT is_new_entity)
 NOTICE:                Buffers: local hit=1
-NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
+NOTICE:          ->  Materialize (actual rows=1.00 loops=3)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
+NOTICE:                      Buffers: local hit=1
 NOTICE:    ->  Limit (actual rows=0.33 loops=3)
 NOTICE:          Buffers: local hit=3
 NOTICE:          CTE ordered_sources
@@ -795,7 +778,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (((existing_segments_with_target.is_new_entity AND (grouping_key = existing_segments_with_target.grouping_key)) OR ((NOT existing_segments_with_target.is_new_entity) AND ((id = existing_segments_with_target.id) OR ((id IS NULL) AND (existing_segments_with_target.id IS NULL))))) AND (daterange(existing_segments_with_target.valid_from, existing_segments_with_target.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: (((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -821,7 +804,121 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=95
+NOTICE:    Buffers: shared hit=64, local read=1
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
+                SELECT
+                    seg.grouping_key, seg.canonical_nk_json, seg.id, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
+                    NULL::date as t_valid_from, NULL::date as t_valid_until,
+                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
+                    NULL::jsonb as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
+                    NULL::jsonb as trace
+                FROM atomic_segments seg
+                
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE source_row.grouping_key = seg.grouping_key
+                                AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    
+                WHERE seg.is_new_entity
+            
+NOTICE:  Nested Loop Left Join (actual rows=0.00 loops=1)
+NOTICE:    Buffers: local hit=1
+NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
+NOTICE:          Filter: is_new_entity
+NOTICE:          Rows Removed by Filter: 3
+NOTICE:          Buffers: local hit=1
+NOTICE:    ->  Limit (never executed)
+NOTICE:          CTE ordered_sources
+NOTICE:            ->  WindowAgg (never executed)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  ->  Sort (never executed)
+NOTICE:                        Sort Key: source_row.source_row_id
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (never executed)
+NOTICE:                              Filter: ((grouping_key = seg.grouping_key) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:          CTE running_payload
+NOTICE:            ->  Recursive Union (never executed)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
+NOTICE:                  ->  CTE Scan on ordered_sources (never executed)
+NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
+NOTICE:                  ->  Hash Join (never executed)
+NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
+NOTICE:                        ->  WorkTable Scan on running_payload r (never executed)
+NOTICE:                        ->  Hash (never executed)
+NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (never executed)
+NOTICE:                Sort Key: running_payload.rn DESC
+NOTICE:                ->  CTE Scan on running_payload (never executed)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=3
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE new_segments_no_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
+                WITH all_segments AS (
+                    SELECT * FROM existing_segments_with_target
+                    UNION ALL
+                    SELECT * FROM new_segments_no_target
+                )
+                SELECT
+                    seg.*,
+                    seg.stable_pk_payload as propagated_stable_pk_payload
+                FROM all_segments seg
+                WHERE (seg.s_data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
+                AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                    WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    ELSE true
+                END
+            
+NOTICE:  Result (actual rows=3.00 loops=1)
+NOTICE:    Buffers: local hit=1
+NOTICE:    ->  Append (actual rows=3.00 loops=1)
+NOTICE:          Buffers: local hit=1
+NOTICE:          ->  Seq Scan on existing_segments_with_target (actual rows=3.00 loops=1)
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
+NOTICE:                Buffers: local hit=1
+NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=129
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -900,7 +997,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=54
+NOTICE:    Buffers: shared hit=80
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -1405,6 +1502,7 @@ SELECT sql_saga.add_era('tmpc.target_nk_not_null', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_nk_not_null_synchronize_temporal_columns_trigger" on table tmpc.target_nk_not_null to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_nk_not_null_valid_range_gist_idx" on column tmpc.target_nk_not_null.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -1440,6 +1538,7 @@ Indexes:
     "target_nk_not_null_pkey" PRIMARY KEY (type, lu_id, valid_range WITHOUT OVERLAPS)
     "target_nk_not_null_type_lu_id_idx" btree (type, lu_id)
     "target_nk_not_null_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
+    "target_nk_not_null_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "target_nk_not_null_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "target_nk_not_null_valid_check" CHECK (NOT isempty(valid_range))
@@ -1515,7 +1614,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 50 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -1550,52 +1649,82 @@ NOTICE:  Executing setup: CREATE INDEX ON source_initial (type, lu_id);
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (type, lu_id, source_row_id);
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id, source_row_id);
+NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE source_initial;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
-                SELECT
-                    s1.*,
-                    eclipse_info.is_eclipsed,
-                    eclipse_info.eclipsed_by
-                FROM source_initial s1
-                CROSS JOIN LATERAL (
+                SELECT * FROM (
+                    -- Path 1: Existing Entities (Window Function on Lookup Keys)
                     SELECT
-                        -- OPTIMIZATION: Use pre-computed valid_range instead of repeated daterange() calls
-                        -- Combined with composite index, this provides 30-40 percent total performance improvement
-                        COALESCE(sql_saga.covers_without_gaps(s2.valid_range, s1.valid_range ORDER BY s2.valid_from), false) as is_eclipsed,
-                        array_agg(s2.source_row_id) as eclipsed_by
-                    FROM source_initial s2
-                    WHERE
-                        (
-                            (NOT s1.lookup_columns_unavailable AND (false))
-                            OR
-                            (s1.lookup_columns_unavailable AND s1.causal_id = s2.causal_id)
-                        )
-                        AND
-                        -- Only consider newer rows (higher row_id) as potential eclipsers.
-                        s2.source_row_id > s1.source_row_id
-                ) eclipse_info;
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY type, lu_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY type, lu_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE NOT s1.lookup_columns_unavailable
+
+                    UNION ALL
+
+                    -- Path 2: New Entities (Window Function on Causal ID)
+                    SELECT
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY causal_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY causal_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE s1.lookup_columns_unavailable
+                ) t;
             
-NOTICE:  Nested Loop (actual rows=1.00 loops=1)
+NOTICE:  Append (actual rows=1.00 loops=1)
 NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=1.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1.00 loops=1)
+NOTICE:    ->  WindowAgg (actual rows=0.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1.type, s1.lu_id ORDER BY s1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Sort (actual rows=0.00 loops=1)
-NOTICE:                Sort Key: s2.valid_from
+NOTICE:                Sort Key: s1.type, s1.lu_id, s1.source_row_id DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
 NOTICE:                Buffers: local hit=1
-NOTICE:                ->  Result (actual rows=0.00 loops=1)
-NOTICE:                      One-Time Filter: s1.lookup_columns_unavailable
+NOTICE:                ->  Seq Scan on source_initial s1 (actual rows=0.00 loops=1)
+NOTICE:                      Filter: (NOT lookup_columns_unavailable)
+NOTICE:                      Rows Removed by Filter: 1
 NOTICE:                      Buffers: local hit=1
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=1)
-NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
-NOTICE:                            Rows Removed by Filter: 1
-NOTICE:                            Buffers: local hit=1
+NOTICE:    ->  WindowAgg (actual rows=1.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1_1.causal_id ORDER BY s1_1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
+NOTICE:          Buffers: local hit=1
+NOTICE:          ->  Sort (actual rows=1.00 loops=1)
+NOTICE:                Sort Key: s1_1.causal_id, s1_1.source_row_id DESC
+NOTICE:                Sort Method: quicksort  Memory: 25kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=1.00 loops=1)
+NOTICE:                      Filter: lookup_columns_unavailable
+NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=46, local read=3
+NOTICE:    Buffers: shared hit=44, local read=5
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -2020,6 +2149,10 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=28
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE atomic_segments;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
                 SELECT
@@ -2027,61 +2160,15 @@ NOTICE:  Explaining:
                     target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
                     target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
                     target_row.stable_pk_payload as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
                     NULL::jsonb as trace
                 FROM atomic_segments seg
                 LEFT JOIN target_rows target_row 
                     ON target_row.lu_id = seg.lu_id AND target_row.type = seg.type 
                     AND daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)
-                WHERE NOT seg.is_new_entity
-            
-NOTICE:  Hash Left Join (actual rows=3.00 loops=1)
-NOTICE:    Hash Cond: ((seg.lu_id = target_row.lu_id) AND (seg.type = target_row.type))
-NOTICE:    Join Filter: (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until))
-NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
-NOTICE:          Filter: (NOT is_new_entity)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=1.00 loops=1)
-NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=41
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
-                SELECT
-                    seg.grouping_key, seg.canonical_nk_json, seg.lu_id, seg.type, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
-                    NULL::date as t_valid_from, NULL::date as t_valid_until,
-                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
-                    NULL::jsonb as target_stable_pk_payload,
-                    NULL::jsonb as trace
-                FROM atomic_segments seg
-                WHERE seg.is_new_entity
-            
-NOTICE:  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
-NOTICE:    Filter: is_new_entity
-NOTICE:    Rows Removed by Filter: 3
-NOTICE:    Buffers: local hit=1
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
-                WITH all_segments AS (
-                    SELECT * FROM existing_segments_with_target
-                    UNION ALL
-                    SELECT * FROM new_segments_no_target
-                )
-                SELECT
-                    with_base_payload.*,
-                    with_base_payload.stable_pk_payload as propagated_stable_pk_payload
-                FROM (
-                    SELECT
-                        seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
-                        source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
-                    FROM all_segments seg
-                    
+                
                         LEFT JOIN LATERAL (
                             WITH RECURSIVE ordered_sources AS (
                                 SELECT
@@ -2089,11 +2176,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE 
-                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
-                OR
-                (NOT seg.is_new_entity AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))))
-             -- v_lateral_join_sr_to_seg
+                                WHERE (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -2114,24 +2197,21 @@ NOTICE:  Explaining:
                             LIMIT 1
                         ) source_payloads ON true
                     
-                    WHERE (source_payloads.data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
-                    AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
-                        WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        ELSE true
-                    END
-                ) with_base_payload
+                WHERE NOT seg.is_new_entity
             
 NOTICE:  Nested Loop Left Join (actual rows=3.00 loops=1)
-NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (existing_segments_with_target.t_data_payload IS NOT NULL))
-NOTICE:    Buffers: local hit=4
-NOTICE:    ->  Append (actual rows=3.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on existing_segments_with_target (actual rows=3.00 loops=1)
+NOTICE:    Buffers: local hit=5
+NOTICE:    ->  Nested Loop Left Join (actual rows=3.00 loops=1)
+NOTICE:          Join Filter: ((target_row.lu_id = seg.lu_id) AND (target_row.type = seg.type) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
+NOTICE:          Buffers: local hit=2
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=3.00 loops=1)
+NOTICE:                Filter: (NOT is_new_entity)
 NOTICE:                Buffers: local hit=1
-NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
+NOTICE:          ->  Materialize (actual rows=1.00 loops=3)
+NOTICE:                Storage: Memory  Maximum Storage: 17kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=1.00 loops=1)
+NOTICE:                      Buffers: local hit=1
 NOTICE:    ->  Limit (actual rows=0.33 loops=3)
 NOTICE:          Buffers: local hit=3
 NOTICE:          CTE ordered_sources
@@ -2144,7 +2224,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (((existing_segments_with_target.is_new_entity AND (grouping_key = existing_segments_with_target.grouping_key)) OR ((NOT existing_segments_with_target.is_new_entity) AND ((lu_id = existing_segments_with_target.lu_id) OR ((lu_id IS NULL) AND (existing_segments_with_target.lu_id IS NULL))) AND ((type = existing_segments_with_target.type) OR ((type IS NULL) AND (existing_segments_with_target.type IS NULL))))) AND (daterange(existing_segments_with_target.valid_from, existing_segments_with_target.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: (((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -2170,7 +2250,121 @@ NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=3
 NOTICE:                      Storage: Memory  Maximum Storage: 17kB
 NOTICE:                      Buffers: local hit=3
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=99
+NOTICE:    Buffers: shared hit=67, local read=1
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
+                SELECT
+                    seg.grouping_key, seg.canonical_nk_json, seg.lu_id, seg.type, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
+                    NULL::date as t_valid_from, NULL::date as t_valid_until,
+                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
+                    NULL::jsonb as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
+                    NULL::jsonb as trace
+                FROM atomic_segments seg
+                
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE source_row.grouping_key = seg.grouping_key
+                                AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    
+                WHERE seg.is_new_entity
+            
+NOTICE:  Nested Loop Left Join (actual rows=0.00 loops=1)
+NOTICE:    Buffers: local hit=1
+NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
+NOTICE:          Filter: is_new_entity
+NOTICE:          Rows Removed by Filter: 3
+NOTICE:          Buffers: local hit=1
+NOTICE:    ->  Limit (never executed)
+NOTICE:          CTE ordered_sources
+NOTICE:            ->  WindowAgg (never executed)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  ->  Sort (never executed)
+NOTICE:                        Sort Key: source_row.source_row_id
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (never executed)
+NOTICE:                              Filter: ((grouping_key = seg.grouping_key) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:          CTE running_payload
+NOTICE:            ->  Recursive Union (never executed)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
+NOTICE:                  ->  CTE Scan on ordered_sources (never executed)
+NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
+NOTICE:                  ->  Hash Join (never executed)
+NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
+NOTICE:                        ->  WorkTable Scan on running_payload r (never executed)
+NOTICE:                        ->  Hash (never executed)
+NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (never executed)
+NOTICE:                Sort Key: running_payload.rn DESC
+NOTICE:                ->  CTE Scan on running_payload (never executed)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=3
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE new_segments_no_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
+                WITH all_segments AS (
+                    SELECT * FROM existing_segments_with_target
+                    UNION ALL
+                    SELECT * FROM new_segments_no_target
+                )
+                SELECT
+                    seg.*,
+                    seg.stable_pk_payload as propagated_stable_pk_payload
+                FROM all_segments seg
+                WHERE (seg.s_data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
+                AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                    WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    ELSE true
+                END
+            
+NOTICE:  Result (actual rows=3.00 loops=1)
+NOTICE:    Buffers: local hit=1
+NOTICE:    ->  Append (actual rows=3.00 loops=1)
+NOTICE:          Buffers: local hit=1
+NOTICE:          ->  Seq Scan on existing_segments_with_target (actual rows=3.00 loops=1)
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
+NOTICE:                Buffers: local hit=1
+NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=134
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -2249,7 +2443,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=3.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=56
+NOTICE:    Buffers: shared hit=83
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS
@@ -2756,6 +2950,7 @@ SELECT sql_saga.add_era('tmpc.target_nk', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "target_nk_synchronize_temporal_columns_trigger" on table tmpc.target_nk to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_nk_valid_range_gist_idx" on column tmpc.target_nk.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -2806,6 +3001,7 @@ Indexes:
     "target_nk_type_lu_id_idx" btree (type, lu_id)
     "target_nk_type_lu_id_valid_excl" EXCLUDE USING gist (type WITH =, lu_id WITH =, valid_range WITH &&) WHERE (es_id IS NULL) DEFERRABLE
     "target_nk_type_lu_id_valid_range_idx" btree (type, lu_id, valid_range)
+    "target_nk_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "lu_or_es_id_check" CHECK (lu_id IS NOT NULL AND es_id IS NULL OR lu_id IS NULL AND es_id IS NOT NULL)
     "target_nk_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
@@ -2885,7 +3081,7 @@ BEGIN
     END LOOP;
 END;
 $$;
-NOTICE:  --- Explaining 43 steps from cache
+NOTICE:  --- Explaining 50 steps from cache
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_initial ON COMMIT DROP AS
@@ -2920,52 +3116,82 @@ NOTICE:  Executing setup: CREATE INDEX ON source_initial (type, lu_id, es_id);
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON source_initial (type, lu_id, es_id, source_row_id);
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id);
+NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON source_initial (causal_id, source_row_id);
+NOTICE:  ---
 NOTICE:  Executing setup: ANALYZE source_initial;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
-                SELECT
-                    s1.*,
-                    eclipse_info.is_eclipsed,
-                    eclipse_info.eclipsed_by
-                FROM source_initial s1
-                CROSS JOIN LATERAL (
+                SELECT * FROM (
+                    -- Path 1: Existing Entities (Window Function on Lookup Keys)
                     SELECT
-                        -- OPTIMIZATION: Use pre-computed valid_range instead of repeated daterange() calls
-                        -- Combined with composite index, this provides 30-40 percent total performance improvement
-                        COALESCE(sql_saga.covers_without_gaps(s2.valid_range, s1.valid_range ORDER BY s2.valid_from), false) as is_eclipsed,
-                        array_agg(s2.source_row_id) as eclipsed_by
-                    FROM source_initial s2
-                    WHERE
-                        (
-                            (NOT s1.lookup_columns_unavailable AND (false))
-                            OR
-                            (s1.lookup_columns_unavailable AND s1.causal_id = s2.causal_id)
-                        )
-                        AND
-                        -- Only consider newer rows (higher row_id) as potential eclipsers.
-                        s2.source_row_id > s1.source_row_id
-                ) eclipse_info;
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY type, lu_id, es_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY type, lu_id, es_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE NOT s1.lookup_columns_unavailable
+
+                    UNION ALL
+
+                    -- Path 2: New Entities (Window Function on Causal ID)
+                    SELECT
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY causal_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY causal_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE s1.lookup_columns_unavailable
+                ) t;
             
-NOTICE:  Nested Loop (actual rows=2.00 loops=1)
-NOTICE:    Buffers: local hit=3
-NOTICE:    ->  Seq Scan on source_initial s1 (actual rows=2.00 loops=1)
+NOTICE:  Append (actual rows=2.00 loops=1)
+NOTICE:    Buffers: local hit=2
+NOTICE:    ->  WindowAgg (actual rows=0.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1.type, s1.lu_id, s1.es_id ORDER BY s1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
 NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Aggregate (actual rows=1.00 loops=2)
-NOTICE:          Buffers: local hit=2
-NOTICE:          ->  Sort (actual rows=0.00 loops=2)
-NOTICE:                Sort Key: s2.valid_from
+NOTICE:          ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                Sort Key: s1.type, s1.lu_id, s1.es_id, s1.source_row_id DESC
 NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                Buffers: local hit=2
-NOTICE:                ->  Result (actual rows=0.00 loops=2)
-NOTICE:                      One-Time Filter: s1.lookup_columns_unavailable
-NOTICE:                      Buffers: local hit=2
-NOTICE:                      ->  Seq Scan on source_initial s2 (actual rows=0.00 loops=2)
-NOTICE:                            Filter: ((source_row_id > s1.source_row_id) AND (s1.causal_id = causal_id))
-NOTICE:                            Rows Removed by Filter: 2
-NOTICE:                            Buffers: local hit=2
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on source_initial s1 (actual rows=0.00 loops=1)
+NOTICE:                      Filter: (NOT lookup_columns_unavailable)
+NOTICE:                      Rows Removed by Filter: 2
+NOTICE:                      Buffers: local hit=1
+NOTICE:    ->  WindowAgg (actual rows=2.00 loops=1)
+NOTICE:          Window: w1 AS (PARTITION BY s1_1.causal_id ORDER BY s1_1.source_row_id ROWS BETWEEN UNBOUNDED PRECEDING AND '1'::bigint PRECEDING)
+NOTICE:          Storage: Memory  Maximum Storage: 17kB
+NOTICE:          Buffers: local hit=1
+NOTICE:          ->  Sort (actual rows=2.00 loops=1)
+NOTICE:                Sort Key: s1_1.causal_id, s1_1.source_row_id DESC
+NOTICE:                Sort Method: quicksort  Memory: 25kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on source_initial s1_1 (actual rows=2.00 loops=1)
+NOTICE:                      Filter: lookup_columns_unavailable
+NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=49, local read=3
+NOTICE:    Buffers: shared hit=47, local read=5
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE target_rows ON COMMIT DROP AS
@@ -3404,6 +3630,10 @@ NOTICE:                      Buffers: local hit=1
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=30
 NOTICE:  ---
+NOTICE:  Executing setup: CREATE INDEX ON atomic_segments (grouping_key);
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE atomic_segments;
+NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE existing_segments_with_target ON COMMIT DROP AS
                 SELECT
@@ -3411,61 +3641,15 @@ NOTICE:  Explaining:
                     target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
                     target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
                     target_row.stable_pk_payload as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
                     NULL::jsonb as trace
                 FROM atomic_segments seg
                 LEFT JOIN target_rows target_row 
                     ON (target_row.es_id = seg.es_id OR (target_row.es_id IS NULL AND seg.es_id IS NULL)) AND (target_row.lu_id = seg.lu_id OR (target_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND target_row.type = seg.type 
                     AND daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)
-                WHERE NOT seg.is_new_entity
-            
-NOTICE:  Hash Left Join (actual rows=6.00 loops=1)
-NOTICE:    Hash Cond: (seg.type = target_row.type)
-NOTICE:    Join Filter: (((target_row.es_id = seg.es_id) OR ((target_row.es_id IS NULL) AND (seg.es_id IS NULL))) AND ((target_row.lu_id = seg.lu_id) OR ((target_row.lu_id IS NULL) AND (seg.lu_id IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
-NOTICE:    Buffers: local hit=2
-NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=6.00 loops=1)
-NOTICE:          Filter: (NOT is_new_entity)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Hash (actual rows=2.00 loops=1)
-NOTICE:          Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:          Buffers: local hit=1
-NOTICE:          ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
-NOTICE:                Buffers: local hit=1
-NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=43
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
-                SELECT
-                    seg.grouping_key, seg.canonical_nk_json, seg.es_id, seg.lu_id, seg.type, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
-                    NULL::date as t_valid_from, NULL::date as t_valid_until,
-                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
-                    NULL::jsonb as target_stable_pk_payload,
-                    NULL::jsonb as trace
-                FROM atomic_segments seg
-                WHERE seg.is_new_entity
-            
-NOTICE:  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
-NOTICE:    Filter: is_new_entity
-NOTICE:    Rows Removed by Filter: 6
-NOTICE:    Buffers: local hit=1
-NOTICE:  ---
-NOTICE:  Explaining: 
-                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
-                WITH all_segments AS (
-                    SELECT * FROM existing_segments_with_target
-                    UNION ALL
-                    SELECT * FROM new_segments_no_target
-                )
-                SELECT
-                    with_base_payload.*,
-                    with_base_payload.stable_pk_payload as propagated_stable_pk_payload
-                FROM (
-                    SELECT
-                        seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
-                        source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
-                    FROM all_segments seg
-                    
+                
                         LEFT JOIN LATERAL (
                             WITH RECURSIVE ordered_sources AS (
                                 SELECT
@@ -3473,11 +3657,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE 
-                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
-                OR
-                (NOT seg.is_new_entity AND (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))))
-             -- v_lateral_join_sr_to_seg
+                                WHERE (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -3498,63 +3678,182 @@ NOTICE:  Explaining:
                             LIMIT 1
                         ) source_payloads ON true
                     
-                    WHERE (source_payloads.data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
-                    AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
-                        WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        ELSE true
-                    END
-                ) with_base_payload
+                WHERE NOT seg.is_new_entity
             
 NOTICE:  Nested Loop Left Join (actual rows=6.00 loops=1)
-NOTICE:    Filter: ((running_payload.data_payload IS NOT NULL) OR (existing_segments_with_target.t_data_payload IS NOT NULL))
-NOTICE:    Buffers: local hit=7
+NOTICE:    Buffers: local hit=8
+NOTICE:    ->  Hash Left Join (actual rows=6.00 loops=1)
+NOTICE:          Hash Cond: (seg.type = target_row.type)
+NOTICE:          Join Filter: (((target_row.es_id = seg.es_id) OR ((target_row.es_id IS NULL) AND (seg.es_id IS NULL))) AND ((target_row.lu_id = seg.lu_id) OR ((target_row.lu_id IS NULL) AND (seg.lu_id IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(target_row.valid_from, target_row.valid_until)))
+NOTICE:          Buffers: local hit=2
+NOTICE:          ->  Seq Scan on atomic_segments seg (actual rows=6.00 loops=1)
+NOTICE:                Filter: (NOT is_new_entity)
+NOTICE:                Buffers: local hit=1
+NOTICE:          ->  Hash (actual rows=2.00 loops=1)
+NOTICE:                Buckets: 1024  Batches: 1  Memory Usage: 9kB
+NOTICE:                Buffers: local hit=1
+NOTICE:                ->  Seq Scan on target_rows target_row (actual rows=2.00 loops=1)
+NOTICE:                      Buffers: local hit=1
+NOTICE:    ->  Memoize (actual rows=0.33 loops=6)
+NOTICE:          Cache Key: seg.es_id, seg.lu_id, seg.type, seg.valid_from, seg.valid_until
+NOTICE:          Cache Mode: binary
+NOTICE:          Hits: 0  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+NOTICE:          Buffers: local hit=6
+NOTICE:          ->  Subquery Scan on source_payloads (actual rows=0.33 loops=6)
+NOTICE:                Buffers: local hit=6
+NOTICE:                ->  Limit (actual rows=0.33 loops=6)
+NOTICE:                      Buffers: local hit=6
+NOTICE:                      CTE ordered_sources
+NOTICE:                        ->  WindowAgg (actual rows=0.33 loops=6)
+NOTICE:                              Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                              Storage: Memory  Maximum Storage: 17kB
+NOTICE:                              Buffers: local hit=6
+NOTICE:                              ->  Sort (actual rows=0.33 loops=6)
+NOTICE:                                    Sort Key: source_row.source_row_id
+NOTICE:                                    Sort Method: quicksort  Memory: 25kB
+NOTICE:                                    Buffers: local hit=6
+NOTICE:                                    ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=6)
+NOTICE:                                          Filter: (((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                                          Rows Removed by Filter: 2
+NOTICE:                                          Buffers: local hit=6
+NOTICE:                      CTE running_payload
+NOTICE:                        ->  Recursive Union (actual rows=0.33 loops=6)
+NOTICE:                              Storage: Memory  Maximum Storage: 33kB
+NOTICE:                              Buffers: local hit=6
+NOTICE:                              ->  CTE Scan on ordered_sources (actual rows=0.33 loops=6)
+NOTICE:                                    Filter: (rn = 1)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:                                    Buffers: local hit=6
+NOTICE:                              ->  Hash Join (actual rows=0.00 loops=6)
+NOTICE:                                    Hash Cond: ((r.rn + 1) = s.rn)
+NOTICE:                                    ->  WorkTable Scan on running_payload r (actual rows=0.67 loops=3)
+NOTICE:                                    ->  Hash (actual rows=0.40 loops=5)
+NOTICE:                                          Buckets: 1024  Batches: 1  Memory Usage: 9kB
+NOTICE:                                          ->  CTE Scan on ordered_sources s (actual rows=0.40 loops=5)
+NOTICE:                                                Storage: Memory  Maximum Storage: 17kB
+NOTICE:                      ->  Sort (actual rows=0.33 loops=6)
+NOTICE:                            Sort Key: running_payload.rn DESC
+NOTICE:                            Sort Method: quicksort  Memory: 25kB
+NOTICE:                            Buffers: local hit=6
+NOTICE:                            ->  CTE Scan on running_payload (actual rows=0.33 loops=6)
+NOTICE:                                  Storage: Memory  Maximum Storage: 17kB
+NOTICE:                                  Buffers: local hit=6
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=70, local read=1
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE existing_segments_with_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE new_segments_no_target ON COMMIT DROP AS
+                SELECT
+                    seg.grouping_key, seg.canonical_nk_json, seg.es_id, seg.lu_id, seg.type, seg.causal_id, seg.is_new_entity, seg.is_identifiable, seg.is_ambiguous, seg.conflicting_ids, seg.stable_identity_columns_are_null, seg.lookup_columns_unavailable, seg.valid_from, seg.valid_until,
+                    NULL::date as t_valid_from, NULL::date as t_valid_until,
+                    NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
+                    NULL::jsonb as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
+                    NULL::jsonb as trace
+                FROM atomic_segments seg
+                
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE source_row.grouping_key = seg.grouping_key
+                                AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    
+                WHERE seg.is_new_entity
+            
+NOTICE:  Nested Loop Left Join (actual rows=0.00 loops=1)
+NOTICE:    Buffers: local hit=1
+NOTICE:    ->  Seq Scan on atomic_segments seg (actual rows=0.00 loops=1)
+NOTICE:          Filter: is_new_entity
+NOTICE:          Rows Removed by Filter: 6
+NOTICE:          Buffers: local hit=1
+NOTICE:    ->  Limit (never executed)
+NOTICE:          CTE ordered_sources
+NOTICE:            ->  WindowAgg (never executed)
+NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
+NOTICE:                  ->  Sort (never executed)
+NOTICE:                        Sort Key: source_row.source_row_id
+NOTICE:                        ->  Seq Scan on active_source_rows source_row (never executed)
+NOTICE:                              Filter: ((grouping_key = seg.grouping_key) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:          CTE running_payload
+NOTICE:            ->  Recursive Union (never executed)
+NOTICE:                  Storage: Memory  Maximum Storage: 33kB
+NOTICE:                  ->  CTE Scan on ordered_sources (never executed)
+NOTICE:                        Filter: (rn = 1)
+NOTICE:                        Storage: Memory  Maximum Storage: 17kB
+NOTICE:                  ->  Hash Join (never executed)
+NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
+NOTICE:                        ->  WorkTable Scan on running_payload r (never executed)
+NOTICE:                        ->  Hash (never executed)
+NOTICE:                              ->  CTE Scan on ordered_sources s (never executed)
+NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
+NOTICE:          ->  Sort (never executed)
+NOTICE:                Sort Key: running_payload.rn DESC
+NOTICE:                ->  CTE Scan on running_payload (never executed)
+NOTICE:                      Storage: Memory  Maximum Storage: 17kB
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=3
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE new_segments_no_target;
+NOTICE:  ---
+NOTICE:  Explaining: 
+                CREATE TEMP TABLE resolved_atomic_segments_with_payloads ON COMMIT DROP AS
+                WITH all_segments AS (
+                    SELECT * FROM existing_segments_with_target
+                    UNION ALL
+                    SELECT * FROM new_segments_no_target
+                )
+                SELECT
+                    seg.*,
+                    seg.stable_pk_payload as propagated_stable_pk_payload
+                FROM all_segments seg
+                WHERE (seg.s_data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
+                AND CASE 'MERGE_ENTITY_PATCH'::sql_saga.temporal_merge_mode
+                    WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    ELSE true
+                END
+            
+NOTICE:  Result (actual rows=6.00 loops=1)
+NOTICE:    Buffers: local hit=1
 NOTICE:    ->  Append (actual rows=6.00 loops=1)
 NOTICE:          Buffers: local hit=1
 NOTICE:          ->  Seq Scan on existing_segments_with_target (actual rows=6.00 loops=1)
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
 NOTICE:                Buffers: local hit=1
 NOTICE:          ->  Seq Scan on new_segments_no_target (actual rows=0.00 loops=1)
-NOTICE:    ->  Limit (actual rows=0.33 loops=6)
-NOTICE:          Buffers: local hit=6
-NOTICE:          CTE ordered_sources
-NOTICE:            ->  WindowAgg (actual rows=0.33 loops=6)
-NOTICE:                  Window: w1 AS (ORDER BY source_row.source_row_id ROWS UNBOUNDED PRECEDING)
-NOTICE:                  Storage: Memory  Maximum Storage: 17kB
-NOTICE:                  Buffers: local hit=6
-NOTICE:                  ->  Sort (actual rows=0.33 loops=6)
-NOTICE:                        Sort Key: source_row.source_row_id
-NOTICE:                        Sort Method: quicksort  Memory: 25kB
-NOTICE:                        Buffers: local hit=6
-NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=6)
-NOTICE:                              Filter: ((daterange(existing_segments_with_target.valid_from, existing_segments_with_target.valid_until) <@ daterange(valid_from, valid_until)) AND ((existing_segments_with_target.is_new_entity AND (grouping_key = existing_segments_with_target.grouping_key)) OR ((NOT existing_segments_with_target.is_new_entity) AND ((es_id = existing_segments_with_target.es_id) OR ((es_id IS NULL) AND (existing_segments_with_target.es_id IS NULL))) AND ((lu_id = existing_segments_with_target.lu_id) OR ((lu_id IS NULL) AND (existing_segments_with_target.lu_id IS NULL))) AND ((type = existing_segments_with_target.type) OR ((type IS NULL) AND (existing_segments_with_target.type IS NULL))))))
-NOTICE:                              Rows Removed by Filter: 2
-NOTICE:                              Buffers: local hit=6
-NOTICE:          CTE running_payload
-NOTICE:            ->  Recursive Union (actual rows=0.33 loops=6)
-NOTICE:                  Storage: Memory  Maximum Storage: 33kB
-NOTICE:                  Buffers: local hit=6
-NOTICE:                  ->  CTE Scan on ordered_sources (actual rows=0.33 loops=6)
-NOTICE:                        Filter: (rn = 1)
-NOTICE:                        Storage: Memory  Maximum Storage: 17kB
-NOTICE:                        Buffers: local hit=6
-NOTICE:                  ->  Hash Join (actual rows=0.00 loops=6)
-NOTICE:                        Hash Cond: ((r.rn + 1) = s.rn)
-NOTICE:                        ->  WorkTable Scan on running_payload r (actual rows=0.67 loops=3)
-NOTICE:                        ->  Hash (actual rows=0.40 loops=5)
-NOTICE:                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
-NOTICE:                              ->  CTE Scan on ordered_sources s (actual rows=0.40 loops=5)
-NOTICE:                                    Storage: Memory  Maximum Storage: 17kB
-NOTICE:          ->  Sort (actual rows=0.33 loops=6)
-NOTICE:                Sort Key: running_payload.rn DESC
-NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                Buffers: local hit=6
-NOTICE:                ->  CTE Scan on running_payload (actual rows=0.33 loops=6)
-NOTICE:                      Storage: Memory  Maximum Storage: 17kB
-NOTICE:                      Buffers: local hit=6
+NOTICE:                Filter: ((s_data_payload IS NOT NULL) OR (t_data_payload IS NOT NULL))
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=103
+NOTICE:    Buffers: shared hit=139
+NOTICE:  ---
+NOTICE:  Executing setup: ANALYZE resolved_atomic_segments_with_payloads;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments_with_propagated_ids ON COMMIT DROP AS
@@ -3633,7 +3932,7 @@ NOTICE:                                                                Buffers: 
 NOTICE:                                                                ->  Seq Scan on resolved_atomic_segments_with_payloads (actual rows=6.00 loops=1)
 NOTICE:                                                                      Buffers: local hit=1
 NOTICE:  Planning:
-NOTICE:    Buffers: shared hit=58
+NOTICE:    Buffers: shared hit=86
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE resolved_atomic_segments ON COMMIT DROP AS

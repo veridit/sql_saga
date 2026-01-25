@@ -37,6 +37,7 @@ CREATE TABLE test_entity (
     valid_until date GENERATED ALWAYS AS (upper(valid_range)) STORED
 );
 SELECT sql_saga.add_era('test_entity', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "test_entity_valid_range_gist_idx" on column public.test_entity.valid_range for temporal_merge performance
  add_era 
 ---------
  t

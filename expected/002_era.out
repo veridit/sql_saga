@@ -35,6 +35,7 @@ TABLE sql_saga.era;
 
 SELECT sql_saga.add_era('basic', 'valid', 'bp', valid_from_column_name := 'valid_from', valid_until_column_name := 'valid_until', add_defaults := false);
 NOTICE:  sql_saga: Created trigger "basic_synchronize_temporal_columns_trigger" on table basic to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "basic_valid_gist_idx" on column public.basic.valid for temporal_merge performance
  add_era 
 ---------
  t

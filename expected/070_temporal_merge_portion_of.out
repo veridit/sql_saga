@@ -53,6 +53,7 @@ SELECT sql_saga.add_era('tm_portion_of.target'::regclass, 'valid_range',
     valid_until_column_name => 'valid_until',
     era_name => 'valid');
 NOTICE:  sql_saga: Created trigger "target_synchronize_temporal_columns_trigger" on table tm_portion_of.target to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "target_valid_range_gist_idx" on column tm_portion_of.target.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -315,6 +316,7 @@ SELECT sql_saga.add_era('tm_portion_of.test_unit_not_null'::regclass, 'valid_ran
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "test_unit_not_null_synchronize_temporal_columns_trigger" on table tm_portion_of.test_unit_not_null to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "test_unit_not_null_valid_range_gist_idx" on column tm_portion_of.test_unit_not_null.valid_range for temporal_merge performance
  add_era 
 ---------
  t

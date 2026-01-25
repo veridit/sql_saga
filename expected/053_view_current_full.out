@@ -39,6 +39,7 @@ CREATE TABLE test_schema.schema_test (
 );
 SELECT sql_saga.add_era('test_schema.schema_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "schema_test_synchronize_temporal_columns_trigger" on table test_schema.schema_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "schema_test_valid_range_gist_idx" on column test_schema.schema_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -108,6 +109,7 @@ CREATE TABLE acl_test (id int, value text, status text, comment text, valid_rang
 ALTER TABLE acl_test OWNER to view_test_role;
 SELECT sql_saga.add_era('acl_test', 'valid_range', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "acl_test_synchronize_temporal_columns_trigger" on table acl_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "acl_test_valid_range_gist_idx" on column public.acl_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -242,6 +244,7 @@ CREATE TABLE range_only_employees (
 );
 -- Register era (range-only, no synchronized columns)
 SELECT sql_saga.add_era('range_only_employees', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "range_only_employees_valid_range_gist_idx" on column public.range_only_employees.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -382,6 +385,7 @@ SELECT sql_saga.add_era('current_ephemeral_test', 'valid_range',
     valid_until_column_name => 'valid_until',
     ephemeral_columns => ARRAY['edit_at', 'edit_by_user_id']);
 NOTICE:  sql_saga: Created trigger "current_ephemeral_test_synchronize_temporal_columns_trigger" on table current_ephemeral_test to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "current_ephemeral_test_valid_range_gist_idx" on column public.current_ephemeral_test.valid_range for temporal_merge performance
  add_era 
 ---------
  t

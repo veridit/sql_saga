@@ -66,6 +66,7 @@ SELECT sql_saga.add_era('legal_unit', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column public.legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -76,6 +77,7 @@ SELECT sql_saga.add_era('location', 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "location_synchronize_temporal_columns_trigger" on table location to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "location_valid_range_gist_idx" on column public.location.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -138,6 +140,7 @@ Indexes:
     "legal_unit_id_idx" btree (id)
     "legal_unit_id_valid_range_idx" btree (id, valid_range)
     "legal_unit_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
+    "legal_unit_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "legal_unit_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "legal_unit_valid_check" CHECK (NOT isempty(valid_range))
@@ -162,6 +165,7 @@ Indexes:
     "location_id_valid_range_idx" btree (id, valid_range)
     "location_id_valid_uniq" UNIQUE (id, valid_range WITHOUT OVERLAPS)
     "location_legal_unit_id_valid_gist_idx" gist (legal_unit_id, valid_range)
+    "location_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
     "location_check" CHECK (valid_from < valid_until AND valid_from > '-infinity'::date)
     "location_valid_check" CHECK (NOT isempty(valid_range))
@@ -318,6 +322,7 @@ Indexes:
     "legal_unit_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "legal_unit_id_idx" btree (id)
     "legal_unit_id_valid_range_idx" btree (id, valid_range)
+    "legal_unit_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 
 \d location
                   Table "public.location"
@@ -333,6 +338,7 @@ Indexes:
     "location_pkey" PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
     "location_id_idx" btree (id)
     "location_id_valid_range_idx" btree (id, valid_range)
+    "location_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 
 DROP TABLE legal_unit;
 DROP TABLE location;

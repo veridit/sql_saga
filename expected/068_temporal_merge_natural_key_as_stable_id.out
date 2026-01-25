@@ -43,6 +43,7 @@ SELECT sql_saga.add_era('nk_legal_unit'::regclass, 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "nk_legal_unit_synchronize_temporal_columns_trigger" on table nk_legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "nk_legal_unit_valid_range_gist_idx" on column public.nk_legal_unit.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -69,6 +70,7 @@ SELECT sql_saga.add_era('nk_establishment'::regclass, 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "nk_establishment_synchronize_temporal_columns_trigger" on table nk_establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "nk_establishment_valid_range_gist_idx" on column public.nk_establishment.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -99,6 +101,7 @@ SELECT sql_saga.add_era('nk_unit_employment'::regclass, 'valid_range',
     valid_from_column_name => 'valid_from',
     valid_until_column_name => 'valid_until');
 NOTICE:  sql_saga: Created trigger "nk_unit_employment_synchronize_temporal_columns_trigger" on table nk_unit_employment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "nk_unit_employment_valid_range_gist_idx" on column public.nk_unit_employment.valid_range for temporal_merge performance
  add_era 
 ---------
  t

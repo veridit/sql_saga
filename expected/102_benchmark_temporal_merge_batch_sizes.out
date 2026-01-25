@@ -47,12 +47,14 @@ SET ROLE TO sql_saga_unprivileged_user;
 CREATE TABLE legal_unit_tm_bs_on (id INTEGER, valid_range daterange NOT NULL, name varchar NOT NULL);
 CREATE TABLE establishment_tm_bs_on (id INTEGER, valid_range daterange NOT NULL, legal_unit_id INTEGER NOT NULL, postal_place TEXT NOT NULL);
 SELECT sql_saga.add_era('legal_unit_tm_bs_on'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "legal_unit_tm_bs_on_valid_range_gist_idx" on column public.legal_unit_tm_bs_on.valid_range for temporal_merge performance
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_era('establishment_tm_bs_on'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "establishment_tm_bs_on_valid_range_gist_idx" on column public.establishment_tm_bs_on.valid_range for temporal_merge performance
  add_era 
 ---------
  t
@@ -92,12 +94,14 @@ CREATE TABLE establishment_tm_bs_off (id INTEGER, valid_range daterange NOT NULL
 CREATE INDEX ON legal_unit_tm_bs_off USING GIST (valid_range);
 CREATE INDEX ON establishment_tm_bs_off USING GIST (valid_range);
 SELECT sql_saga.add_era('legal_unit_tm_bs_off'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "legal_unit_tm_bs_off_valid_range_gist_idx" on column public.legal_unit_tm_bs_off.valid_range for temporal_merge performance
  add_era 
 ---------
  t
 (1 row)
 
 SELECT sql_saga.add_era('establishment_tm_bs_off'::regclass, 'valid_range', 'valid');
+NOTICE:  sql_saga: Created GIST index "establishment_tm_bs_off_valid_range_gist_idx" on column public.establishment_tm_bs_off.valid_range for temporal_merge performance
  add_era 
 ---------
  t
