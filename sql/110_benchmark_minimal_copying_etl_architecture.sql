@@ -110,6 +110,7 @@ CREATE TABLE etl_bench.data_table (
 -- Performance indexes for data table
 CREATE INDEX ON etl_bench.data_table (batch, identity_correlation);
 CREATE INDEX ON etl_bench.data_table (identity_correlation, batch, row_id);
+CREATE INDEX ON etl_bench.data_table USING GIST (daterange(valid_from, valid_until)); -- For temporal join performance
 
 -- Identity resolution table for optimized back-propagation (Agent 2A algorithm)
 CREATE TABLE etl_bench.identity_resolution (
@@ -169,6 +170,9 @@ BEGIN
         generate_series(1, p_rows_per_entity_per_batch) as row_in_batch_num;
     
     GET DIAGNOSTICS v_total_rows = ROW_COUNT;
+    
+    -- Update statistics for the new data to ensure optimal query plans
+    ANALYZE etl_bench.data_table;
     
     v_end_time := clock_timestamp();
     v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_end_time - v_start_time);

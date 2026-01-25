@@ -545,6 +545,10 @@ BEGIN
             v_lookup_keys_as_array_expr TEXT;
             v_keys_for_filtering JSONB;
             v_lateral_source_resolver_sql TEXT;
+            v_lateral_source_resolver_sql_existing TEXT;
+            v_lateral_source_resolver_sql_new TEXT;
+            v_lateral_join_sr_to_seg_existing TEXT;
+            v_lateral_join_sr_to_seg_new TEXT;
             v_unified_id_cols_projection TEXT;
             v_target_nk_json_expr TEXT;
             v_identity_keys_jsonb_build_expr_d TEXT;
@@ -660,14 +664,17 @@ BEGIN
             -- PERFORMANCE: We use OR instead of CASE to allow the query optimizer to use index-based
             -- access paths. The CASE expression prevents index usage because the optimizer can't
             -- determine which branch will be taken at planning time.
-            v_lateral_join_sr_to_seg := format($$
-                ((seg.is_new_entity AND source_row.grouping_key = seg.grouping_key)
-                OR
-                (NOT seg.is_new_entity AND %s))
-            $$, (
+            v_lateral_join_sr_to_seg_existing := (
                 SELECT COALESCE(string_agg(format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND '), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
-            ));
+            );
+            v_lateral_join_sr_to_seg_new := 'source_row.grouping_key = seg.grouping_key';
+
+            v_lateral_join_sr_to_seg := format($$
+                ((seg.is_new_entity AND %2$s)
+                OR
+                (NOT seg.is_new_entity AND %1$s))
+            $$, v_lateral_join_sr_to_seg_existing, v_lateral_join_sr_to_seg_new);
             -- Build the join condition for existing_segments_with_target.
             -- Optimized: Use mutually_exclusive_columns for CASE/WHEN optimization when available.
             -- For other NULLABLE columns, use null-safe pattern (a = b OR (a IS NULL AND b IS NULL))
@@ -1460,6 +1467,7 @@ BEGIN
                 );
             END IF;
             -- This CASE statement builds the correct LATERAL join for resolving source payloads based on the mode.
+            -- This CASE statement builds the correct LATERAL join for resolving source payloads based on the mode.
             CASE mode
                 WHEN 'MERGE_ENTITY_PATCH', 'PATCH_FOR_PORTION_OF' THEN
                     v_lateral_source_resolver_sql := format($$
@@ -1491,6 +1499,67 @@ BEGIN
                             LIMIT 1
                         ) source_payloads ON true
                     $$, v_lateral_join_sr_to_seg, v_range_constructor);
+
+                    v_lateral_source_resolver_sql_existing := format($$
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE %1$s
+                                AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_existing, v_range_constructor);
+
+                    v_lateral_source_resolver_sql_new := format($$
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE %1$s
+                                AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || jsonb_strip_nulls(s.data_payload),
+                                    r.ephemeral_payload || jsonb_strip_nulls(s.ephemeral_payload),
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_new, v_range_constructor);
+
                 WHEN 'MERGE_ENTITY_UPSERT', 'UPDATE_FOR_PORTION_OF' THEN
                     v_lateral_source_resolver_sql := format($$
                         LEFT JOIN LATERAL (
@@ -1521,6 +1590,67 @@ BEGIN
                             LIMIT 1
                         ) source_payloads ON true
                     $$, v_lateral_join_sr_to_seg, v_range_constructor);
+
+                    v_lateral_source_resolver_sql_existing := format($$
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE %1$s
+                                AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || s.data_payload,
+                                    r.ephemeral_payload || s.ephemeral_payload,
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_existing, v_range_constructor);
+
+                    v_lateral_source_resolver_sql_new := format($$
+                        LEFT JOIN LATERAL (
+                            WITH RECURSIVE ordered_sources AS (
+                                SELECT
+                                    source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload,
+                                    source_row.valid_from, source_row.valid_until, source_row.causal_id,
+                                    row_number() OVER (ORDER BY source_row.source_row_id) as rn
+                                FROM active_source_rows source_row
+                                WHERE %1$s
+                                AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ),
+                            running_payload AS (
+                                SELECT rn, source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, ARRAY[source_row_id::BIGINT] as contributing_row_ids
+                                FROM ordered_sources WHERE rn = 1
+                                UNION ALL
+                                SELECT
+                                    s.rn, s.source_row_id,
+                                    r.data_payload || s.data_payload,
+                                    r.ephemeral_payload || s.ephemeral_payload,
+                                    s.valid_from, s.valid_until, s.causal_id,
+                                    r.contributing_row_ids || s.source_row_id::BIGINT
+                                FROM running_payload r JOIN ordered_sources s ON s.rn = r.rn + 1
+                            )
+                            SELECT source_row_id, data_payload, ephemeral_payload, valid_from, valid_until, causal_id, contributing_row_ids
+                            FROM running_payload
+                            ORDER BY rn DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_new, v_range_constructor);
+
                 WHEN 'MERGE_ENTITY_REPLACE', 'REPLACE_FOR_PORTION_OF', 'INSERT_NEW_ENTITIES', 'DELETE_FOR_PORTION_OF' THEN
                     v_lateral_source_resolver_sql := format($$
                         LEFT JOIN LATERAL (
@@ -1532,6 +1662,29 @@ BEGIN
                             LIMIT 1
                         ) source_payloads ON true
                     $$, v_lateral_join_sr_to_seg /* %1$s */, v_range_constructor /* %2$I */);
+
+                    v_lateral_source_resolver_sql_existing := format($$
+                        LEFT JOIN LATERAL (
+                            SELECT source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload, source_row.valid_from, source_row.valid_until, source_row.causal_id, ARRAY[source_row.source_row_id::BIGINT] as contributing_row_ids
+                            FROM active_source_rows source_row
+                            WHERE %1$s
+                            AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ORDER BY source_row.source_row_id DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_existing, v_range_constructor);
+
+                    v_lateral_source_resolver_sql_new := format($$
+                        LEFT JOIN LATERAL (
+                            SELECT source_row.source_row_id, source_row.data_payload, source_row.ephemeral_payload, source_row.valid_from, source_row.valid_until, source_row.causal_id, ARRAY[source_row.source_row_id::BIGINT] as contributing_row_ids
+                            FROM active_source_rows source_row
+                            WHERE %1$s
+                            AND %2$I(seg.valid_from, seg.valid_until) <@ %2$I(source_row.valid_from, source_row.valid_until)
+                            ORDER BY source_row.source_row_id DESC
+                            LIMIT 1
+                        ) source_payloads ON true
+                    $$, v_lateral_join_sr_to_seg_new, v_range_constructor);
+
                 ELSE
                     RAISE EXCEPTION 'Unhandled temporal_merge_mode in planner: %', mode;
             END CASE;
@@ -1597,35 +1750,60 @@ BEGIN
                 v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
             END IF;
 
+            v_sql := 'CREATE INDEX ON source_initial (causal_id);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := 'CREATE INDEX ON source_initial (causal_id, source_row_id);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
             v_sql := 'ANALYZE source_initial;';
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             v_sql := format($SQL$
                 CREATE TEMP TABLE source_with_eclipsed_flag ON COMMIT DROP AS
-                SELECT
-                    s1.*,
-                    eclipse_info.is_eclipsed,
-                    eclipse_info.eclipsed_by
-                FROM source_initial s1
-                CROSS JOIN LATERAL (
+                SELECT * FROM (
+                    -- Path 1: Existing Entities (Window Function on Lookup Keys)
                     SELECT
-                        -- OPTIMIZATION: Use pre-computed valid_range instead of repeated daterange() calls
-                        -- Combined with composite index, this provides 30-40 percent total performance improvement
-                        COALESCE(sql_saga.covers_without_gaps(s2.valid_range, s1.valid_range ORDER BY s2.valid_from), false) as is_eclipsed,
-                        array_agg(s2.source_row_id) as eclipsed_by
-                    FROM source_initial s2
-                    WHERE
-                        (
-                            (NOT s1.lookup_columns_unavailable AND (%1$s))
-                            OR
-                            (s1.lookup_columns_unavailable AND s1.causal_id = s2.causal_id)
-                        )
-                        AND
-                        -- Only consider newer rows (higher row_id) as potential eclipsers.
-                        s2.source_row_id > s1.source_row_id
-                ) eclipse_info;
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY %1$s
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY %1$s
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE NOT s1.lookup_columns_unavailable
+
+                    UNION ALL
+
+                    -- Path 2: New Entities (Window Function on Causal ID)
+                    SELECT
+                        s1.*,
+                        COALESCE(
+                            range_agg(valid_range) OVER (
+                                PARTITION BY causal_id
+                                ORDER BY source_row_id DESC
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                            ) @> valid_range,
+                            false
+                        ) as is_eclipsed,
+                        array_agg(source_row_id) OVER (
+                            PARTITION BY causal_id
+                            ORDER BY source_row_id DESC
+                            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+                        ) as eclipsed_by
+                    FROM source_initial s1
+                    WHERE s1.lookup_columns_unavailable
+                ) t;
             $SQL$,
-                v_natural_key_join_condition  -- %1$s
+                (SELECT string_agg(format('%I', col), ', ') FROM unnest(v_lookup_columns) as col)  -- %1$s
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
     
@@ -1937,6 +2115,12 @@ BEGIN
                 v_lookup_cols_select_list_no_alias /* %1$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            v_sql := 'CREATE INDEX ON atomic_segments (grouping_key);';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
+
+            v_sql := 'ANALYZE atomic_segments;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
             
             -- CTE 15: resolved_atomic_segments_with_payloads (Split-path optimization)
             -- Path 1: Existing entities (use Hash Join for better performance)
@@ -1947,19 +2131,28 @@ BEGIN
                     target_row.valid_from as t_valid_from, target_row.valid_until as t_valid_until,
                     target_row.data_payload as t_data_payload, target_row.ephemeral_payload as t_ephemeral_payload, seg.stable_pk_payload, 
                     target_row.stable_pk_payload as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
                     %2$s
                 FROM atomic_segments seg
                 LEFT JOIN target_rows target_row 
                     ON %3$s 
                     AND %4$I(seg.valid_from, seg.valid_until) <@ %4$I(target_row.valid_from, target_row.valid_until)
+                %5$s
                 WHERE NOT seg.is_new_entity
             $SQL$,
                 v_entity_key_for_with_base_payload_expr, /* %1$s */
                 v_trace_seed_expr,                       /* %2$s */
                 v_lateral_join_tr_to_seg,                /* %3$s */
-                v_range_constructor                      /* %4$I */
+                v_range_constructor,                     /* %4$I */
+                v_lateral_source_resolver_sql_existing   /* %5$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            -- Analyze existing_segments_with_target after creation
+            v_sql := 'ANALYZE existing_segments_with_target;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
 
             -- Path 2: New entities (no target join needed)
             v_sql := format($SQL$
@@ -1969,15 +2162,24 @@ BEGIN
                     NULL::%3$s as t_valid_from, NULL::%3$s as t_valid_until,
                     NULL::jsonb as t_data_payload, NULL::jsonb as t_ephemeral_payload, seg.stable_pk_payload,
                     NULL::jsonb as target_stable_pk_payload,
+                    source_payloads.source_row_id, source_payloads.contributing_row_ids,
+                    source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
+                    source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until,
                     %2$s
                 FROM atomic_segments seg
+                %4$s
                 WHERE seg.is_new_entity
             $SQL$,
                 v_entity_key_for_with_base_payload_expr, /* %1$s */
                 v_trace_seed_expr,                       /* %2$s */
-                v_range_subtype                          /* %3$s */
+                v_range_subtype,                         /* %3$s */
+                v_lateral_source_resolver_sql_new        /* %4$s */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
+
+            -- Analyze new_segments_no_target after creation
+            v_sql := 'ANALYZE new_segments_no_target;';
+            v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
 
             -- Path 3: Union and apply source resolution
             v_sql := format($SQL$
@@ -1988,27 +2190,19 @@ BEGIN
                     SELECT * FROM new_segments_no_target
                 )
                 SELECT
-                    with_base_payload.*,
-                    with_base_payload.stable_pk_payload as propagated_stable_pk_payload
-                FROM (
-                    SELECT
-                        seg.*, source_payloads.source_row_id, source_payloads.contributing_row_ids, 
-                        source_payloads.data_payload as s_data_payload, source_payloads.ephemeral_payload as s_ephemeral_payload,
-                        source_payloads.valid_from AS s_valid_from, source_payloads.valid_until AS s_valid_until
-                    FROM all_segments seg
-                    %1$s
-                    WHERE (source_payloads.data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
-                    AND CASE %2$L::sql_saga.temporal_merge_mode
-                        WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
-                        ELSE true
-                    END
-                ) with_base_payload
+                    seg.*,
+                    seg.stable_pk_payload as propagated_stable_pk_payload
+                FROM all_segments seg
+                WHERE (seg.s_data_payload IS NOT NULL OR seg.t_data_payload IS NOT NULL)
+                AND CASE %1$L::sql_saga.temporal_merge_mode
+                    WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'REPLACE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'DELETE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    WHEN 'UPDATE_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+                    ELSE true
+                END
             $SQL$,
-                v_lateral_source_resolver_sql,           /* %1$s */
-                mode                                     /* %2$L */
+                mode                                     /* %1$L */
             );
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'ddl', 'sql', v_sql);
 
