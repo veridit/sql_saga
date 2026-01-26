@@ -457,7 +457,12 @@ NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
-                SELECT *, (CASE
+                WITH nk_specificity_check AS (
+                    SELECT count(DISTINCT nk_non_null_keys_array::text) = 1 AS is_uniform
+                    FROM source_rows_with_nk_json
+                    WHERE is_new_entity
+                )
+                SELECT s.*, (CASE
                 WHEN is_new_entity
                 THEN 'new_entity__' || CASE WHEN NOT (id IS NULL) THEN COALESCE(id::text, '_NULL_') ELSE causal_id::text END
                 ELSE 'existing_entity__' || COALESCE(id::text, '_NULL_')
@@ -465,29 +470,44 @@ NOTICE:  Explaining:
                 FROM (
                     SELECT
                         s1.*,
-                        s2.nk_json as canonical_nk_json
+                        CASE 
+                            -- Fast path: uniform specificity means each row is its own canonical
+                            WHEN (SELECT is_uniform FROM nk_specificity_check) 
+                            THEN s1.nk_json
+                            -- Slow path: varied specificity requires finding most specific match
+                            ELSE (
+                                SELECT s2_inner.nk_json
+                                FROM source_rows_with_nk_json s2_inner
+                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                                ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
+                                LIMIT 1
+                            )
+                        END as canonical_nk_json
                     FROM source_rows_with_nk_json s1
-                    LEFT JOIN LATERAL (
-                        SELECT s2_inner.nk_json, s2_inner.nk_non_null_keys_array
-                        FROM source_rows_with_nk_json s2_inner
-                        WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
-                        ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
-                        LIMIT 1
-                    ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
-NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0.00 loops=1)
-NOTICE:          ->  Sort (actual rows=0.00 loops=1)
-NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
-NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0.00 loops=1)
-NOTICE:                      One-Time Filter: s1.is_new_entity
-NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
-NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
+NOTICE:  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
+NOTICE:    Buffers: local hit=2
+NOTICE:    InitPlan 1
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=1)
+NOTICE:            Buffers: local hit=1
+NOTICE:            ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                  Sort Key: ((source_rows_with_nk_json.nk_non_null_keys_array)::text)
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  Buffers: local hit=1
+NOTICE:                  ->  Seq Scan on source_rows_with_nk_json (actual rows=0.00 loops=1)
+NOTICE:                        Filter: is_new_entity
+NOTICE:                        Rows Removed by Filter: 1
+NOTICE:                        Buffers: local hit=1
+NOTICE:    SubPlan 2
+NOTICE:      ->  Limit (actual rows=0.00 loops=1)
+NOTICE:            ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                  Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  ->  Result (actual rows=0.00 loops=1)
+NOTICE:                        One-Time Filter: s1.is_new_entity
+NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
+NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=64, local hit=1
 NOTICE:  ---
@@ -1903,7 +1923,12 @@ NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
-                SELECT *, (CASE
+                WITH nk_specificity_check AS (
+                    SELECT count(DISTINCT nk_non_null_keys_array::text) = 1 AS is_uniform
+                    FROM source_rows_with_nk_json
+                    WHERE is_new_entity
+                )
+                SELECT s.*, (CASE
                 WHEN is_new_entity
                 THEN 'new_entity__' || CASE WHEN NOT (type IS NULL AND lu_id IS NULL) THEN COALESCE(type::text, '_NULL_') || '__' || COALESCE(lu_id::text, '_NULL_') ELSE causal_id::text END
                 ELSE 'existing_entity__' || COALESCE(type::text, '_NULL_') || '__' || COALESCE(lu_id::text, '_NULL_')
@@ -1911,29 +1936,44 @@ NOTICE:  Explaining:
                 FROM (
                     SELECT
                         s1.*,
-                        s2.nk_json as canonical_nk_json
+                        CASE 
+                            -- Fast path: uniform specificity means each row is its own canonical
+                            WHEN (SELECT is_uniform FROM nk_specificity_check) 
+                            THEN s1.nk_json
+                            -- Slow path: varied specificity requires finding most specific match
+                            ELSE (
+                                SELECT s2_inner.nk_json
+                                FROM source_rows_with_nk_json s2_inner
+                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                                ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
+                                LIMIT 1
+                            )
+                        END as canonical_nk_json
                     FROM source_rows_with_nk_json s1
-                    LEFT JOIN LATERAL (
-                        SELECT s2_inner.nk_json, s2_inner.nk_non_null_keys_array
-                        FROM source_rows_with_nk_json s2_inner
-                        WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
-                        ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
-                        LIMIT 1
-                    ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=1.00 loops=1)
-NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0.00 loops=1)
-NOTICE:          ->  Sort (actual rows=0.00 loops=1)
-NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
-NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0.00 loops=1)
-NOTICE:                      One-Time Filter: s1.is_new_entity
-NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
-NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
+NOTICE:  Seq Scan on source_rows_with_nk_json s1 (actual rows=1.00 loops=1)
+NOTICE:    Buffers: local hit=2
+NOTICE:    InitPlan 1
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=1)
+NOTICE:            Buffers: local hit=1
+NOTICE:            ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                  Sort Key: ((source_rows_with_nk_json.nk_non_null_keys_array)::text)
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  Buffers: local hit=1
+NOTICE:                  ->  Seq Scan on source_rows_with_nk_json (actual rows=0.00 loops=1)
+NOTICE:                        Filter: is_new_entity
+NOTICE:                        Rows Removed by Filter: 1
+NOTICE:                        Buffers: local hit=1
+NOTICE:    SubPlan 2
+NOTICE:      ->  Limit (actual rows=0.00 loops=1)
+NOTICE:            ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                  Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  ->  Result (actual rows=0.00 loops=1)
+NOTICE:                        One-Time Filter: s1.is_new_entity
+NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
+NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=67, local hit=1
 NOTICE:  ---
@@ -3208,50 +3248,76 @@ NOTICE:  Explaining:
                         SELECT * FROM (
                             SELECT DISTINCT ON (u.type, u.lu_id, u.es_id, u.valid_from) * FROM (
                                 (
-                                        SELECT DISTINCT ON (inner_t.type, inner_t.lu_id, inner_t.es_id, inner_t.valid_from) inner_t.*
-                                        FROM tmpc.target_nk inner_t
-                                        JOIN (SELECT DISTINCT si.type, si.lu_id, si.es_id FROM source_initial si) AS si ON ((si.type = inner_t.type OR (si.type IS NULL AND inner_t.type IS NULL)) AND (si.lu_id = inner_t.lu_id OR (si.lu_id IS NULL AND inner_t.lu_id IS NULL)) AND (si.es_id = inner_t.es_id OR (si.es_id IS NULL AND inner_t.es_id IS NULL)))
+                                        SELECT DISTINCT ON (partitioned.type, partitioned.lu_id, partitioned.es_id, partitioned.valid_from) * FROM (
+                                            (
+                                            SELECT inner_t.*
+                                            FROM tmpc.target_nk inner_t
+                                            WHERE inner_t.lu_id IS NOT NULL
+                                              AND (inner_t.type, inner_t.lu_id) IN (
+                                                SELECT si.type, si.lu_id FROM source_initial si WHERE si.lu_id IS NOT NULL
+                                              )
+                                        ) UNION ALL (
+                                            SELECT inner_t.*
+                                            FROM tmpc.target_nk inner_t
+                                            WHERE inner_t.es_id IS NOT NULL
+                                              AND (inner_t.type, inner_t.es_id) IN (
+                                                SELECT si.type, si.es_id FROM source_initial si WHERE si.es_id IS NOT NULL
+                                              )
+                                        )
+                                        ) partitioned
                                     )
                             ) u
                         )
                     ) AS t  /* v_target_rows_filter */
             
 NOTICE:  Subquery Scan on unnamed_subquery (actual rows=2.00 loops=1)
-NOTICE:    Buffers: shared hit=29, local hit=1
+NOTICE:    Buffers: shared hit=6, local hit=2
 NOTICE:    ->  Unique (actual rows=2.00 loops=1)
-NOTICE:          Buffers: shared hit=29, local hit=1
+NOTICE:          Buffers: shared hit=6, local hit=2
 NOTICE:          ->  Unique (actual rows=2.00 loops=1)
-NOTICE:                Buffers: shared hit=29, local hit=1
+NOTICE:                Buffers: shared hit=6, local hit=2
 NOTICE:                ->  Sort (actual rows=2.00 loops=1)
-NOTICE:                      Sort Key: inner_t.type, inner_t.lu_id, inner_t.es_id, inner_t.valid_from
+NOTICE:                      Sort Key: "*SELECT* 1".type, "*SELECT* 1".lu_id, "*SELECT* 1".es_id, "*SELECT* 1".valid_from
 NOTICE:                      Sort Method: quicksort  Memory: 25kB
-NOTICE:                      Buffers: shared hit=29, local hit=1
-NOTICE:                      ->  Nested Loop (actual rows=2.00 loops=1)
-NOTICE:                            Buffers: shared hit=29, local hit=1
-NOTICE:                            ->  Unique (actual rows=2.00 loops=1)
-NOTICE:                                  Buffers: local hit=1
-NOTICE:                                  ->  Sort (actual rows=2.00 loops=1)
-NOTICE:                                        Sort Key: si.type, si.lu_id, si.es_id
-NOTICE:                                        Sort Method: quicksort  Memory: 25kB
-NOTICE:                                        Buffers: local hit=1
-NOTICE:                                        ->  Seq Scan on source_initial si (actual rows=2.00 loops=1)
-NOTICE:                                              Buffers: local hit=1
-NOTICE:                            ->  Bitmap Heap Scan on target_nk inner_t (actual rows=1.00 loops=2)
-NOTICE:                                  Recheck Cond: ((si.type = type) OR (type IS NULL))
-NOTICE:                                  Filter: (((si.type = type) OR ((si.type IS NULL) AND (type IS NULL))) AND ((si.lu_id = lu_id) OR ((si.lu_id IS NULL) AND (lu_id IS NULL))) AND ((si.es_id = es_id) OR ((si.es_id IS NULL) AND (es_id IS NULL))))
-NOTICE:                                  Rows Removed by Filter: 999
-NOTICE:                                  Heap Blocks: exact=18
-NOTICE:                                  Buffers: shared hit=29
-NOTICE:                                  ->  BitmapOr (actual rows=0.00 loops=2)
-NOTICE:                                        Buffers: shared hit=11
-NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=1000.00 loops=2)
-NOTICE:                                              Index Cond: (type = si.type)
-NOTICE:                                              Index Searches: 2
-NOTICE:                                              Buffers: shared hit=7
-NOTICE:                                        ->  Bitmap Index Scan on target_nk_type_es_id_idx (actual rows=0.00 loops=2)
-NOTICE:                                              Index Cond: (type IS NULL)
-NOTICE:                                              Index Searches: 2
-NOTICE:                                              Buffers: shared hit=4
+NOTICE:                      Buffers: shared hit=6, local hit=2
+NOTICE:                      ->  Result (actual rows=2.00 loops=1)
+NOTICE:                            Buffers: shared hit=6, local hit=2
+NOTICE:                            ->  Append (actual rows=2.00 loops=1)
+NOTICE:                                  Buffers: shared hit=6, local hit=2
+NOTICE:                                  ->  Subquery Scan on "*SELECT* 1" (actual rows=1.00 loops=1)
+NOTICE:                                        Buffers: shared hit=3, local hit=1
+NOTICE:                                        ->  Nested Loop (actual rows=1.00 loops=1)
+NOTICE:                                              Buffers: shared hit=3, local hit=1
+NOTICE:                                              ->  HashAggregate (actual rows=1.00 loops=1)
+NOTICE:                                                    Group Key: si.type, si.lu_id
+NOTICE:                                                    Batches: 1  Memory Usage: 32kB
+NOTICE:                                                    Buffers: local hit=1
+NOTICE:                                                    ->  Seq Scan on source_initial si (actual rows=1.00 loops=1)
+NOTICE:                                                          Filter: (lu_id IS NOT NULL)
+NOTICE:                                                          Rows Removed by Filter: 1
+NOTICE:                                                          Buffers: local hit=1
+NOTICE:                                              ->  Index Scan using target_nk_type_lu_id_idx on target_nk inner_t (actual rows=1.00 loops=1)
+NOTICE:                                                    Index Cond: ((type = si.type) AND (lu_id = si.lu_id) AND (lu_id IS NOT NULL))
+NOTICE:                                                    Index Searches: 1
+NOTICE:                                                    Buffers: shared hit=3
+NOTICE:                                  ->  Subquery Scan on "*SELECT* 2" (actual rows=1.00 loops=1)
+NOTICE:                                        Buffers: shared hit=3, local hit=1
+NOTICE:                                        ->  Nested Loop (actual rows=1.00 loops=1)
+NOTICE:                                              Buffers: shared hit=3, local hit=1
+NOTICE:                                              ->  HashAggregate (actual rows=1.00 loops=1)
+NOTICE:                                                    Group Key: si_1.type, si_1.es_id
+NOTICE:                                                    Batches: 1  Memory Usage: 32kB
+NOTICE:                                                    Buffers: local hit=1
+NOTICE:                                                    ->  Seq Scan on source_initial si_1 (actual rows=1.00 loops=1)
+NOTICE:                                                          Filter: (es_id IS NOT NULL)
+NOTICE:                                                          Rows Removed by Filter: 1
+NOTICE:                                                          Buffers: local hit=1
+NOTICE:                                              ->  Index Scan using target_nk_type_es_id_idx on target_nk inner_t_1 (actual rows=1.00 loops=1)
+NOTICE:                                                    Index Cond: ((type = si_1.type) AND (es_id = si_1.es_id) AND (es_id IS NOT NULL))
+NOTICE:                                                    Index Searches: 1
+NOTICE:                                                    Buffers: shared hit=3
+NOTICE:  Planning:
+NOTICE:    Buffers: shared hit=2, local hit=15 read=1
 NOTICE:  ---
 NOTICE:  Executing setup: CREATE INDEX ON target_rows (es_id, lu_id, type);
 NOTICE:  ---
@@ -3384,7 +3450,12 @@ NOTICE:  Executing setup: ANALYZE source_rows_with_nk_json;
 NOTICE:  ---
 NOTICE:  Explaining: 
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
-                SELECT *, (CASE
+                WITH nk_specificity_check AS (
+                    SELECT count(DISTINCT nk_non_null_keys_array::text) = 1 AS is_uniform
+                    FROM source_rows_with_nk_json
+                    WHERE is_new_entity
+                )
+                SELECT s.*, (CASE
                 WHEN is_new_entity
                 THEN 'new_entity__' || CASE WHEN NOT (type IS NULL AND lu_id IS NULL AND es_id IS NULL) THEN COALESCE(type::text, '_NULL_') || '__' || COALESCE(lu_id::text, '_NULL_') || '__' || COALESCE(es_id::text, '_NULL_') ELSE causal_id::text END
                 ELSE 'existing_entity__' || COALESCE(type::text, '_NULL_') || '__' || COALESCE(lu_id::text, '_NULL_') || '__' || COALESCE(es_id::text, '_NULL_')
@@ -3392,29 +3463,44 @@ NOTICE:  Explaining:
                 FROM (
                     SELECT
                         s1.*,
-                        s2.nk_json as canonical_nk_json
+                        CASE 
+                            -- Fast path: uniform specificity means each row is its own canonical
+                            WHEN (SELECT is_uniform FROM nk_specificity_check) 
+                            THEN s1.nk_json
+                            -- Slow path: varied specificity requires finding most specific match
+                            ELSE (
+                                SELECT s2_inner.nk_json
+                                FROM source_rows_with_nk_json s2_inner
+                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                                ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
+                                LIMIT 1
+                            )
+                        END as canonical_nk_json
                     FROM source_rows_with_nk_json s1
-                    LEFT JOIN LATERAL (
-                        SELECT s2_inner.nk_json, s2_inner.nk_non_null_keys_array
-                        FROM source_rows_with_nk_json s2_inner
-                        WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
-                        ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
-                        LIMIT 1
-                    ) s2 ON true
                 ) s
             
-NOTICE:  Nested Loop Left Join (actual rows=2.00 loops=1)
-NOTICE:    Buffers: local hit=1
-NOTICE:    ->  Seq Scan on source_rows_with_nk_json s1 (actual rows=2.00 loops=1)
-NOTICE:          Buffers: local hit=1
-NOTICE:    ->  Limit (actual rows=0.00 loops=2)
-NOTICE:          ->  Sort (actual rows=0.00 loops=2)
-NOTICE:                Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
-NOTICE:                Sort Method: quicksort  Memory: 25kB
-NOTICE:                ->  Result (actual rows=0.00 loops=2)
-NOTICE:                      One-Time Filter: s1.is_new_entity
-NOTICE:                      ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
-NOTICE:                            Filter: (is_new_entity AND (nk_json @> s1.nk_json))
+NOTICE:  Seq Scan on source_rows_with_nk_json s1 (actual rows=2.00 loops=1)
+NOTICE:    Buffers: local hit=2
+NOTICE:    InitPlan 1
+NOTICE:      ->  Aggregate (actual rows=1.00 loops=1)
+NOTICE:            Buffers: local hit=1
+NOTICE:            ->  Sort (actual rows=0.00 loops=1)
+NOTICE:                  Sort Key: ((source_rows_with_nk_json.nk_non_null_keys_array)::text)
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  Buffers: local hit=1
+NOTICE:                  ->  Seq Scan on source_rows_with_nk_json (actual rows=0.00 loops=1)
+NOTICE:                        Filter: is_new_entity
+NOTICE:                        Rows Removed by Filter: 2
+NOTICE:                        Buffers: local hit=1
+NOTICE:    SubPlan 2
+NOTICE:      ->  Limit (actual rows=0.00 loops=2)
+NOTICE:            ->  Sort (actual rows=0.00 loops=2)
+NOTICE:                  Sort Key: (array_length(s2_inner.nk_non_null_keys_array, 1)) DESC, ((s2_inner.nk_non_null_keys_array)::text) DESC
+NOTICE:                  Sort Method: quicksort  Memory: 25kB
+NOTICE:                  ->  Result (actual rows=0.00 loops=2)
+NOTICE:                        One-Time Filter: s1.is_new_entity
+NOTICE:                        ->  Seq Scan on source_rows_with_nk_json s2_inner (never executed)
+NOTICE:                              Filter: (is_new_entity AND (nk_json @> s1.nk_json))
 NOTICE:  Planning:
 NOTICE:    Buffers: shared hit=70, local hit=1
 NOTICE:  ---

@@ -1086,19 +1086,83 @@ BEGIN
                                     (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col)
                                 );
                             ELSE
+                                -- Nullable columns in the key require special handling.
+                                -- The naive NULL-safe join `(si.col = t.col OR (si.col IS NULL AND t.col IS NULL))`
+                                -- causes O(n²) bitmap scans because PostgreSQL can't optimize the OR condition.
+                                --
+                                -- Solution: Partition by NULL pattern and use simple equality joins within each partition.
+                                -- For each combination of {NULL, NOT NULL} for nullable columns, we generate a separate
+                                -- subquery with explicit IS NULL / IS NOT NULL conditions, allowing index scans.
                                 DECLARE
-                                    v_join_clause TEXT;
+                                    v_nullable_cols name[];
+                                    v_notnull_cols name[];
+                                    v_partition_parts TEXT[];
+                                    v_col name;
+                                    v_null_condition TEXT;
+                                    v_notnull_condition TEXT;
+                                    v_join_cols TEXT;
                                 BEGIN
-                                    v_join_clause := COALESCE(
-                                        (SELECT string_agg(format('(si.%1$I = inner_t.%1$I OR (si.%1$I IS NULL AND inner_t.%1$I IS NULL))', c), ' AND ') FROM unnest(v_key_cols) c),
-                                        'true'
-                                    );
-    
+                                    -- Separate nullable and non-nullable columns
+                                    SELECT array_agg(c) INTO v_nullable_cols
+                                    FROM unnest(v_key_cols) c
+                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
+                                    WHERE NOT a.attnotnull;
+                                    
+                                    SELECT array_agg(c) INTO v_notnull_cols  
+                                    FROM unnest(v_key_cols) c
+                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
+                                    WHERE a.attnotnull;
+                                    
+                                    v_nullable_cols := COALESCE(v_nullable_cols, ARRAY[]::name[]);
+                                    v_notnull_cols := COALESCE(v_notnull_cols, ARRAY[]::name[]);
+                                    
+                                    v_partition_parts := ARRAY[]::TEXT[];
+                                    
+                                    -- For each nullable column, generate two partitions: one for NULL, one for NOT NULL
+                                    -- This handles the common case of mutually exclusive nullable columns (XOR pattern)
+                                    FOREACH v_col IN ARRAY v_nullable_cols LOOP
+                                        -- Partition where this column IS NOT NULL (use equality join)
+                                        v_notnull_condition := format('inner_t.%I IS NOT NULL', v_col);
+                                        v_join_cols := (
+                                            SELECT string_agg(format('si.%1$I = inner_t.%1$I', c), ' AND ')
+                                            FROM unnest(v_notnull_cols || v_col) c
+                                        );
+                                        v_partition_parts := v_partition_parts || format($$(
+                                            SELECT inner_t.*
+                                            FROM %1$s inner_t
+                                            WHERE %2$s
+                                              AND (%3$s) IN (
+                                                SELECT %4$s FROM source_initial si WHERE si.%5$I IS NOT NULL
+                                              )
+                                        )$$,
+                                            v_target_table_ident,
+                                            v_notnull_condition,
+                                            (SELECT string_agg(format('inner_t.%I', c), ', ') FROM unnest(v_notnull_cols || v_col) c),
+                                            (SELECT string_agg(format('si.%I', c), ', ') FROM unnest(v_notnull_cols || v_col) c),
+                                            v_col
+                                        );
+                                    END LOOP;
+                                    
+                                    -- If there are no nullable columns, fall back to simple IN clause
+                                    IF cardinality(v_nullable_cols) = 0 THEN
+                                        v_partition_parts := ARRAY[format($$(
+                                            SELECT * FROM %1$s inner_t
+                                            WHERE (%2$s) IN (SELECT %3$s FROM source_initial si)
+                                        )$$, 
+                                            v_target_table_ident,
+                                            (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_key_cols) col),
+                                            (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col)
+                                        )];
+                                    END IF;
+                                    
                                     v_union_parts := v_union_parts || format($$(
-                                        SELECT DISTINCT ON (%3$s) inner_t.*
-                                        FROM %1$s inner_t
-                                        JOIN (SELECT DISTINCT %4$s FROM source_initial si) AS si ON (%2$s)
-                                    )$$, v_target_table_ident, v_join_clause, (SELECT string_agg(format('inner_t.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col), (SELECT string_agg(format('si.%I', col), ', ') FROM unnest(v_key_cols) col));
+                                        SELECT DISTINCT ON (%2$s) * FROM (
+                                            %1$s
+                                        ) partitioned
+                                    )$$, 
+                                        array_to_string(v_partition_parts, ' UNION ALL '),
+                                        (SELECT string_agg(format('partitioned.%I', col), ', ') FROM unnest(v_distinct_on_cols) AS col)
+                                    );
                                 END; -- DECLARE
                             END IF;
                         END; -- DECLARE
@@ -1945,21 +2009,36 @@ BEGIN
             v_plan_sqls := v_plan_sqls || jsonb_build_object('type', 'setup', 'sql', v_sql);
     
             -- CTE 9.2: source_rows_with_canonical_key
+            -- Optimization: When all new entities have uniform NK specificity (same non-null keys),
+            -- each row's canonical_nk_json is simply its own nk_json. This avoids an O(n²) LATERAL
+            -- join that would otherwise check each row against all others.
+            -- The LATERAL is only needed when rows have different specificities (e.g., one row has
+            -- NK {a:null, b:1} and another has {a:5, b:1} where the second is "more specific").
             v_sql := format($SQL$
                 CREATE TEMP TABLE source_rows_with_canonical_key ON COMMIT DROP AS
-                SELECT *, (%1$s /* v_grouping_key_expr */) as grouping_key
+                WITH nk_specificity_check AS (
+                    SELECT count(DISTINCT nk_non_null_keys_array::text) = 1 AS is_uniform
+                    FROM source_rows_with_nk_json
+                    WHERE is_new_entity
+                )
+                SELECT s.*, (%1$s /* v_grouping_key_expr */) as grouping_key
                 FROM (
                     SELECT
                         s1.*,
-                        s2.nk_json as canonical_nk_json
+                        CASE 
+                            -- Fast path: uniform specificity means each row is its own canonical
+                            WHEN (SELECT is_uniform FROM nk_specificity_check) 
+                            THEN s1.nk_json
+                            -- Slow path: varied specificity requires finding most specific match
+                            ELSE (
+                                SELECT s2_inner.nk_json
+                                FROM source_rows_with_nk_json s2_inner
+                                WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
+                                ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
+                                LIMIT 1
+                            )
+                        END as canonical_nk_json
                     FROM source_rows_with_nk_json s1
-                    LEFT JOIN LATERAL (
-                        SELECT s2_inner.nk_json, s2_inner.nk_non_null_keys_array
-                        FROM source_rows_with_nk_json s2_inner
-                        WHERE s1.is_new_entity AND s2_inner.is_new_entity AND s2_inner.nk_json @> s1.nk_json
-                        ORDER BY array_length(s2_inner.nk_non_null_keys_array, 1) DESC, s2_inner.nk_non_null_keys_array::text DESC
-                        LIMIT 1
-                    ) s2 ON true
                 ) s
             $SQL$,
                 v_grouping_key_expr /* %1$s */
