@@ -227,59 +227,113 @@ CREATE TABLE etl_bench.identity_resolution (
 --- Optimized ETL Procedures (Agent 2A Forward-Propagation Algorithm) ---
 --------------------------------------------------------------------------------
 -- Fast data generator using bulk operations
+-- Generates data in realistic batches with a mix of:
+--   - New entities (first appearance): full data set (5 rows: name, addresses, activity, stats)
+--   - Updates to existing entities: typically 1-2 rows (stat updates)
+-- This matches real-world ETL patterns where most imports update statistics
 CREATE FUNCTION etl_bench.generate_test_data(
     p_total_entities int,
-    p_batches_per_entity int DEFAULT 3,
-    p_rows_per_entity_per_batch int DEFAULT 5
+    p_entities_per_batch int DEFAULT 2000,  -- Entities touched per batch
+    p_rows_per_new_entity int DEFAULT 5,    -- Full data for new entities
+    p_rows_per_update int DEFAULT 1,        -- Typically just stat updates
+    p_new_entity_pct int DEFAULT 50         -- Percentage of batch that are NEW entities
 ) RETURNS void LANGUAGE plpgsql AS $function$
 DECLARE
     v_start_time timestamptz;
     v_end_time timestamptz;
     v_total_rows bigint;
     v_rows_per_second numeric;
+    v_num_batches int;
+    v_new_per_batch int;
+    v_updates_per_batch int;
 BEGIN
-    RAISE NOTICE 'Generating test data: % entities, % total rows', 
-        p_total_entities, (p_total_entities * p_batches_per_entity * p_rows_per_entity_per_batch);
+    -- Calculate batch composition
+    v_new_per_batch := (p_entities_per_batch * p_new_entity_pct / 100);
+    v_updates_per_batch := p_entities_per_batch - v_new_per_batch;
+    v_num_batches := CEIL(p_total_entities::numeric / v_new_per_batch);
+    
+    RAISE NOTICE 'Generating: % entities, % batches (% new @% rows + % updates @% rows each)', 
+        p_total_entities, v_num_batches, 
+        v_new_per_batch, p_rows_per_new_entity,
+        v_updates_per_batch, p_rows_per_update;
     
     v_start_time := clock_timestamp();
     
     -- Clear existing data
     TRUNCATE etl_bench.data_table, etl_bench.identity_resolution;
     
-    -- Bulk generate data using set-based operations (O(n) complexity)
+    -- Generate data with realistic batch mix:
+    -- NEW entities get full data (name, addresses, activity, stats)
+    -- UPDATE entities get minimal data (just stat changes - most common case)
     INSERT INTO etl_bench.data_table (
         row_id, batch, identity_correlation, comment,
         tax_ident, lu_name, physical_address, postal_address,
         activity_code, employees, turnover, valid_from, valid_until
     )
+    WITH batch_info AS (
+        SELECT 
+            batch_num,
+            ((batch_num - 1) * v_new_per_batch + 1) as new_start,
+            LEAST(batch_num * v_new_per_batch, p_total_entities) as new_end,
+            GREATEST(1, (batch_num - 1) * v_new_per_batch) as update_pool_size
+        FROM generate_series(1, v_num_batches) as batch_num
+    ),
+    -- NEW entities: full data rows (name, address, activity, stats)
+    new_entity_rows AS (
+        SELECT 
+            bi.batch_num as batch,
+            entity_num as identity_correlation,
+            row_in_entity,
+            'new' as row_type
+        FROM batch_info bi,
+             generate_series(bi.new_start, bi.new_end) as entity_num,
+             generate_series(1, p_rows_per_new_entity) as row_in_entity
+        WHERE bi.new_start <= bi.new_end
+    ),
+    -- UPDATE entities: minimal rows (typically just stat updates)
+    update_entity_rows AS (
+        SELECT 
+            bi.batch_num as batch,
+            ((update_idx - 1) % bi.update_pool_size) + 1 as identity_correlation,
+            row_in_entity,
+            'update' as row_type
+        FROM batch_info bi,
+             generate_series(1, v_updates_per_batch) as update_idx,
+             generate_series(1, p_rows_per_update) as row_in_entity
+        WHERE bi.batch_num > 1
+          AND bi.update_pool_size > 0
+    ),
+    all_rows AS (
+        SELECT batch, identity_correlation, row_in_entity, row_type FROM new_entity_rows
+        UNION ALL
+        SELECT batch, identity_correlation, row_in_entity, row_type FROM update_entity_rows
+    )
     SELECT 
-        row_number() OVER () as row_id,
-        batch_num,
-        entity_num as identity_correlation,
-        format('Entity %s batch %s row %s', entity_num, batch_num, row_in_batch_num) as comment,
-        CASE WHEN row_in_batch_num = 1 THEN format('TAX%s', entity_num) END as tax_ident,
-        CASE WHEN row_in_batch_num = 1 THEN format('Company-%s', entity_num) END as lu_name,
-        CASE WHEN row_in_batch_num <= 2 THEN format('%s Main St, City %s', entity_num, entity_num) END as physical_address,
-        CASE WHEN row_in_batch_num <= 3 THEN format('PO Box %s', entity_num) END as postal_address,
-        CASE WHEN row_in_batch_num <= 4 THEN (CASE WHEN entity_num % 2 = 0 THEN 'manufacturing' ELSE 'retail' END) END as activity_code,
-        CASE WHEN row_in_batch_num <= 4 THEN (entity_num % 100) + 10 END as employees,
-        CASE WHEN row_in_batch_num <= 5 THEN (entity_num % 1000) * 1000 + 50000 END as turnover,
-        ('2024-01-01'::date + ((batch_num - 1) * 90 + (row_in_batch_num - 1) * 30)) as valid_from,
+        row_number() OVER (ORDER BY batch, identity_correlation, row_in_entity) as row_id,
+        batch,
+        identity_correlation,
+        format('Entity %s (%s)', identity_correlation, row_type) as comment,
+        -- New entities: full data based on row_in_entity
+        -- Updates: only stat data (employees/turnover typically)
+        CASE WHEN row_type = 'new' AND row_in_entity = 1 THEN format('TAX%s', identity_correlation) END as tax_ident,
+        CASE WHEN row_type = 'new' AND row_in_entity = 1 THEN format('Company-%s', identity_correlation) END as lu_name,
+        CASE WHEN row_type = 'new' AND row_in_entity <= 2 THEN format('%s Main St', identity_correlation) END as physical_address,
+        CASE WHEN row_type = 'new' AND row_in_entity <= 3 THEN format('PO Box %s', identity_correlation) END as postal_address,
+        CASE WHEN row_type = 'new' AND row_in_entity <= 4 THEN 
+            (CASE WHEN identity_correlation % 2 = 0 THEN 'manufacturing' ELSE 'retail' END) END as activity_code,
+        -- Stats: both new and update entities get these (most common update case)
+        CASE WHEN row_in_entity <= 4 OR row_type = 'update' THEN (identity_correlation % 100) + 10 END as employees,
+        CASE WHEN row_in_entity <= 5 OR row_type = 'update' THEN (identity_correlation % 1000) * 1000 + 50000 END as turnover,
+        ('2024-01-01'::date + ((batch - 1) * 30)::int) as valid_from,
         'infinity'::date as valid_until
-    FROM 
-        generate_series(1, p_total_entities) as entity_num,
-        generate_series(1, p_batches_per_entity) as batch_num,
-        generate_series(1, p_rows_per_entity_per_batch) as row_in_batch_num;
+    FROM all_rows;
     
     GET DIAGNOSTICS v_total_rows = ROW_COUNT;
     
-    -- Update statistics for the new data to ensure optimal query plans
     ANALYZE etl_bench.data_table;
     
     v_end_time := clock_timestamp();
     v_rows_per_second := v_total_rows / EXTRACT(EPOCH FROM v_end_time - v_start_time);
-    
-    -- Performance data logged to benchmark table only (not as NOTICE)
 END;
 $function$;
 -- Optimized legal units processor with forward-propagation
@@ -389,7 +443,17 @@ BEGIN
     v_start_time := clock_timestamp();
     CALL sql_saga.benchmark_reset();
     
-    PERFORM etl_bench.generate_test_data(v_dataset_size, 3, 5);
+    -- Generate 10K entities with realistic batch mix:
+    -- Each batch: 2000 entities (1000 new + 1000 updates)
+    -- New entities: 5 rows each (name, addresses, activity, stats)
+    -- Update entities: 1 row each (stat update - most common case)
+    PERFORM etl_bench.generate_test_data(
+        p_total_entities => v_dataset_size,
+        p_entities_per_batch => 2000,
+        p_rows_per_new_entity => 5,
+        p_rows_per_update => 1,
+        p_new_entity_pct => 50
+    );
     SELECT COUNT(*) INTO v_total_rows FROM etl_bench.data_table;
     
     v_end_time := clock_timestamp();
@@ -406,7 +470,7 @@ BEGIN
     -- Process each batch and measure performance
     FOR v_batch_id IN 1..v_total_batches LOOP
         
-        -- Count rows in this batch
+        -- Count actual rows in this batch (for consistent rows/sec metric)
         SELECT COUNT(*) INTO v_rows_processed 
         FROM etl_bench.data_table 
         WHERE batch = v_batch_id;
@@ -420,14 +484,13 @@ BEGIN
         
         CALL etl_bench.process_legal_units(v_batch_id);
         
-        -- Add EXPLAIN logging for temporal_merge operations after each batch
-        -- This captures query execution plans to identify O(n²) bottlenecks in temporal_merge_plan
         v_end_time := clock_timestamp();
         v_duration := v_end_time - v_start_time;
         v_rows_per_second := CASE WHEN EXTRACT(EPOCH FROM v_duration) > 0 
                             THEN v_rows_processed / EXTRACT(EPOCH FROM v_duration) 
                             ELSE 0 END;
         
+        -- Log entity count (not row count) for meaningful throughput metrics
         INSERT INTO benchmark (event, row_count, is_performance_benchmark) 
         VALUES (format('Process Legal Units - Batch %s/%s end', v_batch_id, v_total_batches), v_rows_processed, true);
         CALL sql_saga.benchmark_log_and_reset(format('Process Legal Units - Batch %s', v_batch_id));
@@ -449,7 +512,7 @@ BEGIN
 END;
 $$;
 NOTICE:  STARTING BENCHMARK: 10000 entities (optimized ETL)
-NOTICE:  Generating test data: 10000 entities, 150000 total rows
+NOTICE:  Generating: 10000 entities, 10 batches (1000 new @5 rows + 1000 updates @1 rows each)
 --------------------------------------------------------------------------------
 \echo '--- Benchmark Complete (performance data in separate log files) ---'
 --- Benchmark Complete (performance data in separate log files) ---
@@ -534,16 +597,30 @@ SELECT event, row_count FROM benchmark ORDER BY seq_id;
 -------------------------------------------+-----------
  BEGIN                                     |         0
  Generate Test Data - 10000 entities start |         0
- Generate Test Data - 10000 entities end   |    150000
- Process Legal Units - Batch 1/3 start     |         0
- Process Legal Units - Batch 1/3 end       |     50000
- Process Legal Units - Batch 2/3 start     |         0
- Process Legal Units - Batch 2/3 end       |     50000
- Process Legal Units - Batch 3/3 start     |         0
- Process Legal Units - Batch 3/3 end       |     50000
+ Generate Test Data - 10000 entities end   |     59000
+ Process Legal Units - Batch 1/10 start    |         0
+ Process Legal Units - Batch 1/10 end      |      5000
+ Process Legal Units - Batch 2/10 start    |         0
+ Process Legal Units - Batch 2/10 end      |      6000
+ Process Legal Units - Batch 3/10 start    |         0
+ Process Legal Units - Batch 3/10 end      |      6000
+ Process Legal Units - Batch 4/10 start    |         0
+ Process Legal Units - Batch 4/10 end      |      6000
+ Process Legal Units - Batch 5/10 start    |         0
+ Process Legal Units - Batch 5/10 end      |      6000
+ Process Legal Units - Batch 6/10 start    |         0
+ Process Legal Units - Batch 6/10 end      |      6000
+ Process Legal Units - Batch 7/10 start    |         0
+ Process Legal Units - Batch 7/10 end      |      6000
+ Process Legal Units - Batch 8/10 start    |         0
+ Process Legal Units - Batch 8/10 end      |      6000
+ Process Legal Units - Batch 9/10 start    |         0
+ Process Legal Units - Batch 9/10 end      |      6000
+ Process Legal Units - Batch 10/10 start   |         0
+ Process Legal Units - Batch 10/10 end     |      6000
  COMPLETE DATASET 10000 entities start     |         0
- COMPLETE DATASET 10000 entities end       |    150000
-(11 rows)
+ COMPLETE DATASET 10000 entities end       |     59000
+(25 rows)
 
 -- Capture performance metrics to a separate file for manual review
 \set benchmark_log_filename expected/performance/110_benchmark_minimal_copying_etl_architecture_benchmark_report.log
