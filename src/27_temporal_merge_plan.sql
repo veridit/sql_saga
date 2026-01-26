@@ -661,12 +661,23 @@ BEGIN
             -- to ensure the join is on a unique entity. This logic correctly maps original column names
             -- to their internal, aliased names, which are used in all relevant CTEs (sr, tr, seg).
             --
-            -- PERFORMANCE: We use OR instead of CASE to allow the query optimizer to use index-based
-            -- access paths. The CASE expression prevents index usage because the optimizer can't
-            -- determine which branch will be taken at planning time.
+            -- PERFORMANCE OPTIMIZATION: Use simple equality (col = col) for NOT NULL columns,
+            -- which allows PostgreSQL to use a direct Index Scan instead of BitmapOr with two
+            -- index scans, providing ~2x speedup. For NULLABLE columns, we must use the 
+            -- NULL-safe pattern (col = col OR (col IS NULL AND col IS NULL)) to correctly
+            -- handle NULL values that should match.
             v_lateral_join_sr_to_seg_existing := (
-                SELECT COALESCE(string_agg(format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col), ' AND '), 'true')
+                SELECT COALESCE(string_agg(
+                    CASE
+                        WHEN a.attnotnull THEN
+                            format('source_row.%1$I = seg.%1$I', col)
+                        ELSE
+                            format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
+                    END,
+                    ' AND '
+                ), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
+                LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
             );
             v_lateral_join_sr_to_seg_new := 'source_row.grouping_key = seg.grouping_key';
 

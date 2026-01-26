@@ -730,7 +730,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE (source_row.id = seg.id OR (source_row.id IS NULL AND seg.id IS NULL))
+                                WHERE source_row.id = seg.id
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -778,7 +778,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (((id = seg.id) OR ((id IS NULL) AND (seg.id IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: ((id = seg.id) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -2176,7 +2176,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
+                                WHERE source_row.lu_id = seg.lu_id AND source_row.type = seg.type
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -2224,7 +2224,7 @@ NOTICE:                        Sort Key: source_row.source_row_id
 NOTICE:                        Sort Method: quicksort  Memory: 25kB
 NOTICE:                        Buffers: local hit=3
 NOTICE:                        ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=3)
-NOTICE:                              Filter: (((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                              Filter: ((lu_id = seg.lu_id) AND (type = seg.type) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                              Rows Removed by Filter: 1
 NOTICE:                              Buffers: local hit=3
 NOTICE:          CTE running_payload
@@ -3657,7 +3657,7 @@ NOTICE:  Explaining:
                                     source_row.valid_from, source_row.valid_until, source_row.causal_id,
                                     row_number() OVER (ORDER BY source_row.source_row_id) as rn
                                 FROM active_source_rows source_row
-                                WHERE (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND (source_row.type = seg.type OR (source_row.type IS NULL AND seg.type IS NULL))
+                                WHERE (source_row.es_id = seg.es_id OR (source_row.es_id IS NULL AND seg.es_id IS NULL)) AND (source_row.lu_id = seg.lu_id OR (source_row.lu_id IS NULL AND seg.lu_id IS NULL)) AND source_row.type = seg.type
                                 AND daterange(seg.valid_from, seg.valid_until) <@ daterange(source_row.valid_from, source_row.valid_until)
                             ),
                             running_payload AS (
@@ -3713,7 +3713,7 @@ NOTICE:                                    Sort Key: source_row.source_row_id
 NOTICE:                                    Sort Method: quicksort  Memory: 25kB
 NOTICE:                                    Buffers: local hit=6
 NOTICE:                                    ->  Seq Scan on active_source_rows source_row (actual rows=0.33 loops=6)
-NOTICE:                                          Filter: (((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND ((type = seg.type) OR ((type IS NULL) AND (seg.type IS NULL))) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
+NOTICE:                                          Filter: (((es_id = seg.es_id) OR ((es_id IS NULL) AND (seg.es_id IS NULL))) AND ((lu_id = seg.lu_id) OR ((lu_id IS NULL) AND (seg.lu_id IS NULL))) AND (type = seg.type) AND (daterange(seg.valid_from, seg.valid_until) <@ daterange(valid_from, valid_until)))
 NOTICE:                                          Rows Removed by Filter: 2
 NOTICE:                                          Buffers: local hit=6
 NOTICE:                      CTE running_payload
