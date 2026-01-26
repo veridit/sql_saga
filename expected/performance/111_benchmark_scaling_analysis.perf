@@ -1,31 +1,39 @@
-# Performance Baseline: 2026-01-26
-# Machine: MacBook (specifics vary)
-# PostgreSQL: 18
-# After O(n) fix for map_row_to_entity
-#
-# These numbers are reference baselines, not test assertions.
-# They are updated after significant performance changes.
+ # Performance Baseline: sql_saga scaling analysis
+
+ # These numbers are reference baselines, not test assertions.
+
+ # They are updated after significant performance changes.
+
+ #
+
+ 
+
+       header       
+--------------------
+ # Raw timing data:
 
  entities | num_batches | batch1_ms | avg_batch_ms | total_ms | ms_per_entity | entities_per_sec 
 ----------+-------------+-----------+--------------+----------+---------------+------------------
-     2000 |           1 |       354 |          354 |      355 |         0.177 |             5638
-     4000 |           2 |       375 |          449 |      897 |         0.224 |             4458
-     8000 |           4 |       364 |          382 |     1527 |         0.191 |             5240
-    16000 |           8 |       404 |          447 |     3575 |         0.223 |             4476
-    32000 |          16 |       461 |          517 |     8267 |         0.258 |             3871
-    64000 |          32 |       578 |          750 |    24013 |         0.375 |             2665
-   128000 |          64 |       881 |         1430 |    91528 |         0.715 |             1398
+     2000 |           1 |       307 |          307 |      307 |         0.153 |             6519
+     4000 |           2 |       322 |          310 |      621 |         0.155 |             6446
+     8000 |           4 |       329 |          321 |     1284 |         0.161 |             6230
+    16000 |           8 |       364 |          364 |     2908 |         0.182 |             5502
+    32000 |          16 |       411 |          443 |     7089 |         0.222 |             4514
+    64000 |          32 |       519 |          647 |    20719 |         0.324 |             3089
+   128000 |          64 |       811 |         1276 |    81650 |         0.638 |             1568
 
-# Scaling Analysis:
-#      scale      | entity_ratio | time_ratio | efficiency_ratio | scaling_quality 
-# -----------------+----------+--------------+------------+------------------+-----------------
-#  2000 -> 4000    |          2.0 |       2.53 |             1.26 | STABLE
-#  4000 -> 8000    |          2.0 |       1.70 |             0.85 | IMPROVING
-#  8000 -> 16000   |          2.0 |       2.34 |             1.17 | STABLE
-#  16000 -> 32000  |          2.0 |       2.31 |             1.16 | STABLE
-#  32000 -> 64000  |          2.0 |       2.90 |             1.45 | DEGRADING
-#  64000 -> 128000 |          2.0 |       3.81 |             1.91 | DEGRADING
+ 
 
-# Note: 32K+ degradation still exists - likely target table index lookup cost.
-# The O(n) fix improved executor performance (317x for the specific query),
-# but there's another bottleneck at larger scales that needs investigation.
+                        header                         
+-------------------------------------------------------
+ # Scaling analysis (time_ratio when entities double):
+
+      scale      | time_ratio | complexity |   status    
+-----------------+------------+------------+-------------
+ 2000 -> 4000    |       2.02 | LINEAR     | OK
+ 4000 -> 8000    |       2.07 | LINEAR     | OK
+ 8000 -> 16000   |       2.26 | LINEAR     | OK
+ 16000 -> 32000  |       2.44 | LINEAR     | OK
+ 32000 -> 64000  |       2.92 | LOGLINEAR  | OK
+ 64000 -> 128000 |       3.94 | QUADRATIC  | REGRESSION!
+
