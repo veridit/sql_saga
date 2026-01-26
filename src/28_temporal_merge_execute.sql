@@ -959,15 +959,23 @@ BEGIN
                         WHERE a.attrelid = temporal_merge_execute.source_table AND NOT a.attisdropped AND a.attnum > 0;
 
                         IF v_source_update_set_clause IS NOT NULL THEN
+                            -- PERFORMANCE OPTIMIZATION: The previous implementation used
+                            -- `s.source_row_id = ANY(p.row_ids)` which caused O(n²) behavior
+                            -- due to Nested Loop with array containment check on every row.
+                            -- This rewrite unnests row_ids first and uses an equijoin, allowing
+                            -- PostgreSQL to use Hash Join for O(n) performance.
                             v_sql := format($$
-                                WITH map_row_to_entity AS (
-                                    SELECT DISTINCT ON (s.source_row_id)
-                                        s.source_row_id,
-                                        p.entity_keys
-                                    FROM (SELECT DISTINCT unnest(row_ids) AS source_row_id FROM temporal_merge_plan WHERE operation = 'INSERT') s
-                                    JOIN temporal_merge_plan p ON s.source_row_id = ANY(p.row_ids)
-                                    WHERE p.entity_keys IS NOT NULL
-                                    ORDER BY s.source_row_id, p.plan_op_seq
+                                WITH plan_with_row_ids AS (
+                                    SELECT p.plan_op_seq, p.entity_keys, unnest(p.row_ids) AS source_row_id
+                                    FROM temporal_merge_plan p
+                                    WHERE p.operation = 'INSERT' AND p.entity_keys IS NOT NULL
+                                ),
+                                map_row_to_entity AS (
+                                    SELECT DISTINCT ON (pr.source_row_id)
+                                        pr.source_row_id,
+                                        pr.entity_keys
+                                    FROM plan_with_row_ids pr
+                                    ORDER BY pr.source_row_id, pr.plan_op_seq
                                 )
                                 UPDATE %1$s s
                                 SET %2$s
