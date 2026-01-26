@@ -1,10 +1,10 @@
                 event                | row_count | time_from_start | time_from_prev |  row_count  | rows_per_second 
 -------------------------------------+-----------+-----------------+----------------+-------------+-----------------
  BEGIN                               |         0 | 0 ms            |                | 0 rows      | 
- Generate Test Data - 10000 entities |    150000 | 2 secs          | 2 secs         | 150000 rows | ~97679 rows/s
- Process Legal Units - Batch 1/3     |     50000 | 10 secs         | 8 secs         | 50000 rows  | ~5916 rows/s
- Process Legal Units - Batch 2/3     |     50000 | 13 secs         | 3 secs         | 50000 rows  | ~18058 rows/s
- Process Legal Units - Batch 3/3     |     50000 | 16 secs         | 3 secs         | 50000 rows  | ~18665 rows/s
+ Generate Test Data - 10000 entities |    150000 | 3 secs          | 3 secs         | 150000 rows | ~45389 rows/s
+ Process Legal Units - Batch 1/3     |     50000 | 10 secs         | 6 secs         | 50000 rows  | ~8164 rows/s
+ Process Legal Units - Batch 2/3     |     50000 | 13 secs         | 3 secs         | 50000 rows  | ~15225 rows/s
+ Process Legal Units - Batch 3/3     |     50000 | 16 secs         | 3 secs         | 50000 rows  | ~16471 rows/s
  COMPLETE DATASET 10000 entities     |    150000 | 16 secs         | 0 ms           | 150000 rows | ~0 rows/s
 (6 rows)
 
