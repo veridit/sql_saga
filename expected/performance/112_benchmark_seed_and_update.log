@@ -1,0 +1,10 @@
+step,row_count,seconds,rows_per_sec
+Generate staging,24289,0.36,68371
+SEED legal_unit,10000,1.51,6638
+INSERT external_ident (LU),10000,0.10,103953
+SEED stat_for_unit (LU),20000,5.83,3432
+SEED establishment,14289,2.43,5880
+INSERT external_ident (ES),14289,0.19,75998
+SEED stat_for_unit (ES),28578,49.52,577
+TOTAL SEED,,59.99,
+(8 rows)

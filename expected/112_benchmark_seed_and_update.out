@@ -1,0 +1,854 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+\i sql/include/benchmark_setup.sql
+\set ECHO none
+--------------------------------------------------------------------------------
+-- Test 112: Realistic SEED + UPDATE Benchmark
+--------------------------------------------------------------------------------
+-- Models real-world StatBus-like ETL workloads:
+-- - SEED phase: Bulk initial load of LU, ES, external_ident, stat_for_unit
+-- - UPDATE phase: Incremental updates (base data + stat variables)
+--
+-- Based on Norway production data: 1.1M LU, 0.8M ES (ratio ~0.73:1)
+-- Development scale: 10K LU, ~10K ES
+--------------------------------------------------------------------------------
+CREATE SCHEMA seed_bench;
+GRANT ALL ON SCHEMA seed_bench TO sql_saga_unprivileged_user;
+SET ROLE TO sql_saga_unprivileged_user;
+SELECT $$
+================================================================================
+BENCHMARK: Realistic SEED + UPDATE Pattern
+================================================================================
+This benchmark measures performance for production-like ETL workloads:
+
+SEED Phase:
+  - legal_unit: 10K entities (1 row each)
+  - establishment: ~10K entities (FK to LU, distribution-based)
+  - external_ident: ~20K rows (1 per LU + 1 per ES, NON-temporal)
+  - stat_for_unit: ~40K rows (2 stats per LU + 2 stats per ES)
+
+UPDATE Phase:
+  - 5 batches of 1280 entities each
+  - 5% base data changes, 75% stat variable changes
+
+Target: Measure rows/sec for each operation type
+================================================================================
+$$ as doc;
+                                       doc                                        
+----------------------------------------------------------------------------------
+                                                                                 +
+ ================================================================================+
+ BENCHMARK: Realistic SEED + UPDATE Pattern                                      +
+ ================================================================================+
+ This benchmark measures performance for production-like ETL workloads:          +
+                                                                                 +
+ SEED Phase:                                                                     +
+   - legal_unit: 10K entities (1 row each)                                       +
+   - establishment: ~10K entities (FK to LU, distribution-based)                 +
+   - external_ident: ~20K rows (1 per LU + 1 per ES, NON-temporal)               +
+   - stat_for_unit: ~40K rows (2 stats per LU + 2 stats per ES)                  +
+                                                                                 +
+ UPDATE Phase:                                                                   +
+   - 5 batches of 1280 entities each                                             +
+   - 5% base data changes, 75% stat variable changes                             +
+                                                                                 +
+ Target: Measure rows/sec for each operation type                                +
+ ================================================================================+
+ 
+(1 row)
+
+--------------------------------------------------------------------------------
+\echo ''
+
+\echo '--- Reference Tables (non-temporal) ---'
+--- Reference Tables (non-temporal) ---
+--------------------------------------------------------------------------------
+CREATE TABLE seed_bench.ident_type (
+    id int PRIMARY KEY,
+    code text UNIQUE NOT NULL
+);
+INSERT INTO seed_bench.ident_type VALUES (1, 'tax_ident');
+CREATE TABLE seed_bench.stat_definition (
+    id int PRIMARY KEY,
+    code text UNIQUE NOT NULL
+);
+INSERT INTO seed_bench.stat_definition VALUES (1, 'employees'), (2, 'turnover');
+--------------------------------------------------------------------------------
+\echo '--- Core Temporal Tables ---'
+--- Core Temporal Tables ---
+--------------------------------------------------------------------------------
+-- Legal Unit (parent entity)
+CREATE TABLE seed_bench.legal_unit (
+    id serial,
+    name text NOT NULL,
+    physical_address text,
+    valid_range daterange NOT NULL,
+    valid_from date GENERATED ALWAYS AS (lower(valid_range)) STORED,
+    valid_until date GENERATED ALWAYS AS (upper(valid_range)) STORED
+);
+SELECT sql_saga.add_era('seed_bench.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column seed_bench.legal_unit.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(
+    table_oid => 'seed_bench.legal_unit'::regclass,
+    column_names => ARRAY['id'],
+    key_type => 'primary',
+    unique_key_name => 'legal_unit_pk');
+NOTICE:  sql_saga: Added constraints to table seed_bench.legal_unit: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+ add_unique_key 
+----------------
+ legal_unit_pk
+(1 row)
+
+-- Establishment (child entity with temporal FK to LU)
+CREATE TABLE seed_bench.establishment (
+    id serial,
+    legal_unit_id int NOT NULL,
+    address text,
+    valid_range daterange NOT NULL,
+    valid_from date GENERATED ALWAYS AS (lower(valid_range)) STORED,
+    valid_until date GENERATED ALWAYS AS (upper(valid_range)) STORED
+);
+SELECT sql_saga.add_era('seed_bench.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column seed_bench.establishment.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key(
+    table_oid => 'seed_bench.establishment'::regclass,
+    column_names => ARRAY['id'],
+    key_type => 'primary',
+    unique_key_name => 'establishment_pk');
+NOTICE:  sql_saga: Added constraints to table seed_bench.establishment: ALTER COLUMN id SET NOT NULL; ADD PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+  add_unique_key  
+------------------
+ establishment_pk
+(1 row)
+
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'seed_bench.establishment'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    pk_table_oid => 'seed_bench.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']);
+NOTICE:  sql_saga: No compatible index found for foreign key on table seed_bench.establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON seed_bench.establishment USING GIST (legal_unit_id, valid_range)
+          add_foreign_key          
+-----------------------------------
+ establishment_legal_unit_id_valid
+(1 row)
+
+--------------------------------------------------------------------------------
+\echo '--- External Identifiers (NON-temporal - IDs persist over time) ---'
+--- External Identifiers (NON-temporal - IDs persist over time) ---
+--------------------------------------------------------------------------------
+CREATE TABLE seed_bench.external_ident (
+    id serial PRIMARY KEY,
+    legal_unit_id int,
+    establishment_id int,
+    ident_type_id int NOT NULL REFERENCES seed_bench.ident_type(id),
+    ident_value text NOT NULL UNIQUE,
+    CONSTRAINT exactly_one_entity CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    )
+);
+-- Regular FK constraints (not temporal - ident persists even if entity timeline changes)
+-- Note: These reference the entity tables but don't use PERIOD
+CREATE INDEX ON seed_bench.external_ident (legal_unit_id) WHERE legal_unit_id IS NOT NULL;
+CREATE INDEX ON seed_bench.external_ident (establishment_id) WHERE establishment_id IS NOT NULL;
+--------------------------------------------------------------------------------
+\echo '--- Stat Variables (temporal, on both LU and ES) ---'
+--- Stat Variables (temporal, on both LU and ES) ---
+--------------------------------------------------------------------------------
+CREATE TABLE seed_bench.stat_for_unit (
+    legal_unit_id int,
+    establishment_id int,
+    stat_definition_id int NOT NULL REFERENCES seed_bench.stat_definition(id),
+    value numeric NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from date GENERATED ALWAYS AS (lower(valid_range)) STORED,
+    valid_until date GENERATED ALWAYS AS (upper(valid_range)) STORED,
+    CONSTRAINT exactly_one_entity CHECK (
+        (legal_unit_id IS NOT NULL AND establishment_id IS NULL) OR
+        (legal_unit_id IS NULL AND establishment_id IS NOT NULL)
+    )
+);
+SELECT sql_saga.add_era('seed_bench.stat_for_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_valid_range_gist_idx" on column seed_bench.stat_for_unit.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+-- Natural key: entity + stat_definition (no surrogate id)
+SELECT sql_saga.add_unique_key(
+    table_oid => 'seed_bench.stat_for_unit'::regclass,
+    column_names => ARRAY['legal_unit_id', 'establishment_id', 'stat_definition_id'],
+    key_type => 'natural',
+    unique_key_name => 'stat_for_unit_nk');
+NOTICE:  sql_saga: Added constraints to table seed_bench.stat_for_unit: ADD CONSTRAINT stat_for_unit_nk_uniq UNIQUE (legal_unit_id, establishment_id, stat_definition_id, valid_range WITHOUT OVERLAPS)
+  add_unique_key  
+------------------
+ stat_for_unit_nk
+(1 row)
+
+-- Temporal FK to legal_unit (for LU stats)
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'seed_bench.stat_for_unit'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    pk_table_oid => 'seed_bench.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']);
+          add_foreign_key          
+-----------------------------------
+ stat_for_unit_legal_unit_id_valid
+(1 row)
+
+-- Temporal FK to establishment (for ES stats)
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'seed_bench.stat_for_unit'::regclass,
+    fk_column_names => ARRAY['establishment_id'],
+    pk_table_oid => 'seed_bench.establishment'::regclass,
+    pk_column_names => ARRAY['id']);
+NOTICE:  sql_saga: No compatible index found for foreign key on table seed_bench.stat_for_unit. Creating new index: CREATE INDEX stat_for_unit_establishment_id_valid_gist_idx ON seed_bench.stat_for_unit USING GIST (establishment_id, valid_range)
+           add_foreign_key            
+--------------------------------------
+ stat_for_unit_establishment_id_valid
+(1 row)
+
+--------------------------------------------------------------------------------
+\echo '--- Performance Indexes ---'
+--- Performance Indexes ---
+--------------------------------------------------------------------------------
+CREATE INDEX ON seed_bench.legal_unit USING GIST (valid_range);
+CREATE INDEX ON seed_bench.establishment USING GIST (valid_range);
+CREATE INDEX ON seed_bench.establishment (legal_unit_id);
+CREATE INDEX ON seed_bench.stat_for_unit USING GIST (valid_range);
+CREATE INDEX ON seed_bench.stat_for_unit (legal_unit_id) WHERE legal_unit_id IS NOT NULL;
+CREATE INDEX ON seed_bench.stat_for_unit (establishment_id) WHERE establishment_id IS NOT NULL;
+--------------------------------------------------------------------------------
+\echo '--- Staging Table ---'
+--- Staging Table ---
+--------------------------------------------------------------------------------
+-- Central staging table for all incoming data
+CREATE TABLE seed_bench.staging (
+    row_id serial PRIMARY KEY,
+    batch int NOT NULL DEFAULT 1,
+    entity_type text NOT NULL,  -- 'lu', 'es', 'stat_lu', 'stat_es'
+    -- Identity correlation
+    identity_correlation int NOT NULL,
+    founding_id int,  -- For new entity creation
+    -- Back-propagated IDs
+    legal_unit_id int,
+    establishment_id int,
+    -- LU data
+    lu_name text,
+    lu_address text,
+    lu_tax_ident text,
+    -- ES data
+    es_address text,
+    es_tax_ident text,
+    es_lu_correlation int,  -- Links ES to its parent LU
+    -- Stat data
+    stat_code text,
+    stat_value numeric,
+    -- Temporal
+    valid_from date DEFAULT '2024-01-01',
+    valid_until date DEFAULT 'infinity',
+    -- Feedback
+    merge_status text,
+    merge_error text
+);
+CREATE INDEX ON seed_bench.staging (batch, entity_type);
+CREATE INDEX ON seed_bench.staging (identity_correlation);
+CREATE INDEX ON seed_bench.staging (es_lu_correlation) WHERE es_lu_correlation IS NOT NULL;
+--------------------------------------------------------------------------------
+\echo '--- Benchmark Log Table ---'
+--- Benchmark Log Table ---
+--------------------------------------------------------------------------------
+CREATE TABLE seed_bench.benchmark_log (
+    step text NOT NULL,
+    row_count int,
+    duration interval NOT NULL
+);
+--------------------------------------------------------------------------------
+\echo '--- Data Generators ---'
+--- Data Generators ---
+--------------------------------------------------------------------------------
+-- Generate LU seed data (1 row per entity)
+CREATE FUNCTION seed_bench.generate_lu_seed_data(p_count int) 
+RETURNS TABLE(lu_count int, es_distribution jsonb) 
+LANGUAGE plpgsql AS $function$
+DECLARE
+    v_r float;
+    v_es_count int;
+    v_lu_id int;
+BEGIN
+    -- Set seed for reproducible distribution
+    PERFORM setseed(0.42);
+    
+    -- Clear staging
+    DELETE FROM seed_bench.staging WHERE entity_type IN ('lu', 'es');
+    
+    -- Generate LU rows with ES count assignment
+    FOR v_lu_id IN 1..p_count LOOP
+        v_r := random();
+        
+        -- Assign ES count based on Norway-realistic distribution
+        v_es_count := CASE 
+            WHEN v_r < 0.55 THEN 0                              -- 55%: no ES
+            WHEN v_r < 0.90 THEN 1                              -- 35%: single ES
+            WHEN v_r < 0.98 THEN 2 + floor(random() * 4)::int   -- 8%: 2-5 ES
+            WHEN v_r < 0.995 THEN 6 + floor(random() * 15)::int -- 1.5%: 6-20 ES
+            ELSE 21 + floor(random() * 180)::int                -- 0.5%: 21-200 ES (big chains)
+        END;
+        
+        -- Insert LU staging row
+        INSERT INTO seed_bench.staging (
+            entity_type, identity_correlation, founding_id,
+            lu_name, lu_address, lu_tax_ident,
+            valid_from, valid_until
+        ) VALUES (
+            'lu', v_lu_id, v_lu_id,
+            format('Company %s', v_lu_id),
+            format('%s Main Street, City %s', v_lu_id, (v_lu_id % 100) + 1),
+            format('TAX-LU-%s', v_lu_id),
+            '2024-01-01', 'infinity'
+        );
+        
+        -- Generate ES staging rows for this LU
+        FOR v_es_idx IN 1..v_es_count LOOP
+            INSERT INTO seed_bench.staging (
+                entity_type, identity_correlation, founding_id,
+                es_address, es_tax_ident, es_lu_correlation,
+                valid_from, valid_until
+            ) VALUES (
+                'es', 
+                p_count + (v_lu_id - 1) * 200 + v_es_idx,  -- Unique ES correlation
+                p_count + (v_lu_id - 1) * 200 + v_es_idx,
+                format('Branch %s, Location %s', v_es_idx, v_lu_id),
+                format('TAX-ES-%s-%s', v_lu_id, v_es_idx),
+                v_lu_id,  -- Links to parent LU
+                '2024-01-01', 'infinity'
+            );
+        END LOOP;
+    END LOOP;
+    
+    -- Return summary
+    RETURN QUERY
+    SELECT 
+        (SELECT count(*)::int FROM seed_bench.staging WHERE entity_type = 'lu') as lu_count,
+        jsonb_build_object(
+            'total_es', (SELECT count(*) FROM seed_bench.staging WHERE entity_type = 'es'),
+            'lu_with_0_es', (SELECT count(*) FROM seed_bench.staging s1 
+                WHERE s1.entity_type = 'lu' 
+                AND NOT EXISTS (SELECT 1 FROM seed_bench.staging s2 
+                    WHERE s2.entity_type = 'es' AND s2.es_lu_correlation = s1.identity_correlation)),
+            'lu_with_1_es', (SELECT count(*) FROM (
+                SELECT es_lu_correlation FROM seed_bench.staging WHERE entity_type = 'es'
+                GROUP BY es_lu_correlation HAVING count(*) = 1) x),
+            'lu_with_multi_es', (SELECT count(*) FROM (
+                SELECT es_lu_correlation FROM seed_bench.staging WHERE entity_type = 'es'
+                GROUP BY es_lu_correlation HAVING count(*) > 1) x)
+        ) as es_distribution;
+END;
+$function$;
+-- Generate stat staging data for entities
+CREATE FUNCTION seed_bench.generate_stat_seed_data(p_entity_type text)
+RETURNS int
+LANGUAGE plpgsql AS $function$
+DECLARE
+    v_count int := 0;
+BEGIN
+    IF p_entity_type = 'lu' THEN
+        -- Generate 2 stat rows per LU (employees + turnover)
+        INSERT INTO seed_bench.staging (
+            entity_type, identity_correlation,
+            legal_unit_id, stat_code, stat_value,
+            valid_from, valid_until
+        )
+        SELECT 
+            'stat_lu',
+            s.identity_correlation * 10 + stat.ord,  -- Unique correlation
+            s.legal_unit_id,
+            stat.code,
+            CASE stat.code 
+                WHEN 'employees' THEN (s.identity_correlation % 100) + 5
+                WHEN 'turnover' THEN (s.identity_correlation % 1000) * 1000 + 100000
+            END,
+            s.valid_from, s.valid_until
+        FROM seed_bench.staging s
+        CROSS JOIN (VALUES (1, 'employees'), (2, 'turnover')) AS stat(ord, code)
+        WHERE s.entity_type = 'lu' AND s.legal_unit_id IS NOT NULL;
+        
+        GET DIAGNOSTICS v_count = ROW_COUNT;
+        
+    ELSIF p_entity_type = 'es' THEN
+        -- Generate 2 stat rows per ES (employees + turnover)
+        INSERT INTO seed_bench.staging (
+            entity_type, identity_correlation,
+            establishment_id, stat_code, stat_value,
+            valid_from, valid_until
+        )
+        SELECT 
+            'stat_es',
+            s.identity_correlation * 10 + stat.ord,
+            s.establishment_id,
+            stat.code,
+            CASE stat.code 
+                WHEN 'employees' THEN (s.identity_correlation % 50) + 2
+                WHEN 'turnover' THEN (s.identity_correlation % 500) * 1000 + 50000
+            END,
+            s.valid_from, s.valid_until
+        FROM seed_bench.staging s
+        CROSS JOIN (VALUES (1, 'employees'), (2, 'turnover')) AS stat(ord, code)
+        WHERE s.entity_type = 'es' AND s.establishment_id IS NOT NULL;
+        
+        GET DIAGNOSTICS v_count = ROW_COUNT;
+    END IF;
+    
+    RETURN v_count;
+END;
+$function$;
+--------------------------------------------------------------------------------
+\echo '--- SEED Procedures ---'
+--- SEED Procedures ---
+--------------------------------------------------------------------------------
+-- SEED legal_unit
+CREATE PROCEDURE seed_bench.seed_legal_units()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    -- Create view for temporal_merge
+    CREATE OR REPLACE TEMP VIEW source_lu AS
+    SELECT
+        row_id,
+        founding_id,
+        legal_unit_id AS id,
+        lu_name AS name,
+        lu_address AS physical_address,
+        daterange(valid_from, valid_until) AS valid_range,
+        valid_from,
+        valid_until
+    FROM seed_bench.staging
+    WHERE entity_type = 'lu';
+    
+    -- Merge into legal_unit
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.legal_unit',
+        source_table => 'source_lu',
+        primary_identity_columns => ARRAY['id'],
+        founding_id_column => 'founding_id',
+        update_source_with_identity => true
+    );
+    
+    -- Back-propagate generated IDs to staging
+    UPDATE seed_bench.staging dst
+    SET legal_unit_id = src.id
+    FROM (
+        SELECT row_id, id 
+        FROM source_lu 
+        WHERE id IS NOT NULL
+    ) src
+    WHERE dst.row_id = src.row_id;
+    
+    -- Propagate LU IDs to ES staging rows
+    UPDATE seed_bench.staging es
+    SET legal_unit_id = lu.legal_unit_id
+    FROM seed_bench.staging lu
+    WHERE es.entity_type = 'es'
+      AND lu.entity_type = 'lu'
+      AND es.es_lu_correlation = lu.identity_correlation;
+END;
+$procedure$;
+-- SEED external_ident for LU
+CREATE PROCEDURE seed_bench.seed_external_ident_lu()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    INSERT INTO seed_bench.external_ident (legal_unit_id, ident_type_id, ident_value)
+    SELECT 
+        legal_unit_id,
+        1,  -- tax_ident
+        lu_tax_ident
+    FROM seed_bench.staging
+    WHERE entity_type = 'lu' AND legal_unit_id IS NOT NULL;
+END;
+$procedure$;
+-- SEED stat_for_unit for LU
+CREATE PROCEDURE seed_bench.seed_stats_lu()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    CREATE OR REPLACE TEMP VIEW source_stat_lu AS
+    SELECT
+        row_id,
+        legal_unit_id,
+        NULL::int AS establishment_id,
+        sd.id AS stat_definition_id,
+        stat_value AS value,
+        daterange(s.valid_from, s.valid_until) AS valid_range,
+        s.valid_from,
+        s.valid_until
+    FROM seed_bench.staging s
+    JOIN seed_bench.stat_definition sd ON sd.code = s.stat_code
+    WHERE s.entity_type = 'stat_lu';
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.stat_for_unit',
+        source_table => 'source_stat_lu',
+        natural_identity_columns => ARRAY['legal_unit_id', 'establishment_id', 'stat_definition_id']
+    );
+END;
+$procedure$;
+-- SEED establishment
+CREATE PROCEDURE seed_bench.seed_establishments()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    CREATE OR REPLACE TEMP VIEW source_es AS
+    SELECT
+        row_id,
+        founding_id,
+        establishment_id AS id,
+        legal_unit_id,
+        es_address AS address,
+        daterange(valid_from, valid_until) AS valid_range,
+        valid_from,
+        valid_until
+    FROM seed_bench.staging
+    WHERE entity_type = 'es' AND legal_unit_id IS NOT NULL;
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.establishment',
+        source_table => 'source_es',
+        primary_identity_columns => ARRAY['id'],
+        founding_id_column => 'founding_id',
+        update_source_with_identity => true
+    );
+    
+    -- Back-propagate generated ES IDs to staging
+    UPDATE seed_bench.staging dst
+    SET establishment_id = src.id
+    FROM (
+        SELECT row_id, id 
+        FROM source_es 
+        WHERE id IS NOT NULL
+    ) src
+    WHERE dst.row_id = src.row_id;
+END;
+$procedure$;
+-- SEED external_ident for ES
+CREATE PROCEDURE seed_bench.seed_external_ident_es()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    INSERT INTO seed_bench.external_ident (establishment_id, ident_type_id, ident_value)
+    SELECT 
+        establishment_id,
+        1,  -- tax_ident
+        es_tax_ident
+    FROM seed_bench.staging
+    WHERE entity_type = 'es' AND establishment_id IS NOT NULL;
+END;
+$procedure$;
+-- SEED stat_for_unit for ES
+CREATE PROCEDURE seed_bench.seed_stats_es()
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    CREATE OR REPLACE TEMP VIEW source_stat_es AS
+    SELECT
+        row_id,
+        NULL::int AS legal_unit_id,
+        establishment_id,
+        sd.id AS stat_definition_id,
+        stat_value AS value,
+        daterange(s.valid_from, s.valid_until) AS valid_range,
+        s.valid_from,
+        s.valid_until
+    FROM seed_bench.staging s
+    JOIN seed_bench.stat_definition sd ON sd.code = s.stat_code
+    WHERE s.entity_type = 'stat_es';
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.stat_for_unit',
+        source_table => 'source_stat_es',
+        natural_identity_columns => ARRAY['legal_unit_id', 'establishment_id', 'stat_definition_id']
+    );
+END;
+$procedure$;
+--------------------------------------------------------------------------------
+\echo ''
+
+\echo '================================================================================'
+================================================================================
+\echo 'SEED PHASE'
+SEED PHASE
+\echo '================================================================================'
+================================================================================
+--------------------------------------------------------------------------------
+DO $$
+DECLARE
+    v_lu_count int := 10000;  -- Development scale (change to 50000/100000 for production)
+    v_start timestamptz;
+    v_duration interval;
+    v_rows int;
+    v_es_count int;
+    v_lu_result record;
+    v_total_start timestamptz;
+BEGIN
+    v_total_start := clock_timestamp();
+    RAISE NOTICE 'Starting SEED phase with % legal units', v_lu_count;
+    
+    ------------------------------------------------------------------------
+    -- Step 1: Generate LU and ES staging data
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    
+    SELECT * INTO v_lu_result FROM seed_bench.generate_lu_seed_data(v_lu_count);
+    SELECT count(*) INTO v_es_count FROM seed_bench.staging WHERE entity_type = 'es';
+    
+    v_duration := clock_timestamp() - v_start;
+    
+    INSERT INTO seed_bench.benchmark_log VALUES 
+        ('Generate staging', v_lu_result.lu_count + v_es_count, v_duration);
+    
+    ANALYZE seed_bench.staging;
+    
+    ------------------------------------------------------------------------
+    -- Step 2: SEED legal_unit
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    CALL seed_bench.seed_legal_units();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.legal_unit;
+    INSERT INTO seed_bench.benchmark_log VALUES ('SEED legal_unit', v_rows, v_duration);
+    
+    ------------------------------------------------------------------------
+    -- Step 3: SEED external_ident for LU
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    CALL seed_bench.seed_external_ident_lu();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.external_ident WHERE legal_unit_id IS NOT NULL;
+    INSERT INTO seed_bench.benchmark_log VALUES ('INSERT external_ident (LU)', v_rows, v_duration);
+    
+    ------------------------------------------------------------------------
+    -- Step 4: Generate and SEED stat_for_unit for LU
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    PERFORM seed_bench.generate_stat_seed_data('lu');
+    CALL seed_bench.seed_stats_lu();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.stat_for_unit WHERE legal_unit_id IS NOT NULL;
+    INSERT INTO seed_bench.benchmark_log VALUES ('SEED stat_for_unit (LU)', v_rows, v_duration);
+    
+    ------------------------------------------------------------------------
+    -- Step 5: SEED establishment
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    CALL seed_bench.seed_establishments();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.establishment;
+    INSERT INTO seed_bench.benchmark_log VALUES ('SEED establishment', v_rows, v_duration);
+    
+    ------------------------------------------------------------------------
+    -- Step 6: SEED external_ident for ES
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    CALL seed_bench.seed_external_ident_es();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.external_ident WHERE establishment_id IS NOT NULL;
+    INSERT INTO seed_bench.benchmark_log VALUES ('INSERT external_ident (ES)', v_rows, v_duration);
+    
+    ------------------------------------------------------------------------
+    -- Step 7: Generate and SEED stat_for_unit for ES
+    ------------------------------------------------------------------------
+    v_start := clock_timestamp();
+    PERFORM seed_bench.generate_stat_seed_data('es');
+    CALL seed_bench.seed_stats_es();
+    v_duration := clock_timestamp() - v_start;
+    SELECT count(*) INTO v_rows FROM seed_bench.stat_for_unit WHERE establishment_id IS NOT NULL;
+    INSERT INTO seed_bench.benchmark_log VALUES ('SEED stat_for_unit (ES)', v_rows, v_duration);
+    
+    -- Total time
+    INSERT INTO seed_bench.benchmark_log VALUES 
+        ('TOTAL SEED', NULL, clock_timestamp() - v_total_start);
+END;
+$$;
+NOTICE:  Starting SEED phase with 10000 legal units
+WARNING:  Performance warning: The source relation source_lu lacks a GIST index on its temporal columns.
+HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON seed_bench.staging USING GIST (valid_range);
+WARNING:  Performance warning: The source relation source_stat_lu lacks a GIST index on its temporal columns.
+HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON seed_bench.staging USING GIST (valid_range);
+WARNING:  Performance warning: The source relation source_es lacks a GIST index on its temporal columns.
+HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON seed_bench.staging USING GIST (valid_range);
+WARNING:  Performance warning: The source relation source_stat_es lacks a GIST index on its temporal columns.
+HINT:  For better performance, consider creating an index, e.g., CREATE INDEX ON seed_bench.staging USING GIST (valid_range);
+--------------------------------------------------------------------------------
+\echo ''
+
+\echo '--- SEED Performance Results (see expected/performance/ for timing details) ---'
+--- SEED Performance Results (see expected/performance/ for timing details) ---
+--------------------------------------------------------------------------------
+-- Output timing to performance file (variable between runs)
+\set perf_file expected/performance/112_benchmark_seed_and_update.log
+\pset format unaligned
+\pset fieldsep ','
+\o :perf_file
+SELECT 
+    step,
+    row_count,
+    round(EXTRACT(EPOCH FROM duration)::numeric, 2) as seconds,
+    CASE WHEN row_count > 0 
+        THEN round(row_count / EXTRACT(EPOCH FROM duration))
+        ELSE NULL
+    END as rows_per_sec
+FROM seed_bench.benchmark_log
+ORDER BY 
+    CASE step
+        WHEN 'Generate staging' THEN 1
+        WHEN 'SEED legal_unit' THEN 2
+        WHEN 'INSERT external_ident (LU)' THEN 3
+        WHEN 'SEED stat_for_unit (LU)' THEN 4
+        WHEN 'SEED establishment' THEN 5
+        WHEN 'INSERT external_ident (ES)' THEN 6
+        WHEN 'SEED stat_for_unit (ES)' THEN 7
+        WHEN 'TOTAL SEED' THEN 8
+    END;
+\o
+\pset format aligned
+\pset fieldsep ''
+\echo 'Performance data written to expected/performance/112_benchmark_seed_and_update.log'
+Performance data written to expected/performance/112_benchmark_seed_and_update.log
+--------------------------------------------------------------------------------
+\echo ''
+
+\echo '--- Entity Counts ---'
+--- Entity Counts ---
+--------------------------------------------------------------------------------
+SELECT 'legal_unit' as entity, count(*) as count FROM seed_bench.legal_unit
+UNION ALL
+SELECT 'establishment', count(*) FROM seed_bench.establishment
+UNION ALL
+SELECT 'external_ident', count(*) FROM seed_bench.external_ident
+UNION ALL
+SELECT 'stat_for_unit', count(*) FROM seed_bench.stat_for_unit
+ORDER BY entity;
+     entity     | count 
+----------------+-------
+ establishment  | 14289
+ external_ident | 24289
+ legal_unit     | 10000
+ stat_for_unit  | 48578
+(4 rows)
+
+--------------------------------------------------------------------------------
+\echo ''
+
+\echo '--- ES Distribution Verification ---'
+--- ES Distribution Verification ---
+--------------------------------------------------------------------------------
+SELECT 
+    CASE 
+        WHEN es_count = 0 THEN '0 ES (LU alone)'
+        WHEN es_count = 1 THEN '1 ES'
+        WHEN es_count BETWEEN 2 AND 5 THEN '2-5 ES'
+        WHEN es_count BETWEEN 6 AND 20 THEN '6-20 ES'
+        ELSE '21+ ES (big chains)'
+    END as category,
+    count(*) as lu_count,
+    round(100.0 * count(*) / sum(count(*)) OVER (), 1) as percentage
+FROM (
+    SELECT 
+        lu.id,
+        count(es.id) as es_count
+    FROM seed_bench.legal_unit lu
+    LEFT JOIN seed_bench.establishment es ON es.legal_unit_id = lu.id
+    GROUP BY lu.id
+) sub
+GROUP BY 1
+ORDER BY min(es_count);
+      category       | lu_count | percentage 
+---------------------+----------+------------
+ 0 ES (LU alone)     |     5509 |       55.1
+ 1 ES                |     3454 |       34.5
+ 2-5 ES              |      843 |        8.4
+ 6-20 ES             |      139 |        1.4
+ 21+ ES (big chains) |       55 |        0.6
+(5 rows)
+
+--------------------------------------------------------------------------------
+-- CLEANUP
+--------------------------------------------------------------------------------
+RESET ROLE;
+DROP SCHEMA seed_bench CASCADE;
+NOTICE:  drop cascades to 20 other objects
+DETAIL:  drop cascades to table seed_bench.ident_type
+drop cascades to table seed_bench.stat_definition
+drop cascades to table seed_bench.legal_unit
+drop cascades to table seed_bench.establishment
+drop cascades to table seed_bench.external_ident
+drop cascades to table seed_bench.stat_for_unit
+drop cascades to table seed_bench.staging
+drop cascades to view source_lu
+drop cascades to view source_stat_lu
+drop cascades to view source_es
+drop cascades to view source_stat_es
+drop cascades to table seed_bench.benchmark_log
+drop cascades to function seed_bench.generate_lu_seed_data(integer)
+drop cascades to function seed_bench.generate_stat_seed_data(text)
+drop cascades to function seed_bench.seed_legal_units()
+drop cascades to function seed_bench.seed_external_ident_lu()
+drop cascades to function seed_bench.seed_stats_lu()
+drop cascades to function seed_bench.seed_establishments()
+drop cascades to function seed_bench.seed_external_ident_es()
+drop cascades to function seed_bench.seed_stats_es()
+\i sql/include/benchmark_teardown.sql
+\set ECHO none
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
