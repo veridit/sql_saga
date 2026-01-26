@@ -534,6 +534,202 @@ END;
 $procedure$;
 
 --------------------------------------------------------------------------------
+\echo '--- UPDATE Phase Generators ---'
+--------------------------------------------------------------------------------
+
+-- Generate UPDATE batch data
+-- Simulates incremental updates: some base data changes, mostly stat changes
+CREATE FUNCTION seed_bench.generate_update_batch(
+    p_batch_num int,
+    p_batch_size int DEFAULT 1280,
+    p_base_change_pct int DEFAULT 5,
+    p_stat_change_pct int DEFAULT 75
+) RETURNS TABLE(
+    lu_base_changes int,
+    lu_stat_changes int,
+    es_stat_changes int
+) LANGUAGE plpgsql AS $function$
+DECLARE
+    v_valid_from date;
+    v_lu_base_count int;
+    v_lu_stat_count int;
+    v_es_stat_count int;
+BEGIN
+    -- Each batch represents a new time period (quarterly updates)
+    v_valid_from := ('2024-01-01'::date + (p_batch_num * interval '3 months'))::date;
+    
+    -- Use deterministic seed based on batch number
+    PERFORM setseed(0.42 + p_batch_num * 0.01);
+    
+    -- Clear previous batch data from staging
+    DELETE FROM seed_bench.staging WHERE batch = p_batch_num;
+    
+    -- Calculate counts
+    v_lu_base_count := (p_batch_size * p_base_change_pct / 100);
+    v_lu_stat_count := (p_batch_size * p_stat_change_pct / 100);
+    -- ES stat changes: proportional to ES/LU ratio (~1.4)
+    v_es_stat_count := (v_lu_stat_count * 1.4)::int;
+    
+    -- Generate LU base data changes (name/address updates)
+    INSERT INTO seed_bench.staging (
+        batch, entity_type, identity_correlation,
+        legal_unit_id, lu_name, lu_address,
+        valid_from, valid_until
+    )
+    SELECT 
+        p_batch_num,
+        'lu_update',
+        lu.id,
+        lu.id,
+        format('Company %s (Updated Q%s)', lu.id, p_batch_num),
+        format('%s Updated Street, City %s', lu.id, (lu.id % 100) + 1),
+        v_valid_from,
+        'infinity'::date
+    FROM seed_bench.legal_unit lu
+    WHERE lu.id IN (
+        SELECT id FROM seed_bench.legal_unit 
+        ORDER BY random() 
+        LIMIT v_lu_base_count
+    );
+    
+    -- Generate LU stat changes (employees/turnover updates)
+    INSERT INTO seed_bench.staging (
+        batch, entity_type, identity_correlation,
+        legal_unit_id, stat_code, stat_value,
+        valid_from, valid_until
+    )
+    SELECT 
+        p_batch_num,
+        'stat_lu_update',
+        lu.id * 10 + stat.ord,
+        lu.id,
+        stat.code,
+        CASE stat.code 
+            WHEN 'employees' THEN (lu.id % 100) + 5 + p_batch_num * 2  -- Slight growth
+            WHEN 'turnover' THEN (lu.id % 1000) * 1000 + 100000 + p_batch_num * 10000
+        END,
+        v_valid_from,
+        'infinity'::date
+    FROM (
+        SELECT id FROM seed_bench.legal_unit 
+        ORDER BY random() 
+        LIMIT v_lu_stat_count
+    ) lu
+    CROSS JOIN (VALUES (1, 'employees'), (2, 'turnover')) AS stat(ord, code);
+    
+    -- Generate ES stat changes
+    INSERT INTO seed_bench.staging (
+        batch, entity_type, identity_correlation,
+        establishment_id, stat_code, stat_value,
+        valid_from, valid_until
+    )
+    SELECT 
+        p_batch_num,
+        'stat_es_update',
+        es.id * 10 + stat.ord,
+        es.id,
+        stat.code,
+        CASE stat.code 
+            WHEN 'employees' THEN (es.id % 50) + 2 + p_batch_num
+            WHEN 'turnover' THEN (es.id % 500) * 1000 + 50000 + p_batch_num * 5000
+        END,
+        v_valid_from,
+        'infinity'::date
+    FROM (
+        SELECT id FROM seed_bench.establishment 
+        ORDER BY random() 
+        LIMIT v_es_stat_count
+    ) es
+    CROSS JOIN (VALUES (1, 'employees'), (2, 'turnover')) AS stat(ord, code);
+    
+    RETURN QUERY SELECT 
+        v_lu_base_count,
+        v_lu_stat_count * 2,  -- 2 stats per LU
+        v_es_stat_count * 2;  -- 2 stats per ES
+END;
+$function$;
+
+-- UPDATE legal_unit base data
+CREATE PROCEDURE seed_bench.update_legal_units(p_batch int)
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    -- Create temp table instead of view to capture p_batch value
+    DROP TABLE IF EXISTS pg_temp.source_lu_update;
+    CREATE TEMP TABLE source_lu_update AS
+    SELECT
+        row_id,
+        legal_unit_id AS id,
+        lu_name AS name,
+        lu_address AS physical_address,
+        daterange(valid_from, valid_until) AS valid_range,
+        valid_from,
+        valid_until
+    FROM seed_bench.staging
+    WHERE entity_type = 'lu_update' AND batch = p_batch;
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.legal_unit',
+        source_table => 'source_lu_update',
+        primary_identity_columns => ARRAY['id']
+    );
+END;
+$procedure$;
+
+-- UPDATE stat_for_unit for LU
+CREATE PROCEDURE seed_bench.update_stats_lu(p_batch int)
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.source_stat_lu_update;
+    CREATE TEMP TABLE source_stat_lu_update AS
+    SELECT
+        row_id,
+        legal_unit_id,
+        NULL::int AS establishment_id,
+        sd.id AS stat_definition_id,
+        stat_value AS value,
+        daterange(s.valid_from, s.valid_until) AS valid_range,
+        s.valid_from,
+        s.valid_until
+    FROM seed_bench.staging s
+    JOIN seed_bench.stat_definition sd ON sd.code = s.stat_code
+    WHERE s.entity_type = 'stat_lu_update' AND s.batch = p_batch;
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.stat_for_unit',
+        source_table => 'source_stat_lu_update',
+        natural_identity_columns => ARRAY['legal_unit_id', 'establishment_id', 'stat_definition_id']
+    );
+END;
+$procedure$;
+
+-- UPDATE stat_for_unit for ES
+CREATE PROCEDURE seed_bench.update_stats_es(p_batch int)
+LANGUAGE plpgsql AS $procedure$
+BEGIN
+    DROP TABLE IF EXISTS pg_temp.source_stat_es_update;
+    CREATE TEMP TABLE source_stat_es_update AS
+    SELECT
+        row_id,
+        NULL::int AS legal_unit_id,
+        establishment_id,
+        sd.id AS stat_definition_id,
+        stat_value AS value,
+        daterange(s.valid_from, s.valid_until) AS valid_range,
+        s.valid_from,
+        s.valid_until
+    FROM seed_bench.staging s
+    JOIN seed_bench.stat_definition sd ON sd.code = s.stat_code
+    WHERE s.entity_type = 'stat_es_update' AND s.batch = p_batch;
+    
+    CALL sql_saga.temporal_merge(
+        target_table => 'seed_bench.stat_for_unit',
+        source_table => 'source_stat_es_update',
+        natural_identity_columns => ARRAY['legal_unit_id', 'establishment_id', 'stat_definition_id']
+    );
+END;
+$procedure$;
+
+--------------------------------------------------------------------------------
 \echo ''
 \echo '================================================================================'
 \echo 'SEED PHASE'
@@ -632,6 +828,91 @@ $$;
 
 --------------------------------------------------------------------------------
 \echo ''
+\echo '================================================================================'
+\echo 'UPDATE PHASE'
+\echo '================================================================================'
+--------------------------------------------------------------------------------
+
+DO $$
+DECLARE
+    v_batch_count int := 5;
+    v_batch_size int := 1280;
+    v_batch int;
+    v_start timestamptz;
+    v_duration interval;
+    v_rows int;
+    v_batch_result record;
+    v_total_start timestamptz;
+    v_total_lu_base int := 0;
+    v_total_lu_stat int := 0;
+    v_total_es_stat int := 0;
+BEGIN
+    v_total_start := clock_timestamp();
+    RAISE NOTICE 'Starting UPDATE phase: % batches of ~% entities each', v_batch_count, v_batch_size;
+    
+    FOR v_batch IN 1..v_batch_count LOOP
+        RAISE NOTICE 'Processing batch %...', v_batch;
+        
+        ------------------------------------------------------------------------
+        -- Generate batch data
+        ------------------------------------------------------------------------
+        v_start := clock_timestamp();
+        SELECT * INTO v_batch_result 
+        FROM seed_bench.generate_update_batch(v_batch, v_batch_size);
+        v_duration := clock_timestamp() - v_start;
+        
+        v_total_lu_base := v_total_lu_base + v_batch_result.lu_base_changes;
+        v_total_lu_stat := v_total_lu_stat + v_batch_result.lu_stat_changes;
+        v_total_es_stat := v_total_es_stat + v_batch_result.es_stat_changes;
+        
+        ANALYZE seed_bench.staging;
+        
+        ------------------------------------------------------------------------
+        -- UPDATE legal_unit base data
+        ------------------------------------------------------------------------
+        v_start := clock_timestamp();
+        CALL seed_bench.update_legal_units(v_batch);
+        v_duration := clock_timestamp() - v_start;
+        SELECT count(*) INTO v_rows FROM seed_bench.staging 
+        WHERE entity_type = 'lu_update' AND batch = v_batch;
+        INSERT INTO seed_bench.benchmark_log VALUES 
+            (format('UPDATE[%s] legal_unit', v_batch), v_rows, v_duration);
+        
+        ------------------------------------------------------------------------
+        -- UPDATE stat_for_unit for LU
+        ------------------------------------------------------------------------
+        v_start := clock_timestamp();
+        CALL seed_bench.update_stats_lu(v_batch);
+        v_duration := clock_timestamp() - v_start;
+        SELECT count(*) INTO v_rows FROM seed_bench.staging 
+        WHERE entity_type = 'stat_lu_update' AND batch = v_batch;
+        INSERT INTO seed_bench.benchmark_log VALUES 
+            (format('UPDATE[%s] stat_for_unit (LU)', v_batch), v_rows, v_duration);
+        
+        ------------------------------------------------------------------------
+        -- UPDATE stat_for_unit for ES
+        ------------------------------------------------------------------------
+        v_start := clock_timestamp();
+        CALL seed_bench.update_stats_es(v_batch);
+        v_duration := clock_timestamp() - v_start;
+        SELECT count(*) INTO v_rows FROM seed_bench.staging 
+        WHERE entity_type = 'stat_es_update' AND batch = v_batch;
+        INSERT INTO seed_bench.benchmark_log VALUES 
+            (format('UPDATE[%s] stat_for_unit (ES)', v_batch), v_rows, v_duration);
+    END LOOP;
+    
+    -- Total UPDATE time
+    INSERT INTO seed_bench.benchmark_log VALUES 
+        ('TOTAL UPDATE', v_total_lu_base + v_total_lu_stat + v_total_es_stat, 
+         clock_timestamp() - v_total_start);
+    
+    RAISE NOTICE 'UPDATE phase complete. Total changes: % LU base, % LU stats, % ES stats',
+        v_total_lu_base, v_total_lu_stat, v_total_es_stat;
+END;
+$$;
+
+--------------------------------------------------------------------------------
+\echo ''
 \echo '--- SEED Performance Results (see expected/performance/ for timing details) ---'
 --------------------------------------------------------------------------------
 
@@ -651,15 +932,24 @@ SELECT
     END as rows_per_sec
 FROM seed_bench.benchmark_log
 ORDER BY 
-    CASE step
-        WHEN 'Generate staging' THEN 1
-        WHEN 'SEED legal_unit' THEN 2
-        WHEN 'INSERT external_ident (LU)' THEN 3
-        WHEN 'SEED stat_for_unit (LU)' THEN 4
-        WHEN 'SEED establishment' THEN 5
-        WHEN 'INSERT external_ident (ES)' THEN 6
-        WHEN 'SEED stat_for_unit (ES)' THEN 7
-        WHEN 'TOTAL SEED' THEN 8
+    CASE 
+        -- SEED phase
+        WHEN step = 'Generate staging' THEN 1
+        WHEN step = 'SEED legal_unit' THEN 2
+        WHEN step = 'INSERT external_ident (LU)' THEN 3
+        WHEN step = 'SEED stat_for_unit (LU)' THEN 4
+        WHEN step = 'SEED establishment' THEN 5
+        WHEN step = 'INSERT external_ident (ES)' THEN 6
+        WHEN step = 'SEED stat_for_unit (ES)' THEN 7
+        WHEN step = 'TOTAL SEED' THEN 8
+        -- UPDATE phase (batches 1-5)
+        WHEN step LIKE 'UPDATE[1]%' THEN 10 + position('legal_unit' in step) + position('stat_for_unit (LU)' in step) * 2 + position('stat_for_unit (ES)' in step) * 3
+        WHEN step LIKE 'UPDATE[2]%' THEN 20 + position('legal_unit' in step) + position('stat_for_unit (LU)' in step) * 2 + position('stat_for_unit (ES)' in step) * 3
+        WHEN step LIKE 'UPDATE[3]%' THEN 30 + position('legal_unit' in step) + position('stat_for_unit (LU)' in step) * 2 + position('stat_for_unit (ES)' in step) * 3
+        WHEN step LIKE 'UPDATE[4]%' THEN 40 + position('legal_unit' in step) + position('stat_for_unit (LU)' in step) * 2 + position('stat_for_unit (ES)' in step) * 3
+        WHEN step LIKE 'UPDATE[5]%' THEN 50 + position('legal_unit' in step) + position('stat_for_unit (LU)' in step) * 2 + position('stat_for_unit (ES)' in step) * 3
+        WHEN step = 'TOTAL UPDATE' THEN 99
+        ELSE 100
     END;
 
 \o
