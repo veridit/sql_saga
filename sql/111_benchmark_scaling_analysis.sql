@@ -185,10 +185,16 @@ CREATE TEMP TABLE scaling_results (
     ms_per_entity numeric
 );
 
--- Run scaling tests
--- Scale sizes chosen to double each step for clear ratio analysis
--- 64K requires max_locks_per_transaction >= 256
-DO $$
+-- Run scaling tests using a procedure with COMMIT between batches.
+-- This simulates production usage where each batch runs in a separate transaction,
+-- avoiding the artificial O(n²) overhead that occurs when running many batches
+-- in a single DO block (due to PL/pgSQL context accumulation).
+--
+-- Scale sizes chosen to double each step for clear ratio analysis.
+-- 64K requires max_locks_per_transaction >= 256.
+
+CREATE OR REPLACE PROCEDURE scaling_bench.run_all_scales()
+LANGUAGE plpgsql AS $procedure$
 DECLARE
     v_entities int;
     v_batch_size int := 2000;  -- Fixed batch size for consistent comparison
@@ -198,7 +204,7 @@ DECLARE
     v_batch_start timestamptz;
     v_batch1_ms numeric;
     v_batch_ms numeric;
-    v_total_batch_ms numeric := 0;
+    v_total_batch_ms numeric;
     v_total_ms numeric;
     v_scale_sizes int[] := ARRAY[2000, 4000, 8000, 16000, 32000, 64000, 128000];
     v_max_locks int;
@@ -223,13 +229,21 @@ BEGIN
         ANALYZE scaling_bench.data_table;
         ANALYZE scaling_bench.legal_unit;
         
+        -- COMMIT to start fresh for timing (critical for accurate measurement)
+        COMMIT;
+        
         v_start := clock_timestamp();
         v_total_batch_ms := 0;
         
-        -- Process all batches (quiet mode - no per-batch output for deterministic test results)
+        -- Process all batches with COMMIT between each (simulates production usage)
         FOR v_batch_id IN 1..v_num_batches LOOP
             v_batch_start := clock_timestamp();
             CALL scaling_bench.process_batch(v_batch_id);
+            
+            -- COMMIT after each batch - this is critical!
+            -- Without this, PL/pgSQL context accumulates causing artificial O(n²) behavior.
+            COMMIT;
+            
             v_batch_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_batch_start) * 1000;
             v_total_batch_ms := v_total_batch_ms + v_batch_ms;
             
@@ -249,11 +263,14 @@ BEGIN
             v_total_ms,
             v_total_ms / v_entities
         );
+        COMMIT;
     END LOOP;
     
     RAISE NOTICE 'Scaling benchmark completed. See results tables below.';
 END;
-$$;
+$procedure$;
+
+CALL scaling_bench.run_all_scales();
 
 --------------------------------------------------------------------------------
 \echo ''
