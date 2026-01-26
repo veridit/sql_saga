@@ -197,21 +197,36 @@ BEGIN
     CREATE TEMP TABLE temporal_merge_plan (LIKE sql_saga.temporal_merge_plan, PRIMARY KEY (plan_op_seq)) ON COMMIT DROP;
 
     -- Step 1: Generate the plan.
-    INSERT INTO temporal_merge_plan
-    SELECT * FROM sql_saga.temporal_merge_plan(
-        target_table => temporal_merge.target_table,
-        source_table => temporal_merge.source_table,
-        mode => temporal_merge.mode,
-        era_name => temporal_merge.era_name,
-        identity_columns => v_identity_cols_discovered,
-        row_id_column => temporal_merge.row_id_column,
-        founding_id_column => temporal_merge.founding_id_column,
-        delete_mode => temporal_merge.delete_mode,
-        lookup_keys => v_natural_identity_keys_discovered,
-        ephemeral_columns => temporal_merge.ephemeral_columns,
-        p_log_trace => v_log_trace,
-        p_log_sql => v_log_sql
-    );
+    DECLARE
+        v_plan_start TIMESTAMPTZ := clock_timestamp();
+        v_plan_ms NUMERIC;
+        v_exec_start TIMESTAMPTZ;
+        v_exec_ms NUMERIC;
+        v_log_timing BOOLEAN;
+    BEGIN
+        v_log_timing := COALESCE(current_setting('sql_saga.log_step_timing', true), 'off') = 'on';
+        
+        INSERT INTO temporal_merge_plan
+        SELECT * FROM sql_saga.temporal_merge_plan(
+            target_table => temporal_merge.target_table,
+            source_table => temporal_merge.source_table,
+            mode => temporal_merge.mode,
+            era_name => temporal_merge.era_name,
+            identity_columns => v_identity_cols_discovered,
+            row_id_column => temporal_merge.row_id_column,
+            founding_id_column => temporal_merge.founding_id_column,
+            delete_mode => temporal_merge.delete_mode,
+            lookup_keys => v_natural_identity_keys_discovered,
+            ephemeral_columns => temporal_merge.ephemeral_columns,
+            p_log_trace => v_log_trace,
+            p_log_sql => v_log_sql
+        );
+        
+        v_plan_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_plan_start) * 1000;
+        IF v_log_timing THEN
+            RAISE NOTICE 'temporal_merge PLAN phase: %ms', round(v_plan_ms, 1);
+        END IF;
+    END;
 
     -- Conditionally output the plan for debugging.
     DECLARE
@@ -226,25 +241,38 @@ BEGIN
     END;
 
     -- Step 2: Execute the plan.
-    CALL sql_saga.temporal_merge_execute(
-        target_table => temporal_merge.target_table,
-        source_table => temporal_merge.source_table,
-        identity_columns => v_identity_cols_discovered,
-        mode => temporal_merge.mode,
-        era_name => temporal_merge.era_name,
-        row_id_column => temporal_merge.row_id_column,
-        founding_id_column => temporal_merge.founding_id_column,
-        update_source_with_identity => temporal_merge.update_source_with_identity,
-        lookup_columns => v_natural_identity_cols_discovered,
-        delete_mode => temporal_merge.delete_mode,
-        update_source_with_feedback => temporal_merge.update_source_with_feedback,
-        feedback_status_column => temporal_merge.feedback_status_column,
-        feedback_status_key => temporal_merge.feedback_status_key,
-        feedback_error_column => temporal_merge.feedback_error_column,
-        feedback_error_key => temporal_merge.feedback_error_key,
-        ephemeral_columns => temporal_merge.ephemeral_columns,
-        delay_constraints => temporal_merge.delay_constraints
-    );
+    DECLARE
+        v_exec_start TIMESTAMPTZ := clock_timestamp();
+        v_exec_ms NUMERIC;
+        v_log_timing BOOLEAN;
+    BEGIN
+        v_log_timing := COALESCE(current_setting('sql_saga.log_step_timing', true), 'off') = 'on';
+        
+        CALL sql_saga.temporal_merge_execute(
+            target_table => temporal_merge.target_table,
+            source_table => temporal_merge.source_table,
+            identity_columns => v_identity_cols_discovered,
+            mode => temporal_merge.mode,
+            era_name => temporal_merge.era_name,
+            row_id_column => temporal_merge.row_id_column,
+            founding_id_column => temporal_merge.founding_id_column,
+            update_source_with_identity => temporal_merge.update_source_with_identity,
+            lookup_columns => v_natural_identity_cols_discovered,
+            delete_mode => temporal_merge.delete_mode,
+            update_source_with_feedback => temporal_merge.update_source_with_feedback,
+            feedback_status_column => temporal_merge.feedback_status_column,
+            feedback_status_key => temporal_merge.feedback_status_key,
+            feedback_error_column => temporal_merge.feedback_error_column,
+            feedback_error_key => temporal_merge.feedback_error_key,
+            ephemeral_columns => temporal_merge.ephemeral_columns,
+            delay_constraints => temporal_merge.delay_constraints
+        );
+        
+        v_exec_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_exec_start) * 1000;
+        IF v_log_timing THEN
+            RAISE NOTICE 'temporal_merge EXECUTE phase: %ms', round(v_exec_ms, 1);
+        END IF;
+    END;
 END;
 $temporal_merge$;
 

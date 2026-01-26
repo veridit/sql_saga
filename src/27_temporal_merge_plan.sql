@@ -2699,13 +2699,30 @@ BEGIN
     DECLARE
         v_step JSONB;
         v_final_query TEXT;
+        v_step_start TIMESTAMPTZ;
+        v_step_num INT := 0;
+        v_step_ms NUMERIC;
+        v_log_timing BOOLEAN;
     BEGIN
+        -- Check if timing logging is enabled via GUC
+        v_log_timing := COALESCE(current_setting('sql_saga.log_step_timing', true), 'off') = 'on';
+        
         FOR v_step IN SELECT * FROM jsonb_array_elements(v_plan_sqls)
         LOOP
+            v_step_num := v_step_num + 1;
+            v_step_start := clock_timestamp();
+            
             IF v_step->>'type' = 'query' THEN
                 v_final_query := v_step->>'sql';
             ELSE
                 EXECUTE v_step->>'sql';
+            END IF;
+            
+            IF v_log_timing THEN
+                v_step_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_step_start) * 1000;
+                IF v_step_ms > 5 THEN  -- Only log steps taking > 5ms
+                    RAISE NOTICE 'Step % (%ms): %', v_step_num, round(v_step_ms, 1), left(v_step->>'sql', 100);
+                END IF;
             END IF;
         END LOOP;
 
