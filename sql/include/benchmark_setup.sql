@@ -100,9 +100,11 @@ BEGIN
     -- Initialize performance monitoring if pg_stat_monitor extension exists.
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor')
     THEN
-        -- Enable tracking of nested queries. This is critical for getting detailed
-        -- performance data from inside plpgsql functions like temporal_merge.
-        SET pg_stat_monitor.pgsm_track = 'all';
+        -- IMPORTANT: Do NOT enable pgsm_track = 'all' here!
+        -- Tracking nested queries causes O(n) overhead that creates artificial slowdowns
+        -- in benchmark tests. The overhead grows with each batch as more queries are tracked.
+        -- Only enable 'all' tracking for specific profiling sessions, not for benchmarks.
+        -- SET pg_stat_monitor.pgsm_track = 'all';  -- DISABLED - causes O(n) overhead!
 
         IF to_regclass('pg_temp.benchmark_monitor_log') IS NULL THEN
             CREATE TEMP TABLE benchmark_monitor_log (
