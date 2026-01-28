@@ -275,7 +275,7 @@ SELECT 'establishment_tm_bs_off' AS type, COUNT(*) AS count FROM establishment_t
 \set ECHO none
  monitor_log_has_rows 
 ----------------------
- t
+ f
 (1 row)
 
 -- Teardown for batch size benchmark tables

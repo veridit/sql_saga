@@ -1066,7 +1066,7 @@ ORDER BY entity;
  establishment  | 14289
  external_ident | 24289
  legal_unit     | 10320
- stat_for_unit  | 73764
+ stat_for_unit  | 73780
 (4 rows)
 
 --------------------------------------------------------------------------------

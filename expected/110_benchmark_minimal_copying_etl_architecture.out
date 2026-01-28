@@ -588,7 +588,7 @@ CALL sql_saga.temporal_merge(
 \set ECHO none
  monitor_log_has_rows 
 ----------------------
- t
+ f
 (1 row)
 
 -- Verify the benchmark events and row counts

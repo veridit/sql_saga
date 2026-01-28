@@ -24,8 +24,26 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
 -- This must be done as a superuser before setting the role.
+-- Use tracking version for detailed query profiling.
+\i sql/include/benchmark_setup_with_tracking.sql
+-- benchmark_setup_with_tracking.sql
+--
+-- Use this instead of benchmark_setup.sql when you need detailed query profiling
+-- via pg_stat_monitor. This enables pgsm_track='all' which tracks nested queries
+-- inside PL/pgSQL functions.
+--
+-- WARNING: This causes O(n) overhead that grows with each batch as more queries
+-- are tracked. Only use for debugging/profiling, not for measuring true performance.
 \i sql/include/benchmark_setup.sql
 \set ECHO none
+-- Enable nested query tracking for detailed profiling
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') THEN
+        EXECUTE 'SET pg_stat_monitor.pgsm_track = ''all''';
+    END IF;
+END;
+$$;
 SET ROLE TO sql_saga_unprivileged_user;
 -- Enable detailed temporal_merge index logging for this benchmark session.
 --SET sql_saga.temporal_merge.log_index_checks = true;

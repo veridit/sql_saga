@@ -395,7 +395,7 @@ ORDER BY prev_entities;
  8000 -> 16000   | LINEAR     | OK
  16000 -> 32000  | LINEAR     | OK
  32000 -> 64000  | LINEAR     | OK
- 64000 -> 128000 | LOGLINEAR  | OK
+ 64000 -> 128000 | LINEAR     | OK
 (6 rows)
 
 \echo ''

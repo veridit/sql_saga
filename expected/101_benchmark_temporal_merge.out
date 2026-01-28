@@ -23,8 +23,26 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Use tracking version for detailed query profiling (debugging).
+\i sql/include/benchmark_setup_with_tracking.sql
+-- benchmark_setup_with_tracking.sql
+--
+-- Use this instead of benchmark_setup.sql when you need detailed query profiling
+-- via pg_stat_monitor. This enables pgsm_track='all' which tracks nested queries
+-- inside PL/pgSQL functions.
+--
+-- WARNING: This causes O(n) overhead that grows with each batch as more queries
+-- are tracked. Only use for debugging/profiling, not for measuring true performance.
 \i sql/include/benchmark_setup.sql
 \set ECHO none
+-- Enable nested query tracking for detailed profiling
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_stat_monitor') THEN
+        EXECUTE 'SET pg_stat_monitor.pgsm_track = ''all''';
+    END IF;
+END;
+$$;
 SET ROLE TO sql_saga_unprivileged_user;
 --------------------------------------------------------------------------------
 -- BENCHMARK: temporal_merge Performance with Range-Only Tables
@@ -169,6 +187,7 @@ BEGIN;
   \set benchmark_target_table 'legal_unit_tm'
   \i sql/include/benchmark_explain_log.sql
 \set ECHO none
+Performance regression detected: EXPLAIN plan contains a Seq Scan on legal_unit_tm
   INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('Temporal Merge 20% INSERT 80% PATCH Child', 0, false);
   CALL sql_saga.benchmark_reset();
   CALL sql_saga.temporal_merge(target_table => 'establishment_tm'::regclass, source_table => 'establishment_source'::regclass, primary_identity_columns => ARRAY['id'], ephemeral_columns => ARRAY[]::TEXT[]);

@@ -1,5 +1,6 @@
 \i sql/include/test_setup.sql
-\i sql/include/benchmark_setup.sql
+-- Use tracking version for detailed query profiling (debugging).
+\i sql/include/benchmark_setup_with_tracking.sql
 
 SET ROLE TO sql_saga_unprivileged_user;
 

@@ -1,8 +1,16 @@
--- Large Scale Benchmark: 1.1M entities
--- Tests temporal_merge at production scale (1.1M legal units)
+-- Large Scale Production Benchmark: 1.1M legal units + 800K establishments
+-- Tests temporal_merge at production scale with FK constraints
 --
--- This benchmark runs a single massive load to verify O(n) scaling holds.
--- Expected time: ~6-8 minutes for 1.1M entities at ~3000 rows/sec
+-- This benchmark models the Norway statistics bureau workload:
+-- - 1.1M legal units (parent entities)
+-- - 800K establishments (child entities with temporal FK to legal_unit)
+--
+-- Verifies:
+-- 1. Parent table loads at O(1) per batch (~5000 rows/sec)
+-- 2. Child table with temporal FK loads at O(1) per batch
+-- 3. FK constraint checking doesn't cause slowdown as tables grow
+--
+-- Expected time: ~8-12 minutes total
 --
 \i sql/include/test_setup.sql
 \i sql/include/benchmark_setup.sql
@@ -16,10 +24,15 @@ GRANT ALL ON SCHEMA large_bench TO sql_saga_unprivileged_user;
 
 SET ROLE TO sql_saga_unprivileged_user;
 
+--------------------------------------------------------------------------------
+\echo ''
+\echo '--- Creating temporal tables with FK relationship ---'
+--------------------------------------------------------------------------------
+
+-- Parent: legal_unit
 CREATE TABLE large_bench.legal_unit (
     id serial, 
     name text, 
-    comment text, 
     valid_range daterange, 
     valid_from date, 
     valid_until date
@@ -34,26 +47,81 @@ SELECT sql_saga.add_unique_key(
     key_type => 'primary',
     unique_key_name => 'large_bench_legal_unit_pk');
 
-CREATE TABLE large_bench.data_table (
+-- Child: establishment (with temporal FK to legal_unit)
+CREATE TABLE large_bench.establishment (
+    id serial,
+    legal_unit_id int NOT NULL,
+    name text,
+    valid_range daterange, 
+    valid_from date, 
+    valid_until date
+);
+
+SELECT sql_saga.add_era('large_bench.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key(
+    table_oid => 'large_bench.establishment'::regclass, 
+    column_names => ARRAY['id'], 
+    key_type => 'primary',
+    unique_key_name => 'large_bench_establishment_pk');
+
+-- Add temporal FK: establishment.legal_unit_id -> legal_unit.id
+SELECT sql_saga.add_foreign_key(
+    fk_table_oid => 'large_bench.establishment'::regclass,
+    fk_column_names => ARRAY['legal_unit_id'],
+    pk_table_oid => 'large_bench.legal_unit'::regclass,
+    pk_column_names => ARRAY['id']);
+
+--------------------------------------------------------------------------------
+\echo '--- Creating staging tables ---'
+--------------------------------------------------------------------------------
+
+-- Staging for legal_unit
+CREATE TABLE large_bench.lu_staging (
     row_id serial primary key,
     batch int not null,
     identity_correlation int not null,
     legal_unit_id int,
-    merge_statuses jsonb,
-    merge_errors jsonb,
-    comment text,
     lu_name text,
     valid_from date not null,
     valid_until date not null,
     valid_range daterange GENERATED ALWAYS AS (daterange(valid_from, valid_until)) STORED
 );
-CREATE INDEX ON large_bench.data_table (batch);
-CREATE INDEX ON large_bench.data_table USING GIST (valid_range);
+CREATE INDEX ON large_bench.lu_staging (batch);
+CREATE INDEX ON large_bench.lu_staging USING GIST (valid_range);
+
+-- Staging for establishment
+CREATE TABLE large_bench.es_staging (
+    row_id serial primary key,
+    batch int not null,
+    identity_correlation int not null,
+    establishment_id int,
+    legal_unit_id int not null,
+    es_name text,
+    valid_from date not null,
+    valid_until date not null,
+    valid_range daterange GENERATED ALWAYS AS (daterange(valid_from, valid_until)) STORED
+);
+CREATE INDEX ON large_bench.es_staging (batch);
+CREATE INDEX ON large_bench.es_staging USING GIST (valid_range);
+
+-- Results table for timing data
+CREATE TABLE large_bench.benchmark_results (
+    phase text NOT NULL,
+    checkpoint text NOT NULL,
+    entities int,
+    batches int,
+    elapsed_sec numeric,
+    rows_per_sec int,
+    ms_per_batch int
+);
 
 --------------------------------------------------------------------------------
 \echo ''
 \echo '================================================================================'
-\echo 'LARGE SCALE BENCHMARK: 1.1M entities'
+\echo 'LARGE SCALE PRODUCTION BENCHMARK'
+\echo '1.1M legal units + 800K establishments (with temporal FK)'
 \echo '================================================================================'
 \echo ''
 --------------------------------------------------------------------------------
@@ -61,87 +129,249 @@ CREATE INDEX ON large_bench.data_table USING GIST (valid_range);
 CREATE OR REPLACE PROCEDURE large_bench.run_benchmark()
 LANGUAGE plpgsql AS $proc$
 DECLARE
-    v_total_entities int := 1100000;
+    v_lu_count int := 1100000;
+    v_es_count int := 800000;
     v_batch_size int := 2000;
-    v_num_batches int;
+    v_lu_batches int;
+    v_es_batches int;
     v_batch int;
     v_start timestamptz;
+    v_phase_start timestamptz;
     v_checkpoint timestamptz;
-    v_total_ms numeric;
+    v_elapsed_sec numeric;
     v_last_report int := 0;
     v_checkpoint_entities int;
+    v_rows_per_sec int;
+    v_ms_per_batch int;
 BEGIN
-    v_num_batches := CEIL(v_total_entities::numeric / v_batch_size);
+    v_lu_batches := CEIL(v_lu_count::numeric / v_batch_size);
+    v_es_batches := CEIL(v_es_count::numeric / v_batch_size);
     
-    RAISE NOTICE 'Generating % entities (% batches of %)...', 
-        v_total_entities, v_num_batches, v_batch_size;
+    ----------------------------------------------------------------------------
+    -- PHASE 1: Generate all staging data
+    ----------------------------------------------------------------------------
+    v_start := clock_timestamp();
     
-    INSERT INTO large_bench.data_table (row_id, batch, identity_correlation, comment, lu_name, valid_from, valid_until)
-    SELECT row_number() OVER (), CEIL(n::numeric / v_batch_size), n, 
-           format('E%s', n), format('C-%s', n),
+    INSERT INTO large_bench.lu_staging (row_id, batch, identity_correlation, lu_name, valid_from, valid_until)
+    SELECT n, CEIL(n::numeric / v_batch_size), n, 
+           format('Company-%s', n),
            '2024-01-01'::date, 'infinity'
-    FROM generate_series(1, v_total_entities) n;
+    FROM generate_series(1, v_lu_count) n;
     
-    ANALYZE large_bench.data_table;
-    ANALYZE large_bench.legal_unit;
+    INSERT INTO large_bench.es_staging (row_id, batch, identity_correlation, legal_unit_id, es_name, valid_from, valid_until)
+    SELECT n, CEIL(n::numeric / v_batch_size), n, 
+           n,
+           format('Branch-%s', n),
+           '2024-01-01'::date, 'infinity'
+    FROM generate_series(1, v_es_count) n;
+    
+    ANALYZE large_bench.lu_staging;
+    ANALYZE large_bench.es_staging;
+    
+    v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_start);
+    INSERT INTO large_bench.benchmark_results VALUES 
+        ('Phase 1', 'Data generation', v_lu_count + v_es_count, NULL, 
+         ROUND(v_elapsed_sec, 1), ROUND((v_lu_count + v_es_count) / v_elapsed_sec), NULL);
     COMMIT;
     
-    RAISE NOTICE 'Data generated. Starting temporal_merge processing...';
-    RAISE NOTICE '';
+    ----------------------------------------------------------------------------
+    -- PHASE 2: Load parent table (legal_unit)
+    ----------------------------------------------------------------------------
+    v_phase_start := clock_timestamp();
+    v_checkpoint := v_phase_start;
+    v_last_report := 0;
     
-    v_start := clock_timestamp();
-    v_checkpoint := v_start;
-    
-    FOR v_batch IN 1..v_num_batches LOOP
+    FOR v_batch IN 1..v_lu_batches LOOP
         EXECUTE format($sql$
-            CREATE OR REPLACE TEMP VIEW sv AS
+            CREATE OR REPLACE TEMP VIEW sv_lu AS
             SELECT row_id, identity_correlation as founding_id, legal_unit_id AS id, 
-                   lu_name AS name, comment, merge_statuses, merge_errors,
+                   lu_name AS name,
                    valid_from, valid_until, valid_range
-            FROM large_bench.data_table WHERE batch = %L
+            FROM large_bench.lu_staging WHERE batch = %L
         $sql$, v_batch);
         
         CALL sql_saga.temporal_merge(
             target_table => 'large_bench.legal_unit',
-            source_table => 'sv',
+            source_table => 'sv_lu',
             primary_identity_columns => ARRAY['id'],
-            ephemeral_columns => ARRAY['comment'],
-            mode => 'MERGE_ENTITY_PATCH',
             founding_id_column => 'founding_id',
-            update_source_with_identity => true,
-            update_source_with_feedback => false
+            update_source_with_identity => true
         );
         
         COMMIT;
         
-        -- Progress every 100 batches (200K entities)
+        -- Record progress every 100 batches
         IF v_batch - v_last_report >= 100 THEN
             v_checkpoint_entities := v_batch * v_batch_size;
-            RAISE NOTICE 'Progress: %/% batches (%K entities) - % rows/sec avg, % ms/batch',
-                v_batch, v_num_batches, 
-                v_checkpoint_entities / 1000,
-                ROUND(v_checkpoint_entities / EXTRACT(EPOCH FROM clock_timestamp() - v_start)),
-                ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_checkpoint) * 1000 / 100);
+            v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_phase_start);
+            v_rows_per_sec := ROUND(v_checkpoint_entities / v_elapsed_sec);
+            v_ms_per_batch := ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_checkpoint) * 1000 / 100);
+            
+            INSERT INTO large_bench.benchmark_results VALUES 
+                ('Phase 2 (LU)', format('%sK', v_checkpoint_entities / 1000), 
+                 v_checkpoint_entities, v_batch, ROUND(v_elapsed_sec, 1), v_rows_per_sec, v_ms_per_batch);
+            
             v_checkpoint := clock_timestamp();
             v_last_report := v_batch;
+            COMMIT;
         END IF;
     END LOOP;
     
-    v_total_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_start) * 1000;
+    v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_phase_start);
+    INSERT INTO large_bench.benchmark_results VALUES 
+        ('Phase 2 (LU)', 'COMPLETE', v_lu_count, v_lu_batches, 
+         ROUND(v_elapsed_sec, 1), ROUND(v_lu_count / v_elapsed_sec), 
+         ROUND(v_elapsed_sec * 1000 / v_lu_batches));
     
-    RAISE NOTICE '';
-    RAISE NOTICE '================================================================================';
-    RAISE NOTICE 'COMPLETE: % entities in % seconds', v_total_entities, ROUND(v_total_ms / 1000, 1);
-    RAISE NOTICE 'Throughput: % rows/sec, % ms/batch avg', 
-        ROUND(v_total_entities / (v_total_ms / 1000.0)),
-        ROUND(v_total_ms / v_num_batches);
-    RAISE NOTICE '================================================================================';
+    -- Back-propagate LU IDs to ES staging (required before Phase 3)
+    v_start := clock_timestamp();
+    
+    UPDATE large_bench.es_staging es
+    SET legal_unit_id = lu.legal_unit_id
+    FROM large_bench.lu_staging lu
+    WHERE es.legal_unit_id = lu.identity_correlation
+      AND lu.legal_unit_id IS NOT NULL;
+    
+    v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_start);
+    INSERT INTO large_bench.benchmark_results VALUES 
+        ('ID Propagation', 'LU->ES staging', v_es_count, NULL, ROUND(v_elapsed_sec, 1), 
+         ROUND(v_es_count / v_elapsed_sec), NULL);
+    
+    ANALYZE large_bench.legal_unit;
+    ANALYZE large_bench.es_staging;
+    COMMIT;
+    
+    ----------------------------------------------------------------------------
+    -- PHASE 3: Load child table (establishment) with FK constraint
+    ----------------------------------------------------------------------------
+    v_phase_start := clock_timestamp();
+    v_checkpoint := v_phase_start;
+    v_last_report := 0;
+    
+    FOR v_batch IN 1..v_es_batches LOOP
+        EXECUTE format($sql$
+            CREATE OR REPLACE TEMP VIEW sv_es AS
+            SELECT row_id, identity_correlation as founding_id, establishment_id AS id, 
+                   legal_unit_id,
+                   es_name AS name,
+                   valid_from, valid_until, valid_range
+            FROM large_bench.es_staging WHERE batch = %L
+        $sql$, v_batch);
+        
+        CALL sql_saga.temporal_merge(
+            target_table => 'large_bench.establishment',
+            source_table => 'sv_es',
+            primary_identity_columns => ARRAY['id'],
+            founding_id_column => 'founding_id',
+            update_source_with_identity => true
+        );
+        
+        COMMIT;
+        
+        -- Record progress every 100 batches
+        IF v_batch - v_last_report >= 100 THEN
+            v_checkpoint_entities := v_batch * v_batch_size;
+            v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_phase_start);
+            v_rows_per_sec := ROUND(v_checkpoint_entities / v_elapsed_sec);
+            v_ms_per_batch := ROUND(EXTRACT(EPOCH FROM clock_timestamp() - v_checkpoint) * 1000 / 100);
+            
+            INSERT INTO large_bench.benchmark_results VALUES 
+                ('Phase 3 (ES)', format('%sK', v_checkpoint_entities / 1000), 
+                 v_checkpoint_entities, v_batch, ROUND(v_elapsed_sec, 1), v_rows_per_sec, v_ms_per_batch);
+            
+            v_checkpoint := clock_timestamp();
+            v_last_report := v_batch;
+            COMMIT;
+        END IF;
+    END LOOP;
+    
+    v_elapsed_sec := EXTRACT(EPOCH FROM clock_timestamp() - v_phase_start);
+    INSERT INTO large_bench.benchmark_results VALUES 
+        ('Phase 3 (ES)', 'COMPLETE', v_es_count, v_es_batches, 
+         ROUND(v_elapsed_sec, 1), ROUND(v_es_count / v_elapsed_sec), 
+         ROUND(v_elapsed_sec * 1000 / v_es_batches));
+    
+    ANALYZE large_bench.establishment;
+    COMMIT;
 END;
 $proc$;
 
 CALL large_bench.run_benchmark();
 
-SELECT COUNT(*) as final_count FROM large_bench.legal_unit;
+--------------------------------------------------------------------------------
+\echo ''
+\echo '--- Final Counts ---'
+--------------------------------------------------------------------------------
+
+SELECT 'legal_unit' as table_name, COUNT(*) as row_count FROM large_bench.legal_unit
+UNION ALL
+SELECT 'establishment', COUNT(*) FROM large_bench.establishment
+ORDER BY table_name;
+
+\echo ''
+\echo 'See expected/performance/113_benchmark_1m_scale.log for timing details.'
+\echo ''
+
+--------------------------------------------------------------------------------
+-- Write timing details to performance file (variable between runs)
+--------------------------------------------------------------------------------
+\set perf_file expected/performance/113_benchmark_1m_scale.log
+\pset tuples_only on
+\pset footer off
+\o :perf_file
+SELECT '# Performance Baseline: 1.1M legal units + 800K establishments';
+SELECT '# These numbers are reference baselines, not test assertions.';
+SELECT '# They are updated after significant performance changes.';
+SELECT '#';
+SELECT '';
+\pset tuples_only off
+SELECT '# Benchmark Results:' as "header";
+SELECT 
+    phase,
+    checkpoint,
+    entities,
+    batches,
+    elapsed_sec,
+    rows_per_sec,
+    ms_per_batch
+FROM large_bench.benchmark_results
+ORDER BY 
+    CASE phase
+        WHEN 'Phase 1' THEN 1
+        WHEN 'Phase 2 (LU)' THEN 2
+        WHEN 'ID Propagation' THEN 3
+        WHEN 'Phase 3 (ES)' THEN 4
+    END,
+    CASE checkpoint
+        WHEN 'Data generation' THEN 0
+        WHEN 'LU->ES staging' THEN 0
+        WHEN 'COMPLETE' THEN 1000
+        ELSE COALESCE(NULLIF(regexp_replace(checkpoint, '[^0-9]', '', 'g'), '')::int, 500)
+    END;
+
+\pset tuples_only on
+SELECT '';
+SELECT '# Scaling verification (ms_per_batch should stay constant):';
+\pset tuples_only off
+
+SELECT 
+    phase,
+    MIN(ms_per_batch) as min_ms,
+    MAX(ms_per_batch) as max_ms,
+    MAX(ms_per_batch) - MIN(ms_per_batch) as variance,
+    CASE 
+        WHEN MAX(ms_per_batch) <= MIN(ms_per_batch) * 1.5 THEN 'O(1) - GOOD'
+        WHEN MAX(ms_per_batch) <= MIN(ms_per_batch) * 2.0 THEN 'O(1) - OK'
+        ELSE 'REGRESSION!'
+    END as scaling
+FROM large_bench.benchmark_results
+WHERE checkpoint NOT IN ('Data generation', 'LU->ES staging', 'COMPLETE')
+GROUP BY phase
+ORDER BY phase;
+
+\o
+\pset footer on
+\pset tuples_only off
 
 --------------------------------------------------------------------------------
 -- CLEANUP
