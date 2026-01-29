@@ -181,12 +181,7 @@ BEGIN
         v_identity_columns := v_representative_lookup_key;
     END IF;
 
-    -- 1.4: Introspect causal column type.
-    SELECT atttypid INTO v_causal_column_type
-    FROM pg_attribute
-    WHERE attrelid = source_table
-      AND attname = v_causal_col
-      AND NOT attisdropped AND attnum > 0;
+    -- 1.4: (Moved to cache-miss block - v_causal_column_type only used there)
 
     -- 1.5: Build the final, canonical lists of identity columns.
     v_lookup_columns := COALESCE(v_all_lookup_cols, v_identity_columns);
@@ -522,6 +517,14 @@ BEGIN
         IF v_causal_col IS NULL THEN
             RAISE EXCEPTION 'The causal identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
         END IF;
+        
+        -- OPT-7a: Moved from pre-cache section - only used inside cache-miss block
+        SELECT atttypid INTO v_causal_column_type
+        FROM pg_attribute
+        WHERE attrelid = source_table
+          AND attname = v_causal_col
+          AND NOT attisdropped AND attnum > 0;
+          
         IF v_causal_column_type IS NULL THEN
             RAISE EXCEPTION 'Causal column "%" does not exist in source table %s', v_causal_col, source_table::text;
         END IF;

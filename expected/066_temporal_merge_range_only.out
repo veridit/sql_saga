@@ -281,7 +281,7 @@ CALL sql_saga.temporal_merge(
     primary_identity_columns => '{id}'::text[]
 );
 ERROR:  Source table "source_boundary" must have either the range column "valid_range" or the component column "<NULL>".
-CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 299 at RAISE
+CONTEXT:  PL/pgSQL function sql_saga.temporal_merge_plan(regclass,regclass,sql_saga.temporal_merge_mode,name,text[],name,name,sql_saga.temporal_merge_delete_mode,jsonb,text[],boolean,boolean) line 294 at RAISE
 SQL statement "INSERT INTO temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
             target_table => temporal_merge.target_table,
