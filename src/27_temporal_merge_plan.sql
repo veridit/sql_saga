@@ -65,6 +65,11 @@ DECLARE
     --
     v_plan_key_text TEXT;
     v_plan_sqls JSONB;
+    -- L2 cache variables (persistent, cross-transaction)
+    v_l2_cache_key TEXT;
+    v_source_columns_hash TEXT;
+    v_l2_cache_hit BOOLEAN := false;
+    v_source_table_ident TEXT;  -- Actual source table name for substitution
     v_causal_col name;
     v_causal_column_type regtype;
     v_plan_with_op_entity_id_json_build_expr_part_A TEXT;
@@ -109,11 +114,16 @@ BEGIN
     IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
         CREATE TEMP TABLE temporal_merge_plan_cache (
             cache_key TEXT PRIMARY KEY,
-            plan_sqls JSONB NOT NULL
+            plan_sqls JSONB NOT NULL,
+            from_l2 BOOLEAN NOT NULL DEFAULT false  -- Track if plan came from L2 cache
         );
     END IF;
 
     v_causal_col := COALESCE(founding_id_column, row_id_column);
+    
+    -- Resolve source table identifier early (needed for placeholder substitution in execution phase)
+    -- The regclass::TEXT conversion handles schema qualification correctly
+    v_source_table_ident := source_table::regclass::TEXT;
 
     --
     -- Phase 1: Introspection and Column List Generation
@@ -374,8 +384,9 @@ BEGIN
     END IF;
 
     --
-    -- Phase 2: Cache Management & Validation
+    -- Phase 2: Two-Level Cache Management & Validation
     --
+    -- L1 cache key includes source_table OID for within-session uniqueness
     v_plan_key_text := format('%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s:%s',
         target_table::oid,
         source_table::oid,
@@ -391,9 +402,61 @@ BEGIN
         p_log_trace,
         source_table::regclass::text -- Add source table name to key to differentiate plans for different temp tables.
     );
+    
+    -- L2 cache key is schema-based (no OIDs) for cross-session persistence
+    v_l2_cache_key := sql_saga.temporal_merge_cache_key(
+        target_table,
+        identity_columns,
+        v_ephemeral_columns,
+        mode,
+        era_name,
+        row_id_column,
+        founding_id_column,
+        v_range_constructor,
+        delete_mode,
+        lookup_keys,
+        p_log_trace
+    );
+    
+    -- Compute source columns hash for L2 cache validation
+    v_source_columns_hash := sql_saga.temporal_merge_source_columns_hash(
+        source_table,
+        v_lookup_columns,
+        v_temporal_cols,
+        row_id_column,
+        founding_id_column
+    );
 
-    SELECT plan_sqls INTO v_plan_sqls FROM pg_temp.temporal_merge_plan_cache WHERE cache_key = v_plan_key_text;
-    IF NOT FOUND THEN -- PREPARE all sql's
+    -- L1 cache lookup (fastest, within-session)
+    SELECT plan_sqls, from_l2 INTO v_plan_sqls, v_l2_cache_hit
+    FROM pg_temp.temporal_merge_plan_cache 
+    WHERE cache_key = v_plan_key_text;
+    
+    IF NOT FOUND THEN
+        -- L1 miss: Try L2 cache (persistent, cross-transaction)
+        v_plan_sqls := sql_saga.temporal_merge_cache_lookup(v_l2_cache_key, v_source_columns_hash);
+        
+        IF v_plan_sqls IS NOT NULL THEN
+            -- L2 hit: Substitute placeholder and store in L1 for subsequent calls
+            v_l2_cache_hit := true;
+            -- Replace the {{SOURCE_TABLE}} placeholder with actual source table name
+            -- This is done once here so L1 cache has fully-substituted SQL
+            v_plan_sqls := (
+                SELECT jsonb_agg(
+                    CASE 
+                        WHEN elem->>'type' = 'ddl' THEN 
+                            jsonb_set(elem, '{sql}', to_jsonb(replace(elem->>'sql', '{{SOURCE_TABLE}}', v_source_table_ident)))
+                        ELSE elem
+                    END
+                )
+                FROM jsonb_array_elements(v_plan_sqls) elem
+            );
+            INSERT INTO pg_temp.temporal_merge_plan_cache (cache_key, plan_sqls, from_l2)
+            VALUES (v_plan_key_text, v_plan_sqls, true);
+        END IF;
+    END IF;
+    
+    IF v_plan_sqls IS NULL THEN -- Full cache miss: PREPARE all sql's
         -- On cache miss, proceed with validation and planning.
         PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = row_id_column AND NOT attisdropped AND attnum > 0;
         IF NOT FOUND THEN
@@ -485,8 +548,6 @@ BEGIN
             v_target_data_cols_jsonb_build_bare TEXT;
             v_lookup_cols_select_list TEXT;
             v_lookup_cols_select_list_no_alias TEXT;
-            v_source_schema_name TEXT;
-            v_source_table_ident TEXT;
             v_target_table_ident TEXT;
             v_source_data_payload_expr TEXT;
             v_source_ephemeral_payload_expr TEXT;
@@ -643,17 +704,7 @@ BEGIN
     
             -- Resolve table identifiers to be correctly quoted and schema-qualified.
             v_target_table_ident := target_table::TEXT;
-    
-            SELECT n.nspname INTO v_source_schema_name
-            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE c.oid = source_table;
-    
-            IF v_source_schema_name = 'pg_temp' THEN
-                v_source_table_ident := source_table::regclass::TEXT;
-            ELSE
-                v_source_table_ident := source_table::regclass::TEXT;
-            END IF;
-    
+            -- v_source_table_ident is set earlier in the function
     
             -- Construct reusable SQL fragments for entity key column lists and join conditions,
             -- since these are more index friendly than a jsonb object, that we previously had.
@@ -2767,16 +2818,36 @@ BEGIN
                 END IF;
             END;
     
-            INSERT INTO pg_temp.temporal_merge_plan_cache (cache_key, plan_sqls)
-            VALUES (v_plan_key_text, v_plan_sqls);
+            -- Store in L1 cache (session-level) with actual table names
+            INSERT INTO pg_temp.temporal_merge_plan_cache (cache_key, plan_sqls, from_l2)
+            VALUES (v_plan_key_text, v_plan_sqls, false);
+            
+            -- Store in L2 cache (persistent, cross-transaction) with placeholder
+            -- Replace the source table name with {{SOURCE_TABLE}} placeholder for reusability
+            DECLARE
+                v_l2_plan_sqls JSONB;
+            BEGIN
+                v_l2_plan_sqls := (
+                    SELECT jsonb_agg(
+                        CASE 
+                            WHEN elem->>'type' = 'ddl' THEN 
+                                jsonb_set(elem, '{sql}', to_jsonb(replace(elem->>'sql', v_source_table_ident, '{{SOURCE_TABLE}}')))
+                            ELSE elem
+                        END
+                    )
+                    FROM jsonb_array_elements(v_plan_sqls) elem
+                );
+                CALL sql_saga.temporal_merge_cache_store(v_l2_cache_key, v_source_columns_hash, v_l2_plan_sqls);
+            END;
         END;
-    END IF; -- IF NOT FOUND THEN -- PREPARE all sql's
+    END IF; -- IF v_plan_sqls IS NULL THEN -- Full cache miss
 
     -- Delete any temp tables that are created by the prepared statments.
     CALL sql_saga.temporal_merge_drop_temp_tables();
     -- Execute all statements in the plan.
     DECLARE
         v_step JSONB;
+        v_step_sql TEXT;
         v_final_query TEXT;
         v_step_start TIMESTAMPTZ;
         v_step_num INT := 0;
@@ -2791,16 +2862,19 @@ BEGIN
             v_step_num := v_step_num + 1;
             v_step_start := clock_timestamp();
             
+            -- Get the SQL for this step (L1 cache has fully-substituted SQL)
+            v_step_sql := v_step->>'sql';
+            
             IF v_step->>'type' = 'query' THEN
-                v_final_query := v_step->>'sql';
+                v_final_query := v_step_sql;
             ELSE
-                EXECUTE v_step->>'sql';
+                EXECUTE v_step_sql;
             END IF;
             
             IF v_log_timing THEN
                 v_step_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_step_start) * 1000;
                 IF v_step_ms > 5 THEN  -- Only log steps taking > 5ms
-                    RAISE NOTICE 'Step % (%ms): %', v_step_num, round(v_step_ms, 1), left(v_step->>'sql', 100);
+                    RAISE NOTICE 'Step % (%ms): %', v_step_num, round(v_step_ms, 1), left(v_step_sql, 100);
                 END IF;
             END IF;
         END LOOP;

@@ -1,15 +1,15 @@
                  event                  | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 ----------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                                  |         0 | 0 ms            |                | 0 rows    | 
- Range-Only Parent INSERT               |      1000 | 948 ms          | 24 ms          | 1000 rows | ~41499 rows/s
- Range-Only Parent UPDATE Key           |      1000 | 999 ms          | 51 ms          | 1000 rows | ~19474 rows/s
- Range-Only Parent UPDATE Non-Key       |      1000 | 1 secs          | 16 ms          | 1000 rows | ~61751 rows/s
- Range-Only Parent DELETE (no children) |      1000 | 1 secs          | 12 ms          | 1000 rows | ~82223 rows/s
- Range-Only Child INSERT                |      1000 | 1 secs          | 38 ms          | 1000 rows | ~26562 rows/s
- Range-Only Child UPDATE Key            |      1000 | 1 secs          | 35 ms          | 1000 rows | ~28179 rows/s
- Range-Only Child UPDATE Non-Key        |      1000 | 1 secs          | 16 ms          | 1000 rows | ~63387 rows/s
- Range-Only Child DELETE                |      1000 | 1 secs          | 1 ms           | 1000 rows | ~868056 rows/s
- Range-Only temporal_merge Parent       |      1000 | 2 secs          | 458 ms         | 1000 rows | ~2182 rows/s
- Range-Only temporal_merge Child        |      1000 | 2 secs          | 396 ms         | 1000 rows | ~2524 rows/s
+ Range-Only Parent INSERT               |      1000 | 919 ms          | 27 ms          | 1000 rows | ~36801 rows/s
+ Range-Only Parent UPDATE Key           |      1000 | 973 ms          | 54 ms          | 1000 rows | ~18578 rows/s
+ Range-Only Parent UPDATE Non-Key       |      1000 | 990 ms          | 18 ms          | 1000 rows | ~57107 rows/s
+ Range-Only Parent DELETE (no children) |      1000 | 1 secs          | 10 ms          | 1000 rows | ~102754 rows/s
+ Range-Only Child INSERT                |      1000 | 1 secs          | 38 ms          | 1000 rows | ~26089 rows/s
+ Range-Only Child UPDATE Key            |      1000 | 1 secs          | 37 ms          | 1000 rows | ~26717 rows/s
+ Range-Only Child UPDATE Non-Key        |      1000 | 1 secs          | 18 ms          | 1000 rows | ~56252 rows/s
+ Range-Only Child DELETE                |      1000 | 1 secs          | 1 ms           | 1000 rows | ~671141 rows/s
+ Range-Only temporal_merge Parent       |      1000 | 1 secs          | 344 ms         | 1000 rows | ~2904 rows/s
+ Range-Only temporal_merge Child        |      1000 | 2 secs          | 387 ms         | 1000 rows | ~2587 rows/s
 (11 rows)
 

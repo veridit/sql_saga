@@ -135,7 +135,12 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             'temporal_merge_drop_cache','temporal_merge_drop_temp_tables',
             'covers_without_gaps_transfn', 'covers_without_gaps_finalfn',
             'benchmark_prepare_log','benchmark_reset_pg_stat_monitor',
-            'first_sfunc'
+            'first_sfunc',
+            -- L2 cache internal functions
+            'temporal_merge_cache_key', 'temporal_merge_cache_lookup',
+            'temporal_merge_cache_store', 'temporal_merge_cache_stats',
+            'temporal_merge_source_columns_hash', 'temporal_merge_cache_invalidation',
+            'temporal_merge_invalidate_cache'
         );
 SELECT
     E'\n\n' || string_agg(

@@ -1,26 +1,26 @@
 step,row_count,seconds,rows_per_sec
-Generate staging,24289,0.36,67604
-SEED legal_unit,10000,2.12,4709
-INSERT external_ident (LU),10000,0.12,84146
-SEED stat_for_unit (LU),20000,4.73,4232
-SEED establishment,14289,2.57,5550
-INSERT external_ident (ES),14289,0.23,61766
-SEED stat_for_unit (ES),28578,6.89,4146
-TOTAL SEED,,17.11,
-UPDATE[1] legal_unit,64,0.12,548
-UPDATE[2] legal_unit,65,0.13,501
-UPDATE[1] stat_for_unit (LU),1920,2.39,805
-UPDATE[3] legal_unit,65,0.13,500
-UPDATE[2] stat_for_unit (LU),1920,2.60,738
-UPDATE[1] stat_for_unit (ES),2688,2.85,944
-UPDATE[4] legal_unit,67,0.11,589
-UPDATE[3] stat_for_unit (LU),1920,2.78,691
-UPDATE[2] stat_for_unit (ES),2688,3.01,892
-UPDATE[5] legal_unit,65,0.11,582
-UPDATE[4] stat_for_unit (LU),1920,2.82,682
-UPDATE[3] stat_for_unit (ES),2688,3.13,858
-UPDATE[5] stat_for_unit (LU),1920,3.23,594
-UPDATE[4] stat_for_unit (ES),2688,3.50,767
-UPDATE[5] stat_for_unit (ES),2688,4.04,665
-TOTAL UPDATE,23360,31.24,748
+Generate staging,24289,0.32,74854
+SEED legal_unit,10000,1.59,6286
+INSERT external_ident (LU),10000,0.14,72614
+SEED stat_for_unit (LU),20000,4.48,4469
+SEED establishment,14289,2.55,5609
+INSERT external_ident (ES),14289,0.18,77249
+SEED stat_for_unit (ES),28578,6.91,4135
+TOTAL SEED,,16.25,
+UPDATE[1] legal_unit,64,0.13,499
+UPDATE[2] legal_unit,65,0.13,518
+UPDATE[1] stat_for_unit (LU),1920,2.43,790
+UPDATE[3] legal_unit,65,0.12,523
+UPDATE[2] stat_for_unit (LU),1920,2.65,725
+UPDATE[1] stat_for_unit (ES),2688,2.89,932
+UPDATE[4] legal_unit,67,0.13,509
+UPDATE[3] stat_for_unit (LU),1920,2.91,659
+UPDATE[2] stat_for_unit (ES),2688,3.45,780
+UPDATE[5] legal_unit,65,0.12,537
+UPDATE[4] stat_for_unit (LU),1920,3.14,612
+UPDATE[3] stat_for_unit (ES),2688,3.47,774
+UPDATE[5] stat_for_unit (LU),1920,3.44,558
+UPDATE[4] stat_for_unit (ES),2688,3.76,715
+UPDATE[5] stat_for_unit (ES),2688,4.01,670
+TOTAL UPDATE,23360,33.06,707
 (24 rows)
