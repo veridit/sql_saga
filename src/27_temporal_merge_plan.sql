@@ -619,6 +619,9 @@ BEGIN
             v_lookup_cols_sans_valid_from_prefix TEXT;
             v_lateral_join_entity_id_clause TEXT;
             v_stable_pk_cols_jsonb_build_source TEXT;
+            -- OPT-2: Cached nullability info for entity key columns (single query instead of 3)
+            v_entity_key_cols_notnull name[];
+            v_entity_key_cols_nullable name[];
             v_propagated_id_cols_list TEXT;
             v_lookup_keys_as_jsonb_expr TEXT;
             v_lookup_keys_as_array_expr TEXT;
@@ -637,6 +640,16 @@ BEGIN
         BEGIN
             v_plan_sqls := '[]'::jsonb;
             -- On cache miss, proceed with the expensive introspection and query building.
+            
+            -- OPT-2: Single query to get nullability info for all entity key columns.
+            -- This replaces 3 separate pg_attribute queries in join condition builders.
+            SELECT 
+                COALESCE(array_agg(a.attname) FILTER (WHERE a.attnotnull), '{}'),
+                COALESCE(array_agg(a.attname) FILTER (WHERE NOT a.attnotnull), '{}')
+            INTO v_entity_key_cols_notnull, v_entity_key_cols_nullable
+            FROM unnest(v_original_entity_key_cols) AS col
+            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            
             v_unified_id_cols_projection := (
                 SELECT string_agg(
                     CASE
@@ -735,10 +748,11 @@ BEGIN
             -- index scans, providing ~2x speedup. For NULLABLE columns, we must use the 
             -- NULL-safe pattern (col = col OR (col IS NULL AND col IS NULL)) to correctly
             -- handle NULL values that should match.
+            -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
             v_lateral_join_sr_to_seg_existing := (
                 SELECT COALESCE(string_agg(
                     CASE
-                        WHEN a.attnotnull THEN
+                        WHEN col = ANY(v_entity_key_cols_notnull) THEN
                             format('source_row.%1$I = seg.%1$I', col)
                         ELSE
                             format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -746,7 +760,6 @@ BEGIN
                     ' AND '
                 ), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
-                LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
             );
             v_lateral_join_sr_to_seg_new := 'source_row.grouping_key = seg.grouping_key';
 
@@ -764,6 +777,7 @@ BEGIN
                 -- Generate optimized CASE/WHEN condition for mutually exclusive columns.
                 -- This avoids expensive (col IS NULL AND col IS NULL) checks when columns
                 -- are known to be mutually exclusive (only one can be non-NULL at a time).
+                -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
                 v_lateral_join_tr_to_seg := (
                     WITH me_cols AS (
                         -- Mutually exclusive columns: generate WHEN clauses
@@ -783,7 +797,7 @@ BEGIN
                         -- Non-mutually-exclusive columns: use standard null-safe comparison
                         SELECT COALESCE(string_agg(
                             CASE
-                                WHEN a.attnotnull THEN
+                                WHEN col = ANY(v_entity_key_cols_notnull) THEN
                                     format('target_row.%1$I = seg.%1$I', col)
                                 ELSE
                                     format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -791,7 +805,6 @@ BEGIN
                             ' AND '
                         ), '') AS conditions
                         FROM unnest(v_original_entity_key_cols) AS col
-                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
                         WHERE col <> ALL(v_mutually_exclusive_cols)
                     )
                     SELECT 
@@ -805,11 +818,11 @@ BEGIN
                     FROM me_cols, non_me_cols
                 );
             ELSE
-                -- Use original high-performance logic when no optimization applies
+                -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
                 v_lateral_join_tr_to_seg := (
                     SELECT COALESCE(string_agg(
                         CASE
-                            WHEN a.attnotnull THEN
+                            WHEN col = ANY(v_entity_key_cols_notnull) THEN
                                 format('target_row.%1$I = seg.%1$I', col)
                             ELSE
                                 format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -817,7 +830,6 @@ BEGIN
                         ' AND '
                     ), 'true')
                     FROM unnest(v_original_entity_key_cols) AS col
-                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
                 );
             END IF;
     
