@@ -123,7 +123,7 @@ CREATE OR REPLACE TEMP VIEW funcs AS
             'temporal_merge_cache_key', 'temporal_merge_cache_lookup',
             'temporal_merge_cache_store', 'temporal_merge_cache_stats',
             'temporal_merge_source_columns_hash', 'temporal_merge_cache_invalidation',
-            'temporal_merge_invalidate_cache'
+            'temporal_merge_invalidate_cache', 'temporal_merge_cache_maybe_purge'
         );
 
 SELECT
