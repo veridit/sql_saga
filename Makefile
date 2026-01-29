@@ -58,8 +58,9 @@ install: $(EXTENSION)--$(EXTVERSION).sql
 
 
 # Build the main extension script from component files.
-# The source files are numbered to ensure correct concatenation order.
-$(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][0-9]_*.sql)
+# The source files use Na_ pattern (e.g., 0a_, 1b_, 2c_) to ensure correct concatenation order.
+# This provides 26 positions per digit group instead of 10 with pure numeric prefixes.
+$(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][a-z]_*.sql)
 	cat $^ > $@
 
 # test is a convenient alias for installcheck.
