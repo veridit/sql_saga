@@ -458,48 +458,66 @@ BEGIN
     
     IF v_plan_sqls IS NULL THEN -- Full cache miss: PREPARE all sql's
         -- On cache miss, proceed with validation and planning.
-        PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = row_id_column AND NOT attisdropped AND attnum > 0;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', row_id_column, source_table::text;
-        END IF;
-    
-        IF founding_id_column IS NOT NULL THEN
-            PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = founding_id_column AND NOT attisdropped AND attnum > 0;
-            IF NOT FOUND THEN
-                RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', founding_id_column, source_table::text;
-            END IF;
-        END IF;
-    
-        -- Validate that identity columns exist in both source and target tables.
+        -- OPT-1: Consolidated column validation - single query instead of 6+ separate PERFORM queries.
+        -- This batch validates all required columns exist in their respective tables at once.
         DECLARE
-            v_col TEXT;
+            v_missing RECORD;
+            v_check_identity_in_source BOOLEAN;
         BEGIN
-            IF v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0 THEN
-                FOREACH v_col IN ARRAY v_identity_columns LOOP
-                    -- The identity key MUST exist in the target.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
-    
-                    -- It only needs to exist in the source IF we are not using a separate lookup key.
-                    IF v_representative_lookup_key IS NULL OR cardinality(v_representative_lookup_key) = 0 THEN
-                        PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                        IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in source table % (and no lookup_columns were provided)', quote_ident(v_col), source_table; END IF;
-                    END IF;
-                END LOOP;
-            END IF;
-    
-            IF v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0 THEN
-                FOREACH v_col IN ARRAY v_all_lookup_cols LOOP
-                    -- Lookup keys must exist in the target table.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'lookup_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
-    
-                    -- Lookup keys must also exist in the source table to be used for lookup.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'lookup_column % does not exist in source table %', quote_ident(v_col), source_table; END IF;
-                END LOOP;
-            END IF;
-        END; -- END DECLARE
+            -- Identity columns only need to exist in source if no lookup key is provided
+            v_check_identity_in_source := (v_representative_lookup_key IS NULL OR cardinality(v_representative_lookup_key) = 0);
+            
+            FOR v_missing IN
+                WITH required_columns AS (
+                    -- row_id_column must exist in source
+                    SELECT 'row_id_column' AS col_type, row_id_column AS col_name, source_table AS tbl
+                    UNION ALL
+                    -- founding_id_column must exist in source (if provided)
+                    SELECT 'founding_id_column', founding_id_column, source_table
+                    WHERE founding_id_column IS NOT NULL
+                    UNION ALL
+                    -- identity_columns must exist in target
+                    SELECT 'identity_column (target)', unnest(v_identity_columns), target_table
+                    WHERE v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0
+                    UNION ALL
+                    -- identity_columns must exist in source (only if no lookup key)
+                    SELECT 'identity_column (source)', unnest(v_identity_columns), source_table
+                    WHERE v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0
+                      AND v_check_identity_in_source
+                    UNION ALL
+                    -- lookup_columns must exist in target
+                    SELECT 'lookup_column (target)', unnest(v_all_lookup_cols), target_table
+                    WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
+                    UNION ALL
+                    -- lookup_columns must exist in source
+                    SELECT 'lookup_column (source)', unnest(v_all_lookup_cols), source_table
+                    WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
+                )
+                SELECT rc.col_type, rc.col_name, rc.tbl::regclass::text AS tbl_name
+                FROM required_columns rc
+                LEFT JOIN pg_attribute a ON a.attrelid = rc.tbl 
+                    AND a.attname = rc.col_name 
+                    AND a.attnum > 0 
+                    AND NOT a.attisdropped
+                WHERE a.attname IS NULL
+            LOOP
+                -- Raise specific error message based on column type
+                CASE v_missing.col_type
+                    WHEN 'row_id_column' THEN
+                        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                    WHEN 'founding_id_column' THEN
+                        RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                    WHEN 'identity_column (target)' THEN
+                        RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'identity_column (source)' THEN
+                        RAISE EXCEPTION 'identity_column % does not exist in source table % (and no lookup_columns were provided)', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'lookup_column (target)' THEN
+                        RAISE EXCEPTION 'lookup_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'lookup_column (source)' THEN
+                        RAISE EXCEPTION 'lookup_column % does not exist in source table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                END CASE;
+            END LOOP;
+        END; -- END consolidated column validation
     
         IF v_causal_col IS NULL THEN
             RAISE EXCEPTION 'The causal identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
