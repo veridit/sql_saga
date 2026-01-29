@@ -622,6 +622,8 @@ BEGIN
             -- OPT-2: Cached nullability info for entity key columns (single query instead of 3)
             v_entity_key_cols_notnull name[];
             v_entity_key_cols_nullable name[];
+            -- OPT-3: Cached metadata for lookup columns (nullability + type info)
+            v_lookup_cols_meta JSONB;  -- {col_name: {notnull: bool, type: text}}
             v_propagated_id_cols_list TEXT;
             v_lookup_keys_as_jsonb_expr TEXT;
             v_lookup_keys_as_array_expr TEXT;
@@ -649,6 +651,18 @@ BEGIN
             INTO v_entity_key_cols_notnull, v_entity_key_cols_nullable
             FROM unnest(v_original_entity_key_cols) AS col
             JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            
+            -- OPT-3: Single query to get nullability + type info for all lookup columns.
+            -- This replaces 4 separate pg_attribute queries in target_rows_filter loop.
+            SELECT jsonb_object_agg(
+                a.attname,
+                jsonb_build_object('notnull', a.attnotnull, 'type', format_type(a.atttypid, a.atttypmod))
+            )
+            INTO v_lookup_cols_meta
+            FROM unnest(v_lookup_columns) AS col
+            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            
+            v_lookup_cols_meta := COALESCE(v_lookup_cols_meta, '{}'::jsonb);
             
             v_unified_id_cols_projection := (
                 SELECT string_agg(
@@ -1134,27 +1148,24 @@ BEGIN
                             v_any_nullable_lookup_cols BOOLEAN;
                             v_lookup_cols_si_alias_select_list TEXT;
                         BEGIN
-                            SELECT bool_or(is_nullable)
+                            -- OPT-3: Use cached metadata instead of querying pg_attribute
+                            SELECT bool_or(NOT (v_lookup_cols_meta->col->>'notnull')::boolean)
                             INTO v_any_nullable_lookup_cols
-                            FROM (
-                                SELECT NOT a.attnotnull as is_nullable
-                                FROM unnest(v_key_cols) as c(attname)
-                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = target_table
-                            ) c;
+                            FROM unnest(v_key_cols) AS col;
                             v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
     
                             -- This is the crucial fix. The subquery must project the columns for the
                             -- current key, and NULL for all columns belonging to OTHER natural keys
                             -- to ensure the UNION branches have the same structure.
+                            -- OPT-3: Use cached metadata instead of querying pg_attribute
                             v_lookup_cols_si_alias_select_list := (
                                 SELECT string_agg(
                                     CASE
                                         WHEN c.col = ANY(v_key_cols) THEN format('si.%I', c.col)
-                                        ELSE format('NULL::%s', format_type(a.atttypid, a.atttypmod))
+                                        ELSE format('NULL::%s', v_lookup_cols_meta->c.col->>'type')
                                     END,
                                 ', ')
                                 FROM unnest(v_lookup_columns) AS c(col)
-                                JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c.col
                             );
     
                             IF NOT v_any_nullable_lookup_cols THEN
@@ -1183,19 +1194,12 @@ BEGIN
                                     v_notnull_condition TEXT;
                                     v_join_cols TEXT;
                                 BEGIN
-                                    -- Separate nullable and non-nullable columns
-                                    SELECT array_agg(c) INTO v_nullable_cols
-                                    FROM unnest(v_key_cols) c
-                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
-                                    WHERE NOT a.attnotnull;
-                                    
-                                    SELECT array_agg(c) INTO v_notnull_cols  
-                                    FROM unnest(v_key_cols) c
-                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
-                                    WHERE a.attnotnull;
-                                    
-                                    v_nullable_cols := COALESCE(v_nullable_cols, ARRAY[]::name[]);
-                                    v_notnull_cols := COALESCE(v_notnull_cols, ARRAY[]::name[]);
+                                    -- OPT-3: Use cached metadata instead of querying pg_attribute (2 queries -> 0)
+                                    SELECT 
+                                        COALESCE(array_agg(c) FILTER (WHERE NOT (v_lookup_cols_meta->c->>'notnull')::boolean), ARRAY[]::name[]),
+                                        COALESCE(array_agg(c) FILTER (WHERE (v_lookup_cols_meta->c->>'notnull')::boolean), ARRAY[]::name[])
+                                    INTO v_nullable_cols, v_notnull_cols
+                                    FROM unnest(v_key_cols) AS c;
                                     
                                     v_partition_parts := ARRAY[]::TEXT[];
                                     

@@ -1,14 +1,14 @@
                    event                   | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 -------------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                                     |         0 | 0 ms            |                | 0 rows     | 
- History Only Benchmark                    |         0 | 27 ms           | 27 ms          | 0 rows     | 
- History INSERTs                           |     10000 | 53 ms           | 25 ms          | 10000 rows | ~400898 rows/s
- History Update                            |     10000 | 239 ms          | 186 ms         | 10000 rows | ~53637 rows/s
- Era + History Benchmark                   |         0 | 288 ms          | 49 ms          | 0 rows     | 
- Era + History INSERTs                     |     10000 | 733 ms          | 445 ms         | 10000 rows | ~22487 rows/s
- Era + History Update deferred constraints |     10000 | 1 secs          | 660 ms         | 10000 rows | ~15154 rows/s
- Era + History Update non-key              |     10000 | 2 secs          | 711 ms         | 10000 rows | ~14073 rows/s
- Constraints disabled                      |         0 | 2 secs          | 52 ms          | 0 rows     | 
+ History Only Benchmark                    |         0 | 31 ms           | 31 ms          | 0 rows     | 
+ History INSERTs                           |     10000 | 51 ms           | 20 ms          | 10000 rows | ~488162 rows/s
+ History Update                            |     10000 | 234 ms          | 183 ms         | 10000 rows | ~54710 rows/s
+ Era + History Benchmark                   |         0 | 278 ms          | 44 ms          | 0 rows     | 
+ Era + History INSERTs                     |     10000 | 702 ms          | 424 ms         | 10000 rows | ~23605 rows/s
+ Era + History Update deferred constraints |     10000 | 1 secs          | 687 ms         | 10000 rows | ~14554 rows/s
+ Era + History Update non-key              |     10000 | 2 secs          | 757 ms         | 10000 rows | ~13212 rows/s
+ Constraints disabled                      |         0 | 2 secs          | 56 ms          | 0 rows     | 
  Tear down complete                        |         0 | 2 secs          | 4 ms           | 0 rows     | 
 (10 rows)
 
