@@ -181,12 +181,7 @@ BEGIN
         v_identity_columns := v_representative_lookup_key;
     END IF;
 
-    -- 1.4: Introspect causal column type.
-    SELECT atttypid INTO v_causal_column_type
-    FROM pg_attribute
-    WHERE attrelid = source_table
-      AND attname = v_causal_col
-      AND NOT attisdropped AND attnum > 0;
+    -- 1.4: (Moved to cache-miss block - v_causal_column_type only used there)
 
     -- 1.5: Build the final, canonical lists of identity columns.
     v_lookup_columns := COALESCE(v_all_lookup_cols, v_identity_columns);
@@ -458,52 +453,78 @@ BEGIN
     
     IF v_plan_sqls IS NULL THEN -- Full cache miss: PREPARE all sql's
         -- On cache miss, proceed with validation and planning.
-        PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = row_id_column AND NOT attisdropped AND attnum > 0;
-        IF NOT FOUND THEN
-            RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', row_id_column, source_table::text;
-        END IF;
-    
-        IF founding_id_column IS NOT NULL THEN
-            PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = founding_id_column AND NOT attisdropped AND attnum > 0;
-            IF NOT FOUND THEN
-                RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', founding_id_column, source_table::text;
-            END IF;
-        END IF;
-    
-        -- Validate that identity columns exist in both source and target tables.
+        -- OPT-1: Consolidated column validation - single query instead of 6+ separate PERFORM queries.
+        -- This batch validates all required columns exist in their respective tables at once.
         DECLARE
-            v_col TEXT;
+            v_missing RECORD;
+            v_check_identity_in_source BOOLEAN;
         BEGIN
-            IF v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0 THEN
-                FOREACH v_col IN ARRAY v_identity_columns LOOP
-                    -- The identity key MUST exist in the target.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
-    
-                    -- It only needs to exist in the source IF we are not using a separate lookup key.
-                    IF v_representative_lookup_key IS NULL OR cardinality(v_representative_lookup_key) = 0 THEN
-                        PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                        IF NOT FOUND THEN RAISE EXCEPTION 'identity_column % does not exist in source table % (and no lookup_columns were provided)', quote_ident(v_col), source_table; END IF;
-                    END IF;
-                END LOOP;
-            END IF;
-    
-            IF v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0 THEN
-                FOREACH v_col IN ARRAY v_all_lookup_cols LOOP
-                    -- Lookup keys must exist in the target table.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = target_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'lookup_column % does not exist in target table %', quote_ident(v_col), target_table; END IF;
-    
-                    -- Lookup keys must also exist in the source table to be used for lookup.
-                    PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
-                    IF NOT FOUND THEN RAISE EXCEPTION 'lookup_column % does not exist in source table %', quote_ident(v_col), source_table; END IF;
-                END LOOP;
-            END IF;
-        END; -- END DECLARE
+            -- Identity columns only need to exist in source if no lookup key is provided
+            v_check_identity_in_source := (v_representative_lookup_key IS NULL OR cardinality(v_representative_lookup_key) = 0);
+            
+            FOR v_missing IN
+                WITH required_columns AS (
+                    -- row_id_column must exist in source
+                    SELECT 'row_id_column' AS col_type, row_id_column AS col_name, source_table AS tbl
+                    UNION ALL
+                    -- founding_id_column must exist in source (if provided)
+                    SELECT 'founding_id_column', founding_id_column, source_table
+                    WHERE founding_id_column IS NOT NULL
+                    UNION ALL
+                    -- identity_columns must exist in target
+                    SELECT 'identity_column (target)', unnest(v_identity_columns), target_table
+                    WHERE v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0
+                    UNION ALL
+                    -- identity_columns must exist in source (only if no lookup key)
+                    SELECT 'identity_column (source)', unnest(v_identity_columns), source_table
+                    WHERE v_identity_columns IS NOT NULL AND cardinality(v_identity_columns) > 0
+                      AND v_check_identity_in_source
+                    UNION ALL
+                    -- lookup_columns must exist in target
+                    SELECT 'lookup_column (target)', unnest(v_all_lookup_cols), target_table
+                    WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
+                    UNION ALL
+                    -- lookup_columns must exist in source
+                    SELECT 'lookup_column (source)', unnest(v_all_lookup_cols), source_table
+                    WHERE v_all_lookup_cols IS NOT NULL AND cardinality(v_all_lookup_cols) > 0
+                )
+                SELECT rc.col_type, rc.col_name, rc.tbl::regclass::text AS tbl_name
+                FROM required_columns rc
+                LEFT JOIN pg_attribute a ON a.attrelid = rc.tbl 
+                    AND a.attname = rc.col_name 
+                    AND a.attnum > 0 
+                    AND NOT a.attisdropped
+                WHERE a.attname IS NULL
+            LOOP
+                -- Raise specific error message based on column type
+                CASE v_missing.col_type
+                    WHEN 'row_id_column' THEN
+                        RAISE EXCEPTION 'row_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                    WHEN 'founding_id_column' THEN
+                        RAISE EXCEPTION 'founding_id_column "%" does not exist in source table %s', v_missing.col_name, v_missing.tbl_name;
+                    WHEN 'identity_column (target)' THEN
+                        RAISE EXCEPTION 'identity_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'identity_column (source)' THEN
+                        RAISE EXCEPTION 'identity_column % does not exist in source table % (and no lookup_columns were provided)', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'lookup_column (target)' THEN
+                        RAISE EXCEPTION 'lookup_column % does not exist in target table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                    WHEN 'lookup_column (source)' THEN
+                        RAISE EXCEPTION 'lookup_column % does not exist in source table %', quote_ident(v_missing.col_name), v_missing.tbl_name;
+                END CASE;
+            END LOOP;
+        END; -- END consolidated column validation
     
         IF v_causal_col IS NULL THEN
             RAISE EXCEPTION 'The causal identifier column cannot be NULL. Please provide a non-NULL value for either founding_id_column or row_id_column.';
         END IF;
+        
+        -- OPT-7a: Moved from pre-cache section - only used inside cache-miss block
+        SELECT atttypid INTO v_causal_column_type
+        FROM pg_attribute
+        WHERE attrelid = source_table
+          AND attname = v_causal_col
+          AND NOT attisdropped AND attnum > 0;
+          
         IF v_causal_column_type IS NULL THEN
             RAISE EXCEPTION 'Causal column "%" does not exist in source table %s', v_causal_col, source_table::text;
         END IF;
@@ -601,6 +622,11 @@ BEGIN
             v_lookup_cols_sans_valid_from_prefix TEXT;
             v_lateral_join_entity_id_clause TEXT;
             v_stable_pk_cols_jsonb_build_source TEXT;
+            -- OPT-2: Cached nullability info for entity key columns (single query instead of 3)
+            v_entity_key_cols_notnull name[];
+            v_entity_key_cols_nullable name[];
+            -- OPT-3: Cached metadata for lookup columns (nullability + type info)
+            v_lookup_cols_meta JSONB;  -- {col_name: {notnull: bool, type: text}}
             v_propagated_id_cols_list TEXT;
             v_lookup_keys_as_jsonb_expr TEXT;
             v_lookup_keys_as_array_expr TEXT;
@@ -619,6 +645,28 @@ BEGIN
         BEGIN
             v_plan_sqls := '[]'::jsonb;
             -- On cache miss, proceed with the expensive introspection and query building.
+            
+            -- OPT-2: Single query to get nullability info for all entity key columns.
+            -- This replaces 3 separate pg_attribute queries in join condition builders.
+            SELECT 
+                COALESCE(array_agg(a.attname) FILTER (WHERE a.attnotnull), '{}'),
+                COALESCE(array_agg(a.attname) FILTER (WHERE NOT a.attnotnull), '{}')
+            INTO v_entity_key_cols_notnull, v_entity_key_cols_nullable
+            FROM unnest(v_original_entity_key_cols) AS col
+            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            
+            -- OPT-3: Single query to get nullability + type info for all lookup columns.
+            -- This replaces 4 separate pg_attribute queries in target_rows_filter loop.
+            SELECT jsonb_object_agg(
+                a.attname,
+                jsonb_build_object('notnull', a.attnotnull, 'type', format_type(a.atttypid, a.atttypmod))
+            )
+            INTO v_lookup_cols_meta
+            FROM unnest(v_lookup_columns) AS col
+            JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped;
+            
+            v_lookup_cols_meta := COALESCE(v_lookup_cols_meta, '{}'::jsonb);
+            
             v_unified_id_cols_projection := (
                 SELECT string_agg(
                     CASE
@@ -717,10 +765,11 @@ BEGIN
             -- index scans, providing ~2x speedup. For NULLABLE columns, we must use the 
             -- NULL-safe pattern (col = col OR (col IS NULL AND col IS NULL)) to correctly
             -- handle NULL values that should match.
+            -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
             v_lateral_join_sr_to_seg_existing := (
                 SELECT COALESCE(string_agg(
                     CASE
-                        WHEN a.attnotnull THEN
+                        WHEN col = ANY(v_entity_key_cols_notnull) THEN
                             format('source_row.%1$I = seg.%1$I', col)
                         ELSE
                             format('(source_row.%1$I = seg.%1$I OR (source_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -728,7 +777,6 @@ BEGIN
                     ' AND '
                 ), 'true')
                 FROM unnest(v_original_entity_key_cols) AS col
-                LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
             );
             v_lateral_join_sr_to_seg_new := 'source_row.grouping_key = seg.grouping_key';
 
@@ -746,6 +794,7 @@ BEGIN
                 -- Generate optimized CASE/WHEN condition for mutually exclusive columns.
                 -- This avoids expensive (col IS NULL AND col IS NULL) checks when columns
                 -- are known to be mutually exclusive (only one can be non-NULL at a time).
+                -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
                 v_lateral_join_tr_to_seg := (
                     WITH me_cols AS (
                         -- Mutually exclusive columns: generate WHEN clauses
@@ -765,7 +814,7 @@ BEGIN
                         -- Non-mutually-exclusive columns: use standard null-safe comparison
                         SELECT COALESCE(string_agg(
                             CASE
-                                WHEN a.attnotnull THEN
+                                WHEN col = ANY(v_entity_key_cols_notnull) THEN
                                     format('target_row.%1$I = seg.%1$I', col)
                                 ELSE
                                     format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -773,7 +822,6 @@ BEGIN
                             ' AND '
                         ), '') AS conditions
                         FROM unnest(v_original_entity_key_cols) AS col
-                        LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
                         WHERE col <> ALL(v_mutually_exclusive_cols)
                     )
                     SELECT 
@@ -787,11 +835,11 @@ BEGIN
                     FROM me_cols, non_me_cols
                 );
             ELSE
-                -- Use original high-performance logic when no optimization applies
+                -- OPT-2: Use cached nullability arrays instead of querying pg_attribute
                 v_lateral_join_tr_to_seg := (
                     SELECT COALESCE(string_agg(
                         CASE
-                            WHEN a.attnotnull THEN
+                            WHEN col = ANY(v_entity_key_cols_notnull) THEN
                                 format('target_row.%1$I = seg.%1$I', col)
                             ELSE
                                 format('(target_row.%1$I = seg.%1$I OR (target_row.%1$I IS NULL AND seg.%1$I IS NULL))', col)
@@ -799,7 +847,6 @@ BEGIN
                         ' AND '
                     ), 'true')
                     FROM unnest(v_original_entity_key_cols) AS col
-                    LEFT JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = col AND NOT a.attisdropped
                 );
             END IF;
     
@@ -1104,27 +1151,24 @@ BEGIN
                             v_any_nullable_lookup_cols BOOLEAN;
                             v_lookup_cols_si_alias_select_list TEXT;
                         BEGIN
-                            SELECT bool_or(is_nullable)
+                            -- OPT-3: Use cached metadata instead of querying pg_attribute
+                            SELECT bool_or(NOT (v_lookup_cols_meta->col->>'notnull')::boolean)
                             INTO v_any_nullable_lookup_cols
-                            FROM (
-                                SELECT NOT a.attnotnull as is_nullable
-                                FROM unnest(v_key_cols) as c(attname)
-                                JOIN pg_attribute a ON a.attname = c.attname AND a.attrelid = target_table
-                            ) c;
+                            FROM unnest(v_key_cols) AS col;
                             v_any_nullable_lookup_cols := COALESCE(v_any_nullable_lookup_cols, false);
     
                             -- This is the crucial fix. The subquery must project the columns for the
                             -- current key, and NULL for all columns belonging to OTHER natural keys
                             -- to ensure the UNION branches have the same structure.
+                            -- OPT-3: Use cached metadata instead of querying pg_attribute
                             v_lookup_cols_si_alias_select_list := (
                                 SELECT string_agg(
                                     CASE
                                         WHEN c.col = ANY(v_key_cols) THEN format('si.%I', c.col)
-                                        ELSE format('NULL::%s', format_type(a.atttypid, a.atttypmod))
+                                        ELSE format('NULL::%s', v_lookup_cols_meta->c.col->>'type')
                                     END,
                                 ', ')
                                 FROM unnest(v_lookup_columns) AS c(col)
-                                JOIN pg_attribute a ON a.attrelid = target_table AND a.attname = c.col
                             );
     
                             IF NOT v_any_nullable_lookup_cols THEN
@@ -1153,19 +1197,12 @@ BEGIN
                                     v_notnull_condition TEXT;
                                     v_join_cols TEXT;
                                 BEGIN
-                                    -- Separate nullable and non-nullable columns
-                                    SELECT array_agg(c) INTO v_nullable_cols
-                                    FROM unnest(v_key_cols) c
-                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
-                                    WHERE NOT a.attnotnull;
-                                    
-                                    SELECT array_agg(c) INTO v_notnull_cols  
-                                    FROM unnest(v_key_cols) c
-                                    JOIN pg_attribute a ON a.attname = c AND a.attrelid = target_table
-                                    WHERE a.attnotnull;
-                                    
-                                    v_nullable_cols := COALESCE(v_nullable_cols, ARRAY[]::name[]);
-                                    v_notnull_cols := COALESCE(v_notnull_cols, ARRAY[]::name[]);
+                                    -- OPT-3: Use cached metadata instead of querying pg_attribute (2 queries -> 0)
+                                    SELECT 
+                                        COALESCE(array_agg(c) FILTER (WHERE NOT (v_lookup_cols_meta->c->>'notnull')::boolean), ARRAY[]::name[]),
+                                        COALESCE(array_agg(c) FILTER (WHERE (v_lookup_cols_meta->c->>'notnull')::boolean), ARRAY[]::name[])
+                                    INTO v_nullable_cols, v_notnull_cols
+                                    FROM unnest(v_key_cols) AS c;
                                     
                                     v_partition_parts := ARRAY[]::TEXT[];
                                     

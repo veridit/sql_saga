@@ -1,8 +1,8 @@
                event                | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 ------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                              |         0 | 0 ms            |                | 0 rows     | 
- Synced Era+History INSERTs         |     10000 | 973 ms          | 886 ms         | 10000 rows | ~11287 rows/s
- Synced Era+History Update deferred |     10000 | 2 secs          | 1 secs         | 10000 rows | ~8562 rows/s
- Synced Era+History Update non-key  |     10000 | 3 secs          | 1 secs         | 10000 rows | ~8986 rows/s
+ Synced Era+History INSERTs         |     10000 | 824 ms          | 751 ms         | 10000 rows | ~13307 rows/s
+ Synced Era+History Update deferred |     10000 | 2 secs          | 955 ms         | 10000 rows | ~10476 rows/s
+ Synced Era+History Update non-key  |     10000 | 3 secs          | 878 ms         | 10000 rows | ~11390 rows/s
 (4 rows)
 

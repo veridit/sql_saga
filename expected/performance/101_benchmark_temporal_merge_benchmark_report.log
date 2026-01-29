@@ -1,13 +1,13 @@
                    event                    | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 --------------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                                      |         0 | 0 ms            |                | 0 rows    | 
- Temporal Merge SEED Parent                 |         0 | 64 ms           | 64 ms          | 0 rows    | 
- Temporal Merge SEED Parent                 |      2000 | 395 ms          | 331 ms         | 2000 rows | ~6038 rows/s
- Temporal Merge SEED Child                  |         0 | 395 ms          | 0 ms           | 0 rows    | 
- Temporal Merge SEED Child                  |      2000 | 751 ms          | 356 ms         | 2000 rows | ~5613 rows/s
- Temporal Merge 20% INSERT 80% PATCH Parent |         0 | 809 ms          | 58 ms          | 0 rows    | 
- Temporal Merge 20% INSERT 80% PATCH Parent |      2500 | 2 secs          | 888 ms         | 2500 rows | ~2815 rows/s
- Temporal Merge 20% INSERT 80% PATCH Child  |         0 | 3 secs          | 1 secs         | 0 rows    | 
- Temporal Merge 20% INSERT 80% PATCH Child  |      2500 | 4 secs          | 964 ms         | 2500 rows | ~2594 rows/s
+ Temporal Merge SEED Parent                 |         0 | 49 ms           | 49 ms          | 0 rows    | 
+ Temporal Merge SEED Parent                 |      2000 | 315 ms          | 267 ms         | 2000 rows | ~7501 rows/s
+ Temporal Merge SEED Child                  |         0 | 315 ms          | 0 ms           | 0 rows    | 
+ Temporal Merge SEED Child                  |      2000 | 612 ms          | 297 ms         | 2000 rows | ~6729 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Parent |         0 | 663 ms          | 50 ms          | 0 rows    | 
+ Temporal Merge 20% INSERT 80% PATCH Parent |      2500 | 1 secs          | 736 ms         | 2500 rows | ~3395 rows/s
+ Temporal Merge 20% INSERT 80% PATCH Child  |         0 | 2 secs          | 1 secs         | 0 rows    | 
+ Temporal Merge 20% INSERT 80% PATCH Child  |      2500 | 3 secs          | 754 ms         | 2500 rows | ~3315 rows/s
 (9 rows)
 

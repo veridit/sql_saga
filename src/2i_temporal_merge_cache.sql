@@ -115,6 +115,71 @@ COMMENT ON FUNCTION sql_saga.temporal_merge_cache_lookup IS
 source columns hash does not match (indicating schema change). Updates usage statistics on hit.';
 
 
+-- OPT-6: SECURITY DEFINER function for bounded cache growth with LRU eviction.
+-- This function can delete any cache entry regardless of who created it,
+-- ensuring the cache doesn't grow unboundedly even in multi-user environments.
+CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_cache_maybe_purge(
+    p_max_entries INT DEFAULT 1000,
+    p_purge_probability FLOAT DEFAULT 0.02,
+    p_max_age_days INT DEFAULT 30
+) RETURNS INT
+LANGUAGE plpgsql SECURITY DEFINER AS $function$
+DECLARE
+    v_current_count INT;
+    v_deleted_count INT := 0;
+    v_excess INT;
+BEGIN
+    -- Amortized cost: only run purge logic probabilistically
+    IF random() > p_purge_probability THEN
+        RETURN 0;
+    END IF;
+    
+    -- Get current cache size
+    SELECT count(*) INTO v_current_count FROM sql_saga.temporal_merge_cache;
+    
+    -- Phase 1: Remove entries older than max_age_days (regardless of count)
+    DELETE FROM sql_saga.temporal_merge_cache
+    WHERE last_used_at < now() - (p_max_age_days || ' days')::interval;
+    GET DIAGNOSTICS v_deleted_count = ROW_COUNT;
+    
+    -- Phase 2: If still over limit, apply LRU eviction
+    IF v_current_count - v_deleted_count > p_max_entries THEN
+        v_excess := (v_current_count - v_deleted_count) - p_max_entries;
+        -- Delete the least recently used entries to get back under the limit
+        -- Add 10% buffer to avoid thrashing
+        v_excess := v_excess + (p_max_entries / 10);
+        
+        DELETE FROM sql_saga.temporal_merge_cache
+        WHERE cache_key IN (
+            SELECT cache_key 
+            FROM sql_saga.temporal_merge_cache
+            ORDER BY last_used_at ASC, use_count ASC
+            LIMIT v_excess
+        );
+        GET DIAGNOSTICS v_excess = ROW_COUNT;
+        v_deleted_count := v_deleted_count + v_excess;
+    END IF;
+    
+    IF v_deleted_count > 0 THEN
+        RAISE DEBUG 'sql_saga: Purged % stale/excess entries from temporal_merge cache', v_deleted_count;
+    END IF;
+    
+    RETURN v_deleted_count;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.temporal_merge_cache_maybe_purge IS
+'Probabilistically purges old or excess entries from the L2 cache using SECURITY DEFINER
+to bypass ownership restrictions. Called automatically during cache_store operations.
+
+Parameters:
+- p_max_entries: Maximum cache entries before LRU eviction kicks in (default: 1000)
+- p_purge_probability: Chance of running purge on each call (default: 0.02 = 2%)
+- p_max_age_days: Entries not used in this many days are always purged (default: 30)
+
+The amortized cost ensures purge logic runs infrequently while guaranteeing cleanup.';
+
+
 -- Stores a plan in the L2 persistent cache.
 CREATE OR REPLACE PROCEDURE sql_saga.temporal_merge_cache_store(
     p_cache_key TEXT,
@@ -131,11 +196,15 @@ BEGIN
         created_at = now(),
         last_used_at = now(),
         use_count = 1;
+    
+    -- OPT-6: Amortized cache cleanup - probabilistically purge old/excess entries
+    PERFORM sql_saga.temporal_merge_cache_maybe_purge();
 END;
 $procedure$;
 
 COMMENT ON PROCEDURE sql_saga.temporal_merge_cache_store IS
-'Stores a plan in the L2 persistent cache. Uses upsert to handle concurrent access.';
+'Stores a plan in the L2 persistent cache. Uses upsert to handle concurrent access.
+Automatically triggers amortized cache cleanup via temporal_merge_cache_maybe_purge().';
 
 
 -- Invalidates cache entries for a specific target table.
