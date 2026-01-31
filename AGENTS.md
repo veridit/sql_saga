@@ -96,6 +96,12 @@ echo 'SELECT * FROM sql_saga.era;' | psql -d sql_saga_regress  # Run query
 psql -d sql_saga_regress < tmp/verify_fix.sql            # Execute script
 ```
 
+### C Development (LSP Setup)
+```bash
+make compile_commands.json              # Generate LSP compilation database
+```
+This creates `compile_commands.json` with PostgreSQL include paths from `pg_config`, enabling clangd and other LSPs to resolve headers correctly.
+
 ## Code Style Guidelines
 
 ### SQL Code
@@ -177,14 +183,49 @@ SELECT 'Transaction still active';
 ### File Organization
 
 **Source Files:**
-- SQL: `src/[0-9][0-9]_*.sql` (auto-discovered by Makefile)
+- SQL: `src/[0-9][a-z]_*.sql` (uses Na_ pattern: `0a_`, `0b_`, ..., `1a_`, etc.)
+  - This provides 26 positions per digit group instead of 10 with pure numeric prefixes
+  - Auto-discovered by Makefile glob pattern
+- C files: `src/*.c` and `src/*.h`
 - Tests: `sql/[0-9][0-9][0-9]_*.sql` (auto-discovered)
 - Expected output: `expected/[testname].out`
+- Benchmark outputs: `expected/performance/*.csv` and `*.perf`
 - New tests should be self-contained (include `test_setup.sql` and `test_teardown.sql`)
 
 **Adding Features:**
-- Create numbered SQL file: `src/34_my_feature.sql` (auto-included in build)
+- Create numbered SQL file: `src/3e_my_feature.sql` (auto-included in build)
 - No Makefile edits needed
+
+**Key Source Files:**
+- `src/0b_schema.sql` - Core catalog tables (`era`, `unique_keys`, `foreign_keys`)
+- `src/2k_temporal_merge_plan.sql` - temporal_merge planner
+- `src/2l_temporal_merge_execute.sql` - temporal_merge executor
+- `src/sql_saga.c` - C extension code (FK triggers, history table support)
+
+### Test Structure
+
+**Test Categories:**
+- `001_install` - Extension installation (required by older tests)
+- `002-009` - Era management tests
+- `010-019` - Unique key tests
+- `020-029` - System versioning tests
+- `030-039` - Aggregate function tests
+- `040-049` - Foreign key tests
+- `050-059` - View tests (for_portion_of, current)
+- `060-099` - temporal_merge tests
+- `100+` - Benchmark tests
+
+**Self-Contained Test Template:**
+```sql
+\i sql/include/test_setup.sql
+
+BEGIN;
+-- Test schema and data setup
+-- Test scenarios using SAVEPOINTs
+COMMIT;
+
+\i sql/include/test_teardown.sql
+```
 
 ## Development Workflow
 
@@ -266,6 +307,14 @@ make diff-fail-first  # View the full table contents in the diff output
 SET client_min_messages TO DEBUG;
 -- test commands
 RESET client_min_messages;
+```
+
+**temporal_merge GUCs for debugging:**
+```sql
+SET sql_saga.temporal_merge.log_plan = true;     -- Log execution plan
+SET sql_saga.temporal_merge.log_feedback = true; -- Log row-by-row feedback
+SET sql_saga.temporal_merge.log_sql = true;      -- Log generated SQL
+SET sql_saga.temporal_merge.enable_trace = true; -- Enable trace column
 ```
 
 ## RAISE NOTICE Usage Guidelines
@@ -360,14 +409,6 @@ RAISE WARNING 'Synchronization column "%" on table % has an incompatible data ty
 RAISE WARNING 'Created index on table %', table_name;
 ```
 
-**temporal_merge tracing (advanced):**
-```sql
-SET sql_saga.temporal_merge.enable_trace = true;
-CALL sql_saga.temporal_merge(...);
-SET sql_saga.temporal_merge.enable_trace = false;
--- Note: This adds trace jsonb for debugging table joins, not usually needed
-```
-
 ### Development Journaling
 
 Use `tmp/journal.md` for complex tasks:
@@ -419,6 +460,63 @@ Action: Edit expected/*.out to show "100", then fix the code to make it happen
 - **Never** remove `trace` column from temporal_merge output (zero overhead when disabled)
 - **Never** suggest multi-line shell commands (environment splits on newlines)
 - **Always** run `make install` before tests
+
+## Architecture Overview
+
+### Core Concepts
+
+**Eras:** A temporal period definition on a table, tracked in `sql_saga.era` catalog
+- `range_column_name` - The authoritative range column (e.g., `valid_range daterange`)
+- Optional synchronized columns: `valid_from`, `valid_until`, `valid_to`
+- `ephemeral_columns` - Columns excluded from coalescing comparison (e.g., audit columns)
+
+**Unique Keys:** Temporal uniqueness enforced via `WITHOUT OVERLAPS` constraint
+- Tracked in `sql_saga.unique_keys` catalog
+- Types: `primary`, `natural`, `predicated`
+
+**Foreign Keys:** Temporal foreign key relationships
+- Types: `temporal_to_temporal`, `regular_to_temporal`
+- Implemented via C triggers for performance
+- Tracked in `sql_saga.foreign_keys` catalog
+
+### temporal_merge Architecture
+
+The `temporal_merge` procedure is the core data loading mechanism:
+
+1. **Planner** (`src/2k_temporal_merge_plan.sql`):
+   - Uses Allen's Interval Algebra for temporal relationships
+   - Creates atomic time segments from source and target data
+   - Resolves payloads based on merge mode
+   - Coalesces adjacent identical segments
+   - Generates execution plan with `plan_op_seq`
+
+2. **Executor** (`src/2l_temporal_merge_execute.sql`):
+   - Executes DELETE → UPDATE → INSERT order
+   - Uses deferred constraints for temporary gaps
+   - Provides row-by-row feedback
+
+**Merge Modes:**
+- `MERGE_ENTITY_UPSERT` - Insert or partial update (NULL = explicit value)
+- `MERGE_ENTITY_PATCH` - Insert or partial update (NULL = keep target)
+- `MERGE_ENTITY_REPLACE` - Insert or complete replacement
+- `UPDATE_FOR_PORTION_OF` - Surgical update on time slice
+- `PATCH_FOR_PORTION_OF` - Surgical patch on time slice
+- `REPLACE_FOR_PORTION_OF` - Surgical replace on time slice
+- `DELETE_FOR_PORTION_OF` - Surgical delete on time slice
+- `INSERT_NEW_ENTITIES` - Insert only new entities
+
+**Delete Modes:**
+- `NONE` - No deletions
+- `DELETE_MISSING_TIMELINE` - Delete timeline gaps not in source
+- `DELETE_MISSING_ENTITIES` - Delete entities not in source
+- `DELETE_MISSING_TIMELINE_AND_ENTITIES` - Both
+
+### Performance Benchmarks
+
+From recent optimizations:
+- Regular DML: ~24,000-45,000 rows/s
+- temporal_merge batched: ~2,650-8,310 rows/s
+- Optimal batch size: ~1,000 rows per call
 
 ## PostgreSQL 18 Temporal Constraints and Foreign Keys
 
@@ -490,21 +588,21 @@ CREATE TABLE child (
 
 ### Implementation Details
 
-**Schema** (`src/01_schema.sql`):
+**Schema** (`src/0b_schema.sql`):
 - Documents `with_temporary_temporal_gaps` strategy
 - Enum orders define execution sequence
 - Comments explain rationale and constraints
 
-**Planner** (`src/27_temporal_merge_plan.sql`):
+**Planner** (`src/2k_temporal_merge_plan.sql`):
 - Generates `plan_op_seq` using operation and effect ordering
 - Automatically uses DELETE-first based on enum order
 
-**Executor** (`src/28_temporal_merge_execute.sql`):
+**Executor** (`src/2l_temporal_merge_execute.sql`):
 - Processes plan by `plan_op_seq` (respects DELETE-first order)
 - Sets `CONSTRAINTS ALL DEFERRED` during execution
 - Validates constraints at transaction end
 
-**Constraints** (`src/19_add_unique_key.sql`, `src/20_add_foreign_key.sql`):
+**Constraints** (`src/1j_add_unique_key.sql`, `src/2a_add_foreign_key.sql`):
 - Unique: NOT DEFERRABLE (prevents overlaps immediately)
 - FK: DEFERRABLE (tolerates gaps temporarily)
 
@@ -527,6 +625,18 @@ CREATE TABLE child (
 2. **regclass in triggers** - Cast to oid explicitly to avoid catalog lookup issues
 3. **IGNORE NULLS** - PostgreSQL doesn't support it; use gaps-and-islands pattern with SUM() window functions
 4. **Test isolation** - Use SAVEPOINTs for transaction management in tests
+5. **Schema incompatibility** - Tables with simple PRIMARY KEY or GENERATED ALWAYS AS IDENTITY are incompatible with SCD Type 2
+
+## CI/CD
+
+**GitHub Actions** (`.github/workflows/regression.yml`):
+- Runs on push, pull_request, and manual dispatch
+- Tests against PostgreSQL 11-16 using `pgxn/pgxn-tools` container
+- Command: `pg-build-test` (make && make install && make installcheck)
+
+**Local Pre-commit Hooks:**
+- Enable with: `git config core.hooksPath devops/githooks`
+- Prevents committing files in `tmp/` directory
 
 ## Reference Commands
 
@@ -540,10 +650,14 @@ head -20 file.sql                       # Preview file
 make install && make test fast; make diff-fail-all     # Standard dev cycle
 make diff-fail-all vim                  # Review and accept changes
 psql -d sql_saga_regress < tmp/verify_fix.sql  # Verify hypothesis
+
+# Test utilities
+make renumber-tests-from SLOT=066       # Shift tests from 066 onwards to make room
 ```
 
 ## Additional Resources
 
 - Full conventions: `CONVENTIONS.md`
 - Project tasks: `todo.md`
+- API documentation: `doc/api.md`
 - PostgreSQL docs: https://www.postgresql.org/docs/current/
