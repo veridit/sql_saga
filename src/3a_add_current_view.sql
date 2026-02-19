@@ -125,7 +125,7 @@ BEGIN
 
             -- The view includes all columns from the base table, but is filtered to only show the current records.
             -- This makes its schema consistent with the for_portion_of view, enabling parameter passing via SET.
-            EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_barrier=true) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
+            EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_barrier=true, security_invoker=on) AS SELECT * FROM %1$I.%3$I WHERE %4$I @> %5$s::%6$s',
                 r.schema_name, view_name, r.table_name, r.range_column_name, now_function, r.range_subtype);
             EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name, view_name, r.table_owner::regrole);
 

@@ -89,7 +89,7 @@ BEGIN
 
                 view_name := sql_saga.__internal_make_updatable_view_name(r.table_name, r.era_name, 'for_portion_of');
                 trigger_name := 'for_portion_of_' || r.era_name;
-                EXECUTE format('CREATE VIEW %1$I.%2$I AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */);
+                EXECUTE format('CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS TABLE %1$I.%3$I', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_name /* %3$I */);
                 EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %s', r.schema_name /* %1$I */, view_name /* %2$I */, r.table_owner::regrole /* %s */);
                 EXECUTE format('CREATE TRIGGER %I INSTEAD OF INSERT OR UPDATE OR DELETE ON %I.%I FOR EACH ROW EXECUTE PROCEDURE sql_saga.for_portion_of_trigger(%s)',
                     trigger_name, /* %I */
