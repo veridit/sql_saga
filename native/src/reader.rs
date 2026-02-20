@@ -6,6 +6,9 @@ use crate::types::{CachedState, FilterParam, PlannerContext, SourceRow, TargetRo
 
 thread_local! {
     static TARGET_READ_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
+    /// Cached source read: (source_ident, prepared_statement).
+    /// PostgreSQL auto-replans when the underlying temp view is recreated via CREATE OR REPLACE.
+    static SOURCE_READ_STMT: RefCell<Option<(String, pgrx::spi::OwnedPreparedStatement)>> = RefCell::new(None);
 }
 
 // ── SQL template building (called once on cache miss) ──
@@ -206,71 +209,6 @@ fn build_target_sql_template(
 
 // ── SQL execution (called every batch with pre-built SQL) ──
 
-/// Read source rows by executing a pre-built SQL template.
-/// Parses row_to_json output and splits into column categories using CachedState.
-pub fn read_source_rows_with_sql(
-    sql: &str,
-    state: &CachedState,
-) -> Result<Vec<SourceRow>, String> {
-    Spi::connect(|client| {
-        let table = client
-            .select(sql, None, &[])
-            .map_err(|e| format!("SPI error reading source rows: {e}"))?;
-
-        let mut rows = Vec::with_capacity(table.len());
-        for row in table {
-            let row_id: i64 = row.get::<i64>(1).unwrap_or(Some(0)).unwrap_or(0);
-            let causal_id: String = row
-                .get::<String>(2)
-                .unwrap_or(Some(String::new()))
-                .unwrap_or_default();
-            let valid_from: String = row
-                .get::<String>(3)
-                .unwrap_or(Some(String::new()))
-                .unwrap_or_default();
-            let valid_until: String = row
-                .get::<String>(4)
-                .unwrap_or(Some(String::new()))
-                .unwrap_or_default();
-
-            // Single row_to_json → split into category maps
-            let full_json = get_json_map(&row, 5);
-            let (identity_keys, lookup_keys, data_payload, ephemeral_payload, stable_pk_payload) =
-                split_source_json(&full_json, state);
-
-            // Derive is_identifiable and lookup_cols_are_null from JSON
-            let is_identifiable = state.ctx.identity_columns.is_empty()
-                || state
-                    .ctx
-                    .identity_columns
-                    .iter()
-                    .any(|c| full_json.get(c).map_or(false, |v| !v.is_null()));
-
-            let lookup_cols_are_null = state.ctx.all_lookup_cols.is_empty()
-                || state
-                    .ctx
-                    .all_lookup_cols
-                    .iter()
-                    .all(|c| full_json.get(c).map_or(true, |v| v.is_null()));
-
-            rows.push(SourceRow {
-                row_id,
-                causal_id,
-                valid_from,
-                valid_until,
-                identity_keys,
-                lookup_keys,
-                data_payload,
-                ephemeral_payload,
-                stable_pk_payload,
-                is_identifiable,
-                lookup_cols_are_null,
-            });
-        }
-        Ok(rows)
-    })
-}
-
 /// Read target rows by executing a pre-built SQL template.
 /// Parses row_to_json output and splits into column categories using CachedState.
 pub fn read_target_rows_with_sql(
@@ -411,8 +349,108 @@ pub fn clear_target_read_cache() {
     });
 }
 
-/// Try to build a parameterized WHERE clause using = ANY($N::text::type[]).
-/// Returns None if any filter key set has multiple columns (can't parameterize).
+/// Clear the cached source read prepared statement (call on cache miss).
+pub fn clear_source_read_cache() {
+    SOURCE_READ_STMT.with(|cell| {
+        *cell.borrow_mut() = None;
+    });
+}
+
+/// Read source rows using a cached prepared statement (0 params, keyed by source_ident).
+/// The source table name stays the same across batches (CREATE OR REPLACE TEMP VIEW),
+/// so PostgreSQL auto-replans via relcache invalidation when the view is recreated.
+pub fn read_source_rows_cached(
+    source_ident: &str,
+    state: &CachedState,
+) -> Result<Vec<SourceRow>, String> {
+    let source_sql = state.source_sql_template.replace("__SOURCE_IDENT__", source_ident);
+
+    Spi::connect_mut(|client| {
+        // Check if we have a cached statement for this source_ident
+        let cached_name = SOURCE_READ_STMT.with(|cell| {
+            cell.borrow().as_ref().map(|(name, _)| name.clone())
+        });
+
+        let needs_prepare = match cached_name {
+            Some(ref name) if name == source_ident => false,
+            _ => true,
+        };
+
+        if needs_prepare {
+            let stmt = client
+                .prepare_mut(&source_sql, &[])
+                .map_err(|e| format!("Failed to prepare source read: {e}"))?;
+            let owned = stmt.keep();
+            SOURCE_READ_STMT.with(|cell| {
+                *cell.borrow_mut() = Some((source_ident.to_string(), owned));
+            });
+        }
+
+        // Execute using cached prepared statement
+        SOURCE_READ_STMT.with(|cell| {
+            let borrow = cell.borrow();
+            let (_, stmt_ref) = borrow.as_ref().unwrap();
+            let table = client
+                .update(stmt_ref, None, &[])
+                .map_err(|e| format!("SPI error reading source rows: {e}"))?;
+
+            let mut rows = Vec::with_capacity(table.len());
+            for row in table {
+                let row_id: i64 = row.get::<i64>(1).unwrap_or(Some(0)).unwrap_or(0);
+                let causal_id: String = row
+                    .get::<String>(2)
+                    .unwrap_or(Some(String::new()))
+                    .unwrap_or_default();
+                let valid_from: String = row
+                    .get::<String>(3)
+                    .unwrap_or(Some(String::new()))
+                    .unwrap_or_default();
+                let valid_until: String = row
+                    .get::<String>(4)
+                    .unwrap_or(Some(String::new()))
+                    .unwrap_or_default();
+
+                let full_json = get_json_map(&row, 5);
+                let (identity_keys, lookup_keys, data_payload, ephemeral_payload, stable_pk_payload) =
+                    split_source_json(&full_json, state);
+
+                let is_identifiable = state.ctx.identity_columns.is_empty()
+                    || state
+                        .ctx
+                        .identity_columns
+                        .iter()
+                        .any(|c| full_json.get(c).map_or(false, |v| !v.is_null()));
+
+                let lookup_cols_are_null = state.ctx.all_lookup_cols.is_empty()
+                    || state
+                        .ctx
+                        .all_lookup_cols
+                        .iter()
+                        .all(|c| full_json.get(c).map_or(true, |v| v.is_null()));
+
+                rows.push(SourceRow {
+                    row_id,
+                    causal_id,
+                    valid_from,
+                    valid_until,
+                    identity_keys,
+                    lookup_keys,
+                    data_payload,
+                    ephemeral_payload,
+                    stable_pk_payload,
+                    is_identifiable,
+                    lookup_cols_are_null,
+                });
+            }
+            Ok(rows)
+        })
+    })
+}
+
+/// Try to build a parameterized WHERE clause for the target read query.
+/// Single-column key sets: WHERE t."col" = ANY($N::text::type[])
+/// Multi-column key sets: WHERE (t."c1", t."c2") IN (SELECT c1, c2 FROM unnest($N1::text::type1[], $N2::text::type2[]) AS u(c1, c2))
+/// Returns None only if any column type is unknown.
 /// Returns Some(("", [])) for full-scan modes (no WHERE clause needed).
 fn try_build_parameterized_filter(
     target_col_types: &std::collections::HashMap<String, String>,
@@ -461,31 +499,71 @@ fn try_build_parameterized_filter(
         return Some((String::new(), vec![])); // No filter needed
     }
 
-    // All key sets must be single-column and have known types
+    // Build parameterized WHERE clause — handles both single and multi-column key sets
     let mut params = Vec::new();
     let mut where_parts = Vec::new();
     let mut param_index = 1usize;
 
-    for (cols, is_identity) in &filter_key_sets {
-        if cols.len() != 1 {
-            return None; // Multi-column key set: fall back to dynamic SQL
+    for (key_set_id, (cols, is_identity)) in filter_key_sets.iter().enumerate() {
+        // Verify all columns have known types
+        for col in cols {
+            if !target_col_types.contains_key(col) {
+                return None; // Unknown column type: can't parameterize
+            }
         }
-        let col = &cols[0];
-        let pg_type = target_col_types.get(col)?; // Must know the type
 
-        params.push(FilterParam {
-            col_name: col.clone(),
-            pg_type: pg_type.clone(),
-            param_index,
-            is_identity: *is_identity,
-        });
-        where_parts.push(format!(
-            "t.{col} = ANY(${idx}::text::{typ}[])",
-            col = qi(col),
-            idx = param_index,
-            typ = pg_type,
-        ));
-        param_index += 1;
+        if cols.len() == 1 {
+            // Single-column: t."col" = ANY($N::text::type[])
+            let col = &cols[0];
+            let pg_type = target_col_types.get(col).unwrap();
+            params.push(FilterParam {
+                col_name: col.clone(),
+                pg_type: pg_type.clone(),
+                param_index,
+                is_identity: *is_identity,
+                key_set_id,
+            });
+            where_parts.push(format!(
+                "t.{col} = ANY(${idx}::text::{typ}[])",
+                col = qi(col),
+                idx = param_index,
+                typ = pg_type,
+            ));
+            param_index += 1;
+        } else {
+            // Multi-column: (t."c1", t."c2") IN (SELECT c1, c2 FROM unnest(...) AS u(c1, c2))
+            let t_cols: Vec<String> = cols.iter().map(|c| format!("t.{}", qi(c))).collect();
+            let mut unnest_args = Vec::new();
+            let mut u_cols = Vec::new();
+
+            for col in cols {
+                let pg_type = target_col_types.get(col).unwrap();
+                params.push(FilterParam {
+                    col_name: col.clone(),
+                    pg_type: pg_type.clone(),
+                    param_index,
+                    is_identity: *is_identity,
+                    key_set_id,
+                });
+                unnest_args.push(format!(
+                    "${idx}::text::{typ}[]",
+                    idx = param_index,
+                    typ = pg_type,
+                ));
+                u_cols.push(format!("{col} {typ}", col = qi(col), typ = pg_type));
+                param_index += 1;
+            }
+
+            // SELECT col1, col2 FROM unnest($1::text::type1[], $2::text::type2[]) AS u("col1" type1, "col2" type2)
+            let select_cols: Vec<String> = cols.iter().map(|c| qi(c)).collect();
+            where_parts.push(format!(
+                "({t_cols}) IN (SELECT {sel_cols} FROM unnest({unnest}) AS u({u_def}))",
+                t_cols = t_cols.join(", "),
+                sel_cols = select_cols.join(", "),
+                unnest = unnest_args.join(", "),
+                u_def = u_cols.join(", "),
+            ));
+        }
     }
 
     let where_clause = format!(" WHERE {}", where_parts.join(" OR "));
@@ -494,17 +572,38 @@ fn try_build_parameterized_filter(
 
 /// Extract distinct filter values from source rows for parameterized target read.
 /// Returns one PostgreSQL array literal string per FilterParam.
+///
+/// For single-column key sets: extracts distinct values for that column.
+/// For multi-column key sets: extracts distinct tuples as parallel arrays,
+/// ensuring the arrays stay aligned (same index = same tuple).
 pub fn extract_filter_values(
     source_rows: &[SourceRow],
     filter_params: &[FilterParam],
 ) -> Vec<String> {
-    filter_params
-        .iter()
-        .map(|param| {
-            let mut values: Vec<String> = Vec::new();
-            let mut seen = std::collections::HashSet::new();
+    // Group params by key_set_id to handle multi-column correctly
+    let mut key_set_ids: Vec<usize> = filter_params.iter().map(|p| p.key_set_id).collect();
+    key_set_ids.sort_unstable();
+    key_set_ids.dedup();
 
-            for row in source_rows {
+    // For each key_set, extract distinct tuples
+    let mut key_set_values: std::collections::HashMap<usize, Vec<Vec<String>>> =
+        std::collections::HashMap::new();
+
+    for &ks_id in &key_set_ids {
+        let ks_params: Vec<&FilterParam> = filter_params
+            .iter()
+            .filter(|p| p.key_set_id == ks_id)
+            .collect();
+
+        let mut seen = std::collections::HashSet::new();
+        let n_cols = ks_params.len();
+        let mut columns: Vec<Vec<String>> = vec![Vec::new(); n_cols];
+
+        for row in source_rows {
+            let mut tuple: Vec<Option<String>> = Vec::with_capacity(n_cols);
+            let mut any_null = false;
+
+            for param in &ks_params {
                 let map = if param.is_identity {
                     &row.identity_keys
                 } else {
@@ -512,21 +611,53 @@ pub fn extract_filter_values(
                 };
 
                 if let Some(val) = map.get(&param.col_name) {
-                    if !val.is_null() {
-                        let text_val = match val {
-                            serde_json::Value::String(s) => s.clone(),
-                            serde_json::Value::Number(n) => n.to_string(),
-                            serde_json::Value::Bool(b) => b.to_string(),
-                            _ => val.to_string(),
-                        };
-                        if seen.insert(text_val.clone()) {
-                            values.push(text_val);
-                        }
+                    if val.is_null() {
+                        any_null = true;
+                        break;
                     }
+                    let text_val = match val {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::Bool(b) => b.to_string(),
+                        _ => val.to_string(),
+                    };
+                    tuple.push(Some(text_val));
+                } else {
+                    any_null = true;
+                    break;
                 }
             }
 
-            format_pg_array_literal(&values)
+            if any_null {
+                continue;
+            }
+
+            // Deduplicate by tuple
+            let tuple_key: Vec<String> = tuple.iter().map(|v| v.clone().unwrap()).collect();
+            if seen.insert(tuple_key.clone()) {
+                for (i, val) in tuple_key.into_iter().enumerate() {
+                    columns[i].push(val);
+                }
+            }
+        }
+
+        key_set_values.insert(ks_id, columns);
+    }
+
+    // Map back to per-FilterParam array literals (in order)
+    filter_params
+        .iter()
+        .map(|param| {
+            let columns = key_set_values.get(&param.key_set_id).unwrap();
+            let ks_params: Vec<&FilterParam> = filter_params
+                .iter()
+                .filter(|p| p.key_set_id == param.key_set_id)
+                .collect();
+            let col_idx = ks_params
+                .iter()
+                .position(|p| p.param_index == param.param_index)
+                .unwrap();
+            format_pg_array_literal(&columns[col_idx])
         })
         .collect()
 }

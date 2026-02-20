@@ -81,6 +81,7 @@ fn temporal_merge_plan_native(
             *cell.borrow_mut() = None;
         });
         reader::clear_target_read_cache();
+        reader::clear_source_read_cache();
 
         // Single SPI connection for all introspection
         let result = introspect::introspect_all(target_table, source_table, era_name)
@@ -130,13 +131,8 @@ fn temporal_merge_plan_native(
 
     let t_start = Instant::now();
 
-    // Substitute per-batch source_ident into source SQL template
-    let source_sql = state.source_sql_template.replace("__SOURCE_IDENT__", &source_ident);
-
-    let t_sql_sub = Instant::now();
-
-    // Phase 2a: Read source rows
-    let source_rows = reader::read_source_rows_with_sql(&source_sql, &state)
+    // Phase 2a: Read source rows (cached prepared statement, keyed by source_ident)
+    let source_rows = reader::read_source_rows_cached(&source_ident, &state)
         .unwrap_or_else(|e| pgrx::error!("Failed to read source rows: {}", e));
     let t_source = Instant::now();
 
@@ -173,10 +169,9 @@ fn temporal_merge_plan_native(
     if p_log_trace {
         let n_src = plan_rows.len(); // plan_rows count as proxy
         pgrx::notice!(
-            "native planner timing: cache={}, sql_sub={:.1}ms, source_read={:.1}ms, target_read={:.1}ms, sweep={:.1}ms ({}plan_rows), emit={:.1}ms, total={:.1}ms",
+            "native planner timing: cache={}, source_read={:.1}ms, target_read={:.1}ms, sweep={:.1}ms ({}plan_rows), emit={:.1}ms, total={:.1}ms",
             if cache_hit { "HIT" } else { "MISS" },
-            t_sql_sub.duration_since(t_start).as_secs_f64() * 1000.0,
-            t_source.duration_since(t_sql_sub).as_secs_f64() * 1000.0,
+            t_source.duration_since(t_start).as_secs_f64() * 1000.0,
             t_target.duration_since(t_source).as_secs_f64() * 1000.0,
             t_sweep.duration_since(t_target).as_secs_f64() * 1000.0,
             n_src,

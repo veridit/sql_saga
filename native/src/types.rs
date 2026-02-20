@@ -444,8 +444,9 @@ pub struct EntityGroup {
 
 // ── Parameterized filter for target read ──
 
-/// Describes a single parameterized filter condition for the target read query.
-/// Corresponds to: WHERE t."col_name" = ANY($param_index::text::pg_type[])
+/// Describes a single parameterized filter column for the target read query.
+/// Single-column key sets use: WHERE t."col" = ANY($N::text::type[])
+/// Multi-column key sets use: WHERE (t."c1", t."c2") IN (SELECT ... FROM unnest($N1::type[], $N2::type[]))
 #[derive(Debug, Clone)]
 pub struct FilterParam {
     /// Column name in the target table (and source row identity_keys/lookup_keys)
@@ -456,6 +457,9 @@ pub struct FilterParam {
     pub param_index: usize,
     /// Whether this is from identity_columns (true) or all_lookup_cols (false)
     pub is_identity: bool,
+    /// Group ID: columns with the same key_set_id form one composite key filter.
+    /// Single-column key sets have unique IDs; multi-column share one ID.
+    pub key_set_id: usize,
 }
 
 // ── Cached state for the planner (reused across batches within one session) ──
