@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use pgrx::prelude::*;
 
-use crate::types::{CachedState, FilterParam, PlannerContext, SourceRow, TargetRow};
+use crate::types::{CachedState, ColCategory, ColMapping, FilterParam, PlannerContext, SourceRow, TargetRow};
 
 thread_local! {
     static TARGET_READ_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
@@ -17,16 +17,17 @@ pub struct SqlTemplates {
     pub source_sql_template: String,
     pub target_sql_template: String,
     pub target_ident: String,
-    pub source_data_cols: Vec<String>,
-    pub target_data_cols: Vec<String>,
-    pub eph_in_source: Vec<String>,
-    pub eph_in_target: Vec<String>,
+    pub source_col_layout: Vec<ColMapping>,
+    pub target_col_layout: Vec<ColMapping>,
     /// If Some, target SQL uses parameters instead of __SOURCE_IDENT__ subquery.
     pub target_filter_params: Option<Vec<FilterParam>>,
 }
 
 /// Build SQL templates from pre-fetched column data (no SPI calls).
 /// Called once on cache miss after introspect_all() provides column lists.
+///
+/// Instead of row_to_json, SELECTs individual columns with ::text casts.
+/// Returns column layouts that map ordinal positions to category maps.
 pub fn build_sql_templates_from_cols(
     source_cols: &[String],
     target_cols: &[String],
@@ -34,55 +35,21 @@ pub fn build_sql_templates_from_cols(
     target_ident: &str,
     ctx: &PlannerContext,
 ) -> Result<SqlTemplates, String> {
-    // Build source SQL template
-    let source_sql_template = build_source_sql_template(source_cols, ctx)?;
+    // Classify source columns into categories
+    let source_col_layout = build_column_layout(source_cols, ctx, true);
 
-    // Pre-compute column classifications for row_to_json splitting
-    let exclude_source: Vec<&str> = ctx
-        .original_entity_segment_key_cols
-        .iter()
-        .chain(ctx.temporal_cols.iter())
-        .chain(ctx.ephemeral_columns.iter())
-        .chain(std::iter::once(&ctx.row_id_column))
-        .map(|s| s.as_str())
-        .collect();
-    let source_data_cols: Vec<String> = source_cols
-        .iter()
-        .filter(|c| !exclude_source.contains(&c.as_str()) && *c != "era_id" && *c != "era_name")
-        .cloned()
-        .collect();
+    // Build source SQL template with individual columns
+    let source_sql_template = build_source_sql_template(source_cols, &source_col_layout, ctx)?;
 
-    let exclude_target: Vec<&str> = ctx
-        .original_entity_segment_key_cols
-        .iter()
-        .chain(ctx.temporal_cols.iter())
-        .chain(ctx.ephemeral_columns.iter())
-        .map(|s| s.as_str())
-        .collect();
-    let target_data_cols: Vec<String> = target_cols
-        .iter()
-        .filter(|c| !exclude_target.contains(&c.as_str()) && *c != "era_id" && *c != "era_name")
-        .cloned()
-        .collect();
-
-    let eph_in_source: Vec<String> = ctx
-        .ephemeral_columns
-        .iter()
-        .filter(|c| source_cols.contains(c))
-        .cloned()
-        .collect();
-    let eph_in_target: Vec<String> = ctx
-        .ephemeral_columns
-        .iter()
-        .filter(|c| target_cols.contains(c))
-        .cloned()
-        .collect();
+    // Classify target columns into categories
+    let target_col_layout = build_column_layout(target_cols, ctx, false);
 
     // Build target SQL template (try parameterized first, fall back to dynamic)
     let (target_sql_template, target_filter_params) = build_target_sql_template(
         target_ident,
         source_cols,
         target_col_types,
+        &target_col_layout,
         ctx,
     );
 
@@ -90,18 +57,87 @@ pub fn build_sql_templates_from_cols(
         source_sql_template,
         target_sql_template,
         target_ident: target_ident.to_string(),
-        source_data_cols,
-        target_data_cols,
-        eph_in_source,
-        eph_in_target,
+        source_col_layout,
+        target_col_layout,
         target_filter_params,
     })
 }
 
+/// Build the column layout: classify each column into a category.
+/// Only includes columns that belong to identity/lookup/data/ephemeral categories.
+fn build_column_layout(
+    table_cols: &[String],
+    ctx: &PlannerContext,
+    is_source: bool,
+) -> Vec<ColMapping> {
+    // Build exclusion set for "data" category
+    let mut excluded_from_data: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for c in &ctx.original_entity_segment_key_cols {
+        excluded_from_data.insert(c.as_str());
+    }
+    for c in &ctx.temporal_cols {
+        excluded_from_data.insert(c.as_str());
+    }
+    for c in &ctx.ephemeral_columns {
+        excluded_from_data.insert(c.as_str());
+    }
+    if is_source {
+        excluded_from_data.insert(ctx.row_id_column.as_str());
+    }
+    excluded_from_data.insert("era_id");
+    excluded_from_data.insert("era_name");
+
+    let identity_set: std::collections::HashSet<&str> =
+        ctx.identity_columns.iter().map(|s| s.as_str()).collect();
+    let lookup_set: std::collections::HashSet<&str> =
+        ctx.all_lookup_cols.iter().map(|s| s.as_str()).collect();
+    let ephemeral_set: std::collections::HashSet<&str> =
+        ctx.ephemeral_columns.iter().map(|s| s.as_str()).collect();
+    let temporal_set: std::collections::HashSet<&str> =
+        ctx.temporal_cols.iter().map(|s| s.as_str()).collect();
+
+    let mut layout = Vec::new();
+
+    for col in table_cols {
+        let col_str = col.as_str();
+
+        // Skip columns that don't belong to any payload category
+        if temporal_set.contains(col_str) {
+            continue;
+        }
+        if is_source && col_str == ctx.row_id_column.as_str() {
+            continue;
+        }
+        if col_str == "era_id" || col_str == "era_name" {
+            continue;
+        }
+
+        let category = if identity_set.contains(col_str) {
+            ColCategory::Identity
+        } else if lookup_set.contains(col_str) {
+            ColCategory::Lookup
+        } else if ephemeral_set.contains(col_str) && table_cols.contains(col) {
+            ColCategory::Ephemeral
+        } else if !excluded_from_data.contains(col_str) {
+            ColCategory::Data
+        } else {
+            continue; // pk-only cols that are in segment key but not identity/lookup
+        };
+
+        layout.push(ColMapping {
+            col_name: col.clone(),
+            category,
+        });
+    }
+
+    layout
+}
+
 /// Build the source SQL template with __SOURCE_IDENT__ placeholder.
-/// Uses row_to_json(s) instead of multiple jsonb_build_object() calls.
+/// SELECTs individual columns with ::text casts (no JSON construction).
 fn build_source_sql_template(
     source_cols: &[String],
+    col_layout: &[ColMapping],
     ctx: &PlannerContext,
 ) -> Result<String, String> {
     let has_range = source_cols.contains(&ctx.era.range_col);
@@ -158,15 +194,26 @@ fn build_source_sql_template(
         format!("s.{}::text", qi(&ctx.row_id_column))
     };
 
-    // Single row_to_json replaces 5 separate jsonb_build_object calls
+    // Individual columns with ::text casts — no JSON construction/parsing
+    let col_selects: Vec<String> = col_layout
+        .iter()
+        .map(|cm| format!("s.{}::text", qi(&cm.col_name)))
+        .collect();
+
+    let col_list = if col_selects.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", col_selects.join(", "))
+    };
+
     Ok(format!(
-        "SELECT s.{rid}::bigint, ({causal}), ({from_e})::text, ({until_e})::text, \
-         row_to_json(s) \
+        "SELECT s.{rid}::bigint, ({causal}), ({from_e})::text, ({until_e})::text{cols} \
          FROM __SOURCE_IDENT__ AS s",
         rid = qi(&ctx.row_id_column),
         causal = causal_expr,
         from_e = from_expr,
         until_e = until_expr,
+        cols = col_list,
     ))
 }
 
@@ -177,17 +224,29 @@ fn build_target_sql_template(
     target_ident: &str,
     source_cols: &[String],
     target_col_types: &std::collections::HashMap<String, String>,
+    col_layout: &[ColMapping],
     ctx: &PlannerContext,
 ) -> (String, Option<Vec<FilterParam>>) {
+    // Individual columns with ::text casts — no JSON construction/parsing
+    let col_selects: Vec<String> = col_layout
+        .iter()
+        .map(|cm| format!("t.{}::text", qi(&cm.col_name)))
+        .collect();
+    let col_list = if col_selects.is_empty() {
+        String::new()
+    } else {
+        format!(", {}", col_selects.join(", "))
+    };
+
     // Try parameterized filter first (enables prepared statement caching)
     if let Some((where_clause, params)) =
         try_build_parameterized_filter(target_col_types, source_cols, ctx)
     {
         let sql = format!(
-            "SELECT lower(t.{rc})::text, upper(t.{rc})::text, \
-             row_to_json(t) \
+            "SELECT lower(t.{rc})::text, upper(t.{rc})::text{cols} \
              FROM {tgt} AS t{where_c}",
             rc = qi(&ctx.era.range_col),
+            cols = col_list,
             tgt = target_ident,
             where_c = where_clause,
         );
@@ -197,10 +256,10 @@ fn build_target_sql_template(
     // Fall back to dynamic SQL with __SOURCE_IDENT__ subquery
     let where_clause = build_target_filter("__SOURCE_IDENT__", source_cols, ctx);
     let sql = format!(
-        "SELECT lower(t.{rc})::text, upper(t.{rc})::text, \
-         row_to_json(t) \
+        "SELECT lower(t.{rc})::text, upper(t.{rc})::text{cols} \
          FROM {tgt} AS t{where_c}",
         rc = qi(&ctx.era.range_col),
+        cols = col_list,
         tgt = target_ident,
         where_c = where_clause,
     );
@@ -210,7 +269,7 @@ fn build_target_sql_template(
 // ── SQL execution (called every batch with pre-built SQL) ──
 
 /// Read target rows by executing a pre-built SQL template.
-/// Parses row_to_json output and splits into column categories using CachedState.
+/// Reads individual columns by ordinal — no JSON construction or parsing.
 pub fn read_target_rows_with_sql(
     sql: &str,
     state: &CachedState,
@@ -220,6 +279,7 @@ pub fn read_target_rows_with_sql(
             .select(sql, None, &[])
             .map_err(|e| format!("SPI error reading target rows: {e}"))?;
 
+        let layout = &state.target_col_layout;
         let mut rows = Vec::with_capacity(table.len());
         for row in table {
             let valid_from: String = row
@@ -231,10 +291,8 @@ pub fn read_target_rows_with_sql(
                 .unwrap_or(Some(String::new()))
                 .unwrap_or_default();
 
-            // Single row_to_json → split into category maps
-            let full_json = get_json_map(&row, 3);
             let (identity_keys, lookup_keys, data_payload, ephemeral_payload) =
-                split_target_json(&full_json, state);
+                read_target_ordinals(&row, layout);
 
             rows.push(TargetRow {
                 valid_from,
@@ -247,97 +305,6 @@ pub fn read_target_rows_with_sql(
         }
         Ok(rows)
     })
-}
-
-// ── JSON splitting (single-pass column extraction from row_to_json) ──
-
-/// Split a source row's row_to_json output into category maps.
-fn split_source_json(
-    full_json: &serde_json::Map<String, serde_json::Value>,
-    state: &CachedState,
-) -> (
-    serde_json::Map<String, serde_json::Value>, // identity_keys
-    serde_json::Map<String, serde_json::Value>, // lookup_keys
-    serde_json::Map<String, serde_json::Value>, // data_payload
-    serde_json::Map<String, serde_json::Value>, // ephemeral_payload
-    serde_json::Map<String, serde_json::Value>, // stable_pk_payload
-) {
-    let mut identity = serde_json::Map::with_capacity(state.ctx.identity_columns.len());
-    let mut stable_pk = serde_json::Map::with_capacity(state.ctx.identity_columns.len());
-    let mut lookup = serde_json::Map::with_capacity(state.ctx.all_lookup_cols.len());
-    let mut data = serde_json::Map::with_capacity(state.source_data_cols.len());
-    let mut ephemeral = serde_json::Map::with_capacity(state.eph_in_source.len());
-
-    for col in &state.ctx.identity_columns {
-        if let Some(val) = full_json.get(col) {
-            identity.insert(col.clone(), val.clone());
-            stable_pk.insert(col.clone(), val.clone());
-        } else {
-            stable_pk.insert(col.clone(), serde_json::Value::Null);
-        }
-    }
-
-    for col in &state.ctx.all_lookup_cols {
-        if let Some(val) = full_json.get(col) {
-            lookup.insert(col.clone(), val.clone());
-        }
-    }
-
-    for col in &state.source_data_cols {
-        if let Some(val) = full_json.get(col) {
-            data.insert(col.clone(), val.clone());
-        }
-    }
-
-    for col in &state.eph_in_source {
-        if let Some(val) = full_json.get(col) {
-            ephemeral.insert(col.clone(), val.clone());
-        }
-    }
-
-    (identity, lookup, data, ephemeral, stable_pk)
-}
-
-/// Split a target row's row_to_json output into category maps.
-fn split_target_json(
-    full_json: &serde_json::Map<String, serde_json::Value>,
-    state: &CachedState,
-) -> (
-    serde_json::Map<String, serde_json::Value>, // identity_keys
-    serde_json::Map<String, serde_json::Value>, // lookup_keys
-    serde_json::Map<String, serde_json::Value>, // data_payload
-    serde_json::Map<String, serde_json::Value>, // ephemeral_payload
-) {
-    let mut identity = serde_json::Map::with_capacity(state.ctx.identity_columns.len());
-    let mut lookup = serde_json::Map::with_capacity(state.ctx.all_lookup_cols.len());
-    let mut data = serde_json::Map::with_capacity(state.target_data_cols.len());
-    let mut ephemeral = serde_json::Map::with_capacity(state.eph_in_target.len());
-
-    for col in &state.ctx.identity_columns {
-        if let Some(val) = full_json.get(col) {
-            identity.insert(col.clone(), val.clone());
-        }
-    }
-
-    for col in &state.ctx.all_lookup_cols {
-        if let Some(val) = full_json.get(col) {
-            lookup.insert(col.clone(), val.clone());
-        }
-    }
-
-    for col in &state.target_data_cols {
-        if let Some(val) = full_json.get(col) {
-            data.insert(col.clone(), val.clone());
-        }
-    }
-
-    for col in &state.eph_in_target {
-        if let Some(val) = full_json.get(col) {
-            ephemeral.insert(col.clone(), val.clone());
-        }
-    }
-
-    (identity, lookup, data, ephemeral)
 }
 
 // ── Parameterized target read (cached prepared statement) ──
@@ -359,6 +326,8 @@ pub fn clear_source_read_cache() {
 /// Read source rows using a cached prepared statement (0 params, keyed by source_ident).
 /// The source table name stays the same across batches (CREATE OR REPLACE TEMP VIEW),
 /// so PostgreSQL auto-replans via relcache invalidation when the view is recreated.
+///
+/// Reads individual columns by ordinal — no JSON construction or parsing.
 pub fn read_source_rows_cached(
     source_ident: &str,
     state: &CachedState,
@@ -394,6 +363,7 @@ pub fn read_source_rows_cached(
                 .update(stmt_ref, None, &[])
                 .map_err(|e| format!("SPI error reading source rows: {e}"))?;
 
+            let layout = &state.source_col_layout;
             let mut rows = Vec::with_capacity(table.len());
             for row in table {
                 let row_id: i64 = row.get::<i64>(1).unwrap_or(Some(0)).unwrap_or(0);
@@ -410,23 +380,10 @@ pub fn read_source_rows_cached(
                     .unwrap_or(Some(String::new()))
                     .unwrap_or_default();
 
-                let full_json = get_json_map(&row, 5);
-                let (identity_keys, lookup_keys, data_payload, ephemeral_payload, stable_pk_payload) =
-                    split_source_json(&full_json, state);
-
-                let is_identifiable = state.ctx.identity_columns.is_empty()
-                    || state
-                        .ctx
-                        .identity_columns
-                        .iter()
-                        .any(|c| full_json.get(c).map_or(false, |v| !v.is_null()));
-
-                let lookup_cols_are_null = state.ctx.all_lookup_cols.is_empty()
-                    || state
-                        .ctx
-                        .all_lookup_cols
-                        .iter()
-                        .all(|c| full_json.get(c).map_or(true, |v| v.is_null()));
+                // Read individual columns by ordinal — no JSON parsing
+                let (identity_keys, lookup_keys, data_payload, ephemeral_payload,
+                     stable_pk_payload, is_identifiable, lookup_cols_are_null) =
+                    read_source_ordinals(&row, layout, &state.ctx);
 
                 rows.push(SourceRow {
                     row_id,
@@ -445,6 +402,67 @@ pub fn read_source_rows_cached(
             Ok(rows)
         })
     })
+}
+
+/// Read source row columns by ordinal and classify into category maps.
+/// Columns start at ordinal 5 (after row_id, causal_id, valid_from, valid_until).
+fn read_source_ordinals(
+    row: &pgrx::spi::SpiHeapTupleData,
+    layout: &[ColMapping],
+    ctx: &PlannerContext,
+) -> (
+    serde_json::Map<String, serde_json::Value>, // identity_keys
+    serde_json::Map<String, serde_json::Value>, // lookup_keys
+    serde_json::Map<String, serde_json::Value>, // data_payload
+    serde_json::Map<String, serde_json::Value>, // ephemeral_payload
+    serde_json::Map<String, serde_json::Value>, // stable_pk_payload
+    bool,                                        // is_identifiable
+    bool,                                        // lookup_cols_are_null
+) {
+    let mut identity = serde_json::Map::new();
+    let mut lookup = serde_json::Map::new();
+    let mut data = serde_json::Map::new();
+    let mut ephemeral = serde_json::Map::new();
+
+    for (i, cm) in layout.iter().enumerate() {
+        let ordinal = 5 + i; // 1-based, first 4 are fixed
+        let val = match row.get::<String>(ordinal) {
+            Ok(Some(s)) => serde_json::Value::String(s),
+            _ => serde_json::Value::Null,
+        };
+        match cm.category {
+            ColCategory::Identity => {
+                identity.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Lookup => {
+                lookup.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Data => {
+                data.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Ephemeral => {
+                ephemeral.insert(cm.col_name.clone(), val);
+            }
+        }
+    }
+
+    // stable_pk_payload: all identity columns, Null for missing
+    let mut stable_pk = serde_json::Map::with_capacity(ctx.identity_columns.len());
+    for col in &ctx.identity_columns {
+        let val = identity
+            .get(col)
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        stable_pk.insert(col.clone(), val);
+    }
+
+    let is_identifiable = ctx.identity_columns.is_empty()
+        || identity.values().any(|v| !v.is_null());
+
+    let lookup_cols_are_null = ctx.all_lookup_cols.is_empty()
+        || lookup.values().all(|v| v.is_null());
+
+    (identity, lookup, data, ephemeral, stable_pk, is_identifiable, lookup_cols_are_null)
 }
 
 /// Try to build a parameterized WHERE clause for the target read query.
@@ -663,7 +681,7 @@ pub fn extract_filter_values(
 }
 
 /// Read target rows using a cached prepared statement with parameters.
-/// The target SQL in state.target_sql_template must use $N parameters.
+/// Reads individual columns by ordinal — no JSON construction or parsing.
 pub fn read_target_rows_parameterized(
     state: &CachedState,
     param_values: &[String],
@@ -698,6 +716,7 @@ pub fn read_target_rows_parameterized(
                 .update(stmt_ref, None, &args)
                 .map_err(|e| format!("SPI error reading target rows: {e}"))?;
 
+            let layout = &state.target_col_layout;
             let mut rows = Vec::with_capacity(table.len());
             for row in table {
                 let valid_from: String = row
@@ -709,9 +728,8 @@ pub fn read_target_rows_parameterized(
                     .unwrap_or(Some(String::new()))
                     .unwrap_or_default();
 
-                let full_json = get_json_map(&row, 3);
                 let (identity_keys, lookup_keys, data_payload, ephemeral_payload) =
-                    split_target_json(&full_json, state);
+                    read_target_ordinals(&row, layout);
 
                 rows.push(TargetRow {
                     valid_from,
@@ -725,6 +743,47 @@ pub fn read_target_rows_parameterized(
             Ok(rows)
         })
     })
+}
+
+/// Read target row columns by ordinal and classify into category maps.
+/// Columns start at ordinal 3 (after valid_from, valid_until).
+fn read_target_ordinals(
+    row: &pgrx::spi::SpiHeapTupleData,
+    layout: &[ColMapping],
+) -> (
+    serde_json::Map<String, serde_json::Value>, // identity_keys
+    serde_json::Map<String, serde_json::Value>, // lookup_keys
+    serde_json::Map<String, serde_json::Value>, // data_payload
+    serde_json::Map<String, serde_json::Value>, // ephemeral_payload
+) {
+    let mut identity = serde_json::Map::new();
+    let mut lookup = serde_json::Map::new();
+    let mut data = serde_json::Map::new();
+    let mut ephemeral = serde_json::Map::new();
+
+    for (i, cm) in layout.iter().enumerate() {
+        let ordinal = 3 + i; // 1-based, first 2 are valid_from/valid_until
+        let val = match row.get::<String>(ordinal) {
+            Ok(Some(s)) => serde_json::Value::String(s),
+            _ => serde_json::Value::Null,
+        };
+        match cm.category {
+            ColCategory::Identity => {
+                identity.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Lookup => {
+                lookup.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Data => {
+                data.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::Ephemeral => {
+                ephemeral.insert(cm.col_name.clone(), val);
+            }
+        }
+    }
+
+    (identity, lookup, data, ephemeral)
 }
 
 /// Format a list of string values as a PostgreSQL array literal.
@@ -910,13 +969,3 @@ pub fn resolve_table_name(table_oid: pg_sys::Oid) -> Result<String, String> {
     .ok_or_else(|| "Could not resolve table name".to_string())
 }
 
-/// Read a JSON (not JSONB) column from an SPI row as a serde_json::Map.
-fn get_json_map(
-    row: &pgrx::spi::SpiHeapTupleData,
-    ordinal: usize,
-) -> serde_json::Map<String, serde_json::Value> {
-    match row.get::<pgrx::Json>(ordinal) {
-        Ok(Some(pgrx::Json(serde_json::Value::Object(map)))) => map,
-        _ => serde_json::Map::new(),
-    }
-}

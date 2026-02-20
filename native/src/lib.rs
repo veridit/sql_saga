@@ -116,10 +116,8 @@ fn temporal_merge_plan_native(
             target_ident: templates.target_ident,
             source_sql_template: templates.source_sql_template,
             target_sql_template: templates.target_sql_template,
-            source_data_cols: templates.source_data_cols,
-            target_data_cols: templates.target_data_cols,
-            eph_in_source: templates.eph_in_source,
-            eph_in_target: templates.eph_in_target,
+            source_col_layout: templates.source_col_layout,
+            target_col_layout: templates.target_col_layout,
             target_filter_params: templates.target_filter_params,
         };
         PLANNER_CACHE.with(|c| {

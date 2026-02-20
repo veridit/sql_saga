@@ -442,6 +442,24 @@ pub struct EntityGroup {
     pub time_boundaries: BTreeSet<String>,
 }
 
+// ── Column layout for ordinal-based reading (eliminates JSON parsing) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColCategory {
+    Identity,
+    Lookup,
+    Data,
+    Ephemeral,
+}
+
+/// Describes one column in the SELECT list for ordinal-based reading.
+/// Columns start at ordinal `first_ordinal` (after the fixed prefix columns).
+#[derive(Debug, Clone)]
+pub struct ColMapping {
+    pub col_name: String,
+    pub category: ColCategory,
+}
+
 // ── Parameterized filter for target read ──
 
 /// Describes a single parameterized filter column for the target read query.
@@ -471,10 +489,10 @@ pub struct CachedState {
     pub target_ident: String,
     pub source_sql_template: String,
     pub target_sql_template: String,
-    pub source_data_cols: Vec<String>,
-    pub target_data_cols: Vec<String>,
-    pub eph_in_source: Vec<String>,
-    pub eph_in_target: Vec<String>,
+    /// Column layout for source rows (ordinals start at 5, after row_id/causal/from/until).
+    pub source_col_layout: Vec<ColMapping>,
+    /// Column layout for target rows (ordinals start at 3, after valid_from/valid_until).
+    pub target_col_layout: Vec<ColMapping>,
     /// If Some, target_sql_template uses $N parameters for the WHERE filter.
     /// Each FilterParam describes one = ANY($N::text::type[]) condition.
     /// If None, target_sql_template uses __SOURCE_IDENT__ subquery (dynamic SQL).
