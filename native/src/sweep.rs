@@ -143,7 +143,8 @@ fn correlate_entities(
         }
 
         // For new entities, check identifiability
-        if is_new && !sr.is_identifiable && sr.lookup_cols_are_null && early_feedback.is_none() {
+        // In founding mode, rows are always identifiable via the founding_id grouping key
+        if is_new && !sr.is_identifiable && sr.lookup_cols_are_null && !ctx.is_founding_mode() && early_feedback.is_none() {
             early_feedback = Some(EarlyFeedback {
                 action: PlanAction::Error,
                 message: Some(format!(
@@ -447,10 +448,11 @@ fn resolve_payloads(
         let target_until = covering_target.map(|t| t.valid_until.clone());
 
         // Compute data hash for coalescing (excluding ephemeral columns)
+        // Uses xxh3 (non-cryptographic, ~10x faster than MD5)
         let data_hash = data_payload.as_ref().map(|p| {
             let stripped = strip_nulls(p);
             let serialized = serde_json::to_string(&serde_json::Value::Object(stripped)).unwrap_or_default();
-            format!("{:x}", md5::compute(serialized.as_bytes()))
+            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(serialized.as_bytes()))
         });
 
         let ephemeral_payload = if !covering_sources.is_empty() {
@@ -542,16 +544,11 @@ fn coalesce_segments(
     for seg in &resolved {
         let can_merge = current.as_ref().map_or(false, |c| {
             // Same grouping key, adjacent in time, same data hash
+            // data_hash is pre-computed in resolve_payloads and never changes during coalescing
             c.grouping_key == seg.grouping_key
                 && c.valid_until == seg.valid_from
-                && c.data_payload.as_ref().map(|p| {
-                    let h = format!("{:x}", md5::compute(
-                        serde_json::to_string(&serde_json::Value::Object(strip_nulls(p)))
-                            .unwrap_or_default()
-                            .as_bytes()
-                    ));
-                    h == seg.data_hash.as_deref().unwrap_or("")
-                }).unwrap_or(false)
+                && c.data_hash.is_some()
+                && c.data_hash == seg.data_hash
         });
 
         if can_merge {
@@ -577,6 +574,7 @@ fn coalesce_segments(
                 data_payload: seg.data_payload.clone(),
                 ephemeral_payload: seg.ephemeral_payload.clone(),
                 ancestor_valid_from: seg.target_valid_from.clone(),
+                data_hash: seg.data_hash.clone(),
             });
         }
     }
@@ -772,30 +770,12 @@ fn classify_single_diff(d: &DiffRow, _ctx: &PlannerContext) -> (PlanAction, Opti
             let t_until = d.target_valid_until.as_ref().unwrap();
             let f_until = d.final_valid_until.as_ref().unwrap();
 
-            // Check if payload changed
+            // Check if payload changed (direct map comparison, no MD5/serialization)
             let payload_identical = d
                 .final_payload
                 .as_ref()
                 .zip(d.target_payload.as_ref())
-                .map(|(fp, tp)| {
-                    let fh = format!(
-                        "{:x}",
-                        md5::compute(
-                            serde_json::to_string(&serde_json::Value::Object(strip_nulls(fp)))
-                                .unwrap_or_default()
-                                .as_bytes()
-                        )
-                    );
-                    let th = format!(
-                        "{:x}",
-                        md5::compute(
-                            serde_json::to_string(&serde_json::Value::Object(strip_nulls(tp)))
-                                .unwrap_or_default()
-                                .as_bytes()
-                        )
-                    );
-                    fh == th
-                })
+                .map(|(fp, tp)| maps_equal_ignoring_nulls(fp, tp))
                 .unwrap_or(false);
 
             if f_from == t_from && f_until == t_until && payload_identical {
@@ -963,6 +943,34 @@ fn json_value_to_str(v: &serde_json::Value) -> String {
         serde_json::Value::Null => "_NULL_".to_string(),
         other => other.to_string(),
     }
+}
+
+/// Compare two JSON maps for equality, treating null values as absent.
+fn maps_equal_ignoring_nulls(
+    a: &serde_json::Map<String, serde_json::Value>,
+    b: &serde_json::Map<String, serde_json::Value>,
+) -> bool {
+    // Check all non-null entries in a exist with same value in b
+    for (k, v) in a {
+        if v.is_null() {
+            continue;
+        }
+        match b.get(k) {
+            Some(bv) if bv == v => {}
+            _ => return false,
+        }
+    }
+    // Check all non-null entries in b exist in a
+    for (k, v) in b {
+        if v.is_null() {
+            continue;
+        }
+        match a.get(k) {
+            Some(av) if av == v => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Strip null values from a JSON map.

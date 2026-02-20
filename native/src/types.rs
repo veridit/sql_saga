@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 // ── Merge mode (mirrors sql_saga.temporal_merge_mode) ──
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MergeMode {
     MergeEntityUpsert,
     UpdateForPortionOf,
@@ -62,7 +62,7 @@ impl MergeMode {
 
 // ── Delete mode (mirrors sql_saga.temporal_merge_delete_mode) ──
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeleteMode {
     None,
     DeleteMissingTimeline,
@@ -350,6 +350,9 @@ pub struct CoalescedSegment {
     pub ephemeral_payload: Option<serde_json::Map<String, serde_json::Value>>,
     /// The original target valid_from for diff join (ancestor tracking)
     pub ancestor_valid_from: Option<String>,
+    /// Pre-computed hash of data_payload (excluding nulls), carried from resolve phase.
+    /// Invariant: data_payload is never modified during coalescing, so this stays valid.
+    pub data_hash: Option<String>,
 }
 
 // ── Diff row (result of FULL OUTER JOIN between coalesced and target) ──
@@ -437,4 +440,19 @@ pub struct EntityGroup {
     pub source_rows: Vec<MatchedSourceRow>,
     pub target_rows: Vec<TargetRow>,
     pub time_boundaries: BTreeSet<String>,
+}
+
+// ── Cached state for the planner (reused across batches within one session) ──
+
+#[derive(Debug, Clone)]
+pub struct CachedState {
+    pub cache_key: u64,
+    pub ctx: PlannerContext,
+    pub target_ident: String,
+    pub source_sql_template: String,
+    pub target_sql_template: String,
+    pub source_data_cols: Vec<String>,
+    pub target_data_cols: Vec<String>,
+    pub eph_in_source: Vec<String>,
+    pub eph_in_target: Vec<String>,
 }

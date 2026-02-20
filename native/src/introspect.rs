@@ -2,53 +2,86 @@ use pgrx::prelude::*;
 
 use crate::types::{DeleteMode, EraMetadata, IdentityStrategy, MergeMode, PlannerContext};
 
-/// Introspect era metadata from sql_saga.era for the given target table and era name.
-pub fn introspect_era(
+/// Result of all introspection queries needed on cache miss.
+pub struct IntrospectionResult {
+    pub era: EraMetadata,
+    pub pk_cols: Vec<String>,
+    pub target_ident: String,
+    pub source_cols: Vec<String>,
+    pub target_cols: Vec<String>,
+}
+
+/// Perform all introspection in a single SPI connection scope.
+/// On cache miss, this replaces 5 separate Spi::connect() calls with 1.
+pub fn introspect_all(
     target_table: pg_sys::Oid,
+    source_table: pg_sys::Oid,
     era_name: &str,
-) -> Result<EraMetadata, String> {
-    let oid_val = u32::from(target_table);
+) -> Result<IntrospectionResult, String> {
+    let target_oid = u32::from(target_table);
+    let source_oid = u32::from(source_table);
     let era_escaped = era_name.replace('\'', "''");
-    let query = format!(
-        r#"SELECT
-            e.range_column_name::text,
-            e.valid_from_column_name::text,
-            e.valid_until_column_name::text,
-            e.valid_to_column_name::text,
-            e.range_type::text,
-            e.multirange_type::text,
-            e.range_subtype::text,
-            e.range_subtype_category::text,
-            COALESCE(e.ephemeral_columns::text[], '{{}}'::text[])
-        FROM sql_saga.era AS e
-        JOIN pg_class c ON c.relname = e.table_name
-        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
-        WHERE c.oid = {oid}::oid AND e.era_name = '{era}'"#,
-        oid = oid_val,
-        era = era_escaped,
-    );
 
     Spi::connect(|client| {
-        let row = client
-            .select(&query, Some(1), &[])
+        // 1. Era metadata
+        let era_query = format!(
+            r#"SELECT
+                e.range_column_name::text,
+                e.valid_from_column_name::text,
+                e.valid_until_column_name::text,
+                e.valid_to_column_name::text,
+                e.range_type::text,
+                e.multirange_type::text,
+                e.range_subtype::text,
+                e.range_subtype_category::text,
+                COALESCE(e.ephemeral_columns::text[], '{{}}'::text[])
+            FROM sql_saga.era AS e
+            JOIN pg_class c ON c.relname = e.table_name
+            JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
+            WHERE c.oid = {oid}::oid AND e.era_name = '{era}'"#,
+            oid = target_oid,
+            era = era_escaped,
+        );
+        let era_row = client
+            .select(&era_query, Some(1), &[])
             .map_err(|e| format!("SPI error introspecting era: {e}"))?
             .first();
 
-        let range_col: String = row
+        let range_col: String = era_row
             .get::<String>(1)
             .map_err(|e| format!("era query failed: {e}"))?
             .ok_or_else(|| format!("No era named \"{}\" found for target table", era_name))?;
+        let valid_from: String = era_row
+            .get::<String>(2)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let valid_until: String = era_row
+            .get::<String>(3)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let valid_to: Option<String> = era_row.get::<String>(4).map_err(|e| format!("{e}"))?;
+        let range_type: String = era_row
+            .get::<String>(5)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let multirange_type: String = era_row
+            .get::<String>(6)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let range_subtype: String = era_row
+            .get::<String>(7)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let subtype_cat_str: String = era_row
+            .get::<String>(8)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
+        let ephemeral_cols: Vec<String> = era_row
+            .get::<Vec<String>>(9)
+            .map_err(|e| format!("{e}"))?
+            .unwrap_or_default();
 
-        let valid_from: String = row.get::<String>(2).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let valid_until: String = row.get::<String>(3).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let valid_to: Option<String> = row.get::<String>(4).map_err(|e| format!("{e}"))?;
-        let range_type: String = row.get::<String>(5).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let multirange_type: String = row.get::<String>(6).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let range_subtype: String = row.get::<String>(7).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let subtype_cat_str: String = row.get::<String>(8).map_err(|e| format!("{e}"))?.unwrap_or_default();
-        let ephemeral_cols: Vec<String> = row.get::<Vec<String>>(9).map_err(|e| format!("{e}"))?.unwrap_or_default();
-
-        Ok(EraMetadata {
+        let era = EraMetadata {
             range_col,
             valid_from_col: valid_from,
             valid_until_col: valid_until,
@@ -58,31 +91,88 @@ pub fn introspect_era(
             range_subtype,
             range_subtype_category: subtype_cat_str.chars().next().unwrap_or(' '),
             ephemeral_columns: ephemeral_cols,
-        })
-    })
-}
+        };
 
-/// Introspect primary key columns for the target table (excluding temporal columns).
-pub fn introspect_pk_cols(target_table: pg_sys::Oid, temporal_cols: &[String]) -> Vec<String> {
-    let oid_val = u32::from(target_table);
-    let query = format!(
-        "SELECT COALESCE(array_agg(a.attname::text), '{{}}'::text[]) \
-         FROM pg_constraint c \
-         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) \
-         WHERE c.conrelid = {}::oid AND c.contype = 'p'",
-        oid_val
-    );
+        // 2. PK columns (filtered by temporal cols derived from era)
+        let mut temporal_cols = vec![era.range_col.clone(), era.valid_from_col.clone()];
+        if let Some(ref vt) = era.valid_to_col {
+            temporal_cols.push(vt.clone());
+        }
+        temporal_cols.push(era.valid_until_col.clone());
 
-    Spi::connect(|client| {
-        let cols: Vec<String> = client
-            .select(&query, None, &[])
+        let pk_query = format!(
+            "SELECT COALESCE(array_agg(a.attname::text), '{{}}'::text[]) \
+             FROM pg_constraint c \
+             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey) \
+             WHERE c.conrelid = {}::oid AND c.contype = 'p'",
+            target_oid
+        );
+        let pk_cols: Vec<String> = client
+            .select(&pk_query, None, &[])
             .ok()
             .and_then(|table| table.first().get_one::<Vec<String>>().ok().flatten())
-            .unwrap_or_default();
-
-        cols.into_iter()
+            .unwrap_or_default()
+            .into_iter()
             .filter(|c| !temporal_cols.contains(c))
-            .collect()
+            .collect();
+
+        // 3. Target table name
+        let name_query = format!("SELECT {}::regclass::text", target_oid);
+        let target_ident: String = client
+            .select(&name_query, None, &[])
+            .map_err(|e| format!("SPI error: {e}"))?
+            .first()
+            .get_one::<String>()
+            .map_err(|e| format!("SPI error: {e}"))?
+            .ok_or_else(|| "Could not resolve target table name".to_string())?;
+
+        // 4. Source columns (all, including generated)
+        let src_cols_query = format!(
+            "SELECT attname::text FROM pg_attribute \
+             WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped \
+             ORDER BY attnum",
+            source_oid
+        );
+        let source_cols: Vec<String> = {
+            let table = client
+                .select(&src_cols_query, None, &[])
+                .map_err(|e| format!("SPI error: {e}"))?;
+            let mut cols = Vec::new();
+            for row in table {
+                if let Some(name) = row.get::<String>(1).unwrap_or(None) {
+                    cols.push(name);
+                }
+            }
+            cols
+        };
+
+        // 5. Target columns (excluding generated)
+        let tgt_cols_query = format!(
+            "SELECT attname::text FROM pg_attribute \
+             WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped \
+             AND attgenerated = '' ORDER BY attnum",
+            target_oid
+        );
+        let target_cols: Vec<String> = {
+            let table = client
+                .select(&tgt_cols_query, None, &[])
+                .map_err(|e| format!("SPI error: {e}"))?;
+            let mut cols = Vec::new();
+            for row in table {
+                if let Some(name) = row.get::<String>(1).unwrap_or(None) {
+                    cols.push(name);
+                }
+            }
+            cols
+        };
+
+        Ok(IntrospectionResult {
+            era,
+            pk_cols,
+            target_ident,
+            source_cols,
+            target_cols,
+        })
     })
 }
 

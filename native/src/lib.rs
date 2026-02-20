@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::time::Instant;
+
 use pgrx::prelude::*;
 
 pg_module_magic!();
@@ -7,7 +12,12 @@ mod reader;
 mod sweep;
 mod types;
 
-use types::{DeleteMode, MergeMode, PlanRow};
+use types::{CachedState, DeleteMode, MergeMode, PlanRow};
+
+thread_local! {
+    static PLANNER_CACHE: RefCell<Option<CachedState>> = RefCell::new(None);
+    static EMIT_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
+}
 
 /// Native Rust implementation of the temporal_merge planner.
 /// Drop-in replacement for sql_saga.temporal_merge_plan() — produces the same
@@ -40,45 +50,150 @@ fn temporal_merge_plan_native(
     // Parse lookup_keys JSONB into Vec<Vec<String>>
     let all_lookup_cols = parse_lookup_keys(lookup_keys);
 
-    // Phase 1: Introspect era metadata
-    let era = introspect::introspect_era(target_table, era_name)
-        .unwrap_or_else(|e| pgrx::error!("{}", e));
-
-    // Introspect PK columns
-    let mut temporal_cols = vec![era.range_col.clone(), era.valid_from_col.clone()];
-    if let Some(ref vt) = era.valid_to_col {
-        temporal_cols.push(vt.clone());
-    }
-    temporal_cols.push(era.valid_until_col.clone());
-    let pk_cols = introspect::introspect_pk_cols(target_table, &temporal_cols);
-
-    // Build planner context
-    let ctx = introspect::build_planner_context(
+    // Compute cache key (excludes source_table OID — it changes per batch)
+    let cache_key = compute_cache_key(
+        target_table,
         mode,
+        era_name,
+        &identity_columns,
+        &all_lookup_cols,
+        &ephemeral_columns,
+        founding_id_column,
+        row_id_column,
         delete_mode,
-        era,
-        identity_columns,
-        all_lookup_cols,
-        pk_cols,
-        ephemeral_columns.unwrap_or_default(),
-        founding_id_column.map(|s| s.to_string()),
-        row_id_column.to_string(),
         p_log_trace,
     );
 
-    // Phase 2: Bulk SPI reads
-    let source_rows = reader::read_source_rows(source_table, &ctx)
+    // Resolve source_ident (changes per batch, always needed)
+    let source_ident = reader::resolve_table_name(source_table)
+        .unwrap_or_else(|e| pgrx::error!("Failed to resolve source table: {}", e));
+
+    // Check cache and get or build CachedState
+    let cache_hit = PLANNER_CACHE.with(|c| {
+        c.borrow().as_ref().map_or(false, |s| s.cache_key == cache_key)
+    });
+
+    let state = if cache_hit {
+        PLANNER_CACHE.with(|c| c.borrow().as_ref().unwrap().clone())
+    } else {
+        // Cache miss: clear cached prepared statements
+        EMIT_STMT.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
+        // Single SPI connection for all introspection
+        let result = introspect::introspect_all(target_table, source_table, era_name)
+            .unwrap_or_else(|e| pgrx::error!("{}", e));
+
+        let ctx = introspect::build_planner_context(
+            mode,
+            delete_mode,
+            result.era,
+            identity_columns,
+            all_lookup_cols,
+            result.pk_cols,
+            ephemeral_columns.unwrap_or_default(),
+            founding_id_column.map(|s| s.to_string()),
+            row_id_column.to_string(),
+            p_log_trace,
+        );
+
+        // Build SQL templates from pre-fetched column data (no SPI calls)
+        let templates = reader::build_sql_templates_from_cols(
+            &result.source_cols,
+            &result.target_cols,
+            &result.target_ident,
+            &ctx,
+        )
+        .unwrap_or_else(|e| pgrx::error!("Failed to build SQL templates: {}", e));
+
+        let new_state = CachedState {
+            cache_key,
+            ctx,
+            target_ident: templates.target_ident,
+            source_sql_template: templates.source_sql_template,
+            target_sql_template: templates.target_sql_template,
+            source_data_cols: templates.source_data_cols,
+            target_data_cols: templates.target_data_cols,
+            eph_in_source: templates.eph_in_source,
+            eph_in_target: templates.eph_in_target,
+        };
+        PLANNER_CACHE.with(|c| {
+            *c.borrow_mut() = Some(new_state.clone());
+        });
+
+        new_state
+    };
+
+    let t_start = Instant::now();
+
+    // Substitute per-batch source_ident into cached SQL templates
+    let source_sql = state.source_sql_template.replace("__SOURCE_IDENT__", &source_ident);
+    let target_sql = state.target_sql_template.replace("__SOURCE_IDENT__", &source_ident);
+
+    let t_sql_sub = Instant::now();
+
+    // Phase 2: Bulk SPI reads with pre-built SQL + row_to_json splitting
+    let source_rows = reader::read_source_rows_with_sql(&source_sql, &state)
         .unwrap_or_else(|e| pgrx::error!("Failed to read source rows: {}", e));
-    let target_rows = reader::read_target_rows(target_table, &ctx)
+    let t_source = Instant::now();
+
+    let target_rows = reader::read_target_rows_with_sql(&target_sql, &state)
         .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e));
+    let t_target = Instant::now();
 
     // Phase 3: Sweep-line planning
-    let plan_rows = sweep::sweep_line_plan(source_rows, target_rows, &ctx);
+    let plan_rows = sweep::sweep_line_plan(source_rows, target_rows, &state.ctx);
+    let t_sweep = Instant::now();
 
     // Phase 4: Insert into pg_temp.temporal_merge_plan
     let count = emit_plan_rows(&plan_rows);
+    let t_emit = Instant::now();
+
+    if p_log_trace {
+        let n_src = plan_rows.len(); // plan_rows count as proxy
+        pgrx::notice!(
+            "native planner timing: cache={}, sql_sub={:.1}ms, source_read={:.1}ms, target_read={:.1}ms, sweep={:.1}ms ({}plan_rows), emit={:.1}ms, total={:.1}ms",
+            if cache_hit { "HIT" } else { "MISS" },
+            t_sql_sub.duration_since(t_start).as_secs_f64() * 1000.0,
+            t_source.duration_since(t_sql_sub).as_secs_f64() * 1000.0,
+            t_target.duration_since(t_source).as_secs_f64() * 1000.0,
+            t_sweep.duration_since(t_target).as_secs_f64() * 1000.0,
+            n_src,
+            t_emit.duration_since(t_sweep).as_secs_f64() * 1000.0,
+            t_emit.duration_since(t_start).as_secs_f64() * 1000.0,
+        );
+    }
 
     count
+}
+
+/// Compute a cache key from all parameters that affect SQL template construction.
+/// Source table OID is excluded because it changes per batch.
+fn compute_cache_key(
+    target_table: pg_sys::Oid,
+    mode: MergeMode,
+    era_name: &str,
+    identity_columns: &Option<Vec<String>>,
+    all_lookup_cols: &Option<Vec<String>>,
+    ephemeral_columns: &Option<Vec<String>>,
+    founding_id_column: Option<&str>,
+    row_id_column: &str,
+    delete_mode: DeleteMode,
+    log_trace: bool,
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    u32::from(target_table).hash(&mut hasher);
+    mode.hash(&mut hasher);
+    era_name.hash(&mut hasher);
+    identity_columns.hash(&mut hasher);
+    all_lookup_cols.hash(&mut hasher);
+    ephemeral_columns.hash(&mut hasher);
+    founding_id_column.hash(&mut hasher);
+    row_id_column.hash(&mut hasher);
+    delete_mode.hash(&mut hasher);
+    log_trace.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Parse lookup_keys JSONB (array of arrays) into a flat, distinct list of column names.
@@ -105,124 +220,155 @@ fn parse_lookup_keys(lookup_keys: Option<pgrx::JsonB>) -> Option<Vec<String>> {
     }
 }
 
-/// Insert plan rows into pg_temp.temporal_merge_plan via SPI.
+/// Insert plan rows into pg_temp.temporal_merge_plan via a single bulk
+/// INSERT ... SELECT * FROM json_populate_recordset(...).
+/// Serializes all rows into one JSON array, sends as one SPI call.
 fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
+    use pgrx::datum::DatumWithOid;
+    use std::fmt::Write;
+
     if plan_rows.is_empty() {
         return 0;
     }
 
-    // Build a batch INSERT statement
-    let mut values_parts: Vec<String> = Vec::with_capacity(plan_rows.len());
+    // Serialize all plan rows into a single JSON array string
+    // Use a pre-allocated buffer to avoid intermediate allocations
+    let estimated_size = plan_rows.len() * 300; // ~300 bytes per row average
+    let mut buf = String::with_capacity(estimated_size);
+    buf.push('[');
 
-    for row in plan_rows {
-        let row_ids_str = format!(
-            "ARRAY[{}]::bigint[]",
-            row.row_ids
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(",")
-        );
-
-        let operation = format!("'{}'::sql_saga.temporal_merge_plan_action", row.operation.as_str());
-        let update_effect = row
-            .update_effect
-            .map(|e| format!("'{}'::sql_saga.temporal_merge_update_effect", e.as_str()))
-            .unwrap_or_else(|| "NULL".to_string());
-
-        let causal_id = sql_text_or_null(&row.causal_id);
-        let is_new_entity = row.is_new_entity.to_string();
-        let entity_keys = sql_jsonb_or_null(&row.entity_keys);
-        let identity_keys = sql_jsonb_or_null(&row.identity_keys);
-        let lookup_keys = sql_jsonb_or_null(&row.lookup_keys);
-
-        let s_t_relation = row
-            .s_t_relation
-            .map(|r| format!("'{}'::sql_saga.allen_interval_relation", r.as_str()))
-            .unwrap_or_else(|| "NULL".to_string());
-        let b_a_relation = row
-            .b_a_relation
-            .map(|r| format!("'{}'::sql_saga.allen_interval_relation", r.as_str()))
-            .unwrap_or_else(|| "NULL".to_string());
-
-        let old_valid_from = sql_text_or_null(&row.old_valid_from);
-        let old_valid_until = sql_text_or_null(&row.old_valid_until);
-        let new_valid_from = sql_text_or_null(&row.new_valid_from);
-        let new_valid_until = sql_text_or_null(&row.new_valid_until);
-        let old_valid_range = sql_text_or_null(&row.old_valid_range);
-        let new_valid_range = sql_text_or_null(&row.new_valid_range);
-        let data = sql_jsonb_or_null(&row.data);
-        let feedback = sql_jsonb_or_null(&row.feedback);
-        let trace = sql_jsonb_or_null(&row.trace);
-        let grouping_key = sql_escape_text(&row.grouping_key);
-
-        values_parts.push(format!(
-            "({plan_op_seq}, {stmt_seq}, {row_ids}, {op}, {ue}, {causal}, {is_new}, {ek}, {ik}, {lk}, {st}, {ba}, {ovf}, {ovu}, {nvf}, {nvu}, {ovr}, {nvr}, {data}, {fb}, {trace}, {gk})",
-            plan_op_seq = row.plan_op_seq,
-            stmt_seq = row.statement_seq,
-            row_ids = row_ids_str,
-            op = operation,
-            ue = update_effect,
-            causal = causal_id,
-            is_new = is_new_entity,
-            ek = entity_keys,
-            ik = identity_keys,
-            lk = lookup_keys,
-            st = s_t_relation,
-            ba = b_a_relation,
-            ovf = old_valid_from,
-            ovu = old_valid_until,
-            nvf = new_valid_from,
-            nvu = new_valid_until,
-            ovr = old_valid_range,
-            nvr = new_valid_range,
-            data = data,
-            fb = feedback,
-            trace = trace,
-            gk = grouping_key,
-        ));
-    }
-
-    // Batch insert in chunks to avoid SQL statement size limits
-    let chunk_size = 500;
-    let mut total = 0i64;
-
-    Spi::connect_mut(|client| {
-        for chunk in values_parts.chunks(chunk_size) {
-            let sql = format!(
-                "INSERT INTO pg_temp.temporal_merge_plan (plan_op_seq, statement_seq, row_ids, operation, update_effect, causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, s_t_relation, b_a_relation, old_valid_from, old_valid_until, new_valid_from, new_valid_until, old_valid_range, new_valid_range, data, feedback, trace, grouping_key) VALUES {}",
-                chunk.join(", ")
-            );
-            client.update(&sql, None, &[])
-                .unwrap_or_else(|e| pgrx::error!("Failed to insert plan rows: {}", e));
-            total += chunk.len() as i64;
+    for (i, row) in plan_rows.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
         }
+        buf.push('{');
+        // plan_op_seq, statement_seq
+        write!(buf, "\"plan_op_seq\":{},\"statement_seq\":{}", row.plan_op_seq, row.statement_seq).unwrap();
+        // row_ids as JSON array
+        buf.push_str(",\"row_ids\":[");
+        for (j, id) in row.row_ids.iter().enumerate() {
+            if j > 0 { buf.push(','); }
+            write!(buf, "{}", id).unwrap();
+        }
+        buf.push(']');
+        // operation (always present)
+        write!(buf, ",\"operation\":\"{}\"", row.operation.as_str()).unwrap();
+        // update_effect (nullable)
+        if let Some(ue) = row.update_effect {
+            write!(buf, ",\"update_effect\":\"{}\"", ue.as_str()).unwrap();
+        } else {
+            buf.push_str(",\"update_effect\":null");
+        }
+        // causal_id (nullable)
+        json_text_field(&mut buf, "causal_id", &row.causal_id);
+        // is_new_entity
+        write!(buf, ",\"is_new_entity\":{}", row.is_new_entity).unwrap();
+        // JSONB fields
+        json_value_field(&mut buf, "entity_keys", &row.entity_keys);
+        json_value_field(&mut buf, "identity_keys", &row.identity_keys);
+        json_value_field(&mut buf, "lookup_keys", &row.lookup_keys);
+        // Allen relations (nullable enums)
+        if let Some(r) = row.s_t_relation {
+            write!(buf, ",\"s_t_relation\":\"{}\"", r.as_str()).unwrap();
+        } else {
+            buf.push_str(",\"s_t_relation\":null");
+        }
+        if let Some(r) = row.b_a_relation {
+            write!(buf, ",\"b_a_relation\":\"{}\"", r.as_str()).unwrap();
+        } else {
+            buf.push_str(",\"b_a_relation\":null");
+        }
+        // Text fields (all nullable)
+        json_text_field(&mut buf, "old_valid_from", &row.old_valid_from);
+        json_text_field(&mut buf, "old_valid_until", &row.old_valid_until);
+        json_text_field(&mut buf, "new_valid_from", &row.new_valid_from);
+        json_text_field(&mut buf, "new_valid_until", &row.new_valid_until);
+        json_text_field(&mut buf, "old_valid_range", &row.old_valid_range);
+        json_text_field(&mut buf, "new_valid_range", &row.new_valid_range);
+        // JSONB fields
+        json_value_field(&mut buf, "data", &row.data);
+        json_value_field(&mut buf, "feedback", &row.feedback);
+        json_value_field(&mut buf, "trace", &row.trace);
+        // grouping_key (always present)
+        write!(buf, ",\"grouping_key\":\"{}\"", json_escape(&row.grouping_key)).unwrap();
+        buf.push('}');
+    }
+    buf.push(']');
+
+    let count = plan_rows.len() as i64;
+
+    // Single SPI call: bulk INSERT via json_populate_recordset
+    // Uses SPI_keepplan to cache the prepared statement across batches.
+    // If the temp table is recreated, PostgreSQL auto-replans (skips parsing).
+    Spi::connect_mut(|client| {
+        // Check if we have a cached prepared statement
+        let has_stmt = EMIT_STMT.with(|cell| cell.borrow().is_some());
+
+        if !has_stmt {
+            // First call: prepare and keep
+            let stmt = client
+                .prepare_mut(
+                    "INSERT INTO pg_temp.temporal_merge_plan \
+                     SELECT * FROM json_populate_recordset(null::pg_temp.temporal_merge_plan, $1::json)",
+                    &[pgrx::PgOid::from(pg_sys::TEXTOID)],
+                )
+                .unwrap_or_else(|e| pgrx::error!("Failed to prepare bulk insert: {}", e));
+            let owned = stmt.keep();
+            EMIT_STMT.with(|cell| {
+                *cell.borrow_mut() = Some(owned);
+            });
+        }
+
+        // Execute using cached prepared statement
+        let args = [DatumWithOid::from(buf)];
+        EMIT_STMT.with(|cell| {
+            let borrow = cell.borrow();
+            let stmt_ref = borrow.as_ref().unwrap();
+            client
+                .update(stmt_ref, None, &args)
+                .unwrap_or_else(|e| pgrx::error!("Failed to bulk insert plan rows: {}", e));
+        });
     });
 
-    total
+    count
 }
 
-fn sql_text_or_null(val: &Option<String>) -> String {
+/// Write a nullable text field to the JSON buffer.
+fn json_text_field(buf: &mut String, key: &str, val: &Option<String>) {
+    use std::fmt::Write;
     match val {
-        Some(s) => format!("'{}'", s.replace('\'', "''")),
-        None => "NULL".to_string(),
+        Some(s) => write!(buf, ",\"{}\":\"{}\"", key, json_escape(s)).unwrap(),
+        None => write!(buf, ",\"{}\":null", key).unwrap(),
     }
 }
 
-fn sql_escape_text(val: &str) -> String {
-    format!("'{}'", val.replace('\'', "''"))
+/// Write a nullable serde_json::Value field to the JSON buffer.
+fn json_value_field(buf: &mut String, key: &str, val: &Option<serde_json::Value>) {
+    use std::fmt::Write;
+    match val {
+        Some(v) => write!(buf, ",\"{}\":{}", key, v).unwrap(), // serde_json::Value Display is JSON
+        None => write!(buf, ",\"{}\":null", key).unwrap(),
+    }
 }
 
-fn sql_jsonb_or_null(val: &Option<serde_json::Value>) -> String {
-    match val {
-        Some(v) => format!(
-            "'{}'::jsonb",
-            serde_json::to_string(v)
-                .unwrap_or_else(|_| "{}".to_string())
-                .replace('\'', "''")
-        ),
-        None => "NULL".to_string(),
+/// Escape a string for JSON output (handles \, ", and control chars).
+fn json_escape(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c < '\x20' => {
+                use std::fmt::Write;
+                write!(result, "\\u{:04x}", c as u32).unwrap();
+            }
+            c => result.push(c),
+        }
     }
+    result
 }
 
 // ── Tests ──
