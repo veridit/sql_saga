@@ -234,8 +234,8 @@ fn parse_lookup_keys(lookup_keys: Option<pgrx::JsonB>) -> Option<Vec<String>> {
 }
 
 /// Insert plan rows into pg_temp.temporal_merge_plan via a single bulk
-/// INSERT ... SELECT * FROM json_populate_recordset(...).
-/// Serializes all rows into one JSON array, sends as one SPI call.
+/// INSERT ... SELECT * FROM unnest($1::text[], ..., $22::text[]) with casts.
+/// Each column is a parallel text[] array; no JSON serialization needed.
 fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
     use pgrx::datum::DatumWithOid;
     use std::fmt::Write;
@@ -244,86 +244,127 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
         return 0;
     }
 
-    // Serialize all plan rows into a single JSON array string
-    // Use a pre-allocated buffer to avoid intermediate allocations
-    let estimated_size = plan_rows.len() * 300; // ~300 bytes per row average
-    let mut buf = String::with_capacity(estimated_size);
-    buf.push('[');
+    let n = plan_rows.len();
+    // Build 22 parallel arrays (one per column), each as a PG text[] literal
+    let mut plan_op_seq = Vec::with_capacity(n);
+    let mut statement_seq = Vec::with_capacity(n);
+    let mut row_ids = Vec::with_capacity(n);
+    let mut operation = Vec::with_capacity(n);
+    let mut update_effect = Vec::with_capacity(n);
+    let mut causal_id = Vec::with_capacity(n);
+    let mut is_new_entity = Vec::with_capacity(n);
+    let mut entity_keys = Vec::with_capacity(n);
+    let mut identity_keys = Vec::with_capacity(n);
+    let mut lookup_keys = Vec::with_capacity(n);
+    let mut s_t_relation = Vec::with_capacity(n);
+    let mut b_a_relation = Vec::with_capacity(n);
+    let mut old_valid_from = Vec::with_capacity(n);
+    let mut old_valid_until = Vec::with_capacity(n);
+    let mut new_valid_from = Vec::with_capacity(n);
+    let mut new_valid_until = Vec::with_capacity(n);
+    let mut old_valid_range = Vec::with_capacity(n);
+    let mut new_valid_range = Vec::with_capacity(n);
+    let mut data = Vec::with_capacity(n);
+    let mut feedback = Vec::with_capacity(n);
+    let mut trace = Vec::with_capacity(n);
+    let mut grouping_key = Vec::with_capacity(n);
 
-    for (i, row) in plan_rows.iter().enumerate() {
-        if i > 0 {
-            buf.push(',');
-        }
-        buf.push('{');
-        // plan_op_seq, statement_seq
-        write!(buf, "\"plan_op_seq\":{},\"statement_seq\":{}", row.plan_op_seq, row.statement_seq).unwrap();
-        // row_ids as JSON array
-        buf.push_str(",\"row_ids\":[");
+    for row in plan_rows {
+        plan_op_seq.push(row.plan_op_seq.to_string());
+        statement_seq.push(row.statement_seq.to_string());
+
+        // row_ids: bigint[] → text representation "{1,2,3}"
+        let mut ids_buf = String::with_capacity(row.row_ids.len() * 8);
+        ids_buf.push('{');
         for (j, id) in row.row_ids.iter().enumerate() {
-            if j > 0 { buf.push(','); }
-            write!(buf, "{}", id).unwrap();
+            if j > 0 { ids_buf.push(','); }
+            write!(ids_buf, "{}", id).unwrap();
         }
-        buf.push(']');
-        // operation (always present)
-        write!(buf, ",\"operation\":\"{}\"", row.operation.as_str()).unwrap();
-        // update_effect (nullable)
-        if let Some(ue) = row.update_effect {
-            write!(buf, ",\"update_effect\":\"{}\"", ue.as_str()).unwrap();
-        } else {
-            buf.push_str(",\"update_effect\":null");
-        }
-        // causal_id (nullable)
-        json_text_field(&mut buf, "causal_id", &row.causal_id);
-        // is_new_entity
-        write!(buf, ",\"is_new_entity\":{}", row.is_new_entity).unwrap();
-        // JSONB fields
-        json_value_field(&mut buf, "entity_keys", &row.entity_keys);
-        json_value_field(&mut buf, "identity_keys", &row.identity_keys);
-        json_value_field(&mut buf, "lookup_keys", &row.lookup_keys);
-        // Allen relations (nullable enums)
-        if let Some(r) = row.s_t_relation {
-            write!(buf, ",\"s_t_relation\":\"{}\"", r.as_str()).unwrap();
-        } else {
-            buf.push_str(",\"s_t_relation\":null");
-        }
-        if let Some(r) = row.b_a_relation {
-            write!(buf, ",\"b_a_relation\":\"{}\"", r.as_str()).unwrap();
-        } else {
-            buf.push_str(",\"b_a_relation\":null");
-        }
-        // Text fields (all nullable)
-        json_text_field(&mut buf, "old_valid_from", &row.old_valid_from);
-        json_text_field(&mut buf, "old_valid_until", &row.old_valid_until);
-        json_text_field(&mut buf, "new_valid_from", &row.new_valid_from);
-        json_text_field(&mut buf, "new_valid_until", &row.new_valid_until);
-        json_text_field(&mut buf, "old_valid_range", &row.old_valid_range);
-        json_text_field(&mut buf, "new_valid_range", &row.new_valid_range);
-        // JSONB fields
-        json_value_field(&mut buf, "data", &row.data);
-        json_value_field(&mut buf, "feedback", &row.feedback);
-        json_value_field(&mut buf, "trace", &row.trace);
-        // grouping_key (always present)
-        write!(buf, ",\"grouping_key\":\"{}\"", json_escape(&row.grouping_key)).unwrap();
-        buf.push('}');
+        ids_buf.push('}');
+        row_ids.push(ids_buf);
+
+        operation.push(row.operation.as_str().to_string());
+        update_effect.push(opt_str(row.update_effect.map(|u| u.as_str())));
+        causal_id.push(opt_owned(&row.causal_id));
+        is_new_entity.push(row.is_new_entity.to_string());
+        entity_keys.push(opt_json(&row.entity_keys));
+        identity_keys.push(opt_json(&row.identity_keys));
+        lookup_keys.push(opt_json(&row.lookup_keys));
+        s_t_relation.push(opt_str(row.s_t_relation.map(|r| r.as_str())));
+        b_a_relation.push(opt_str(row.b_a_relation.map(|r| r.as_str())));
+        old_valid_from.push(opt_owned(&row.old_valid_from));
+        old_valid_until.push(opt_owned(&row.old_valid_until));
+        new_valid_from.push(opt_owned(&row.new_valid_from));
+        new_valid_until.push(opt_owned(&row.new_valid_until));
+        old_valid_range.push(opt_owned(&row.old_valid_range));
+        new_valid_range.push(opt_owned(&row.new_valid_range));
+        data.push(opt_json(&row.data));
+        feedback.push(opt_json(&row.feedback));
+        trace.push(opt_json(&row.trace));
+        grouping_key.push(row.grouping_key.clone());
     }
-    buf.push(']');
 
-    let count = plan_rows.len() as i64;
+    let count = n as i64;
 
-    // Single SPI call: bulk INSERT via json_populate_recordset
-    // Uses SPI_keepplan to cache the prepared statement across batches.
-    // If the temp table is recreated, PostgreSQL auto-replans (skips parsing).
+    // Convert each Vec<String> to a PG text[] literal, handling NULLs
+    let arrays: Vec<String> = vec![
+        pg_text_array(&plan_op_seq),
+        pg_text_array(&statement_seq),
+        pg_text_array(&row_ids),
+        pg_text_array(&operation),
+        pg_nullable_text_array(&update_effect),
+        pg_nullable_text_array(&causal_id),
+        pg_text_array(&is_new_entity),
+        pg_nullable_text_array(&entity_keys),
+        pg_nullable_text_array(&identity_keys),
+        pg_nullable_text_array(&lookup_keys),
+        pg_nullable_text_array(&s_t_relation),
+        pg_nullable_text_array(&b_a_relation),
+        pg_nullable_text_array(&old_valid_from),
+        pg_nullable_text_array(&old_valid_until),
+        pg_nullable_text_array(&new_valid_from),
+        pg_nullable_text_array(&new_valid_until),
+        pg_nullable_text_array(&old_valid_range),
+        pg_nullable_text_array(&new_valid_range),
+        pg_nullable_text_array(&data),
+        pg_nullable_text_array(&feedback),
+        pg_nullable_text_array(&trace),
+        pg_text_array(&grouping_key),
+    ];
+
     Spi::connect_mut(|client| {
-        // Check if we have a cached prepared statement
         let has_stmt = EMIT_STMT.with(|cell| cell.borrow().is_some());
 
         if !has_stmt {
-            // First call: prepare and keep
+            let param_types: Vec<pgrx::PgOid> = (0..22)
+                .map(|_| pgrx::PgOid::from(pg_sys::TEXTOID))
+                .collect();
             let stmt = client
                 .prepare_mut(
-                    "INSERT INTO pg_temp.temporal_merge_plan \
-                     SELECT * FROM json_populate_recordset(null::pg_temp.temporal_merge_plan, $1::json)",
-                    &[pgrx::PgOid::from(pg_sys::TEXTOID)],
+                    "INSERT INTO pg_temp.temporal_merge_plan (\
+                     plan_op_seq, statement_seq, row_ids, operation, update_effect, \
+                     causal_id, is_new_entity, entity_keys, identity_keys, lookup_keys, \
+                     s_t_relation, b_a_relation, old_valid_from, old_valid_until, \
+                     new_valid_from, new_valid_until, old_valid_range, new_valid_range, \
+                     data, feedback, trace, grouping_key) \
+                     SELECT \
+                     a1::bigint, a2::int, a3::bigint[], \
+                     a4::sql_saga.temporal_merge_plan_action, \
+                     a5::sql_saga.temporal_merge_update_effect, \
+                     a6, a7::boolean, a8::jsonb, a9::jsonb, a10::jsonb, \
+                     a11::sql_saga.allen_interval_relation, \
+                     a12::sql_saga.allen_interval_relation, \
+                     a13, a14, a15, a16, a17, a18, \
+                     a19::jsonb, a20::jsonb, a21::jsonb, a22 \
+                     FROM unnest(\
+                     $1::text[], $2::text[], $3::text[], $4::text[], $5::text[], \
+                     $6::text[], $7::text[], $8::text[], $9::text[], $10::text[], \
+                     $11::text[], $12::text[], $13::text[], $14::text[], $15::text[], \
+                     $16::text[], $17::text[], $18::text[], $19::text[], $20::text[], \
+                     $21::text[], $22::text[]) \
+                     AS t(a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, \
+                     a11, a12, a13, a14, a15, a16, a17, a18, a19, a20, a21, a22)",
+                    &param_types,
                 )
                 .unwrap_or_else(|e| pgrx::error!("Failed to prepare bulk insert: {}", e));
             let owned = stmt.keep();
@@ -332,8 +373,10 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
             });
         }
 
-        // Execute using cached prepared statement
-        let args = [DatumWithOid::from(buf)];
+        let args: Vec<DatumWithOid> = arrays
+            .into_iter()
+            .map(DatumWithOid::from)
+            .collect();
         EMIT_STMT.with(|cell| {
             let borrow = cell.borrow();
             let stmt_ref = borrow.as_ref().unwrap();
@@ -346,42 +389,66 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
     count
 }
 
-/// Write a nullable text field to the JSON buffer.
-fn json_text_field(buf: &mut String, key: &str, val: &Option<String>) {
-    use std::fmt::Write;
-    match val {
-        Some(s) => write!(buf, ",\"{}\":\"{}\"", key, json_escape(s)).unwrap(),
-        None => write!(buf, ",\"{}\":null", key).unwrap(),
-    }
-}
-
-/// Write a nullable serde_json::Value field to the JSON buffer.
-fn json_value_field(buf: &mut String, key: &str, val: &Option<serde_json::Value>) {
-    use std::fmt::Write;
-    match val {
-        Some(v) => write!(buf, ",\"{}\":{}", key, v).unwrap(), // serde_json::Value Display is JSON
-        None => write!(buf, ",\"{}\":null", key).unwrap(),
-    }
-}
-
-/// Escape a string for JSON output (handles \, ", and control chars).
-fn json_escape(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            c if c < '\x20' => {
-                use std::fmt::Write;
-                write!(result, "\\u{:04x}", c as u32).unwrap();
+/// Format a non-nullable text[] array literal: {"val1","val2",...}
+fn pg_text_array(values: &[String]) -> String {
+    let mut buf = String::with_capacity(values.len() * 20 + 2);
+    buf.push('{');
+    for (i, v) in values.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        buf.push('"');
+        for c in v.chars() {
+            match c {
+                '"' => buf.push_str("\\\""),
+                '\\' => buf.push_str("\\\\"),
+                _ => buf.push(c),
             }
-            c => result.push(c),
+        }
+        buf.push('"');
+    }
+    buf.push('}');
+    buf
+}
+
+/// Format a nullable text[] array literal: {"val1",NULL,"val3",...}
+/// Values of None::String are represented as NULL (unquoted).
+/// Uses backslash escaping (PG array_in format): \" for double quotes, \\ for backslashes.
+fn pg_nullable_text_array(values: &[Option<String>]) -> String {
+    let mut buf = String::with_capacity(values.len() * 20 + 2);
+    buf.push('{');
+    for (i, v) in values.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        match v {
+            Some(s) => {
+                buf.push('"');
+                for c in s.chars() {
+                    match c {
+                        '"' => buf.push_str("\\\""),
+                        '\\' => buf.push_str("\\\\"),
+                        _ => buf.push(c),
+                    }
+                }
+                buf.push('"');
+            }
+            None => buf.push_str("NULL"),
         }
     }
-    result
+    buf.push('}');
+    buf
+}
+
+/// Convert Option<&str> to Option<String> for nullable columns.
+fn opt_str(v: Option<&str>) -> Option<String> {
+    v.map(|s| s.to_string())
+}
+
+/// Convert Option<String> ref to Option<String> for nullable text columns.
+fn opt_owned(v: &Option<String>) -> Option<String> {
+    v.clone()
+}
+
+/// Convert Option<serde_json::Value> to Option<String> (JSON text) for nullable jsonb columns.
+fn opt_json(v: &Option<serde_json::Value>) -> Option<String> {
+    v.as_ref().map(|j| j.to_string())
 }
 
 // ── Tests ──
