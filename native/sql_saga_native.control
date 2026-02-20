@@ -1,0 +1,5 @@
+comment = 'sql_saga native Rust functions for temporal_merge planning'
+default_version = '@CARGO_VERSION@'
+module_pathname = '$libdir/sql_saga_native'
+relocatable = false
+superuser = false
