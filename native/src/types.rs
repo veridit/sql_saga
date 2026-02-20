@@ -442,6 +442,22 @@ pub struct EntityGroup {
     pub time_boundaries: BTreeSet<String>,
 }
 
+// ── Parameterized filter for target read ──
+
+/// Describes a single parameterized filter condition for the target read query.
+/// Corresponds to: WHERE t."col_name" = ANY($param_index::text::pg_type[])
+#[derive(Debug, Clone)]
+pub struct FilterParam {
+    /// Column name in the target table (and source row identity_keys/lookup_keys)
+    pub col_name: String,
+    /// PostgreSQL type name (e.g., "integer", "text", "uuid")
+    pub pg_type: String,
+    /// 1-based parameter index ($1, $2, ...)
+    pub param_index: usize,
+    /// Whether this is from identity_columns (true) or all_lookup_cols (false)
+    pub is_identity: bool,
+}
+
 // ── Cached state for the planner (reused across batches within one session) ──
 
 #[derive(Debug, Clone)]
@@ -455,4 +471,8 @@ pub struct CachedState {
     pub target_data_cols: Vec<String>,
     pub eph_in_source: Vec<String>,
     pub eph_in_target: Vec<String>,
+    /// If Some, target_sql_template uses $N parameters for the WHERE filter.
+    /// Each FilterParam describes one = ANY($N::text::type[]) condition.
+    /// If None, target_sql_template uses __SOURCE_IDENT__ subquery (dynamic SQL).
+    pub target_filter_params: Option<Vec<FilterParam>>,
 }

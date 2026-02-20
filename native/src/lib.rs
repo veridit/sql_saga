@@ -80,6 +80,7 @@ fn temporal_merge_plan_native(
         EMIT_STMT.with(|cell| {
             *cell.borrow_mut() = None;
         });
+        reader::clear_target_read_cache();
 
         // Single SPI connection for all introspection
         let result = introspect::introspect_all(target_table, source_table, era_name)
@@ -102,6 +103,7 @@ fn temporal_merge_plan_native(
         let templates = reader::build_sql_templates_from_cols(
             &result.source_cols,
             &result.target_cols,
+            &result.target_col_types,
             &result.target_ident,
             &ctx,
         )
@@ -117,6 +119,7 @@ fn temporal_merge_plan_native(
             target_data_cols: templates.target_data_cols,
             eph_in_source: templates.eph_in_source,
             eph_in_target: templates.eph_in_target,
+            target_filter_params: templates.target_filter_params,
         };
         PLANNER_CACHE.with(|c| {
             *c.borrow_mut() = Some(new_state.clone());
@@ -127,19 +130,36 @@ fn temporal_merge_plan_native(
 
     let t_start = Instant::now();
 
-    // Substitute per-batch source_ident into cached SQL templates
+    // Substitute per-batch source_ident into source SQL template
     let source_sql = state.source_sql_template.replace("__SOURCE_IDENT__", &source_ident);
-    let target_sql = state.target_sql_template.replace("__SOURCE_IDENT__", &source_ident);
 
     let t_sql_sub = Instant::now();
 
-    // Phase 2: Bulk SPI reads with pre-built SQL + row_to_json splitting
+    // Phase 2a: Read source rows
     let source_rows = reader::read_source_rows_with_sql(&source_sql, &state)
         .unwrap_or_else(|e| pgrx::error!("Failed to read source rows: {}", e));
     let t_source = Instant::now();
 
-    let target_rows = reader::read_target_rows_with_sql(&target_sql, &state)
-        .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e));
+    // Phase 2b: Read target rows — parameterized (cached stmt) or dynamic SQL
+    let target_rows = if let Some(ref filter_params) = state.target_filter_params {
+        if filter_params.is_empty() {
+            // Full scan or no filter: static SQL, no parameters
+            reader::read_target_rows_parameterized(&state, &[])
+                .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e))
+        } else {
+            // Parameterized filter: extract identity values from source rows
+            let param_values = reader::extract_filter_values(&source_rows, filter_params);
+            reader::read_target_rows_parameterized(&state, &param_values)
+                .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e))
+        }
+    } else {
+        // Dynamic SQL fallback (multi-column key sets)
+        let target_sql = state
+            .target_sql_template
+            .replace("__SOURCE_IDENT__", &source_ident);
+        reader::read_target_rows_with_sql(&target_sql, &state)
+            .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e))
+    };
     let t_target = Instant::now();
 
     // Phase 3: Sweep-line planning

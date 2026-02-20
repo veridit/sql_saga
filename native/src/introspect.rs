@@ -9,6 +9,8 @@ pub struct IntrospectionResult {
     pub target_ident: String,
     pub source_cols: Vec<String>,
     pub target_cols: Vec<String>,
+    /// Map of target column name → PostgreSQL type name (e.g., "integer", "text")
+    pub target_col_types: std::collections::HashMap<String, String>,
 }
 
 /// Perform all introspection in a single SPI connection scope.
@@ -146,24 +148,28 @@ pub fn introspect_all(
             cols
         };
 
-        // 5. Target columns (excluding generated)
+        // 5. Target columns (excluding generated) with their types
         let tgt_cols_query = format!(
-            "SELECT attname::text FROM pg_attribute \
+            "SELECT attname::text, atttypid::regtype::text FROM pg_attribute \
              WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped \
              AND attgenerated = '' ORDER BY attnum",
             target_oid
         );
-        let target_cols: Vec<String> = {
+        let (target_cols, target_col_types) = {
             let table = client
                 .select(&tgt_cols_query, None, &[])
                 .map_err(|e| format!("SPI error: {e}"))?;
             let mut cols = Vec::new();
+            let mut types = std::collections::HashMap::new();
             for row in table {
                 if let Some(name) = row.get::<String>(1).unwrap_or(None) {
+                    if let Some(typ) = row.get::<String>(2).unwrap_or(None) {
+                        types.insert(name.clone(), typ);
+                    }
                     cols.push(name);
                 }
             }
-            cols
+            (cols, types)
         };
 
         Ok(IntrospectionResult {
@@ -172,6 +178,7 @@ pub fn introspect_all(
             target_ident,
             source_cols,
             target_cols,
+            target_col_types,
         })
     })
 }
