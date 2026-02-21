@@ -47,6 +47,11 @@ fn temporal_merge_plan_native(
     p_log_trace: default!(bool, false),
     _p_log_sql: default!(bool, false),
 ) -> i64 {
+    // Clear the emit prepared statement — the target temp table (pg_temp.temporal_merge_plan)
+    // is dropped and recreated by the PL/pgSQL wrapper on every call, so any cached plan
+    // referencing the old table OID is stale.
+    EMIT_STMT.with(|cell| { *cell.borrow_mut() = None; });
+
     let mode = MergeMode::from_str(mode)
         .unwrap_or_else(|| pgrx::error!("Invalid merge mode: {}", mode));
     let delete_mode = DeleteMode::from_str(delete_mode)

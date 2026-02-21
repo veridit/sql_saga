@@ -244,7 +244,7 @@ BEGIN
 
         v_plan_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_plan_start) * 1000;
         IF v_log_timing THEN
-            RAISE NOTICE 'temporal_merge PLAN phase: %ms (%)', round(v_plan_ms, 1), CASE WHEN v_use_native THEN 'native' ELSE 'plpgsql' END;
+            RAISE NOTICE 'temporal_merge PLAN phase: %ms (%)', round(v_plan_ms, 1), CASE WHEN v_use_plpgsql THEN 'plpgsql' ELSE 'native' END;
         END IF;
     END;
 
