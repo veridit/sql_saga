@@ -203,13 +203,13 @@ BEGIN
         v_exec_start TIMESTAMPTZ;
         v_exec_ms NUMERIC;
         v_log_timing BOOLEAN;
-        v_use_native BOOLEAN;
+        v_use_plpgsql BOOLEAN;
     BEGIN
         v_log_timing := COALESCE(current_setting('sql_saga.log_step_timing', true), 'off') = 'on';
-        v_use_native := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.use_native_planner', true), ''), 'false')::boolean;
+        v_use_plpgsql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.use_plpgsql_planner', true), ''), 'false')::boolean;
 
-        IF v_use_native THEN
-            -- Use native Rust sweep-line planner (inserts directly into pg_temp.temporal_merge_plan)
+        IF NOT v_use_plpgsql THEN
+            -- Use native Rust sweep-line planner (default, 10-13x faster with O(1) scaling)
             PERFORM sql_saga.temporal_merge_plan_native(
                 target_table => temporal_merge.target_table::oid,
                 source_table => temporal_merge.source_table::oid,
