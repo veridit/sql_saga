@@ -567,10 +567,7 @@ pub struct CachedState {
     /// Each FilterParam describes one = ANY($N::text::type[]) condition.
     /// If None, target_sql_template uses __SOURCE_IDENT__ subquery (dynamic SQL).
     pub target_filter_params: Option<Vec<FilterParam>>,
-    /// Hash of source column names — used to detect when source structure changes
-    /// (e.g., different source tables wrapped in the same CREATE OR REPLACE view).
+    /// Hash of source column names + types — used to detect when source structure changes
+    /// (e.g., different source tables with different column types).
     pub source_cols_hash: u64,
-    /// Source table OID — used to invalidate cache when source table changes.
-    /// Critical for test scenarios that drop and recreate source tables with different columns.
-    pub source_oid: u32,
 }

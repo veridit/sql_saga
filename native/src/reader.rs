@@ -13,6 +13,22 @@ thread_local! {
     static SOURCE_READ_STMTS: RefCell<HashMap<String, pgrx::spi::OwnedPreparedStatement>> = RefCell::new(HashMap::new());
 }
 
+/// Return the number of cached target read prepared statements.
+pub fn target_read_stmt_count() -> usize {
+    TARGET_READ_STMTS.with(|c| c.borrow().len())
+}
+
+/// Return the number of cached source read prepared statements.
+pub fn source_read_stmt_count() -> usize {
+    SOURCE_READ_STMTS.with(|c| c.borrow().len())
+}
+
+/// Clear all cached read prepared statements.
+pub fn clear_read_stmts() {
+    TARGET_READ_STMTS.with(|c| c.borrow_mut().clear());
+    SOURCE_READ_STMTS.with(|c| c.borrow_mut().clear());
+}
+
 // ── SQL template building (called once on cache miss) ──
 
 pub struct SqlTemplates {
