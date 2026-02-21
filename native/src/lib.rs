@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -22,6 +22,8 @@ thread_local! {
     /// of 4 target tables per import cycle).
     static PLANNER_CACHE: RefCell<HashMap<u64, CachedState>> = RefCell::new(HashMap::new());
     static EMIT_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
+    static CACHE_HITS: Cell<u64> = Cell::new(0);
+    static CACHE_MISSES: Cell<u64> = Cell::new(0);
 }
 
 /// Native Rust implementation of the temporal_merge planner.
@@ -78,12 +80,13 @@ fn temporal_merge_plan_native(
     let source_ident = reader::resolve_table_name(source_table)
         .unwrap_or_else(|e| pgrx::error!("Failed to resolve source table: {}", e));
 
-    // Quick introspection of source column names to detect structure changes.
-    // The source view (CREATE OR REPLACE) has a stable OID but columns change.
+    // Quick introspection of source column names + types to detect structure changes.
+    // Including types ensures (id int) vs (id bigint) are distinguished.
     let source_cols_hash = {
         let source_oid = u32::from(source_table);
         let cols_query = format!(
-            "SELECT array_agg(attname::text ORDER BY attnum) FROM pg_attribute \
+            "SELECT array_agg(attname || '::' || format_type(atttypid, atttypmod) ORDER BY attnum)::text \
+             FROM pg_attribute \
              WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped",
             source_oid
         );
@@ -99,20 +102,20 @@ fn temporal_merge_plan_native(
         h.finish()
     };
 
-    // Check cache: config cache_key, source columns, AND source OID must all match.
-    // The source OID check prevents stale template reuse when drop+create reuses same OID
-    // or when SPI snapshot doesn't reflect catalog changes.
-    let source_oid = u32::from(source_table);
+    // Check cache: config cache_key + source columns hash must match.
+    // Source OID is intentionally excluded — different temp tables with identical
+    // column structure should be cache hits (StatBus pattern).
     let cache_hit = PLANNER_CACHE.with(|c| {
         c.borrow().get(&cache_key).map_or(false, |s| {
             s.source_cols_hash == source_cols_hash
-                && s.source_oid == source_oid
         })
     });
 
     let state = if cache_hit {
+        CACHE_HITS.with(|c| c.set(c.get() + 1));
         PLANNER_CACHE.with(|c| c.borrow().get(&cache_key).unwrap().clone())
     } else {
+        CACHE_MISSES.with(|c| c.set(c.get() + 1));
         // Cache miss for this config — evict stale entry if exists
         PLANNER_CACHE.with(|c| { c.borrow_mut().remove(&cache_key); });
 
@@ -224,7 +227,6 @@ fn temporal_merge_plan_native(
             target_col_layout: templates.target_col_layout,
             target_filter_params: templates.target_filter_params,
             source_cols_hash,
-            source_oid,
         };
         PLANNER_CACHE.with(|c| {
             c.borrow_mut().insert(cache_key, new_state.clone());
@@ -319,6 +321,40 @@ fn temporal_merge_plan_native(
     }
 
     count
+}
+
+/// Return per-connection cache statistics for observability.
+#[pg_extern]
+fn temporal_merge_native_cache_stats() -> TableIterator<
+    'static,
+    (
+        name!(stat_name, String),
+        name!(stat_value, i64),
+    ),
+> {
+    let planner_entries = PLANNER_CACHE.with(|c| c.borrow().len()) as i64;
+    let target_stmts = reader::target_read_stmt_count() as i64;
+    let source_stmts = reader::source_read_stmt_count() as i64;
+    let hits = CACHE_HITS.with(|c| c.get()) as i64;
+    let misses = CACHE_MISSES.with(|c| c.get()) as i64;
+
+    TableIterator::new(vec![
+        ("planner_cache_entries".to_string(), planner_entries),
+        ("target_read_stmts".to_string(), target_stmts),
+        ("source_read_stmts".to_string(), source_stmts),
+        ("cache_hits".to_string(), hits),
+        ("cache_misses".to_string(), misses),
+    ])
+}
+
+/// Reset all per-connection caches and counters.
+#[pg_extern]
+fn temporal_merge_native_cache_reset() {
+    PLANNER_CACHE.with(|c| c.borrow_mut().clear());
+    EMIT_STMT.with(|c| { *c.borrow_mut() = None; });
+    CACHE_HITS.with(|c| c.set(0));
+    CACHE_MISSES.with(|c| c.set(0));
+    reader::clear_read_stmts();
 }
 
 /// Compute a cache key from all parameters that affect SQL template construction.

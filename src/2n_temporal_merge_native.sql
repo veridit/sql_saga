@@ -27,3 +27,25 @@ COMMENT ON FUNCTION sql_saga.temporal_merge_plan_native IS
 sql_saga.temporal_merge_plan(). 10-13x faster with O(1) scaling. Produces the same output
 by inserting directly into pg_temp.temporal_merge_plan.
 To fall back to PL/pgSQL: SET sql_saga.temporal_merge.use_plpgsql_planner = true;';
+
+-- Cache observability: returns per-connection stats for the native planner cache.
+CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_native_cache_stats(
+    OUT stat_name TEXT,
+    OUT stat_value BIGINT
+) RETURNS SETOF RECORD
+LANGUAGE c VOLATILE
+AS 'sql_saga_native', 'temporal_merge_native_cache_stats_wrapper';
+
+COMMENT ON FUNCTION sql_saga.temporal_merge_native_cache_stats IS
+'Returns per-connection cache statistics for the native Rust temporal_merge planner.
+Stats: planner_cache_entries, target_read_stmts, source_read_stmts, cache_hits, cache_misses.';
+
+-- Cache reset: clears all per-connection caches and counters.
+CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_native_cache_reset()
+RETURNS VOID
+LANGUAGE c VOLATILE
+AS 'sql_saga_native', 'temporal_merge_native_cache_reset_wrapper';
+
+COMMENT ON FUNCTION sql_saga.temporal_merge_native_cache_reset IS
+'Clears all per-connection native planner caches (planner cache, prepared statements)
+and resets hit/miss counters to zero.';
