@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::time::Instant;
 
@@ -15,7 +16,11 @@ mod types;
 use types::{CachedState, DeleteMode, MergeMode, PlanRow};
 
 thread_local! {
-    static PLANNER_CACHE: RefCell<Option<CachedState>> = RefCell::new(None);
+    /// Multi-entry cache keyed by config cache_key (target_table + mode + columns).
+    /// Holds one CachedState per distinct temporal_merge configuration, enabling
+    /// cache hits when alternating between target tables (e.g., StatBus pattern
+    /// of 4 target tables per import cycle).
+    static PLANNER_CACHE: RefCell<HashMap<u64, CachedState>> = RefCell::new(HashMap::new());
     static EMIT_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
 }
 
@@ -94,22 +99,17 @@ fn temporal_merge_plan_native(
     // or when SPI snapshot doesn't reflect catalog changes.
     let source_oid = u32::from(source_table);
     let cache_hit = PLANNER_CACHE.with(|c| {
-        c.borrow().as_ref().map_or(false, |s| {
-            s.cache_key == cache_key
-                && s.source_cols_hash == source_cols_hash
+        c.borrow().get(&cache_key).map_or(false, |s| {
+            s.source_cols_hash == source_cols_hash
                 && s.source_oid == source_oid
         })
     });
 
     let state = if cache_hit {
-        PLANNER_CACHE.with(|c| c.borrow().as_ref().unwrap().clone())
+        PLANNER_CACHE.with(|c| c.borrow().get(&cache_key).unwrap().clone())
     } else {
-        // Cache miss: clear cached prepared statements
-        EMIT_STMT.with(|cell| {
-            *cell.borrow_mut() = None;
-        });
-        reader::clear_target_read_cache();
-        reader::clear_source_read_cache();
+        // Cache miss for this config — evict stale entry if exists
+        PLANNER_CACHE.with(|c| { c.borrow_mut().remove(&cache_key); });
 
         // Single SPI connection for all introspection
         let result = introspect::introspect_all(target_table, source_table, era_name)
@@ -222,7 +222,7 @@ fn temporal_merge_plan_native(
             source_oid,
         };
         PLANNER_CACHE.with(|c| {
-            *c.borrow_mut() = Some(new_state.clone());
+            c.borrow_mut().insert(cache_key, new_state.clone());
         });
 
         new_state

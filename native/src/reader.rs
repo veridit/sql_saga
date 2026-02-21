@@ -1,14 +1,16 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use pgrx::prelude::*;
 
 use crate::types::{CachedState, ColCategory, ColMapping, FilterParam, PlannerContext, SourceRow, TargetRow};
 
 thread_local! {
-    static TARGET_READ_STMT: RefCell<Option<pgrx::spi::OwnedPreparedStatement>> = RefCell::new(None);
-    /// Cached source read: (source_ident, prepared_statement).
+    /// Multi-entry cache keyed by target SQL template (one per target table config).
+    static TARGET_READ_STMTS: RefCell<HashMap<String, pgrx::spi::OwnedPreparedStatement>> = RefCell::new(HashMap::new());
+    /// Multi-entry cache keyed by source_ident (one per source table).
     /// PostgreSQL auto-replans when the underlying temp view is recreated via CREATE OR REPLACE.
-    static SOURCE_READ_STMT: RefCell<Option<(String, pgrx::spi::OwnedPreparedStatement)>> = RefCell::new(None);
+    static SOURCE_READ_STMTS: RefCell<HashMap<String, pgrx::spi::OwnedPreparedStatement>> = RefCell::new(HashMap::new());
 }
 
 // ── SQL template building (called once on cache miss) ──
@@ -354,19 +356,10 @@ pub fn read_target_rows_with_sql(
 
 // ── Parameterized target read (cached prepared statement) ──
 
-/// Clear the cached target read prepared statement (call on cache miss).
-pub fn clear_target_read_cache() {
-    TARGET_READ_STMT.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
-}
-
-/// Clear the cached source read prepared statement (call on cache miss).
-pub fn clear_source_read_cache() {
-    SOURCE_READ_STMT.with(|cell| {
-        *cell.borrow_mut() = None;
-    });
-}
+// Note: No clear functions needed — multi-entry caches grow organically.
+// Stale entries (old SQL templates from changed schemas) become unreachable
+// but harmless. The number of entries is bounded by the number of distinct
+// target tables and source views used in the session.
 
 /// Read source rows using a cached prepared statement (0 params, keyed by source_ident).
 /// The source table name stays the same across batches (CREATE OR REPLACE TEMP VIEW),
@@ -380,30 +373,27 @@ pub fn read_source_rows_cached(
     let source_sql = state.source_sql_template.replace("__SOURCE_IDENT__", source_ident);
 
     Spi::connect_mut(|client| {
-        // Check if we have a cached statement for this source_ident
-        let cached_name = SOURCE_READ_STMT.with(|cell| {
-            cell.borrow().as_ref().map(|(name, _)| name.clone())
+        // Key by full SQL (not just source_ident) because the same source table
+        // can be read with different templates (e.g., with/without founding_id_column)
+        let cache_key = source_sql.clone();
+        let needs_prepare = SOURCE_READ_STMTS.with(|cell| {
+            !cell.borrow().contains_key(&cache_key)
         });
-
-        let needs_prepare = match cached_name {
-            Some(ref name) if name == source_ident => false,
-            _ => true,
-        };
 
         if needs_prepare {
             let stmt = client
                 .prepare_mut(&source_sql, &[])
                 .map_err(|e| format!("Failed to prepare source read: {e}"))?;
             let owned = stmt.keep();
-            SOURCE_READ_STMT.with(|cell| {
-                *cell.borrow_mut() = Some((source_ident.to_string(), owned));
+            SOURCE_READ_STMTS.with(|cell| {
+                cell.borrow_mut().insert(cache_key.clone(), owned);
             });
         }
 
         // Execute using cached prepared statement
-        SOURCE_READ_STMT.with(|cell| {
+        SOURCE_READ_STMTS.with(|cell| {
             let borrow = cell.borrow();
-            let (_, stmt_ref) = borrow.as_ref().unwrap();
+            let stmt_ref = borrow.get(&cache_key).unwrap();
             let table = client
                 .update(stmt_ref, None, &[])
                 .map_err(|e| format!("SPI error reading source rows: {e}"))?;
@@ -748,8 +738,9 @@ pub fn read_target_rows_parameterized(
     param_values: &[String],
 ) -> Result<Vec<TargetRow>, String> {
     Spi::connect_mut(|client| {
-        // Prepare on first call, cache with SPI_keepplan
-        let has_stmt = TARGET_READ_STMT.with(|cell| cell.borrow().is_some());
+        // Prepare on first call per target SQL template, cache with SPI_keepplan
+        let cache_key = state.target_sql_template.clone();
+        let has_stmt = TARGET_READ_STMTS.with(|cell| cell.borrow().contains_key(&cache_key));
         if !has_stmt {
             let param_types: Vec<pgrx::PgOid> = (0..param_values.len())
                 .map(|_| pgrx::PgOid::from(pg_sys::TEXTOID))
@@ -758,8 +749,8 @@ pub fn read_target_rows_parameterized(
                 .prepare_mut(&state.target_sql_template, &param_types)
                 .map_err(|e| format!("Failed to prepare target read: {}", e))?;
             let owned = stmt.keep();
-            TARGET_READ_STMT.with(|cell| {
-                *cell.borrow_mut() = Some(owned);
+            TARGET_READ_STMTS.with(|cell| {
+                cell.borrow_mut().insert(cache_key.clone(), owned);
             });
         }
 
@@ -770,9 +761,9 @@ pub fn read_target_rows_parameterized(
             .map(|v| DatumWithOid::from(v.clone()))
             .collect();
 
-        TARGET_READ_STMT.with(|cell| {
+        TARGET_READ_STMTS.with(|cell| {
             let borrow = cell.borrow();
-            let stmt_ref = borrow.as_ref().unwrap();
+            let stmt_ref = borrow.get(&cache_key).unwrap();
             let table = client
                 .update(stmt_ref, None, &args)
                 .map_err(|e| format!("SPI error reading target rows: {e}"))?;
