@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 // ── Merge mode (mirrors sql_saga.temporal_merge_mode) ──
@@ -37,6 +38,18 @@ impl MergeMode {
 
     pub fn is_replace(&self) -> bool {
         matches!(self, Self::MergeEntityReplace | Self::ReplaceForPortionOf)
+    }
+
+    /// REPLACE-family modes use "last-writer-wins": only the highest source_row_id
+    /// contributes to row_ids per atomic segment. PATCH/UPSERT modes accumulate all.
+    pub fn is_last_writer_wins(&self) -> bool {
+        matches!(
+            self,
+            Self::MergeEntityReplace
+                | Self::ReplaceForPortionOf
+                | Self::InsertNewEntities
+                | Self::DeleteForPortionOf
+        )
     }
 
     pub fn is_for_portion_of(&self) -> bool {
@@ -190,38 +203,61 @@ impl AllenRelation {
 
     /// Compute Allen relation between intervals [x_from, x_until) and [y_from, y_until).
     /// Returns None if any input is None.
-    pub fn compute(x_from: &str, x_until: &str, y_from: &str, y_until: &str) -> Option<Self> {
-        // String comparison works for ISO dates and numeric types
-        // because they sort lexicographically in the same order as their values.
-        if x_until < y_from {
+    pub fn compute(x_from: &str, x_until: &str, y_from: &str, y_until: &str, is_numeric: bool) -> Option<Self> {
+        let lt = |a: &str, b: &str| temporal_cmp(a, b, is_numeric) == Ordering::Less;
+        let gt = |a: &str, b: &str| temporal_cmp(a, b, is_numeric) == Ordering::Greater;
+        let eq = |a: &str, b: &str| temporal_cmp(a, b, is_numeric) == Ordering::Equal;
+
+        if lt(x_until, y_from) {
             Some(Self::Precedes)
-        } else if x_until == y_from {
+        } else if eq(x_until, y_from) {
             Some(Self::Meets)
-        } else if x_from < y_from && y_from < x_until && x_until < y_until {
+        } else if lt(x_from, y_from) && lt(y_from, x_until) && lt(x_until, y_until) {
             Some(Self::Overlaps)
-        } else if x_from == y_from && x_until < y_until {
+        } else if eq(x_from, y_from) && lt(x_until, y_until) {
             Some(Self::Starts)
-        } else if x_from > y_from && x_until < y_until {
+        } else if gt(x_from, y_from) && lt(x_until, y_until) {
             Some(Self::During)
-        } else if x_from > y_from && x_until == y_until {
+        } else if gt(x_from, y_from) && eq(x_until, y_until) {
             Some(Self::Finishes)
-        } else if x_from == y_from && x_until == y_until {
+        } else if eq(x_from, y_from) && eq(x_until, y_until) {
             Some(Self::Equals)
-        } else if y_until < x_from {
+        } else if lt(y_until, x_from) {
             Some(Self::PrecededBy)
-        } else if y_until == x_from {
+        } else if eq(y_until, x_from) {
             Some(Self::MetBy)
-        } else if y_from < x_from && x_from < y_until && y_until < x_until {
+        } else if lt(y_from, x_from) && lt(x_from, y_until) && lt(y_until, x_until) {
             Some(Self::OverlappedBy)
-        } else if x_from == y_from && x_until > y_until {
+        } else if eq(x_from, y_from) && gt(x_until, y_until) {
             Some(Self::StartedBy)
-        } else if x_from < y_from && x_until > y_until {
+        } else if lt(x_from, y_from) && gt(x_until, y_until) {
             Some(Self::Contains)
-        } else if x_from < y_from && x_until == y_until {
+        } else if lt(x_from, y_from) && eq(x_until, y_until) {
             Some(Self::FinishedBy)
         } else {
             Option::None
         }
+    }
+}
+
+/// Compare temporal boundary values with awareness of range subtype.
+/// For numeric range subtypes (int4range, int8range, numrange), parse as f64.
+/// For date/time subtypes, lexicographic string comparison is correct.
+pub fn temporal_cmp(a: &str, b: &str, is_numeric: bool) -> Ordering {
+    if is_numeric {
+        let a_num = parse_temporal_numeric(a);
+        let b_num = parse_temporal_numeric(b);
+        a_num.partial_cmp(&b_num).unwrap_or(Ordering::Equal)
+    } else {
+        a.cmp(b)
+    }
+}
+
+fn parse_temporal_numeric(s: &str) -> f64 {
+    match s {
+        "infinity" => f64::INFINITY,
+        "-infinity" => f64::NEG_INFINITY,
+        _ => s.parse::<f64>().unwrap_or(0.0),
     }
 }
 
@@ -277,6 +313,8 @@ pub struct TargetRow {
     pub lookup_keys: serde_json::Map<String, serde_json::Value>,
     pub data_payload: serde_json::Map<String, serde_json::Value>,
     pub ephemeral_payload: serde_json::Map<String, serde_json::Value>,
+    /// PK-only columns (pk_cols minus identity/lookup/temporal) for entity_keys propagation
+    pub pk_payload: serde_json::Map<String, serde_json::Value>,
 }
 
 // ── Matched source row (after entity correlation) ──
@@ -333,6 +371,12 @@ pub struct ResolvedSegment {
     pub ephemeral_payload: Option<serde_json::Map<String, serde_json::Value>>,
     pub target_data_payload: Option<serde_json::Map<String, serde_json::Value>>,
     pub data_hash: Option<String>,
+    /// True if at least one source row covers this segment
+    pub has_source_coverage: bool,
+    /// True if a target row covers this segment
+    pub has_target_coverage: bool,
+    /// Allen relation between source row range and covering target row range (per-segment)
+    pub s_t_relation: Option<AllenRelation>,
 }
 
 // ── Coalesced segment (after merging adjacent identical segments) ──
@@ -353,6 +397,12 @@ pub struct CoalescedSegment {
     /// Pre-computed hash of data_payload (excluding nulls), carried from resolve phase.
     /// Invariant: data_payload is never modified during coalescing, so this stays valid.
     pub data_hash: Option<String>,
+    /// True if at least one source row covers any part of this coalesced segment
+    pub has_source_coverage: bool,
+    /// True if at least one target row covers any part of this coalesced segment
+    pub has_target_coverage: bool,
+    /// Allen relation between source row range and covering target row range (first value)
+    pub s_t_relation: Option<AllenRelation>,
 }
 
 // ── Diff row (result of FULL OUTER JOIN between coalesced and target) ──
@@ -372,8 +422,18 @@ pub struct DiffRow {
     pub target_valid_from: Option<String>,
     pub target_valid_until: Option<String>,
     pub target_payload: Option<serde_json::Map<String, serde_json::Value>>,
-    // Allen relation between target and final
-    pub allen_relation: Option<AllenRelation>,
+    // Ephemeral payload (carried for plan row output, not for comparison)
+    pub ephemeral_payload: Option<serde_json::Map<String, serde_json::Value>>,
+    /// True if at least one source row covers this segment
+    pub has_source_coverage: bool,
+    /// Allen relation between source row range and covering target row range
+    pub s_t_relation: Option<AllenRelation>,
+    /// Target row's ephemeral payload (for comparison in classify_single_diff)
+    pub target_ephemeral: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Target row's lookup keys (for including in INSERT data when source doesn't have them)
+    pub target_lookup_keys: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Target's PK-only columns (for entity_keys in existing entity operations)
+    pub target_pk_payload: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 // ── Plan row (final output, matches sql_saga.temporal_merge_plan) ──
@@ -413,6 +473,9 @@ pub struct PlannerContext {
     pub era: EraMetadata,
     pub identity_columns: Vec<String>,
     pub all_lookup_cols: Vec<String>,
+    /// Individual natural key sets for independent entity matching.
+    /// PL/pgSQL tries each set with OR logic: match on ANY set succeeds.
+    pub lookup_key_sets: Vec<Vec<String>>,
     pub original_entity_key_cols: Vec<String>,
     pub original_entity_segment_key_cols: Vec<String>,
     pub temporal_cols: Vec<String>,
@@ -422,6 +485,8 @@ pub struct PlannerContext {
     pub founding_id_column: Option<String>,
     pub row_id_column: String,
     pub log_trace: bool,
+    /// Columns where NULL source values should be stripped in UPSERT/REPLACE modes.
+    pub exclude_if_null_columns: std::collections::HashSet<String>,
 }
 
 impl PlannerContext {
@@ -450,6 +515,9 @@ pub enum ColCategory {
     Lookup,
     Data,
     Ephemeral,
+    /// PK columns that are NOT identity/lookup/temporal/ephemeral.
+    /// These flow through as entity_keys but are excluded from data_payload.
+    StablePk,
 }
 
 /// Describes one column in the SELECT list for ordinal-based reading.
@@ -458,6 +526,8 @@ pub enum ColCategory {
 pub struct ColMapping {
     pub col_name: String,
     pub category: ColCategory,
+    /// PostgreSQL type name (e.g., "integer", "text") for native JSON type parsing
+    pub pg_type: String,
 }
 
 // ── Parameterized filter for target read ──
@@ -497,4 +567,10 @@ pub struct CachedState {
     /// Each FilterParam describes one = ANY($N::text::type[]) condition.
     /// If None, target_sql_template uses __SOURCE_IDENT__ subquery (dynamic SQL).
     pub target_filter_params: Option<Vec<FilterParam>>,
+    /// Hash of source column names — used to detect when source structure changes
+    /// (e.g., different source tables wrapped in the same CREATE OR REPLACE view).
+    pub source_cols_hash: u64,
+    /// Source table OID — used to invalidate cache when source table changes.
+    /// Critical for test scenarios that drop and recreate source tables with different columns.
+    pub source_oid: u32,
 }

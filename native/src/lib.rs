@@ -47,8 +47,8 @@ fn temporal_merge_plan_native(
     let delete_mode = DeleteMode::from_str(delete_mode)
         .unwrap_or_else(|| pgrx::error!("Invalid delete mode: {}", delete_mode));
 
-    // Parse lookup_keys JSONB into Vec<Vec<String>>
-    let all_lookup_cols = parse_lookup_keys(lookup_keys);
+    // Parse lookup_keys JSONB into flat list + individual key sets
+    let (all_lookup_cols, lookup_key_sets) = parse_lookup_keys(lookup_keys);
 
     // Compute cache key (excludes source_table OID — it changes per batch)
     let cache_key = compute_cache_key(
@@ -68,9 +68,37 @@ fn temporal_merge_plan_native(
     let source_ident = reader::resolve_table_name(source_table)
         .unwrap_or_else(|e| pgrx::error!("Failed to resolve source table: {}", e));
 
-    // Check cache and get or build CachedState
+    // Quick introspection of source column names to detect structure changes.
+    // The source view (CREATE OR REPLACE) has a stable OID but columns change.
+    let source_cols_hash = {
+        let source_oid = u32::from(source_table);
+        let cols_query = format!(
+            "SELECT array_agg(attname::text ORDER BY attnum) FROM pg_attribute \
+             WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped",
+            source_oid
+        );
+        let cols_str: String = Spi::connect(|client| {
+            client
+                .select(&cols_query, None, &[])
+                .ok()
+                .and_then(|t| t.first().get_one::<String>().ok().flatten())
+                .unwrap_or_default()
+        });
+        let mut h = DefaultHasher::new();
+        cols_str.hash(&mut h);
+        h.finish()
+    };
+
+    // Check cache: config cache_key, source columns, AND source OID must all match.
+    // The source OID check prevents stale template reuse when drop+create reuses same OID
+    // or when SPI snapshot doesn't reflect catalog changes.
+    let source_oid = u32::from(source_table);
     let cache_hit = PLANNER_CACHE.with(|c| {
-        c.borrow().as_ref().map_or(false, |s| s.cache_key == cache_key)
+        c.borrow().as_ref().map_or(false, |s| {
+            s.cache_key == cache_key
+                && s.source_cols_hash == source_cols_hash
+                && s.source_oid == source_oid
+        })
     });
 
     let state = if cache_hit {
@@ -87,17 +115,86 @@ fn temporal_merge_plan_native(
         let result = introspect::introspect_all(target_table, source_table, era_name)
             .unwrap_or_else(|e| pgrx::error!("{}", e));
 
+        let ephemeral_columns = ephemeral_columns.unwrap_or_default();
+
+        // Validate ephemeral columns don't include temporal boundary columns (matches PL/pgSQL).
+        {
+            let era = &result.era;
+            if ephemeral_columns.contains(&era.valid_from_col) || ephemeral_columns.contains(&era.valid_until_col) {
+                pgrx::error!(
+                    "Temporal boundary columns (\"{}\", \"{}\") cannot be specified in ephemeral_columns.",
+                    era.valid_from_col, era.valid_until_col
+                );
+            }
+            if let Some(ref vt) = era.valid_to_col {
+                if ephemeral_columns.contains(vt) {
+                    pgrx::error!(
+                        "Synchronized column \"{}\" is automatically handled and should not be specified in ephemeral_columns.",
+                        vt
+                    );
+                }
+            }
+            if ephemeral_columns.contains(&era.range_col) {
+                pgrx::error!(
+                    "Synchronized column \"{}\" is automatically handled and should not be specified in ephemeral_columns.",
+                    era.range_col
+                );
+            }
+        }
+
+        // Validate column existence (matches PL/pgSQL consolidated column validation)
+        {
+            let src = &result.source_cols;
+            let tgt = &result.target_cols;
+            if !src.contains(&row_id_column.to_string()) {
+                pgrx::error!(
+                    "row_id_column \"{}\" does not exist in source table {}",
+                    row_id_column, source_ident
+                );
+            }
+            if let Some(ref fid) = founding_id_column {
+                if !src.contains(&fid.to_string()) {
+                    pgrx::error!(
+                        "founding_id_column \"{}\" does not exist in source table {}",
+                        fid, source_ident
+                    );
+                }
+            }
+            if let Some(ref id_cols) = identity_columns {
+                for col in id_cols {
+                    if !tgt.contains(col) {
+                        pgrx::error!(
+                            "identity_column {} does not exist in target table {}",
+                            col, result.target_ident
+                        );
+                    }
+                }
+            }
+            if let Some(ref lk_cols) = all_lookup_cols {
+                for col in lk_cols {
+                    if !tgt.contains(col) {
+                        pgrx::error!(
+                            "lookup_column {} does not exist in target table {}",
+                            col, result.target_ident
+                        );
+                    }
+                }
+            }
+        }
+
         let ctx = introspect::build_planner_context(
             mode,
             delete_mode,
             result.era,
             identity_columns,
             all_lookup_cols,
+            lookup_key_sets,
             result.pk_cols,
-            ephemeral_columns.unwrap_or_default(),
+            ephemeral_columns,
             founding_id_column.map(|s| s.to_string()),
             row_id_column.to_string(),
             p_log_trace,
+            result.exclude_if_null_columns,
         );
 
         // Build SQL templates from pre-fetched column data (no SPI calls)
@@ -105,10 +202,12 @@ fn temporal_merge_plan_native(
             &result.source_cols,
             &result.target_cols,
             &result.target_col_types,
+            &result.source_col_types,
             &result.target_ident,
             &ctx,
+            &source_ident,
         )
-        .unwrap_or_else(|e| pgrx::error!("Failed to build SQL templates: {}", e));
+        .unwrap_or_else(|e| pgrx::error!("{}", e));
 
         let new_state = CachedState {
             cache_key,
@@ -119,6 +218,8 @@ fn temporal_merge_plan_native(
             source_col_layout: templates.source_col_layout,
             target_col_layout: templates.target_col_layout,
             target_filter_params: templates.target_filter_params,
+            source_cols_hash,
+            source_oid,
         };
         PLANNER_CACHE.with(|c| {
             *c.borrow_mut() = Some(new_state.clone());
@@ -134,6 +235,20 @@ fn temporal_merge_plan_native(
         .unwrap_or_else(|e| pgrx::error!("Failed to read source rows: {}", e));
     let t_source = Instant::now();
 
+    if p_log_trace {
+        pgrx::notice!("native planner: read {} source rows", source_rows.len());
+        for sr in &source_rows {
+            pgrx::notice!(
+                "  src row_id={} identity_keys={:?} lookup_keys={:?} valid=[{},{})",
+                sr.row_id,
+                sr.identity_keys,
+                sr.lookup_keys,
+                sr.valid_from,
+                sr.valid_until,
+            );
+        }
+    }
+
     // Phase 2b: Read target rows — parameterized (cached stmt) or dynamic SQL
     let target_rows = if let Some(ref filter_params) = state.target_filter_params {
         if filter_params.is_empty() {
@@ -143,6 +258,10 @@ fn temporal_merge_plan_native(
         } else {
             // Parameterized filter: extract identity values from source rows
             let param_values = reader::extract_filter_values(&source_rows, filter_params);
+            if p_log_trace {
+                pgrx::notice!("native planner: target filter params={:?}", param_values);
+                pgrx::notice!("native planner: target SQL template={}", state.target_sql_template);
+            }
             reader::read_target_rows_parameterized(&state, &param_values)
                 .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e))
         }
@@ -151,10 +270,26 @@ fn temporal_merge_plan_native(
         let target_sql = state
             .target_sql_template
             .replace("__SOURCE_IDENT__", &source_ident);
+        if p_log_trace {
+            pgrx::notice!("native planner: target SQL (dynamic)={}", target_sql);
+        }
         reader::read_target_rows_with_sql(&target_sql, &state)
             .unwrap_or_else(|e| pgrx::error!("Failed to read target rows: {}", e))
     };
     let t_target = Instant::now();
+
+    if p_log_trace {
+        pgrx::notice!("native planner: read {} target rows", target_rows.len());
+        for tr in &target_rows {
+            pgrx::notice!(
+                "  tgt identity_keys={:?} lookup_keys={:?} valid=[{},{})",
+                tr.identity_keys,
+                tr.lookup_keys,
+                tr.valid_from,
+                tr.valid_until,
+            );
+        }
+    }
 
     // Phase 3: Sweep-line planning
     let plan_rows = sweep::sweep_line_plan(source_rows, target_rows, &state.ctx);
@@ -210,26 +345,38 @@ fn compute_cache_key(
 }
 
 /// Parse lookup_keys JSONB (array of arrays) into a flat, distinct list of column names.
-fn parse_lookup_keys(lookup_keys: Option<pgrx::JsonB>) -> Option<Vec<String>> {
-    let pgrx::JsonB(val) = lookup_keys?;
-    let arr = val.as_array()?;
+/// Parse lookup_keys JSONB `[["id"], ["legal_unit_id"]]` into flat column list
+/// and individual key sets.
+fn parse_lookup_keys(lookup_keys: Option<pgrx::JsonB>) -> (Option<Vec<String>>, Vec<Vec<String>>) {
+    let Some(pgrx::JsonB(val)) = lookup_keys else {
+        return (None, Vec::new());
+    };
+    let Some(arr) = val.as_array() else {
+        return (None, Vec::new());
+    };
     let mut cols = Vec::new();
+    let mut key_sets: Vec<Vec<String>> = Vec::new();
     for key_array in arr {
         if let Some(inner) = key_array.as_array() {
+            let mut set = Vec::new();
             for col in inner {
                 if let Some(s) = col.as_str() {
                     if !cols.contains(&s.to_string()) {
                         cols.push(s.to_string());
                     }
+                    set.push(s.to_string());
                 }
+            }
+            if !set.is_empty() {
+                key_sets.push(set);
             }
         }
     }
     if cols.is_empty() {
-        None
+        (None, Vec::new())
     } else {
         cols.sort();
-        Some(cols)
+        (Some(cols), key_sets)
     }
 }
 
@@ -248,7 +395,7 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
     // Build 22 parallel arrays (one per column), each as a PG text[] literal
     let mut plan_op_seq = Vec::with_capacity(n);
     let mut statement_seq = Vec::with_capacity(n);
-    let mut row_ids = Vec::with_capacity(n);
+    let mut row_ids: Vec<Option<String>> = Vec::with_capacity(n);
     let mut operation = Vec::with_capacity(n);
     let mut update_effect = Vec::with_capacity(n);
     let mut causal_id = Vec::with_capacity(n);
@@ -273,15 +420,20 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
         plan_op_seq.push(row.plan_op_seq.to_string());
         statement_seq.push(row.statement_seq.to_string());
 
-        // row_ids: bigint[] → text representation "{1,2,3}"
-        let mut ids_buf = String::with_capacity(row.row_ids.len() * 8);
-        ids_buf.push('{');
-        for (j, id) in row.row_ids.iter().enumerate() {
-            if j > 0 { ids_buf.push(','); }
-            write!(ids_buf, "{}", id).unwrap();
+        // row_ids: bigint[] → text representation "{1,2,3}" or NULL for empty
+        // PL/pgSQL produces NULL row_ids for DELETE rows (no source contributes)
+        if row.row_ids.is_empty() {
+            row_ids.push(None);
+        } else {
+            let mut ids_buf = String::with_capacity(row.row_ids.len() * 8);
+            ids_buf.push('{');
+            for (j, id) in row.row_ids.iter().enumerate() {
+                if j > 0 { ids_buf.push(','); }
+                write!(ids_buf, "{}", id).unwrap();
+            }
+            ids_buf.push('}');
+            row_ids.push(Some(ids_buf));
         }
-        ids_buf.push('}');
-        row_ids.push(ids_buf);
 
         operation.push(row.operation.as_str().to_string());
         update_effect.push(opt_str(row.update_effect.map(|u| u.as_str())));
@@ -310,7 +462,7 @@ fn emit_plan_rows(plan_rows: &[PlanRow]) -> i64 {
     let arrays: Vec<String> = vec![
         pg_text_array(&plan_op_seq),
         pg_text_array(&statement_seq),
-        pg_text_array(&row_ids),
+        pg_nullable_text_array(&row_ids),
         pg_text_array(&operation),
         pg_nullable_text_array(&update_effect),
         pg_nullable_text_array(&causal_id),
@@ -467,28 +619,28 @@ mod tests {
     #[pg_test]
     fn test_allen_relation_equals() {
         use crate::types::AllenRelation;
-        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-01-01", "2024-02-01");
+        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-01-01", "2024-02-01", false);
         assert_eq!(r, Some(AllenRelation::Equals));
     }
 
     #[pg_test]
     fn test_allen_relation_precedes() {
         use crate::types::AllenRelation;
-        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01");
+        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01", false);
         assert_eq!(r, Some(AllenRelation::Precedes));
     }
 
     #[pg_test]
     fn test_allen_relation_meets() {
         use crate::types::AllenRelation;
-        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-02-01", "2024-03-01");
+        let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-02-01", "2024-03-01", false);
         assert_eq!(r, Some(AllenRelation::Meets));
     }
 
     #[pg_test]
     fn test_allen_relation_overlaps() {
         use crate::types::AllenRelation;
-        let r = AllenRelation::compute("2024-01-01", "2024-03-01", "2024-02-01", "2024-04-01");
+        let r = AllenRelation::compute("2024-01-01", "2024-03-01", "2024-02-01", "2024-04-01", false);
         assert_eq!(r, Some(AllenRelation::Overlaps));
     }
 

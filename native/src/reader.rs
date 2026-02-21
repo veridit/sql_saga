@@ -32,17 +32,19 @@ pub fn build_sql_templates_from_cols(
     source_cols: &[String],
     target_cols: &[String],
     target_col_types: &std::collections::HashMap<String, String>,
+    source_col_types: &std::collections::HashMap<String, String>,
     target_ident: &str,
     ctx: &PlannerContext,
+    source_table_name: &str,
 ) -> Result<SqlTemplates, String> {
-    // Classify source columns into categories
-    let source_col_layout = build_column_layout(source_cols, ctx, true);
+    // Classify source columns into categories (restrict Data to target-intersecting columns)
+    let source_col_layout = build_column_layout(source_cols, source_col_types, ctx, true, Some(target_cols));
 
     // Build source SQL template with individual columns
-    let source_sql_template = build_source_sql_template(source_cols, &source_col_layout, ctx)?;
+    let source_sql_template = build_source_sql_template(source_cols, &source_col_layout, ctx, source_table_name)?;
 
     // Classify target columns into categories
-    let target_col_layout = build_column_layout(target_cols, ctx, false);
+    let target_col_layout = build_column_layout(target_cols, target_col_types, ctx, false, None);
 
     // Build target SQL template (try parameterized first, fall back to dynamic)
     let (target_sql_template, target_filter_params) = build_target_sql_template(
@@ -65,10 +67,14 @@ pub fn build_sql_templates_from_cols(
 
 /// Build the column layout: classify each column into a category.
 /// Only includes columns that belong to identity/lookup/data/ephemeral categories.
+/// For source layouts, `other_table_cols` should be the target columns to restrict
+/// Data category to columns that exist on both tables (matching PL/pgSQL behavior).
 fn build_column_layout(
     table_cols: &[String],
+    col_types: &std::collections::HashMap<String, String>,
     ctx: &PlannerContext,
     is_source: bool,
+    other_table_cols: Option<&[String]>,
 ) -> Vec<ColMapping> {
     // Build exclusion set for "data" category
     let mut excluded_from_data: std::collections::HashSet<&str> = std::collections::HashSet::new();
@@ -86,6 +92,9 @@ fn build_column_layout(
     }
     excluded_from_data.insert("era_id");
     excluded_from_data.insert("era_name");
+    excluded_from_data.insert("merge_status");
+    excluded_from_data.insert("merge_statuses");
+    excluded_from_data.insert("merge_errors");
 
     let identity_set: std::collections::HashSet<&str> =
         ctx.identity_columns.iter().map(|s| s.as_str()).collect();
@@ -108,8 +117,17 @@ fn build_column_layout(
         if is_source && col_str == ctx.row_id_column.as_str() {
             continue;
         }
-        if col_str == "era_id" || col_str == "era_name" {
+        if col_str == "era_id" || col_str == "era_name" || col_str == "merge_status"
+            || col_str == "merge_statuses" || col_str == "merge_errors" {
             continue;
+        }
+        // Exclude founding_id column from source data payload (internal correlation column)
+        if is_source {
+            if let Some(ref fid) = ctx.founding_id_column {
+                if col_str == fid.as_str() {
+                    continue;
+                }
+            }
         }
 
         let category = if identity_set.contains(col_str) {
@@ -119,14 +137,29 @@ fn build_column_layout(
         } else if ephemeral_set.contains(col_str) && table_cols.contains(col) {
             ColCategory::Ephemeral
         } else if !excluded_from_data.contains(col_str) {
+            // For source Data columns, only include if the column also exists on the target.
+            // PL/pgSQL payload_columns is the intersection of source and target columns.
+            if let Some(other_cols) = other_table_cols {
+                if !other_cols.contains(col) {
+                    continue;
+                }
+            }
             ColCategory::Data
+        } else if ctx.pk_cols.contains(col) {
+            ColCategory::StablePk
         } else {
-            continue; // pk-only cols that are in segment key but not identity/lookup
+            continue; // other segment key cols (e.g. temporal) already filtered above
         };
+
+        let pg_type = col_types
+            .get(col)
+            .cloned()
+            .unwrap_or_else(|| "text".to_string());
 
         layout.push(ColMapping {
             col_name: col.clone(),
             category,
+            pg_type,
         });
     }
 
@@ -139,6 +172,7 @@ fn build_source_sql_template(
     source_cols: &[String],
     col_layout: &[ColMapping],
     ctx: &PlannerContext,
+    source_table_name: &str,
 ) -> Result<String, String> {
     let has_range = source_cols.contains(&ctx.era.range_col);
     let has_from = source_cols.contains(&ctx.era.valid_from_col);
@@ -151,9 +185,19 @@ fn build_source_sql_template(
         .unwrap_or(false);
 
     if !has_from && !has_range {
+        let vf_str = if ctx.era.valid_from_col.is_empty() { "<NULL>" } else { &ctx.era.valid_from_col };
         return Err(format!(
-            "Source table must have either \"{}\" or \"{}\"",
-            ctx.era.range_col, ctx.era.valid_from_col
+            "Source table \"{}\" must have either the range column \"{}\" or the component column \"{}\".",
+            source_table_name, ctx.era.range_col, vf_str
+        ));
+    }
+
+    // Validate upper bound: need range, valid_until, or valid_to (matches PL/pgSQL validation)
+    if !has_range && !has_until && !has_to {
+        let vto_str = ctx.era.valid_to_col.as_deref().unwrap_or("<NULL>");
+        return Err(format!(
+            "Source table \"{}\" must have a \"{}\", \"{}\", or \"{}\" column.",
+            source_table_name, ctx.era.range_col, ctx.era.valid_until_col, vto_str
         ));
     }
 
@@ -291,7 +335,7 @@ pub fn read_target_rows_with_sql(
                 .unwrap_or(Some(String::new()))
                 .unwrap_or_default();
 
-            let (identity_keys, lookup_keys, data_payload, ephemeral_payload) =
+            let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
                 read_target_ordinals(&row, layout);
 
             rows.push(TargetRow {
@@ -301,6 +345,7 @@ pub fn read_target_rows_with_sql(
                 lookup_keys,
                 data_payload,
                 ephemeral_payload,
+                pk_payload,
             });
         }
         Ok(rows)
@@ -427,7 +472,7 @@ fn read_source_ordinals(
     for (i, cm) in layout.iter().enumerate() {
         let ordinal = 5 + i; // 1-based, first 4 are fixed
         let val = match row.get::<String>(ordinal) {
-            Ok(Some(s)) => serde_json::Value::String(s),
+            Ok(Some(s)) => parse_typed_value(s, &cm.pg_type),
             _ => serde_json::Value::Null,
         };
         match cm.category {
@@ -442,6 +487,9 @@ fn read_source_ordinals(
             }
             ColCategory::Ephemeral => {
                 ephemeral.insert(cm.col_name.clone(), val);
+            }
+            ColCategory::StablePk => {
+                // PK-only columns: not included in source stable_pk (source may not have them)
             }
         }
     }
@@ -489,11 +537,19 @@ fn try_build_parameterized_filter(
         return Some((String::new(), vec![]));
     }
 
-    // Collect filter key sets (same logic as build_target_filter)
+    // Collect filter key sets — use individual lookup_key_sets (OR logic), not flat all_lookup_cols.
+    // PL/pgSQL uses each natural key set independently in its join expression.
     let mut filter_key_sets: Vec<(Vec<String>, bool)> = Vec::new(); // (cols, is_identity)
 
-    if !ctx.all_lookup_cols.is_empty() {
-        filter_key_sets.push((ctx.all_lookup_cols.clone(), false));
+    for key_set in &ctx.lookup_key_sets {
+        if !key_set.is_empty() {
+            let already_present = filter_key_sets
+                .iter()
+                .any(|(cols, _)| cols == key_set);
+            if !already_present {
+                filter_key_sets.push((key_set.clone(), false));
+            }
+        }
     }
 
     if !ctx.identity_columns.is_empty() {
@@ -531,7 +587,8 @@ fn try_build_parameterized_filter(
         }
 
         if cols.len() == 1 {
-            // Single-column: t."col" = ANY($N::text::type[])
+            // Single-column: EXISTS (SELECT 1 FROM unnest($N) AS _u(v) WHERE t."col" IS NOT DISTINCT FROM _u.v)
+            // Uses IS NOT DISTINCT FROM to correctly match NULL values.
             let col = &cols[0];
             let pg_type = target_col_types.get(col).unwrap();
             params.push(FilterParam {
@@ -542,19 +599,21 @@ fn try_build_parameterized_filter(
                 key_set_id,
             });
             where_parts.push(format!(
-                "t.{col} = ANY(${idx}::text::{typ}[])",
+                "EXISTS (SELECT 1 FROM unnest(${idx}::text::{typ}[]) AS _u(v) WHERE t.{col} IS NOT DISTINCT FROM _u.v)",
                 col = qi(col),
                 idx = param_index,
                 typ = pg_type,
             ));
             param_index += 1;
         } else {
-            // Multi-column: (t."c1", t."c2") IN (SELECT c1, c2 FROM unnest(...) AS u(c1, c2))
-            let t_cols: Vec<String> = cols.iter().map(|c| format!("t.{}", qi(c))).collect();
-            let mut unnest_args = Vec::new();
-            let mut u_cols = Vec::new();
+            // Multi-column: EXISTS with IS NOT DISTINCT FROM for NULL-safe matching.
+            // PostgreSQL forbids column definition lists on multi-arg UNNEST, so we use
+            // ROWS FROM() and alias the composite result with column names.
+            let mut unnest_calls = Vec::new();
+            let mut u_col_names = Vec::new();
+            let mut conditions = Vec::new();
 
-            for col in cols {
+            for (ci, col) in cols.iter().enumerate() {
                 let pg_type = target_col_types.get(col).unwrap();
                 params.push(FilterParam {
                     col_name: col.clone(),
@@ -563,23 +622,26 @@ fn try_build_parameterized_filter(
                     is_identity: *is_identity,
                     key_set_id,
                 });
-                unnest_args.push(format!(
-                    "${idx}::text::{typ}[]",
+                let u_alias = format!("_c{}", ci);
+                unnest_calls.push(format!(
+                    "unnest(${idx}::text::{typ}[])",
                     idx = param_index,
                     typ = pg_type,
                 ));
-                u_cols.push(format!("{col} {typ}", col = qi(col), typ = pg_type));
+                u_col_names.push(u_alias.clone());
+                conditions.push(format!(
+                    "t.{col} IS NOT DISTINCT FROM _u.{u_alias}",
+                    col = qi(col),
+                    u_alias = u_alias,
+                ));
                 param_index += 1;
             }
 
-            // SELECT col1, col2 FROM unnest($1::text::type1[], $2::text::type2[]) AS u("col1" type1, "col2" type2)
-            let select_cols: Vec<String> = cols.iter().map(|c| qi(c)).collect();
             where_parts.push(format!(
-                "({t_cols}) IN (SELECT {sel_cols} FROM unnest({unnest}) AS u({u_def}))",
-                t_cols = t_cols.join(", "),
-                sel_cols = select_cols.join(", "),
-                unnest = unnest_args.join(", "),
-                u_def = u_cols.join(", "),
+                "EXISTS (SELECT 1 FROM ROWS FROM({fns}) AS _u({cols}) WHERE {conds})",
+                fns = unnest_calls.join(", "),
+                cols = u_col_names.join(", "),
+                conds = conditions.join(" AND "),
             ));
         }
     }
@@ -603,8 +665,8 @@ pub fn extract_filter_values(
     key_set_ids.sort_unstable();
     key_set_ids.dedup();
 
-    // For each key_set, extract distinct tuples
-    let mut key_set_values: std::collections::HashMap<usize, Vec<Vec<String>>> =
+    // For each key_set, extract distinct tuples (Option<String> to support NULLs)
+    let mut key_set_values: std::collections::HashMap<usize, Vec<Vec<Option<String>>>> =
         std::collections::HashMap::new();
 
     for &ks_id in &key_set_ids {
@@ -615,45 +677,44 @@ pub fn extract_filter_values(
 
         let mut seen = std::collections::HashSet::new();
         let n_cols = ks_params.len();
-        let mut columns: Vec<Vec<String>> = vec![Vec::new(); n_cols];
+        let mut columns: Vec<Vec<Option<String>>> = vec![Vec::new(); n_cols];
 
         for row in source_rows {
             let mut tuple: Vec<Option<String>> = Vec::with_capacity(n_cols);
-            let mut any_null = false;
 
             for param in &ks_params {
-                let map = if param.is_identity {
-                    &row.identity_keys
-                } else {
-                    &row.lookup_keys
-                };
+                // Check both maps: a column might be in identity_keys or lookup_keys
+                // depending on how PL/pgSQL wrapper classified it. For filter purposes,
+                // we just need the value from whichever map has it.
+                let val_opt = row
+                    .identity_keys
+                    .get(&param.col_name)
+                    .or_else(|| row.lookup_keys.get(&param.col_name));
 
-                if let Some(val) = map.get(&param.col_name) {
+                if let Some(val) = val_opt {
                     if val.is_null() {
-                        any_null = true;
-                        break;
+                        tuple.push(None); // NULL — included for IS NOT DISTINCT FROM matching
+                    } else {
+                        let text_val = match val {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            _ => val.to_string(),
+                        };
+                        tuple.push(Some(text_val));
                     }
-                    let text_val = match val {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        serde_json::Value::Bool(b) => b.to_string(),
-                        _ => val.to_string(),
-                    };
-                    tuple.push(Some(text_val));
                 } else {
-                    any_null = true;
-                    break;
+                    tuple.push(None); // Missing column treated as NULL
                 }
             }
 
-            if any_null {
-                continue;
-            }
-
-            // Deduplicate by tuple
-            let tuple_key: Vec<String> = tuple.iter().map(|v| v.clone().unwrap()).collect();
-            if seen.insert(tuple_key.clone()) {
-                for (i, val) in tuple_key.into_iter().enumerate() {
+            // Deduplicate by tuple (represent NULL as sentinel for dedup key)
+            let tuple_key: Vec<String> = tuple.iter().map(|v| match v {
+                Some(s) => s.clone(),
+                None => "\x00NULL\x00".to_string(),
+            }).collect();
+            if seen.insert(tuple_key) {
+                for (i, val) in tuple.into_iter().enumerate() {
                     columns[i].push(val);
                 }
             }
@@ -728,7 +789,7 @@ pub fn read_target_rows_parameterized(
                     .unwrap_or(Some(String::new()))
                     .unwrap_or_default();
 
-                let (identity_keys, lookup_keys, data_payload, ephemeral_payload) =
+                let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
                     read_target_ordinals(&row, layout);
 
                 rows.push(TargetRow {
@@ -738,6 +799,7 @@ pub fn read_target_rows_parameterized(
                     lookup_keys,
                     data_payload,
                     ephemeral_payload,
+                    pk_payload,
                 });
             }
             Ok(rows)
@@ -755,16 +817,18 @@ fn read_target_ordinals(
     serde_json::Map<String, serde_json::Value>, // lookup_keys
     serde_json::Map<String, serde_json::Value>, // data_payload
     serde_json::Map<String, serde_json::Value>, // ephemeral_payload
+    serde_json::Map<String, serde_json::Value>, // pk_payload (PK-only columns)
 ) {
     let mut identity = serde_json::Map::new();
     let mut lookup = serde_json::Map::new();
     let mut data = serde_json::Map::new();
     let mut ephemeral = serde_json::Map::new();
+    let mut pk = serde_json::Map::new();
 
     for (i, cm) in layout.iter().enumerate() {
         let ordinal = 3 + i; // 1-based, first 2 are valid_from/valid_until
         let val = match row.get::<String>(ordinal) {
-            Ok(Some(s)) => serde_json::Value::String(s),
+            Ok(Some(s)) => parse_typed_value(s, &cm.pg_type),
             _ => serde_json::Value::Null,
         };
         match cm.category {
@@ -780,30 +844,71 @@ fn read_target_ordinals(
             ColCategory::Ephemeral => {
                 ephemeral.insert(cm.col_name.clone(), val);
             }
+            ColCategory::StablePk => {
+                pk.insert(cm.col_name.clone(), val);
+            }
         }
     }
 
-    (identity, lookup, data, ephemeral)
+    (identity, lookup, data, ephemeral, pk)
+}
+
+/// Parse a text value from PostgreSQL into the correct JSON type based on pg_type.
+fn parse_typed_value(text: String, pg_type: &str) -> serde_json::Value {
+    match pg_type {
+        "integer" | "bigint" | "smallint" | "serial" | "bigserial" | "smallserial"
+        | "int2" | "int4" | "int8" | "oid" => {
+            if let Ok(n) = text.parse::<i64>() {
+                serde_json::Value::Number(n.into())
+            } else {
+                serde_json::Value::String(text)
+            }
+        }
+        "numeric" | "real" | "double precision" | "decimal"
+        | "float4" | "float8" | "money" => {
+            // Try integer first (preserves "1250" as 1250, not 1250.0)
+            if let Ok(n) = text.parse::<i64>() {
+                serde_json::Value::Number(n.into())
+            } else if let Ok(n) = text.parse::<f64>() {
+                serde_json::Number::from_f64(n)
+                    .map(serde_json::Value::Number)
+                    .unwrap_or_else(|| serde_json::Value::String(text))
+            } else {
+                serde_json::Value::String(text)
+            }
+        }
+        "boolean" | "bool" => match text.as_str() {
+            "t" | "true" => serde_json::Value::Bool(true),
+            "f" | "false" => serde_json::Value::Bool(false),
+            _ => serde_json::Value::String(text),
+        },
+        _ => serde_json::Value::String(text),
+    }
 }
 
 /// Format a list of string values as a PostgreSQL array literal.
 /// E.g., ["a", "b with,comma"] → {"a","b with,comma"}
-fn format_pg_array_literal(values: &[String]) -> String {
+fn format_pg_array_literal(values: &[Option<String>]) -> String {
     let mut buf = String::with_capacity(values.len() * 10 + 2);
     buf.push('{');
     for (i, v) in values.iter().enumerate() {
         if i > 0 {
             buf.push(',');
         }
-        buf.push('"');
-        for c in v.chars() {
-            match c {
-                '"' => buf.push_str("\"\""),
-                '\\' => buf.push_str("\\\\"),
-                _ => buf.push(c),
+        match v {
+            None => buf.push_str("NULL"),
+            Some(s) => {
+                buf.push('"');
+                for c in s.chars() {
+                    match c {
+                        '"' => buf.push_str("\"\""),
+                        '\\' => buf.push_str("\\\\"),
+                        _ => buf.push(c),
+                    }
+                }
+                buf.push('"');
             }
         }
-        buf.push('"');
     }
     buf.push('}');
     buf
