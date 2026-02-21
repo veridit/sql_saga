@@ -8,6 +8,7 @@ use pgrx::prelude::*;
 
 pg_module_magic!();
 
+mod executor_cache;
 mod introspect;
 mod reader;
 mod sweep;
@@ -337,6 +338,9 @@ fn temporal_merge_native_cache_stats() -> TableIterator<
     let source_stmts = reader::source_read_stmt_count() as i64;
     let hits = CACHE_HITS.with(|c| c.get()) as i64;
     let misses = CACHE_MISSES.with(|c| c.get()) as i64;
+    let executor_entries = executor_cache::EXECUTOR_CACHE.with(|c| c.borrow().len()) as i64;
+    let executor_hits = executor_cache::EXECUTOR_CACHE_HITS.with(|c| c.get()) as i64;
+    let executor_misses = executor_cache::EXECUTOR_CACHE_MISSES.with(|c| c.get()) as i64;
 
     TableIterator::new(vec![
         ("planner_cache_entries".to_string(), planner_entries),
@@ -344,6 +348,9 @@ fn temporal_merge_native_cache_stats() -> TableIterator<
         ("source_read_stmts".to_string(), source_stmts),
         ("cache_hits".to_string(), hits),
         ("cache_misses".to_string(), misses),
+        ("executor_cache_entries".to_string(), executor_entries),
+        ("executor_cache_hits".to_string(), executor_hits),
+        ("executor_cache_misses".to_string(), executor_misses),
     ])
 }
 
@@ -355,6 +362,9 @@ fn temporal_merge_native_cache_reset() {
     CACHE_HITS.with(|c| c.set(0));
     CACHE_MISSES.with(|c| c.set(0));
     reader::clear_read_stmts();
+    executor_cache::EXECUTOR_CACHE.with(|c| c.borrow_mut().clear());
+    executor_cache::EXECUTOR_CACHE_HITS.with(|c| c.set(0));
+    executor_cache::EXECUTOR_CACHE_MISSES.with(|c| c.set(0));
 }
 
 /// Compute a cache key from all parameters that affect SQL template construction.

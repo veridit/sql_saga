@@ -66,6 +66,13 @@ DECLARE
     v_update_statement_seqs INT[];
     v_update_statement_seq INT;
     v_source_col_names TEXT[];
+    v_cache sql_saga.temporal_merge_executor_cache;
+    v_use_native_executor boolean;
+    v_log_step_timing boolean;
+    v_t0 timestamptz;
+    v_t1 timestamptz;
+    v_t2 timestamptz;
+    v_t3 timestamptz;
 BEGIN
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
@@ -73,11 +80,62 @@ BEGIN
     v_log_feedback := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_feedback', true), ''), 'false')::boolean;
     v_log_vars := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_vars', true), ''), 'false')::boolean;
     v_log_execute := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_execute', true), ''), 'false')::boolean;
+    v_log_step_timing := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_step_timing', true), ''), 'false')::boolean;
     v_log_id := substr(md5(COALESCE(current_setting('sql_saga.temporal_merge.log_id_seed', true), random()::text)), 1, 3);
+    IF v_log_step_timing THEN v_t0 := clock_timestamp(); END IF;
 
     -- Identity and lookup columns are assumed to have been discovered and validated by the main temporal_merge procedure.
     v_lookup_columns := COALESCE(temporal_merge_execute.lookup_columns, temporal_merge_execute.identity_columns);
     v_causal_col := COALESCE(temporal_merge_execute.founding_id_column, temporal_merge_execute.row_id_column);
+
+    -- Use the native executor cache if the shared library is available.
+    v_use_native_executor := to_regproc('sql_saga.temporal_merge_executor_introspect') IS NOT NULL;
+
+    IF v_use_native_executor THEN
+        -- Single function call replaces ~570 lines of introspection + CTE logic.
+        -- On cache hit, returns immediately with zero SPI calls.
+        SELECT * INTO v_cache FROM sql_saga.temporal_merge_executor_introspect(
+            target_table => temporal_merge_execute.target_table::oid,
+            source_table => temporal_merge_execute.source_table::oid,
+            identity_columns => temporal_merge_execute.identity_columns,
+            lookup_columns => v_lookup_columns,
+            era_name => temporal_merge_execute.era_name,
+            ephemeral_columns => temporal_merge_execute.ephemeral_columns,
+            founding_id_column => temporal_merge_execute.founding_id_column,
+            row_id_column => temporal_merge_execute.row_id_column
+        );
+
+        -- Unpack cached values into local variables
+        v_range_col := v_cache.range_col;
+        v_range_constructor := v_cache.range_constructor;
+        v_range_subtype := v_cache.range_subtype::regtype;
+        v_valid_from_col := v_cache.valid_from_col;
+        v_valid_until_col := v_cache.valid_until_col;
+        v_valid_to_col := v_cache.valid_to_col;
+        v_valid_from_col_type := v_cache.valid_from_col_type::regtype;
+        v_valid_until_col_type := v_cache.valid_until_col_type::regtype;
+        v_pk_cols := v_cache.pk_cols::name[];
+        v_not_null_defaulted_cols := v_cache.not_null_defaulted_cols;
+        v_insert_defaulted_columns := v_cache.insert_defaulted_columns;
+        v_founding_defaulted_columns := v_cache.founding_defaulted_columns;
+        v_source_col_names := v_cache.source_col_names;
+        v_update_set_clause := v_cache.update_set_clause;
+        v_all_cols_ident := v_cache.all_cols_ident;
+        v_all_cols_select := v_cache.all_cols_select;
+        v_all_cols_from_jsonb := v_cache.all_cols_from_jsonb;
+        v_founding_all_cols_ident := v_cache.founding_all_cols_ident;
+        v_founding_all_cols_from_jsonb := v_cache.founding_all_cols_from_jsonb;
+        v_entity_key_join_clause := v_cache.entity_key_join_clause;
+        v_entity_key_select_list := v_cache.entity_key_select_list;
+
+        -- Still need schema name for constraint deferral later
+        SELECT n.nspname INTO v_target_schema_name
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.oid = temporal_merge_execute.target_table;
+
+    ELSE
+        -- Fallback: PL/pgSQL introspection (original code path)
 
     -- Introspect source columns to determine which columns are actually provided.
     -- This allows us to handle partial source views correctly, especially for defaulted columns.
@@ -96,7 +154,38 @@ BEGIN
     FROM pg_catalog.pg_attribute a
     WHERE a.attrelid = temporal_merge_execute.target_table
       AND a.attnum > 0 AND NOT a.attisdropped AND a.atthasdef AND a.attnotnull;
-    
+
+    -- Introspect era information to get the correct column names
+    SELECT n.nspname, c.relname
+    INTO v_target_schema_name, v_target_table_name_only
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = temporal_merge_execute.target_table;
+
+    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type::name, e.range_subtype
+    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_range_subtype
+    FROM sql_saga.era e
+    WHERE e.table_schema = v_target_schema_name
+      AND e.table_name = v_target_table_name_only
+      AND e.era_name = temporal_merge_execute.era_name;
+
+    IF v_range_col IS NULL THEN
+        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, temporal_merge_execute.target_table;
+    END IF;
+
+    -- Introspect the primary key columns, excluding temporal columns.
+    -- They will be excluded from UPDATE SET clauses.
+    -- Must happen after temporal columns are discovered.
+    SELECT COALESCE(array_agg(a.attname), '{}'::name[])
+    INTO v_pk_cols
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.conrelid = temporal_merge_execute.target_table
+      AND c.contype = 'p'
+      AND a.attname NOT IN (v_range_col, v_valid_from_col, v_valid_until_col);
+
+    END IF; -- v_use_native_executor (introspection phase 1)
+
     v_summary_line := format(
         'on %s: mode=>%s, delete_mode=>%s, identity_columns=>%L, lookup_columns=>%L, ephemeral_columns=>%L, founding_id_column=>%L, row_id_column=>%L',
         temporal_merge_execute.target_table,
@@ -138,34 +227,7 @@ BEGIN
         CREATE UNIQUE INDEX ON temporal_merge_index_cache (rel_oid, lookup_columns) WHERE lookup_columns IS NOT NULL;
     END IF;
 
-    -- Introspect era information to get the correct column names
-    SELECT n.nspname, c.relname
-    INTO v_target_schema_name, v_target_table_name_only
-    FROM pg_class c
-    JOIN pg_namespace n ON n.oid = c.relnamespace
-    WHERE c.oid = temporal_merge_execute.target_table;
-
-    SELECT e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name, e.range_type::name, e.range_subtype
-    INTO v_range_col, v_valid_from_col, v_valid_until_col, v_valid_to_col, v_range_constructor, v_range_subtype
-    FROM sql_saga.era e
-    WHERE e.table_schema = v_target_schema_name
-      AND e.table_name = v_target_table_name_only
-      AND e.era_name = temporal_merge_execute.era_name;
-
-    IF v_range_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, temporal_merge_execute.target_table;
-    END IF;
-
-    -- Introspect the primary key columns, excluding temporal columns.
-    -- They will be excluded from UPDATE SET clauses.
-    -- Must happen after temporal columns are discovered.
-    SELECT COALESCE(array_agg(a.attname), '{}'::name[])
-    INTO v_pk_cols
-    FROM pg_constraint c
-    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-    WHERE c.conrelid = temporal_merge_execute.target_table 
-      AND c.contype = 'p'
-      AND a.attname NOT IN (v_range_col, v_valid_from_col, v_valid_until_col);
+    IF v_log_step_timing THEN v_t1 := clock_timestamp(); END IF;
 
     -- Prepare expected normalized index expressions and logging flag for index checks
     IF v_valid_from_col IS NOT NULL AND v_valid_until_col IS NOT NULL THEN
@@ -414,6 +476,11 @@ BEGIN
         END;
     END IF;
 
+    IF v_log_step_timing THEN v_t2 := clock_timestamp(); END IF;
+
+    IF NOT v_use_native_executor THEN
+    -- Fallback: PL/pgSQL introspection for defaulted columns, column types, entity keys, and CTE
+
     -- Auto-detect columns that should be excluded from INSERT statements.
     -- We only exclude columns that cannot accept values (GENERATED ALWAYS).
     -- Columns with DEFAULTs (atthasdef) and IDENTITY BY DEFAULT (attidentity='d') are INCLUDED
@@ -590,7 +657,7 @@ BEGIN
                 ', ' ORDER BY cfi.attnum
              )
              FROM cols_for_insert cfi
-             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
                                     AND ad.adnum = cfi.attnum
              WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
             (SELECT string_agg(
@@ -609,7 +676,7 @@ BEGIN
                 ', ' ORDER BY cfi.attnum
              )
              FROM cols_for_insert cfi
-             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
                                     AND ad.adnum = cfi.attnum
              WHERE cfi.attname IS DISTINCT FROM v_valid_from_col AND cfi.attname IS DISTINCT FROM v_valid_until_col),
             (SELECT string_agg(format('%I', cffi.attname), ', ' ORDER BY cffi.attnum) FROM cols_for_founding_insert cffi WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col),
@@ -628,7 +695,7 @@ BEGIN
                 ', ' ORDER BY cffi.attnum
              )
              FROM cols_for_founding_insert cffi
-             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table 
+             LEFT JOIN pg_attrdef ad ON ad.adrelid = temporal_merge_execute.target_table
                                     AND ad.adnum = cffi.attnum
              WHERE cffi.attname IS DISTINCT FROM v_valid_from_col AND cffi.attname IS DISTINCT FROM v_valid_until_col)
         INTO
@@ -638,6 +705,17 @@ BEGIN
             v_all_cols_from_jsonb,
             v_founding_all_cols_ident,
             v_founding_all_cols_from_jsonb;
+
+    END IF; -- NOT v_use_native_executor (introspection phase 2)
+
+        IF v_log_step_timing THEN
+            v_t3 := clock_timestamp();
+            RAISE NOTICE '(%) step_timing: introspection=%.1fms, index_checks=%.1fms, column_list_cte=%.1fms',
+                v_log_id,
+                extract(epoch from v_t1 - v_t0) * 1000,
+                extract(epoch from v_t2 - v_t1) * 1000,
+                extract(epoch from v_t3 - v_t2) * 1000;
+        END IF;
 
         -- DELETE -> UPDATE -> INSERT order is critical for PostgreSQL 18 temporal FK compatibility.
         DECLARE
