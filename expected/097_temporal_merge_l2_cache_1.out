@@ -92,7 +92,7 @@ FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%';
  l2_cache_entries_after_first_call 
 -----------------------------------
-                                 0
+                                 1
 (1 row)
 
 \echo '--- Verify the cached SQL has the placeholder ---'
@@ -103,7 +103,8 @@ FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%';
  first_step_has_placeholder 
 ----------------------------
-(0 rows)
+ t
+(1 row)
 
 COMMIT;
 --------------------------------------------------------------------------------
@@ -123,7 +124,8 @@ FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%';
  l2_use_count_before 
 ---------------------
-(0 rows)
+                   1
+(1 row)
 
 -- This call should reuse the L2 cache (different source table, same schema)
 CALL sql_saga.temporal_merge(
@@ -140,7 +142,8 @@ FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%';
  l2_use_count_after 
 --------------------
-(0 rows)
+                  2
+(1 row)
 
 \echo '--- Verify the merge worked correctly ---'
 --- Verify the merge worked correctly ---
@@ -171,7 +174,7 @@ FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%';
  l2_cache_before_alter 
 -----------------------
-                     0
+                     1
 (1 row)
 
 -- ALTER TABLE should trigger cache invalidation
@@ -208,9 +211,10 @@ SELECT count(*) AS l2_cache_after_rebuild, source_columns_hash AS hash_after_reb
 FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%'
 GROUP BY source_columns_hash;
- l2_cache_after_rebuild | hash_after_rebuild 
-------------------------+--------------------
-(0 rows)
+ l2_cache_after_rebuild |        hash_after_rebuild        
+------------------------+----------------------------------
+                      1 | 35dc627153087330f4ffd106a91931a0
+(1 row)
 
 COMMIT;
 BEGIN;
@@ -233,9 +237,10 @@ SELECT count(*) AS l2_cache_count, source_columns_hash AS new_hash
 FROM sql_saga.temporal_merge_cache
 WHERE cache_key LIKE 'l2cache.target:%'
 GROUP BY source_columns_hash;
- l2_cache_count | new_hash 
-----------------+----------
-(0 rows)
+ l2_cache_count |             new_hash             
+----------------+----------------------------------
+              1 | 9698d8781e7616ecc95f063200f291bf
+(1 row)
 
 \echo '--- Verify the merge still worked correctly despite cache rebuild ---'
 --- Verify the merge still worked correctly despite cache rebuild ---
@@ -265,7 +270,7 @@ SELECT total_entries, total_size_bytes > 0 AS has_size, most_used_count, least_u
 FROM sql_saga.temporal_merge_cache_stats();
  total_entries | has_size | most_used_count | least_used_count 
 ---------------+----------+-----------------+------------------
-             0 | f        |                 |                 
+             1 | t        |               1 |                1
 (1 row)
 
 --------------------------------------------------------------------------------

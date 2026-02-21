@@ -248,7 +248,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for non-existent row_id_column: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for non-existent row_id_column: row_id_column "non_existent_row_id" does not exist in source table tm_bad_cols_source
+NOTICE:  Caught expected error for non-existent row_id_column: row_id_column "non_existent_row_id" does not exist in source table tm_bad_cols_sources
 -- Test with non-existent founding_id_column
 DO $$
 BEGIN
@@ -264,7 +264,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for non-existent founding_id_column: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for non-existent founding_id_column: founding_id_column "non_existent_founding_id" does not exist in source table tm_bad_cols_source
+NOTICE:  Caught expected error for non-existent founding_id_column: founding_id_column "non_existent_founding_id" does not exist in source table tm_bad_cols_sources
 ROLLBACK TO SAVEPOINT scenario_10;
 SAVEPOINT scenario_11;
 -- Scenario 11: Test using a non-default row_id_column name.
@@ -362,7 +362,7 @@ EXCEPTION WHEN others THEN
     RAISE NOTICE 'Caught expected error for missing default row_id column: %', SQLERRM;
 END;
 $$;
-NOTICE:  Caught expected error for missing default row_id column: row_id_column "row_id" does not exist in source table tm_no_rowid_sources
+NOTICE:  Caught expected error for missing default row_id column: row_id_column "row_id" does not exist in source table tm_no_rowid_sourcess
 ROLLBACK TO SAVEPOINT scenario_12;
 SAVEPOINT scenario_13;
 -- Scenario 13: Test `temporal_merge` with non-standard column and era names.

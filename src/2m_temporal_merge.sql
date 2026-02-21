@@ -203,9 +203,28 @@ BEGIN
         v_exec_start TIMESTAMPTZ;
         v_exec_ms NUMERIC;
         v_log_timing BOOLEAN;
+        v_use_plpgsql BOOLEAN;
     BEGIN
         v_log_timing := COALESCE(current_setting('sql_saga.log_step_timing', true), 'off') = 'on';
-        
+        v_use_plpgsql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.use_plpgsql_planner', true), ''), 'false')::boolean;
+
+        IF NOT v_use_plpgsql THEN
+            -- Use native Rust sweep-line planner (default, 10-13x faster with O(1) scaling)
+            PERFORM sql_saga.temporal_merge_plan_native(
+                target_table => temporal_merge.target_table::oid,
+                source_table => temporal_merge.source_table::oid,
+                mode => temporal_merge.mode::text,
+                era_name => temporal_merge.era_name::text,
+                identity_columns => v_identity_cols_discovered,
+                row_id_column => temporal_merge.row_id_column::text,
+                founding_id_column => temporal_merge.founding_id_column::text,
+                delete_mode => temporal_merge.delete_mode::text,
+                lookup_keys => v_natural_identity_keys_discovered,
+                ephemeral_columns => temporal_merge.ephemeral_columns,
+                p_log_trace => v_log_trace,
+                p_log_sql => v_log_sql
+            );
+        ELSE
         INSERT INTO temporal_merge_plan
         SELECT * FROM sql_saga.temporal_merge_plan(
             target_table => temporal_merge.target_table,
@@ -221,10 +240,11 @@ BEGIN
             p_log_trace => v_log_trace,
             p_log_sql => v_log_sql
         );
-        
+        END IF;
+
         v_plan_ms := EXTRACT(EPOCH FROM clock_timestamp() - v_plan_start) * 1000;
         IF v_log_timing THEN
-            RAISE NOTICE 'temporal_merge PLAN phase: %ms', round(v_plan_ms, 1);
+            RAISE NOTICE 'temporal_merge PLAN phase: %ms (%)', round(v_plan_ms, 1), CASE WHEN v_use_plpgsql THEN 'plpgsql' ELSE 'native' END;
         END IF;
     END;
 

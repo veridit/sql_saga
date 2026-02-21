@@ -3332,11 +3332,11 @@ NOTICE:  Explaining:
                     target_row.stable_pk_payload as discovered_stable_pk_payload,
                     target_row.es_id AS discovered_id_1, target_row.lu_id AS discovered_id_2, target_row.type AS discovered_id_3 /* v_propagated_id_cols_list */
                 FROM source_with_eclipsed_flag source_row
-                LEFT JOIN target_rows target_row ON ((source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL)) AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND source_row.type = target_row.type /* v_source_rows_exists_join_expr */)
+                LEFT JOIN target_rows target_row ON (source_row.type = target_row.type AND (source_row.lu_id = target_row.lu_id OR (source_row.lu_id IS NULL AND target_row.lu_id IS NULL)) AND (source_row.es_id = target_row.es_id OR (source_row.es_id IS NULL AND target_row.es_id IS NULL)) /* v_source_rows_exists_join_expr */)
             
 NOTICE:  Hash Left Join (actual rows=2.00 loops=1)
 NOTICE:    Hash Cond: (source_row.type = target_row.type)
-NOTICE:    Join Filter: (((source_row.es_id = target_row.es_id) OR ((source_row.es_id IS NULL) AND (target_row.es_id IS NULL))) AND ((source_row.lu_id = target_row.lu_id) OR ((source_row.lu_id IS NULL) AND (target_row.lu_id IS NULL))))
+NOTICE:    Join Filter: (((source_row.lu_id = target_row.lu_id) OR ((source_row.lu_id IS NULL) AND (target_row.lu_id IS NULL))) AND ((source_row.es_id = target_row.es_id) OR ((source_row.es_id IS NULL) AND (target_row.es_id IS NULL))))
 NOTICE:    Buffers: local hit=2
 NOTICE:    ->  Seq Scan on source_with_eclipsed_flag source_row (actual rows=2.00 loops=1)
 NOTICE:          Buffers: local hit=1
