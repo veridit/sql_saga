@@ -808,9 +808,18 @@ fn resolve_payloads(
         if data_payload.is_none() && covering_target.is_none() {
             continue;
         }
+        // *_FOR_PORTION_OF modes: skip source-covered segments with no target coverage.
+        // PL/pgSQL: WHEN 'PATCH_FOR_PORTION_OF' THEN seg.t_data_payload IS NOT NULL
+        // These modes only affect the "portion of" the target that already exists.
+        // Without this, extending segments get INSERT with only source columns,
+        // missing target-inherited columns (e.g., "null value in column 'name'").
+        if ctx.mode.is_for_portion_of() && covering_target.is_none() && !covering_sources.is_empty() {
+            continue;
+        }
         // DELETE_FOR_PORTION_OF: source-covered segments have data=None (deletion markers).
         // These represent time periods to be removed from the target — skip them so the
         // remaining target-only segments form SHRINK/INSERT operations.
+        // Note: already handled by is_for_portion_of() above for non-DELETE modes.
         if data_payload.is_none() && ctx.mode == MergeMode::DeleteForPortionOf && !covering_sources.is_empty() {
             continue;
         }
