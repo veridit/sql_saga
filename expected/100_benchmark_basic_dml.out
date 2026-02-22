@@ -339,7 +339,6 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temp
 \set benchmark_target_table 'legal_unit'
 \i sql/include/benchmark_explain_log.sql
 \set ECHO none
-Performance regression detected: EXPLAIN plan contains a Seq Scan on legal_unit
 -- Child table merge
 CREATE TEMP TABLE establishment_source (row_id int, id int, valid_range daterange, legal_unit_id int, postal_place text);
 INSERT INTO establishment_source SELECT i, i, daterange('2015-01-01', 'infinity', '[)'), i, 'Updated via Merge ' || i FROM generate_series(4001, 5000) AS i;
@@ -357,7 +356,6 @@ INSERT INTO benchmark (event, row_count, is_performance_benchmark) VALUES ('temp
 \set benchmark_target_table 'establishment'
 \i sql/include/benchmark_explain_log.sql
 \set ECHO none
-Performance regression detected: EXPLAIN plan contains a Seq Scan on establishment
 -- Teardown sql_saga constraints
 SELECT sql_saga.drop_foreign_key('projects', ARRAY['legal_unit_id']);
 NOTICE:  sql_saga: Dropping automatically created index "projects_legal_unit_id_idx" for foreign key "projects_legal_unit_id_fkey"

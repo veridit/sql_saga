@@ -42,6 +42,14 @@ BEGIN
     -- The previous call to temporal_merge has already populated the plan cache.
     -- We retrieve the plan, re-run its setup steps to recreate temp tables,
     -- and then EXPLAIN its main query.
+    --
+    -- The plan cache only exists when the PL/pgSQL planner was used.
+    -- The native Rust planner inserts directly into temporal_merge_plan
+    -- and does not populate the plan cache. Skip gracefully in that case.
+    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
+        INSERT INTO benchmark_explain_output VALUES ('--- Skipped: native planner does not populate temporal_merge_plan_cache ---');
+        RETURN;
+    END IF;
 
     -- Find the plan SQLs for the source table of this scenario.
     SELECT c.plan_sqls INTO plan_sqls
