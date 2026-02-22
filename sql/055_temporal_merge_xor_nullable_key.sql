@@ -146,6 +146,51 @@ FROM xnk.stat_for_unit
 GROUP BY stat_definition_id, legal_unit_id, establishment_id
 HAVING count(*) > 1;
 
+\echo '--- Regression: both nullable columns non-NULL ---'
+-- The partition-by-NULL optimization must handle rows where multiple nullable
+-- identity columns are simultaneously non-NULL. Without mutually exclusive
+-- filters, such a row would be processed in multiple partitions.
+
+-- Step 1: Seed a "both non-NULL" row alongside existing XOR rows
+CREATE TEMP TABLE source_both (
+    row_id INT, stat_definition_id INT, legal_unit_id INT, establishment_id INT,
+    value BIGINT, valid_from DATE, valid_until DATE
+) ON COMMIT DROP;
+INSERT INTO source_both VALUES
+    (1, 99, 1, 1, 999, '2024-01-01', 'infinity');
+
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_both',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+
+-- Verify: 5 rows total (4 XOR + 1 both-non-NULL)
+SELECT count(*) AS row_count FROM xnk.stat_for_unit;
+
+-- Step 2: Update the both-non-NULL row (should update exactly once)
+TRUNCATE source_both;
+INSERT INTO source_both VALUES
+    (1, 99, 1, 1, 888, '2024-01-01', 'infinity');
+
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_both',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+
+-- Verify: still 5 rows, value updated, XOR rows unchanged
+SELECT count(*) AS row_count FROM xnk.stat_for_unit;
+SELECT stat_definition_id, legal_unit_id, establishment_id, value, valid_from, valid_until
+FROM xnk.stat_for_unit ORDER BY stat_definition_id, legal_unit_id, establishment_id;
+-- Verify: no duplicates
+SELECT stat_definition_id, legal_unit_id, establishment_id, count(*) AS cnt
+FROM xnk.stat_for_unit
+GROUP BY stat_definition_id, legal_unit_id, establishment_id
+HAVING count(*) > 1;
+
 ROLLBACK;
 
 \i sql/include/test_teardown.sql

@@ -74,6 +74,7 @@ BEGIN
                     INSERT INTO benchmark_explain_output VALUES (format('partition %s: filter=%s  join=%s', v_part, v_cache.partition_plan_filters[v_part], v_cache.partition_join_clauses[v_part]));
                 END LOOP;
             EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'sql_saga: Could not introspect executor cache: %', SQLERRM;
                 INSERT INTO benchmark_explain_output VALUES ('--- Could not introspect executor cache: ' || SQLERRM || ' ---');
             END;
         END IF;

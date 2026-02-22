@@ -463,13 +463,30 @@ fn run_executor_introspection(
                         vec![select_parts.join(", ")],
                     )
                 } else {
-                    // One partition per nullable column (XOR pattern)
+                    // Partition-by-NULL optimization: one partition per nullable identity column.
+                    //
+                    // This relies on XOR semantics enforced by sql_saga.unique_keys.mutually_exclusive_columns.
+                    // When enabled, add_unique_key() creates a UNIQUE NULLS NOT DISTINCT constraint
+                    // (see src/1j_add_unique_key.sql:412) ensuring each row has exactly one non-NULL
+                    // nullable identity column.
+                    //
+                    // Filters use priority ordering to be mutually exclusive even without strict XOR:
+                    // partition i requires col_i IS NOT NULL AND all preceding cols ARE NULL.
+                    // This assigns each row to exactly one partition (the first non-NULL nullable column).
+                    //
+                    // Each partition JOINs on ALL nullable columns (not just its designated one):
+                    // - Designated column: simple equality (guaranteed NOT NULL by filter)
+                    // - Other columns: COALESCE null-safe comparison (may be NULL or non-NULL)
+                    //
+                    // Under XOR (common case), the COALESCE for "other" columns evaluates to
+                    // COALESCE(NULL, -1) = COALESCE(NULL, -1) → constant true. No performance cost.
                     let mut pj = Vec::new();
                     let mut pf = Vec::new();
                     let mut ps = Vec::new();
-                    for nc in &nullable_cols {
+                    for (i, nc) in nullable_cols.iter().enumerate() {
                         let mut this_join = Vec::new();
                         let mut this_select = Vec::new();
+                        let mut this_filter_parts = Vec::new();
                         // NOT NULL columns: simple equality in every partition
                         for nnc in &not_null_cols {
                             this_join.push(format!(
@@ -496,11 +513,35 @@ fn run_executor_introspection(
                             typ = nc.col_type,
                             alias = qi(&nc.ek_alias),
                         ));
+                        // Other nullable cols: COALESCE null-safe comparison
+                        for (j, other_nc) in nullable_cols.iter().enumerate() {
+                            if j == i { continue; }
+                            this_join.push(format!(
+                                "COALESCE(t.{col}, (-1)::{typ}) = COALESCE(p.{alias}, (-1)::{typ})",
+                                col = qi(&other_nc.col),
+                                alias = qi(&other_nc.ek_alias),
+                                typ = other_nc.col_type,
+                            ));
+                            this_select.push(format!(
+                                "(entity_keys->>'{col}')::{typ} AS {alias}",
+                                col = other_nc.col.replace('\'', "''"),
+                                typ = other_nc.col_type,
+                                alias = qi(&other_nc.ek_alias),
+                            ));
+                        }
                         pj.push(this_join.join(" AND "));
-                        pf.push(format!(
+                        // Mutually exclusive filter: this col IS NOT NULL, all preceding ARE NULL
+                        this_filter_parts.push(format!(
                             "(entity_keys->>'{}') IS NOT NULL",
                             nc.col.replace('\'', "''")
                         ));
+                        for prev_nc in &nullable_cols[..i] {
+                            this_filter_parts.push(format!(
+                                "(entity_keys->>'{}') IS NULL",
+                                prev_nc.col.replace('\'', "''")
+                            ));
+                        }
+                        pf.push(this_filter_parts.join(" AND "));
                         ps.push(this_select.join(", "));
                     }
                     (pj, pf, ps)
