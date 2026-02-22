@@ -17,6 +17,9 @@ pub struct IntrospectionResult {
     /// Includes: NOT NULL with default, nullable with default, NOT NULL without default.
     /// Excludes: identity, generated, and nullable-without-default (REGULAR) columns.
     pub exclude_if_null_columns: std::collections::HashSet<String>,
+    /// Map of target column name → whether the column is NOT NULL (attnotnull).
+    /// Used for partition-by-NULL optimization in parameterized target filters.
+    pub target_col_notnull: std::collections::HashMap<String, bool>,
 }
 
 /// Perform all introspection in a single SPI connection scope.
@@ -158,28 +161,31 @@ pub fn introspect_all(
             (cols, types)
         };
 
-        // 5. Target columns (excluding generated) with their types
+        // 5. Target columns (excluding generated) with their types and nullability
         let tgt_cols_query = format!(
-            "SELECT attname::text, atttypid::regtype::text FROM pg_attribute \
+            "SELECT attname::text, atttypid::regtype::text, attnotnull FROM pg_attribute \
              WHERE attrelid = {}::oid AND attnum > 0 AND NOT attisdropped \
              AND attgenerated = '' ORDER BY attnum",
             target_oid
         );
-        let (target_cols, target_col_types) = {
+        let (target_cols, target_col_types, target_col_notnull) = {
             let table = client
                 .select(&tgt_cols_query, None, &[])
                 .map_err(|e| format!("SPI error: {e}"))?;
             let mut cols = Vec::new();
             let mut types = std::collections::HashMap::new();
+            let mut notnull = std::collections::HashMap::new();
             for row in table {
                 if let Some(name) = row.get::<String>(1).unwrap_or(None) {
                     if let Some(typ) = row.get::<String>(2).unwrap_or(None) {
                         types.insert(name.clone(), typ);
                     }
+                    let is_notnull = row.get::<bool>(3).unwrap_or(Some(false)).unwrap_or(false);
+                    notnull.insert(name.clone(), is_notnull);
                     cols.push(name);
                 }
             }
-            (cols, types)
+            (cols, types, notnull)
         };
 
         // 6. Exclude-if-null columns (for UPSERT/REPLACE NULL stripping)
@@ -210,6 +216,7 @@ pub fn introspect_all(
             target_col_types,
             source_col_types,
             exclude_if_null_columns,
+            target_col_notnull,
         })
     })
 }

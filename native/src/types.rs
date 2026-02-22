@@ -548,6 +548,10 @@ pub struct FilterParam {
     /// Group ID: columns with the same key_set_id form one composite key filter.
     /// Single-column key sets have unique IDs; multi-column share one ID.
     pub key_set_id: usize,
+    /// Column names that must be NOT NULL in source rows for this partition.
+    /// Used by extract_filter_values to filter source rows per partition.
+    /// Empty means no partition filtering (all-NOT-NULL key set).
+    pub partition_not_null_cols: Vec<String>,
 }
 
 // ── Cached state for the planner (reused across batches within one session) ──
