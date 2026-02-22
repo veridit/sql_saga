@@ -1,8 +1,8 @@
                  event                  | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 ----------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                                  |         0 | 0 ms            |                | 0 rows     | 
- Range-Only Era+History INSERTs         |     10000 | 546 ms          | 491 ms         | 10000 rows | ~20377 rows/s
- Range-Only Era+History Update deferred |     10000 | 1 secs          | 822 ms         | 10000 rows | ~12163 rows/s
- Range-Only Era+History Update non-key  |     10000 | 2 secs          | 878 ms         | 10000 rows | ~11392 rows/s
+ Range-Only Era+History INSERTs         |     10000 | 659 ms          | 594 ms         | 10000 rows | ~16836 rows/s
+ Range-Only Era+History Update deferred |     10000 | 2 secs          | 866 ms         | 10000 rows | ~11543 rows/s
+ Range-Only Era+History Update non-key  |     10000 | 3 secs          | 975 ms         | 10000 rows | ~10257 rows/s
 (4 rows)
 
