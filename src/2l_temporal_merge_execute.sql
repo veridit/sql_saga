@@ -540,10 +540,10 @@ BEGIN
     -- Without this, JSONB extraction in the WHERE clause forces a cross-join
     -- with post-filtering, causing O(N*M) comparisons instead of O(N+M).
     --
-    -- IMPORTANT: We use = instead of IS NOT DISTINCT FROM because:
-    -- 1. PostgreSQL can only use = in Hash/Merge join conditions
-    -- 2. IS NOT DISTINCT FROM forces the comparison into a Join Filter (post-hash)
-    -- 3. Identity columns are part of unique keys, so NULLs are not expected
+    -- For NOT NULL columns: use = for Hash/Merge join performance.
+    -- For nullable columns (XOR pattern like legal_unit_id/establishment_id):
+    -- use COALESCE sentinel to enable NULL=NULL matching while preserving Hash Join.
+    -- IS NOT DISTINCT FROM was tested on PG18 and caused performance issues.
     SELECT
         string_agg(
             format(
@@ -555,11 +555,20 @@ BEGIN
             ', '
         ),
         string_agg(
-            format(
-                't.%1$I = p.%2$I',
-                col,
-                col || '_ek'
-            ),
+            CASE WHEN a.attnotnull THEN
+                format(
+                    't.%1$I = p.%2$I',
+                    col,
+                    col || '_ek'
+                )
+            ELSE
+                format(
+                    'COALESCE(t.%1$I, (-1)::%3$s) = COALESCE(p.%2$I, (-1)::%3$s)',
+                    col,
+                    col || '_ek',
+                    format_type(a.atttypid, -1)
+                )
+            END,
             ' AND '
         )
     INTO

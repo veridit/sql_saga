@@ -380,7 +380,7 @@ fn run_executor_introspection(
                 .collect::<Vec<_>>()
                 .join(",");
             let ek_query = format!(
-                "SELECT a.attname::text, format_type(a.atttypid, -1) \
+                "SELECT a.attname::text, format_type(a.atttypid, -1), a.attnotnull \
                  FROM pg_attribute a \
                  WHERE a.attrelid = {}::oid AND a.attname IN ({}) AND NOT a.attisdropped \
                  ORDER BY array_position(ARRAY[{}]::text[], a.attname::text)",
@@ -394,6 +394,7 @@ fn run_executor_introspection(
             for row in table {
                 let col: String = row.get::<String>(1).unwrap_or(None).unwrap_or_default();
                 let col_type: String = row.get::<String>(2).unwrap_or(None).unwrap_or_default();
+                let attnotnull: bool = row.get::<bool>(3).unwrap_or(None).unwrap_or(false);
                 let ek_alias = format!("{}_ek", col);
                 select_parts.push(format!(
                     "(entity_keys->>'{col}')::{typ} AS {alias}",
@@ -401,11 +402,20 @@ fn run_executor_introspection(
                     typ = col_type,
                     alias = qi(&ek_alias),
                 ));
-                join_parts.push(format!(
-                    "t.{col} = p.{alias}",
-                    col = qi(&col),
-                    alias = qi(&ek_alias),
-                ));
+                if attnotnull {
+                    join_parts.push(format!(
+                        "t.{col} = p.{alias}",
+                        col = qi(&col),
+                        alias = qi(&ek_alias),
+                    ));
+                } else {
+                    join_parts.push(format!(
+                        "COALESCE(t.{col}, (-1)::{typ}) = COALESCE(p.{alias}, (-1)::{typ})",
+                        col = qi(&col),
+                        alias = qi(&ek_alias),
+                        typ = col_type,
+                    ));
+                }
             }
 
             if select_parts.is_empty() {
