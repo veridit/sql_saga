@@ -51,6 +51,7 @@ pub fn build_sql_templates_from_cols(
     target_cols: &[String],
     target_col_types: &std::collections::HashMap<String, String>,
     source_col_types: &std::collections::HashMap<String, String>,
+    target_col_notnull: &std::collections::HashMap<String, bool>,
     target_ident: &str,
     ctx: &PlannerContext,
     source_table_name: &str,
@@ -69,6 +70,7 @@ pub fn build_sql_templates_from_cols(
         target_ident,
         source_cols,
         target_col_types,
+        target_col_notnull,
         &target_col_layout,
         ctx,
     );
@@ -286,6 +288,7 @@ fn build_target_sql_template(
     target_ident: &str,
     source_cols: &[String],
     target_col_types: &std::collections::HashMap<String, String>,
+    target_col_notnull: &std::collections::HashMap<String, bool>,
     col_layout: &[ColMapping],
     ctx: &PlannerContext,
 ) -> (String, Option<Vec<FilterParam>>) {
@@ -302,7 +305,7 @@ fn build_target_sql_template(
 
     // Try parameterized filter first (enables prepared statement caching)
     if let Some((where_clause, params)) =
-        try_build_parameterized_filter(target_col_types, source_cols, ctx)
+        try_build_parameterized_filter(target_col_types, target_col_notnull, source_cols, ctx)
     {
         let sql = format!(
             "SELECT lower(t.{rc})::text, upper(t.{rc})::text{cols} \
@@ -526,6 +529,7 @@ fn read_source_ordinals(
 /// Returns Some(("", [])) for full-scan modes (no WHERE clause needed).
 fn try_build_parameterized_filter(
     target_col_types: &std::collections::HashMap<String, String>,
+    target_col_notnull: &std::collections::HashMap<String, bool>,
     source_cols: &[String],
     ctx: &PlannerContext,
 ) -> Option<(String, Vec<FilterParam>)> {
@@ -579,12 +583,16 @@ fn try_build_parameterized_filter(
         return Some((String::new(), vec![])); // No filter needed
     }
 
-    // Build parameterized WHERE clause — handles both single and multi-column key sets
+    // Build parameterized WHERE clause — handles both single and multi-column key sets.
+    // For key sets with nullable columns, uses partition-by-NULL optimization:
+    // generates separate EXISTS per nullable column with IS NOT NULL + = joins,
+    // enabling Hash/Merge joins instead of Nested Loop with IS NOT DISTINCT FROM.
     let mut params = Vec::new();
     let mut where_parts = Vec::new();
     let mut param_index = 1usize;
+    let mut key_set_id = 0usize;
 
-    for (key_set_id, (cols, is_identity)) in filter_key_sets.iter().enumerate() {
+    for (_original_idx, (cols, is_identity)) in filter_key_sets.iter().enumerate() {
         // Verify all columns have known types
         for col in cols {
             if !target_col_types.contains_key(col) {
@@ -592,34 +600,15 @@ fn try_build_parameterized_filter(
             }
         }
 
-        if cols.len() == 1 {
-            // Single-column: EXISTS (SELECT 1 FROM unnest($N) AS _u(v) WHERE t."col" IS NOT DISTINCT FROM _u.v)
-            // Uses IS NOT DISTINCT FROM to correctly match NULL values.
-            let col = &cols[0];
-            let pg_type = target_col_types.get(col).unwrap();
-            params.push(FilterParam {
-                col_name: col.clone(),
-                pg_type: pg_type.clone(),
-                param_index,
-                is_identity: *is_identity,
-                key_set_id,
-            });
-            where_parts.push(format!(
-                "EXISTS (SELECT 1 FROM unnest(${idx}::text::{typ}[]) AS _u(v) WHERE t.{col} IS NOT DISTINCT FROM _u.v)",
-                col = qi(col),
-                idx = param_index,
-                typ = pg_type,
-            ));
-            param_index += 1;
-        } else {
-            // Multi-column: EXISTS with IS NOT DISTINCT FROM for NULL-safe matching.
-            // PostgreSQL forbids column definition lists on multi-arg UNNEST, so we use
-            // ROWS FROM() and alias the composite result with column names.
-            let mut unnest_calls = Vec::new();
-            let mut u_col_names = Vec::new();
-            let mut conditions = Vec::new();
+        // Determine which columns are nullable
+        let nullable_cols: Vec<&String> = cols.iter()
+            .filter(|c| !target_col_notnull.get(*c).copied().unwrap_or(true))
+            .collect();
 
-            for (ci, col) in cols.iter().enumerate() {
+        if nullable_cols.is_empty() {
+            // All columns are NOT NULL — use existing approach
+            if cols.len() == 1 {
+                let col = &cols[0];
                 let pg_type = target_col_types.get(col).unwrap();
                 params.push(FilterParam {
                     col_name: col.clone(),
@@ -627,28 +616,136 @@ fn try_build_parameterized_filter(
                     param_index,
                     is_identity: *is_identity,
                     key_set_id,
+                    partition_not_null_cols: vec![],
                 });
-                let u_alias = format!("_c{}", ci);
-                unnest_calls.push(format!(
-                    "unnest(${idx}::text::{typ}[])",
+                where_parts.push(format!(
+                    "EXISTS (SELECT 1 FROM unnest(${idx}::text::{typ}[]) AS _u(v) WHERE t.{col} IS NOT DISTINCT FROM _u.v)",
+                    col = qi(col),
                     idx = param_index,
                     typ = pg_type,
                 ));
-                u_col_names.push(u_alias.clone());
-                conditions.push(format!(
-                    "t.{col} IS NOT DISTINCT FROM _u.{u_alias}",
-                    col = qi(col),
-                    u_alias = u_alias,
-                ));
                 param_index += 1;
-            }
+            } else {
+                // Multi-column, all NOT NULL: EXISTS with IS NOT DISTINCT FROM
+                let mut unnest_calls = Vec::new();
+                let mut u_col_names = Vec::new();
+                let mut conditions = Vec::new();
 
-            where_parts.push(format!(
-                "EXISTS (SELECT 1 FROM ROWS FROM({fns}) AS _u({cols}) WHERE {conds})",
-                fns = unnest_calls.join(", "),
-                cols = u_col_names.join(", "),
-                conds = conditions.join(" AND "),
-            ));
+                for (ci, col) in cols.iter().enumerate() {
+                    let pg_type = target_col_types.get(col).unwrap();
+                    params.push(FilterParam {
+                        col_name: col.clone(),
+                        pg_type: pg_type.clone(),
+                        param_index,
+                        is_identity: *is_identity,
+                        key_set_id,
+                        partition_not_null_cols: vec![],
+                    });
+                    let u_alias = format!("_c{}", ci);
+                    unnest_calls.push(format!(
+                        "unnest(${idx}::text::{typ}[])",
+                        idx = param_index,
+                        typ = pg_type,
+                    ));
+                    u_col_names.push(u_alias.clone());
+                    conditions.push(format!(
+                        "t.{col} IS NOT DISTINCT FROM _u.{u_alias}",
+                        col = qi(col),
+                        u_alias = u_alias,
+                    ));
+                    param_index += 1;
+                }
+
+                where_parts.push(format!(
+                    "EXISTS (SELECT 1 FROM ROWS FROM({fns}) AS _u({cols}) WHERE {conds})",
+                    fns = unnest_calls.join(", "),
+                    cols = u_col_names.join(", "),
+                    conds = conditions.join(" AND "),
+                ));
+            }
+            key_set_id += 1;
+        } else {
+            // Has nullable columns — partition-by-NULL optimization.
+            // For each nullable column, generate a separate EXISTS clause with:
+            // - IS NOT NULL filter on target column
+            // - = equality joins (Hash/Merge join eligible)
+            // - Source params filtered to rows where that column IS NOT NULL
+            // Mirrors PL/pgSQL partition-by-NULL pattern (src/2k_temporal_merge_plan.sql:1183-1254).
+            let notnull_cols: Vec<&String> = cols.iter()
+                .filter(|c| target_col_notnull.get(*c).copied().unwrap_or(true))
+                .collect();
+
+            for nullable_col in &nullable_cols {
+                // Partition columns = NOT NULL cols + this nullable col
+                let partition_cols: Vec<&String> = notnull_cols.iter()
+                    .copied()
+                    .chain(std::iter::once(*nullable_col))
+                    .collect();
+
+                if partition_cols.len() == 1 {
+                    // Single-column partition (nullable col only, no NOT NULL cols)
+                    let col = partition_cols[0];
+                    let pg_type = target_col_types.get(col).unwrap();
+                    params.push(FilterParam {
+                        col_name: col.clone(),
+                        pg_type: pg_type.clone(),
+                        param_index,
+                        is_identity: *is_identity,
+                        key_set_id,
+                        partition_not_null_cols: vec![(*nullable_col).clone()],
+                    });
+                    where_parts.push(format!(
+                        "EXISTS (SELECT 1 FROM unnest(${idx}::text::{typ}[]) AS _u(v) \
+                         WHERE t.{col} IS NOT NULL AND t.{col} = _u.v)",
+                        col = qi(col),
+                        idx = param_index,
+                        typ = pg_type,
+                    ));
+                    param_index += 1;
+                } else {
+                    // Multi-column partition: ROWS FROM with = equality joins
+                    let mut unnest_calls = Vec::new();
+                    let mut u_col_names = Vec::new();
+                    let mut conditions = Vec::new();
+
+                    // Add IS NOT NULL condition for the nullable column on target
+                    conditions.push(format!("t.{} IS NOT NULL", qi(nullable_col)));
+
+                    for (ci, col) in partition_cols.iter().enumerate() {
+                        let pg_type = target_col_types.get(*col).unwrap();
+                        params.push(FilterParam {
+                            col_name: (*col).clone(),
+                            pg_type: pg_type.clone(),
+                            param_index,
+                            is_identity: *is_identity,
+                            key_set_id,
+                            partition_not_null_cols: vec![(*nullable_col).clone()],
+                        });
+                        let u_alias = format!("_c{}", ci);
+                        unnest_calls.push(format!(
+                            "unnest(${idx}::text::{typ}[])",
+                            idx = param_index,
+                            typ = pg_type,
+                        ));
+                        u_col_names.push(u_alias.clone());
+                        // Use = for equality (all columns in partition are NOT NULL by construction)
+                        conditions.push(format!(
+                            "t.{col} = _u.{u_alias}",
+                            col = qi(col),
+                            u_alias = u_alias,
+                        ));
+                        param_index += 1;
+                    }
+
+                    where_parts.push(format!(
+                        "EXISTS (SELECT 1 FROM ROWS FROM({fns}) AS _u({cols}) WHERE {conds})",
+                        fns = unnest_calls.join(", "),
+                        cols = u_col_names.join(", "),
+                        conds = conditions.join(" AND "),
+                    ));
+                }
+                key_set_id += 1;
+            }
         }
     }
 
@@ -681,11 +778,29 @@ pub fn extract_filter_values(
             .filter(|p| p.key_set_id == ks_id)
             .collect();
 
+        // Get partition NOT NULL filter columns (same for all params in a key_set)
+        let partition_not_null = ks_params.first()
+            .map(|p| &p.partition_not_null_cols)
+            .cloned()
+            .unwrap_or_default();
+
         let mut seen = std::collections::HashSet::new();
         let n_cols = ks_params.len();
         let mut columns: Vec<Vec<Option<String>>> = vec![Vec::new(); n_cols];
 
         for row in source_rows {
+            // Partition-by-NULL filter: skip rows where required columns are NULL
+            if !partition_not_null.is_empty() {
+                let passes = partition_not_null.iter().all(|col| {
+                    let val = row.identity_keys.get(col)
+                        .or_else(|| row.lookup_keys.get(col));
+                    val.map_or(false, |v| !v.is_null())
+                });
+                if !passes {
+                    continue;
+                }
+            }
+
             let mut tuple: Vec<Option<String>> = Vec::with_capacity(n_cols);
 
             for param in &ks_params {

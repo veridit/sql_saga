@@ -471,22 +471,38 @@ fn detect_eclipsed(
     for (i, m) in matched.iter().enumerate() {
         // Build partition key from lookup column values.
         // A lookup column may be in identity_keys (when PK = NK), so check both maps.
-        let mut partition_map = serde_json::Map::new();
-        for col in &ctx.all_lookup_cols {
-            if let Some(v) = m.source.lookup_keys.get(col) {
-                partition_map.insert(col.clone(), v.clone());
-            } else if let Some(v) = m.source.identity_keys.get(col) {
-                partition_map.insert(col.clone(), v.clone());
-            }
-        }
-        let has_lookup_values = !partition_map.is_empty()
-            && partition_map.values().any(|v| !v.is_null());
-        let partition_key = if has_lookup_values {
-            // Path 1: has lookup keys → partition by raw lookup column values
-            json_map_to_key(&partition_map)
-        } else {
-            // Path 2: no usable lookup keys → partition by causal_id (each row isolated)
+        //
+        // Optimization: for XOR nullable keys (common pattern), most rows have only
+        // one non-null lookup column. Build the key inline without allocating a map
+        // or sorting when possible.
+        let partition_key = if ctx.all_lookup_cols.is_empty() {
             format!("causal_{}", m.source.causal_id)
+        } else {
+            // Fast path: collect non-null key=value pairs inline
+            let mut parts: Vec<(&str, String)> = Vec::new();
+            for col in &ctx.all_lookup_cols {
+                let val = m.source.lookup_keys.get(col)
+                    .or_else(|| m.source.identity_keys.get(col));
+                if let Some(v) = val {
+                    if !v.is_null() {
+                        parts.push((col.as_str(), json_value_to_str(v)));
+                    }
+                }
+            }
+            if parts.is_empty() {
+                // Path 2: no usable lookup keys → partition by causal_id
+                format!("causal_{}", m.source.causal_id)
+            } else if parts.len() == 1 {
+                // Fast path: single non-null key — no sorting needed
+                format!("{}={}", parts[0].0, parts[0].1)
+            } else {
+                // Multiple non-null keys — sort for stable key
+                parts.sort_by_key(|(k, _)| *k);
+                parts.iter()
+                    .map(|(k, v)| format!("{}={}", k, v))
+                    .collect::<Vec<_>>()
+                    .join("__")
+            }
         };
         by_group.entry(partition_key).or_default().push(i);
     }

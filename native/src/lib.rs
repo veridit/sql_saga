@@ -212,6 +212,7 @@ fn temporal_merge_plan_native(
             &result.target_cols,
             &result.target_col_types,
             &result.source_col_types,
+            &result.target_col_notnull,
             &result.target_ident,
             &ctx,
             &source_ident,
