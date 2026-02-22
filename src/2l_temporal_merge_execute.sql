@@ -73,6 +73,15 @@ DECLARE
     v_t1 timestamptz;
     v_t2 timestamptz;
     v_t3 timestamptz;
+    v_t_delete timestamptz;
+    v_t_update timestamptz;
+    v_t_insert timestamptz;
+    v_t_done timestamptz;
+    v_partition_join_clauses TEXT[];
+    v_partition_plan_filters TEXT[];
+    v_partition_select_lists TEXT[];
+    v_partition_count INT;
+    v_part INT;
 BEGIN
     v_log_trace := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.enable_trace', true), ''), 'false')::boolean;
     v_log_sql := COALESCE(NULLIF(current_setting('sql_saga.temporal_merge.log_sql', true), ''), 'false')::boolean;
@@ -127,6 +136,9 @@ BEGIN
         v_founding_all_cols_from_jsonb := v_cache.founding_all_cols_from_jsonb;
         v_entity_key_join_clause := v_cache.entity_key_join_clause;
         v_entity_key_select_list := v_cache.entity_key_select_list;
+        v_partition_join_clauses := v_cache.partition_join_clauses;
+        v_partition_plan_filters := v_cache.partition_plan_filters;
+        v_partition_select_lists := v_cache.partition_select_lists;
 
         -- Still need schema name for constraint deferral later
         SELECT n.nspname INTO v_target_schema_name
@@ -580,6 +592,10 @@ BEGIN
     v_entity_key_join_clause := COALESCE(v_entity_key_join_clause, 'true');
     v_entity_key_select_list := COALESCE(v_entity_key_select_list, '');
 
+    -- Partition arrays: single partition for PL/pgSQL fallback (no COALESCE elimination)
+    v_partition_join_clauses := ARRAY[v_entity_key_join_clause];
+    v_partition_plan_filters := ARRAY['true'];
+    v_partition_select_lists := ARRAY[v_entity_key_select_list];
 
         -- Get dynamic column lists for DML. The data columns are defined as all columns
         -- in the target table, minus the identity and temporal boundary columns.
@@ -717,6 +733,8 @@ BEGIN
 
     END IF; -- NOT v_use_native_executor (introspection phase 2)
 
+        v_partition_count := COALESCE(array_length(v_partition_join_clauses, 1), 0);
+
         IF v_log_step_timing THEN
             v_t3 := clock_timestamp();
             RAISE NOTICE '(%) step_timing: introspection=%.1fms, index_checks=%.1fms, column_list_cte=%.1fms',
@@ -775,23 +793,28 @@ BEGIN
                 -- Execute operations ordered by plan_op_seq: DELETE -> UPDATE -> INSERT
                 -- The planner generates plan_op_seq to ensure DELETE operations come first,
                 -- then UPDATEs (ordered by effect), then INSERTs. This prevents temporal overlaps.
+                IF v_log_step_timing THEN v_t_delete := clock_timestamp(); END IF;
                 IF v_log_execute THEN
                     RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING DELETES ---', v_log_id;
                 END IF;
-                -- 1. Execute DELETE operations
+                -- 1. Execute DELETE operations (partitioned by nullable identity columns)
                 -- Pre-extract entity_keys columns in subquery for efficient join.
                 IF (SELECT TRUE FROM temporal_merge_plan WHERE operation = 'DELETE' LIMIT 1) THEN
-                    v_sql := format($$ DELETE FROM %1$s t
-                        USING (SELECT *, %5$s FROM temporal_merge_plan WHERE operation = 'DELETE') p
-                        WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
-                    $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, v_entity_key_select_list);
-                    EXECUTE v_sql;
+                    FOR v_part IN 1..v_partition_count LOOP
+                        v_sql := format($$ DELETE FROM %1$s t
+                            USING (SELECT *, %5$s FROM temporal_merge_plan WHERE operation = 'DELETE' AND %6$s) p
+                            WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                        $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                        IF v_log_sql THEN RAISE NOTICE '(%) DELETE partition %/% SQL: %', v_log_id, v_part, v_partition_count, v_sql; END IF;
+                        EXECUTE v_sql;
+                    END LOOP;
                 END IF;
 
+                IF v_log_step_timing THEN v_t_update := clock_timestamp(); END IF;
                 IF v_log_execute THEN
                     RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING UPDATES ---', v_log_id;
                 END IF;
-                -- 2. Execute UPDATE operations (batched by statement_seq to avoid temporal overlaps)
+                -- 2. Execute UPDATE operations (batched by statement_seq, partitioned by nullable identity columns)
                 -- The planner assigns statement_seq to group operations that can safely execute together:
                 -- - NONE/SHRINK operations share a statement_seq (they only contract ranges)
                 -- - MOVE operations each get their own statement_seq (can create temporary overlaps)
@@ -802,24 +825,29 @@ BEGIN
 
                 IF v_update_statement_seqs IS NOT NULL THEN
                     FOREACH v_update_statement_seq IN ARRAY v_update_statement_seqs LOOP
-                        IF v_update_set_clause IS NOT NULL THEN
-                            -- Pre-extract entity_keys columns in subquery for efficient join.
-                            -- This allows PostgreSQL to use Hash/Merge joins instead of cross-join with filter.
-                            v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_range::%5$I, %2$s
-                                FROM (SELECT *, %9$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s ORDER BY plan_op_seq) p
-                                WHERE %3$s AND t.%4$I = p.old_valid_range::%5$I;
-                            $$, v_target_table_ident, v_update_set_clause, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_entity_key_select_list);
-                            EXECUTE v_sql;
-                        ELSIF v_all_cols_ident IS NOT NULL THEN
-                            v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
-                                FROM (SELECT *, %8$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s ORDER BY plan_op_seq) p
-                                WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
-                            $$, v_target_table_ident, v_entity_key_join_clause, v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_entity_key_select_list);
-                            EXECUTE v_sql;
-                        END IF;
+                        FOR v_part IN 1..v_partition_count LOOP
+                            IF v_update_set_clause IS NOT NULL THEN
+                                -- Pre-extract entity_keys columns in subquery for efficient join.
+                                -- This allows PostgreSQL to use Hash/Merge joins instead of cross-join with filter.
+                                v_sql := format($$ UPDATE %1$s t SET %4$I = p.new_valid_range::%5$I, %2$s
+                                    FROM (SELECT *, %9$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %8$s AND %10$s ORDER BY plan_op_seq) p
+                                    WHERE %3$s AND t.%4$I = p.old_valid_range::%5$I;
+                                $$, v_target_table_ident, v_update_set_clause, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                                IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
+                                EXECUTE v_sql;
+                            ELSIF v_all_cols_ident IS NOT NULL THEN
+                                v_sql := format($$ UPDATE %1$s t SET %3$I = p.new_valid_range::%4$I
+                                    FROM (SELECT *, %8$s FROM temporal_merge_plan WHERE operation = 'UPDATE' AND statement_seq = %7$s AND %9$s ORDER BY plan_op_seq) p
+                                    WHERE %2$s AND t.%3$I = p.old_valid_range::%4$I;
+                                $$, v_target_table_ident, v_partition_join_clauses[v_part], v_range_col, v_range_constructor, NULL, NULL, v_update_statement_seq, v_partition_select_lists[v_part], v_partition_plan_filters[v_part]);
+                                IF v_log_sql THEN RAISE NOTICE '(%) UPDATE partition %/% seq=% SQL: %', v_log_id, v_part, v_partition_count, v_update_statement_seq, v_sql; END IF;
+                                EXECUTE v_sql;
+                            END IF;
+                        END LOOP;
                     END LOOP;
                 END IF;
 
+                IF v_log_step_timing THEN v_t_insert := clock_timestamp(); END IF;
                 IF v_log_execute THEN
                     RAISE NOTICE '(%) --- temporal_merge_execute: EXECUTING INSERTS ---', v_log_id;
                 END IF;
@@ -1024,6 +1052,15 @@ BEGIN
                         );
                         EXECUTE v_sql;
                      END;
+                END IF;
+
+                IF v_log_step_timing THEN
+                    v_t_done := clock_timestamp();
+                    RAISE NOTICE '(%) executor_timing: delete=%.1fms, update=%.1fms, insert=%.1fms',
+                        v_log_id,
+                        extract(epoch from v_t_update - v_t_delete) * 1000,
+                        extract(epoch from v_t_insert - v_t_update) * 1000,
+                        extract(epoch from v_t_done - v_t_insert) * 1000;
                 END IF;
 
                 -- Back-fill source table with generated IDs if requested.

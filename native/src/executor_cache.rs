@@ -34,6 +34,10 @@ pub struct ExecutorCachedState {
     pub founding_all_cols_from_jsonb: Option<String>,
     pub entity_key_join_clause: String,
     pub entity_key_select_list: String,
+    // Partition-by-NULL: per-partition SQL fragments for executor DELETE/UPDATE
+    pub partition_join_clauses: Vec<String>,
+    pub partition_plan_filters: Vec<String>,
+    pub partition_select_lists: Vec<String>,
     // Cache validation
     pub source_cols_hash: u64,
 }
@@ -205,6 +209,12 @@ fn temporal_merge_executor_introspect(
         .unwrap_or_else(|e| pgrx::error!("set entity_key_join_clause: {}", e));
     result.set_by_name("entity_key_select_list", state.entity_key_select_list.clone())
         .unwrap_or_else(|e| pgrx::error!("set entity_key_select_list: {}", e));
+    result.set_by_name("partition_join_clauses", state.partition_join_clauses.clone())
+        .unwrap_or_else(|e| pgrx::error!("set partition_join_clauses: {}", e));
+    result.set_by_name("partition_plan_filters", state.partition_plan_filters.clone())
+        .unwrap_or_else(|e| pgrx::error!("set partition_plan_filters: {}", e));
+    result.set_by_name("partition_select_lists", state.partition_select_lists.clone())
+        .unwrap_or_else(|e| pgrx::error!("set partition_select_lists: {}", e));
 
     result
 }
@@ -370,10 +380,22 @@ fn run_executor_introspection(
             range_subtype.clone()
         };
 
-        // 8. Entity key join/select clause
-        // Build using a single query to get identity column types
-        let (entity_key_select_list, entity_key_join_clause) = if identity_columns.is_empty() {
-            (String::new(), "true".to_string())
+        // 8. Entity key join/select clause + partition-by-NULL arrays
+        // Build using a single query to get identity column types.
+        // The legacy join/select uses COALESCE sentinel for nullable cols (backward compat).
+        // The partition arrays split nullable cols into separate partitions with simple equality.
+        struct ColInfo {
+            col: String,
+            col_type: String,
+            attnotnull: bool,
+            ek_alias: String,
+        }
+
+        let (entity_key_select_list, entity_key_join_clause,
+             partition_join_clauses, partition_plan_filters, partition_select_lists) =
+        if identity_columns.is_empty() {
+            (String::new(), "true".to_string(),
+             vec!["true".to_string()], vec!["true".to_string()], vec![String::new()])
         } else {
             let cols_list = identity_columns.iter()
                 .map(|c| format!("'{}'", c.replace('\'', "''")))
@@ -389,39 +411,143 @@ fn run_executor_introspection(
             let table = client.select(&ek_query, None, &[])
                 .unwrap_or_else(|e| pgrx::error!("SPI error getting identity col types: {}", e));
 
-            let mut select_parts = Vec::new();
-            let mut join_parts = Vec::new();
+            // Collect column info (SPI result can only be iterated once)
+            let mut col_infos: Vec<ColInfo> = Vec::new();
             for row in table {
                 let col: String = row.get::<String>(1).unwrap_or(None).unwrap_or_default();
                 let col_type: String = row.get::<String>(2).unwrap_or(None).unwrap_or_default();
                 let attnotnull: bool = row.get::<bool>(3).unwrap_or(None).unwrap_or(false);
                 let ek_alias = format!("{}_ek", col);
-                select_parts.push(format!(
-                    "(entity_keys->>'{col}')::{typ} AS {alias}",
-                    col = col.replace('\'', "''"),
-                    typ = col_type,
-                    alias = qi(&ek_alias),
-                ));
-                if attnotnull {
-                    join_parts.push(format!(
-                        "t.{col} = p.{alias}",
-                        col = qi(&col),
-                        alias = qi(&ek_alias),
-                    ));
-                } else {
-                    join_parts.push(format!(
-                        "COALESCE(t.{col}, (-1)::{typ}) = COALESCE(p.{alias}, (-1)::{typ})",
-                        col = qi(&col),
-                        alias = qi(&ek_alias),
-                        typ = col_type,
-                    ));
-                }
+                col_infos.push(ColInfo { col, col_type, attnotnull, ek_alias });
             }
 
-            if select_parts.is_empty() {
-                (String::new(), "true".to_string())
+            if col_infos.is_empty() {
+                (String::new(), "true".to_string(),
+                 vec!["true".to_string()], vec!["true".to_string()], vec![String::new()])
             } else {
-                (select_parts.join(", "), join_parts.join(" AND "))
+                // Build legacy select/join (backward compat with PL/pgSQL fallback)
+                let mut select_parts = Vec::new();
+                let mut join_parts = Vec::new();
+                for ci in &col_infos {
+                    select_parts.push(format!(
+                        "(entity_keys->>'{col}')::{typ} AS {alias}",
+                        col = ci.col.replace('\'', "''"),
+                        typ = ci.col_type,
+                        alias = qi(&ci.ek_alias),
+                    ));
+                    if ci.attnotnull {
+                        join_parts.push(format!(
+                            "t.{col} = p.{alias}",
+                            col = qi(&ci.col),
+                            alias = qi(&ci.ek_alias),
+                        ));
+                    } else {
+                        join_parts.push(format!(
+                            "COALESCE(t.{col}, (-1)::{typ}) = COALESCE(p.{alias}, (-1)::{typ})",
+                            col = qi(&ci.col),
+                            alias = qi(&ci.ek_alias),
+                            typ = ci.col_type,
+                        ));
+                    }
+                }
+
+                // Build partition arrays for partition-by-NULL optimization
+                let not_null_cols: Vec<&ColInfo> = col_infos.iter().filter(|c| c.attnotnull).collect();
+                let nullable_cols: Vec<&ColInfo> = col_infos.iter().filter(|c| !c.attnotnull).collect();
+
+                let (p_joins, p_filters, p_selects) = if nullable_cols.is_empty() {
+                    // No nullable cols: single partition with simple equality (same as legacy)
+                    (
+                        vec![join_parts.join(" AND ")],
+                        vec!["true".to_string()],
+                        vec![select_parts.join(", ")],
+                    )
+                } else {
+                    // Partition-by-NULL optimization: one partition per nullable identity column.
+                    //
+                    // This relies on XOR semantics enforced by sql_saga.unique_keys.mutually_exclusive_columns.
+                    // When enabled, add_unique_key() creates a UNIQUE NULLS NOT DISTINCT constraint
+                    // (see src/1j_add_unique_key.sql:412) ensuring each row has exactly one non-NULL
+                    // nullable identity column.
+                    //
+                    // Filters use priority ordering to be mutually exclusive even without strict XOR:
+                    // partition i requires col_i IS NOT NULL AND all preceding cols ARE NULL.
+                    // This assigns each row to exactly one partition (the first non-NULL nullable column).
+                    //
+                    // Each partition JOINs on ALL nullable columns (not just its designated one):
+                    // - Designated column: simple equality (guaranteed NOT NULL by filter)
+                    // - Other columns: COALESCE null-safe comparison (may be NULL or non-NULL)
+                    //
+                    // Under XOR (common case), the COALESCE for "other" columns evaluates to
+                    // COALESCE(NULL, -1) = COALESCE(NULL, -1) → constant true. No performance cost.
+                    let mut pj = Vec::new();
+                    let mut pf = Vec::new();
+                    let mut ps = Vec::new();
+                    for (i, nc) in nullable_cols.iter().enumerate() {
+                        let mut this_join = Vec::new();
+                        let mut this_select = Vec::new();
+                        let mut this_filter_parts = Vec::new();
+                        // NOT NULL columns: simple equality in every partition
+                        for nnc in &not_null_cols {
+                            this_join.push(format!(
+                                "t.{col} = p.{alias}",
+                                col = qi(&nnc.col),
+                                alias = qi(&nnc.ek_alias),
+                            ));
+                            this_select.push(format!(
+                                "(entity_keys->>'{col}')::{typ} AS {alias}",
+                                col = nnc.col.replace('\'', "''"),
+                                typ = nnc.col_type,
+                                alias = qi(&nnc.ek_alias),
+                            ));
+                        }
+                        // This partition's nullable col: simple equality (safe due to IS NOT NULL filter)
+                        this_join.push(format!(
+                            "t.{col} = p.{alias}",
+                            col = qi(&nc.col),
+                            alias = qi(&nc.ek_alias),
+                        ));
+                        this_select.push(format!(
+                            "(entity_keys->>'{col}')::{typ} AS {alias}",
+                            col = nc.col.replace('\'', "''"),
+                            typ = nc.col_type,
+                            alias = qi(&nc.ek_alias),
+                        ));
+                        // Other nullable cols: COALESCE null-safe comparison
+                        for (j, other_nc) in nullable_cols.iter().enumerate() {
+                            if j == i { continue; }
+                            this_join.push(format!(
+                                "COALESCE(t.{col}, (-1)::{typ}) = COALESCE(p.{alias}, (-1)::{typ})",
+                                col = qi(&other_nc.col),
+                                alias = qi(&other_nc.ek_alias),
+                                typ = other_nc.col_type,
+                            ));
+                            this_select.push(format!(
+                                "(entity_keys->>'{col}')::{typ} AS {alias}",
+                                col = other_nc.col.replace('\'', "''"),
+                                typ = other_nc.col_type,
+                                alias = qi(&other_nc.ek_alias),
+                            ));
+                        }
+                        pj.push(this_join.join(" AND "));
+                        // Mutually exclusive filter: this col IS NOT NULL, all preceding ARE NULL
+                        this_filter_parts.push(format!(
+                            "(entity_keys->>'{}') IS NOT NULL",
+                            nc.col.replace('\'', "''")
+                        ));
+                        for prev_nc in &nullable_cols[..i] {
+                            this_filter_parts.push(format!(
+                                "(entity_keys->>'{}') IS NULL",
+                                prev_nc.col.replace('\'', "''")
+                            ));
+                        }
+                        pf.push(this_filter_parts.join(" AND "));
+                        ps.push(this_select.join(", "));
+                    }
+                    (pj, pf, ps)
+                };
+
+                (select_parts.join(", "), join_parts.join(" AND "), p_joins, p_filters, p_selects)
             }
         };
 
@@ -475,6 +601,9 @@ fn run_executor_introspection(
             founding_all_cols_from_jsonb,
             entity_key_join_clause,
             entity_key_select_list,
+            partition_join_clauses,
+            partition_plan_filters,
+            partition_select_lists,
             source_cols_hash,
         }
     })

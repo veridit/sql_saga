@@ -31,6 +31,9 @@ To fall back to PL/pgSQL: SET sql_saga.temporal_merge.use_plpgsql_planner = true
 -- Composite type for executor introspection cache results.
 -- Used as the return type of temporal_merge_executor_introspect().
 DO $$ BEGIN
+    -- Drop first to handle schema changes (new fields added over time).
+    -- CASCADE drops temporal_merge_executor_introspect which is recreated below.
+    DROP TYPE IF EXISTS sql_saga.temporal_merge_executor_cache CASCADE;
     CREATE TYPE sql_saga.temporal_merge_executor_cache AS (
         -- Era metadata (all text for Rust String compatibility)
         range_col text,
@@ -55,9 +58,12 @@ DO $$ BEGIN
         founding_all_cols_ident text,
         founding_all_cols_from_jsonb text,
         entity_key_join_clause text,
-        entity_key_select_list text
+        entity_key_select_list text,
+        -- Partition-by-NULL: per-partition SQL fragments for executor DELETE/UPDATE
+        partition_join_clauses text[],
+        partition_plan_filters text[],
+        partition_select_lists text[]
     );
-EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
 -- Native executor introspection cache function.

@@ -42,6 +42,45 @@ BEGIN
     -- The previous call to temporal_merge has already populated the plan cache.
     -- We retrieve the plan, re-run its setup steps to recreate temp tables,
     -- and then EXPLAIN its main query.
+    --
+    -- The plan cache only exists when the PL/pgSQL planner was used.
+    -- The native Rust planner inserts directly into temporal_merge_plan
+    -- and does not populate the plan cache. Skip gracefully in that case.
+    IF to_regclass('pg_temp.temporal_merge_plan_cache') IS NULL THEN
+        -- Native Rust planner was used. Report cache stats instead of EXPLAIN replay.
+        INSERT INTO benchmark_explain_output VALUES ('--- Native planner: EXPLAIN replay not available (no plan cache) ---');
+
+        IF to_regproc('sql_saga.temporal_merge_native_cache_stats') IS NOT NULL THEN
+            INSERT INTO benchmark_explain_output VALUES ('--- Native planner cache stats ---');
+            FOR rec IN SELECT stat_name || ': ' || stat_value AS line
+                       FROM sql_saga.temporal_merge_native_cache_stats()
+            LOOP
+                INSERT INTO benchmark_explain_output VALUES (rec.line);
+            END LOOP;
+        END IF;
+
+        IF to_regproc('sql_saga.temporal_merge_executor_introspect') IS NOT NULL THEN
+            INSERT INTO benchmark_explain_output VALUES ('--- Executor partition info for ' || p_target_table::text || ' ---');
+            DECLARE
+                v_cache sql_saga.temporal_merge_executor_cache;
+                v_part INT;
+            BEGIN
+                SELECT * INTO v_cache FROM sql_saga.temporal_merge_executor_introspect(
+                    target_table => p_target_table::oid,
+                    source_table => p_source_table::oid
+                );
+                INSERT INTO benchmark_explain_output VALUES (format('partition_count: %s', COALESCE(array_length(v_cache.partition_join_clauses, 1), 0)));
+                FOR v_part IN 1..COALESCE(array_length(v_cache.partition_join_clauses, 1), 0) LOOP
+                    INSERT INTO benchmark_explain_output VALUES (format('partition %s: filter=%s  join=%s', v_part, v_cache.partition_plan_filters[v_part], v_cache.partition_join_clauses[v_part]));
+                END LOOP;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'sql_saga: Could not introspect executor cache: %', SQLERRM;
+                INSERT INTO benchmark_explain_output VALUES ('--- Could not introspect executor cache: ' || SQLERRM || ' ---');
+            END;
+        END IF;
+
+        RETURN;
+    END IF;
 
     -- Find the plan SQLs for the source table of this scenario.
     SELECT c.plan_sqls INTO plan_sqls
