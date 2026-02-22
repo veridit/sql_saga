@@ -1,0 +1,266 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Regression test: executor NULL join clause fix for XOR nullable identity columns.
+-- Tables like stat_for_unit have mutually exclusive FKs (legal_unit_id XOR establishment_id).
+-- The executor's entity_key_join_clause must use COALESCE for nullable columns,
+-- because NULL = NULL evaluates to UNKNOWN, causing DELETE/UPDATE to silently fail
+-- and duplicates to accumulate.
+\set ECHO all
+BEGIN;
+CREATE SCHEMA xnk;
+-- Parent tables with temporal primary keys
+CREATE TABLE xnk.legal_unit (
+    id INT NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    name TEXT,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+SELECT sql_saga.add_era('xnk.legal_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "legal_unit_synchronize_temporal_columns_trigger" on table xnk.legal_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "legal_unit_valid_range_gist_idx" on column xnk.legal_unit.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('xnk.legal_unit', ARRAY['id'], 'valid',
+    unique_key_name => 'xnk_lu_uk');
+NOTICE:  sql_saga: Added constraints to table xnk.legal_unit: ADD CONSTRAINT xnk_lu_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+ add_unique_key 
+----------------
+ xnk_lu_uk
+(1 row)
+
+CREATE TABLE xnk.establishment (
+    id INT NOT NULL,
+    valid_range daterange NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    name TEXT,
+    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS)
+);
+SELECT sql_saga.add_era('xnk.establishment', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table xnk.establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column xnk.establishment.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('xnk.establishment', ARRAY['id'], 'valid',
+    unique_key_name => 'xnk_est_uk');
+NOTICE:  sql_saga: Added constraints to table xnk.establishment: ADD CONSTRAINT xnk_est_uk_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+ add_unique_key 
+----------------
+ xnk_est_uk
+(1 row)
+
+-- Seed parent data
+INSERT INTO xnk.legal_unit VALUES (1, '[2024-01-01,infinity)', '2024-01-01', 'infinity', 'LU One');
+INSERT INTO xnk.establishment VALUES (1, '[2024-01-01,infinity)', '2024-01-01', 'infinity', 'Est One');
+-- stat_for_unit: XOR nullable pattern (legal_unit_id XOR establishment_id)
+CREATE TABLE xnk.stat_for_unit (
+    stat_definition_id INT NOT NULL,
+    legal_unit_id INT,
+    establishment_id INT,
+    valid_range daterange NOT NULL,
+    valid_from DATE NOT NULL,
+    valid_until DATE NOT NULL,
+    value BIGINT,
+    CONSTRAINT sfu_xor_check CHECK (legal_unit_id IS NOT NULL OR establishment_id IS NOT NULL)
+);
+SELECT sql_saga.add_era('xnk.stat_for_unit', 'valid_range',
+    valid_from_column_name => 'valid_from',
+    valid_until_column_name => 'valid_until');
+NOTICE:  sql_saga: Created trigger "stat_for_unit_synchronize_temporal_columns_trigger" on table xnk.stat_for_unit to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created GIST index "stat_for_unit_valid_range_gist_idx" on column xnk.stat_for_unit.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('xnk.stat_for_unit',
+    ARRAY['stat_definition_id', 'legal_unit_id', 'establishment_id'], 'valid',
+    unique_key_name => 'xnk_sfu_uk');
+NOTICE:  sql_saga: Added constraints to table xnk.stat_for_unit: ADD CONSTRAINT xnk_sfu_uk_uniq UNIQUE (stat_definition_id, legal_unit_id, establishment_id, valid_range WITHOUT OVERLAPS)
+ add_unique_key 
+----------------
+ xnk_sfu_uk
+(1 row)
+
+\echo '--- Step 1: SEED legal unit stats (establishment_id = NULL) ---'
+--- Step 1: SEED legal unit stats (establishment_id = NULL) ---
+CREATE TEMP TABLE source_lu (
+    row_id INT, stat_definition_id INT, legal_unit_id INT, establishment_id INT,
+    value BIGINT, valid_from DATE, valid_until DATE
+) ON COMMIT DROP;
+INSERT INTO source_lu VALUES
+    (1, 1, 1, NULL, 100, '2024-01-01', 'infinity'),
+    (2, 2, 1, NULL, 200, '2024-01-01', 'infinity');
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_lu',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+\echo '--- After SEED LU stats ---'
+--- After SEED LU stats ---
+SELECT stat_definition_id, legal_unit_id, establishment_id, value, valid_from, valid_until
+FROM xnk.stat_for_unit ORDER BY stat_definition_id, legal_unit_id, establishment_id;
+ stat_definition_id | legal_unit_id | establishment_id | value | valid_from | valid_until 
+--------------------+---------------+------------------+-------+------------+-------------
+                  1 |             1 |                  |   100 | 2024-01-01 | infinity
+                  2 |             1 |                  |   200 | 2024-01-01 | infinity
+(2 rows)
+
+\echo '--- Step 2: SEED establishment stats (legal_unit_id = NULL) ---'
+--- Step 2: SEED establishment stats (legal_unit_id = NULL) ---
+CREATE TEMP TABLE source_es (
+    row_id INT, stat_definition_id INT, legal_unit_id INT, establishment_id INT,
+    value BIGINT, valid_from DATE, valid_until DATE
+) ON COMMIT DROP;
+INSERT INTO source_es VALUES
+    (1, 1, NULL, 1, 300, '2024-01-01', 'infinity'),
+    (2, 2, NULL, 1, 400, '2024-01-01', 'infinity');
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_es',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+\echo '--- After SEED ES stats (should be 4 rows total) ---'
+--- After SEED ES stats (should be 4 rows total) ---
+SELECT stat_definition_id, legal_unit_id, establishment_id, value, valid_from, valid_until
+FROM xnk.stat_for_unit ORDER BY stat_definition_id, legal_unit_id, establishment_id;
+ stat_definition_id | legal_unit_id | establishment_id | value | valid_from | valid_until 
+--------------------+---------------+------------------+-------+------------+-------------
+                  1 |             1 |                  |   100 | 2024-01-01 | infinity
+                  1 |               |                1 |   300 | 2024-01-01 | infinity
+                  2 |             1 |                  |   200 | 2024-01-01 | infinity
+                  2 |               |                1 |   400 | 2024-01-01 | infinity
+(4 rows)
+
+SELECT count(*) AS row_count FROM xnk.stat_for_unit;
+ row_count 
+-----------
+         4
+(1 row)
+
+\echo '--- Step 3: UPDATE legal unit stats (tests DELETE/UPDATE with NULL establishment_id) ---'
+--- Step 3: UPDATE legal unit stats (tests DELETE/UPDATE with NULL establishment_id) ---
+TRUNCATE source_lu;
+INSERT INTO source_lu VALUES
+    (1, 1, 1, NULL, 150, '2024-01-01', 'infinity'),
+    (2, 2, 1, NULL, 250, '2024-01-01', 'infinity');
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_lu',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+\echo '--- After UPDATE LU stats (should still be 4 rows, values changed to 150/250) ---'
+--- After UPDATE LU stats (should still be 4 rows, values changed to 150/250) ---
+SELECT stat_definition_id, legal_unit_id, establishment_id, value, valid_from, valid_until
+FROM xnk.stat_for_unit ORDER BY stat_definition_id, legal_unit_id, establishment_id;
+ stat_definition_id | legal_unit_id | establishment_id | value | valid_from | valid_until 
+--------------------+---------------+------------------+-------+------------+-------------
+                  1 |             1 |                  |   150 | 2024-01-01 | infinity
+                  1 |               |                1 |   300 | 2024-01-01 | infinity
+                  2 |             1 |                  |   250 | 2024-01-01 | infinity
+                  2 |               |                1 |   400 | 2024-01-01 | infinity
+(4 rows)
+
+SELECT count(*) AS row_count FROM xnk.stat_for_unit;
+ row_count 
+-----------
+         4
+(1 row)
+
+\echo '--- Step 4: UPDATE establishment stats (tests DELETE/UPDATE with NULL legal_unit_id) ---'
+--- Step 4: UPDATE establishment stats (tests DELETE/UPDATE with NULL legal_unit_id) ---
+TRUNCATE source_es;
+INSERT INTO source_es VALUES
+    (1, 1, NULL, 1, 350, '2024-01-01', 'infinity'),
+    (2, 2, NULL, 1, 450, '2024-01-01', 'infinity');
+CALL sql_saga.temporal_merge(
+    target_table => 'xnk.stat_for_unit',
+    source_table => 'source_es',
+    natural_identity_columns => '{stat_definition_id, legal_unit_id, establishment_id}',
+    mode => 'MERGE_ENTITY_REPLACE'
+);
+\echo '--- After UPDATE ES stats (should still be 4 rows, values changed to 350/450) ---'
+--- After UPDATE ES stats (should still be 4 rows, values changed to 350/450) ---
+SELECT stat_definition_id, legal_unit_id, establishment_id, value, valid_from, valid_until
+FROM xnk.stat_for_unit ORDER BY stat_definition_id, legal_unit_id, establishment_id;
+ stat_definition_id | legal_unit_id | establishment_id | value | valid_from | valid_until 
+--------------------+---------------+------------------+-------+------------+-------------
+                  1 |             1 |                  |   150 | 2024-01-01 | infinity
+                  1 |               |                1 |   350 | 2024-01-01 | infinity
+                  2 |             1 |                  |   250 | 2024-01-01 | infinity
+                  2 |               |                1 |   450 | 2024-01-01 | infinity
+(4 rows)
+
+SELECT count(*) AS row_count FROM xnk.stat_for_unit;
+ row_count 
+-----------
+         4
+(1 row)
+
+\echo '--- Verify: no duplicates accumulated ---'
+--- Verify: no duplicates accumulated ---
+SELECT stat_definition_id, legal_unit_id, establishment_id, count(*) AS cnt
+FROM xnk.stat_for_unit
+GROUP BY stat_definition_id, legal_unit_id, establishment_id
+HAVING count(*) > 1;
+ stat_definition_id | legal_unit_id | establishment_id | cnt 
+--------------------+---------------+------------------+-----
+(0 rows)
+
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
