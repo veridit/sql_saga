@@ -4,7 +4,30 @@ use std::collections::HashMap;
 use pgrx::prelude::*;
 
 use crate::types::{CachedState, ColCategory, ColMapping, FilterParam, PlannerContext, SourceRow, TargetRow};
+use crate::util::qi;
 
+// Prepared statement caching — per-connection lifetime via SPI_keepplan.
+//
+// pgrx's PreparedStatement::keep() calls SPI_keepplan() (PostgreSQL src/backend/
+// executor/spi.c), which copies the plan from SPI's transient memory context into
+// CacheMemoryContext (a long-lived, top-level context). This makes plans survive:
+//   - SPI connection close/reopen (Spi::connect scope exit)
+//   - Transaction commit/rollback boundaries
+//   - Multiple temporal_merge calls within one session
+// Plans are freed only when the backend process exits.
+//
+// Automatic replanning: When the source temp view is recreated via CREATE OR REPLACE,
+// PostgreSQL's relcache invalidation (src/utils/cache/relcache.c:RelationCacheInvalidate)
+// detects the OID change and marks cached plans as invalid. The next SPI_execute_plan()
+// call transparently replans. This is why we don't need manual invalidation for
+// source view changes.
+// See: PostgreSQL docs §54.4 "SPI_keepplan" and src/utils/cache/plancache.c.
+//
+// Key format: Plans are keyed by the full SQL string. Different target tables or
+// source views produce different SQL, so each gets its own cached plan. Stale entries
+// (from schema changes that produced different SQL) become unreachable HashMap entries.
+// The number of entries is bounded by the number of distinct (table, view) pairs used
+// in the session — typically 1-10 for batch ETL workloads.
 thread_local! {
     /// Multi-entry cache keyed by target SQL template (one per target table config).
     static TARGET_READ_STMTS: RefCell<HashMap<String, pgrx::spi::OwnedPreparedStatement>> = RefCell::new(HashMap::new());
@@ -349,12 +372,16 @@ pub fn read_target_rows_with_sql(
         for row in table {
             let valid_from: String = row
                 .get::<String>(1)
-                .unwrap_or(Some(String::new()))
-                .unwrap_or_default();
+                .unwrap_or(None)
+                .unwrap_or_else(|| {
+                    pgrx::error!("sql_saga: NULL temporal boundary (valid_from) in target row");
+                });
             let valid_until: String = row
                 .get::<String>(2)
-                .unwrap_or(Some(String::new()))
-                .unwrap_or_default();
+                .unwrap_or(None)
+                .unwrap_or_else(|| {
+                    pgrx::error!("sql_saga: NULL temporal boundary (valid_until) in target row");
+                });
 
             let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
                 read_target_ordinals(&row, layout);
@@ -427,12 +454,16 @@ pub fn read_source_rows_cached(
                     .unwrap_or_default();
                 let valid_from: String = row
                     .get::<String>(3)
-                    .unwrap_or(Some(String::new()))
-                    .unwrap_or_default();
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| {
+                        pgrx::error!("sql_saga: NULL temporal boundary (valid_from) in source row");
+                    });
                 let valid_until: String = row
                     .get::<String>(4)
-                    .unwrap_or(Some(String::new()))
-                    .unwrap_or_default();
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| {
+                        pgrx::error!("sql_saga: NULL temporal boundary (valid_until) in source row");
+                    });
 
                 // Read individual columns by ordinal — no JSON parsing
                 let (identity_keys, lookup_keys, data_payload, ephemeral_payload,
@@ -774,12 +805,16 @@ pub fn read_target_rows_parameterized(
             for row in table {
                 let valid_from: String = row
                     .get::<String>(1)
-                    .unwrap_or(Some(String::new()))
-                    .unwrap_or_default();
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| {
+                        pgrx::error!("sql_saga: NULL temporal boundary (valid_from) in target row");
+                    });
                 let valid_until: String = row
                     .get::<String>(2)
-                    .unwrap_or(Some(String::new()))
-                    .unwrap_or_default();
+                    .unwrap_or(None)
+                    .unwrap_or_else(|| {
+                        pgrx::error!("sql_saga: NULL temporal boundary (valid_until) in target row");
+                    });
 
                 let (identity_keys, lookup_keys, data_payload, ephemeral_payload, pk_payload) =
                     read_target_ordinals(&row, layout);
@@ -992,10 +1027,6 @@ fn build_target_filter(
 }
 
 // ── Helpers ──
-
-fn qi(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
-}
 
 fn build_until_expr(
     alias: &str,

@@ -5,6 +5,8 @@ use std::hash::{Hash, Hasher};
 
 use pgrx::prelude::*;
 
+use crate::util::qi;
+
 /// Cached executor introspection state.
 /// Contains all metadata and SQL fragments needed by the PL/pgSQL executor,
 /// replacing ~570 lines of per-call introspection + CTE logic.
@@ -42,6 +44,24 @@ pub struct ExecutorCachedState {
     pub source_cols_hash: u64,
 }
 
+// Executor introspection cache — schema metadata for SQL fragment generation.
+//
+// Stores pre-computed SQL fragments (JOIN clauses, column lists, SET expressions)
+// derived from pg_attribute, sql_saga.era, and sql_saga.unique_keys catalog queries.
+// Contains NO row data, transaction state, or snapshot information — purely structural
+// metadata that changes only when DDL alters the table schema.
+//
+// Invalidation: Every call computes source_cols_hash by querying pg_attribute for
+// column names and types, then compares against the cached hash. Schema changes
+// (ALTER TABLE ADD/DROP COLUMN) produce a different hash → cache miss → full
+// re-introspection. Target table DDL is NOT independently hashed, but would cause
+// the executor's prepared statements to fail at execution time (column count/type
+// mismatch), surfacing as a clear PostgreSQL ERROR rather than silent corruption.
+//
+// Growth: One entry per distinct (target_table_oid, mode, identity_columns,
+// source_cols_hash) combination. Bounded by the number of target tables in the
+// application. Explicit reset available via temporal_merge_native_cache_reset().
+// No LRU eviction — acceptable for the batch ETL use case (small number of tables).
 thread_local! {
     /// Multi-entry cache keyed by config hash.
     pub static EXECUTOR_CACHE: RefCell<HashMap<u64, ExecutorCachedState>> = RefCell::new(HashMap::new());
@@ -88,11 +108,6 @@ fn hash_source_cols(client: &pgrx::spi::SpiClient, source_oid: u32) -> u64 {
     let mut h = DefaultHasher::new();
     cols_str.hash(&mut h);
     h.finish()
-}
-
-/// Helper: quote identifier (double-quote, escaping inner double-quotes).
-fn qi(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
 }
 
 /// Perform all executor introspection in a single SPI connection and return
@@ -609,8 +624,30 @@ fn run_executor_introspection(
     })
 }
 
-/// Build the SQL query that replaces the column list CTE (lines 513-640).
-/// This is executed once on cache miss; the results are cached.
+/// Build the SQL query that replaces the column list CTE (lines 513-640 of the PL/pgSQL executor).
+/// Executed once on cache miss; results are cached in ExecutorCachedState.
+///
+/// CTEs:
+///   - **target_cols**: All non-dropped columns from the target table (pg_attribute).
+///   - **common_data_cols**: Data columns, excluding range/temporal, identity, lookup, PK,
+///     GENERATED ALWAYS, and serial (nextval) columns. These are the "payload" columns
+///     that appear in UPDATE SET clauses.
+///   - **all_available_cols**: Union of common_data_cols + lookup + identity + PK columns.
+///     This is the superset from which INSERT column lists are derived.
+///   - **cols_for_insert**: Columns for normal INSERT — all_available_cols minus
+///     insert-defaulted columns (GENERATED ALWAYS, synchronized temporal cols), but
+///     always keeping identity/lookup/PK columns even if they are defaulted.
+///   - **cols_for_founding_insert**: Columns for founding INSERT — all_available_cols minus
+///     founding-defaulted columns (GENERATED ALWAYS + IDENTITY BY DEFAULT), producing a
+///     more restrictive list that lets PostgreSQL generate serial IDs for new entities.
+///
+/// The final SELECT returns 6 string fragments (any may be NULL if no columns qualify):
+///   1. **update_set_clause**: `col = CASE WHEN p.data ? 'col' THEN (p.data->>'col')::type ELSE t.col END, ...`
+///   2. **all_cols_ident**: Comma-separated quoted column names for INSERT target list.
+///   3. **all_cols_select**: Comma-separated expressions reading from `jpr_all` record with COALESCE for NOT NULL defaulted.
+///   4. **all_cols_from_jsonb**: Comma-separated `(s.full_data->>'col')::type` expressions for INSERT from JSONB.
+///   5. **founding_all_cols_ident**: Column names for founding INSERT target list.
+///   6. **founding_all_cols_from_jsonb**: `(s.full_data->>'col')::type` expressions for founding INSERT from JSONB.
 fn build_column_list_cte_query(
     target_oid: u32,
     identity_columns: &[String],

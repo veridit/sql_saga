@@ -257,7 +257,9 @@ fn parse_temporal_numeric(s: &str) -> f64 {
     match s {
         "infinity" => f64::INFINITY,
         "-infinity" => f64::NEG_INFINITY,
-        _ => s.parse::<f64>().unwrap_or(0.0),
+        _ => s.parse::<f64>().unwrap_or_else(|_| {
+            pgrx::error!("sql_saga: cannot parse temporal numeric bound: {:?}", s);
+        }),
     }
 }
 

@@ -13,9 +13,35 @@ mod introspect;
 mod reader;
 mod sweep;
 mod types;
+mod util;
 
 use types::{CachedState, DeleteMode, MergeMode, PlanRow};
 
+// SAFETY ANALYSIS — Per-connection caching via thread_local!
+//
+// PostgreSQL uses a process-per-connection model (one OS process per backend,
+// single-threaded). Rust's thread_local! maps to per-thread storage, making it
+// effectively per-connection. Each backend gets independent cache instances with
+// no possibility of cross-connection data races.
+// See: PostgreSQL docs §20.3 "Resource Consumption" — max_connections creates
+// separate server processes; src/backend/postmaster/postmaster.c:BackendStartup().
+//
+// Memory ownership: All cached data (String, Vec, HashMap) uses Rust's system
+// allocator, NOT PostgreSQL's palloc. This means cached data is NOT subject to
+// memory context resets. Rust's ownership system guarantees deallocation on Drop.
+// pgrx 0.16.x does not route standard Rust collections through palloc.
+// See: pgrx source — palloc is only used for PgBox/PgMemoryContexts, not std types.
+//
+// Cross-transaction safety: Caches store only schema-derived metadata (column names,
+// SQL templates, type information). No row data, transaction IDs, snapshot info, or
+// visibility information is cached. Schema metadata is stable across transactions
+// unless DDL occurs, which is detected by source_cols_hash comparison on every call.
+//
+// SPI data extraction: Every Spi::connect() closure extracts data as Rust-owned
+// String/Vec/i64 values. pgrx's row.get::<String>() internally calls text_to_cstring
+// and creates a Rust String — the SPI memory context can be safely freed after the
+// closure returns without invalidating any cached data.
+// See: pgrx source — spi/client.rs get::<String>() → FromDatum → String::from().
 thread_local! {
     /// Multi-entry cache keyed by config cache_key (target_table + mode + columns).
     /// Holds one CachedState per distinct temporal_merge configuration, enabling
