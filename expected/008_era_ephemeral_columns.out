@@ -1,0 +1,149 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+SET ROLE TO sql_saga_unprivileged_user;
+-- =============================================================================
+-- Test: set_era_ephemeral_columns
+-- =============================================================================
+\echo '--- Setup: Create table with era ---'
+--- Setup: Create table with era ---
+CREATE TABLE public.ephemeral_test (
+    id integer,
+    name text,
+    value numeric,
+    edit_at timestamptz,
+    edit_by text,
+    valid_range daterange NOT NULL
+);
+SELECT sql_saga.add_era('public.ephemeral_test', 'valid_range');
+NOTICE:  sql_saga: Created GIST index "ephemeral_test_valid_range_gist_idx" on column public.ephemeral_test.valid_range for temporal_merge performance
+ add_era 
+---------
+ t
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 1: Set ephemeral columns and verify in sql_saga.era ---'
+--- Test 1: Set ephemeral columns and verify in sql_saga.era ---
+-- =============================================================================
+SELECT sql_saga.set_era_ephemeral_columns(
+    table_class => 'public.ephemeral_test',
+    era_name => 'valid',
+    ephemeral_columns => ARRAY['edit_at', 'edit_by']::name[]
+);
+ set_era_ephemeral_columns 
+---------------------------
+ 
+(1 row)
+
+SELECT ephemeral_columns
+FROM sql_saga.era
+WHERE table_name = 'ephemeral_test' AND era_name = 'valid';
+ ephemeral_columns 
+-------------------
+ {edit_at,edit_by}
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 2: Clear ephemeral columns by setting to NULL ---'
+--- Test 2: Clear ephemeral columns by setting to NULL ---
+-- =============================================================================
+SELECT sql_saga.set_era_ephemeral_columns(
+    table_class => 'public.ephemeral_test',
+    era_name => 'valid',
+    ephemeral_columns => NULL
+);
+ set_era_ephemeral_columns 
+---------------------------
+ 
+(1 row)
+
+SELECT ephemeral_columns IS NULL AS is_cleared
+FROM sql_saga.era
+WHERE table_name = 'ephemeral_test' AND era_name = 'valid';
+ is_cleared 
+------------
+ t
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 3: Error - non-existent column ---'
+--- Test 3: Error - non-existent column ---
+-- =============================================================================
+SAVEPOINT test3;
+SELECT sql_saga.set_era_ephemeral_columns(
+    table_class => 'public.ephemeral_test',
+    era_name => 'valid',
+    ephemeral_columns => ARRAY['no_such_column']::name[]
+);
+ERROR:  column "no_such_column" does not exist in table ephemeral_test
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 27 at RAISE
+ROLLBACK TO test3;
+-- =============================================================================
+\echo '--- Test 4: Error - system column as ephemeral ---'
+--- Test 4: Error - system column as ephemeral ---
+-- =============================================================================
+SAVEPOINT test4;
+SELECT sql_saga.set_era_ephemeral_columns(
+    table_class => 'public.ephemeral_test',
+    era_name => 'valid',
+    ephemeral_columns => ARRAY['xmin']::name[]
+);
+ERROR:  cannot mark system column "xmin" as ephemeral
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 37 at RAISE
+ROLLBACK TO test4;
+-- =============================================================================
+\echo '--- Test 5: Error - non-existent era ---'
+--- Test 5: Error - non-existent era ---
+-- =============================================================================
+SAVEPOINT test5;
+SELECT sql_saga.set_era_ephemeral_columns(
+    table_class => 'public.ephemeral_test',
+    era_name => 'nonexistent',
+    ephemeral_columns => ARRAY['edit_at']::name[]
+);
+ERROR:  Era "nonexistent" not found on table ephemeral_test
+CONTEXT:  PL/pgSQL function set_era_ephemeral_columns(regclass,name,name[]) line 47 at RAISE
+ROLLBACK TO test5;
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

@@ -1,0 +1,152 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+BEGIN;
+SET ROLE TO sql_saga_unprivileged_user;
+-- =============================================================================
+-- Test: sql_saga.first() aggregate
+-- =============================================================================
+-- =============================================================================
+\echo '--- Test 1: Basic - first value ordered by id ---'
+--- Test 1: Basic - first value ordered by id ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, 'a'), (2, 'b'), (3, 'c')) AS t(id, val);
+ first 
+-------
+ a
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 2: Empty input returns NULL ---'
+--- Test 2: Empty input returns NULL ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (SELECT 1 AS val, 1 AS id WHERE false) AS t;
+ first 
+-------
+      
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 3: GROUP BY with multiple groups ---'
+--- Test 3: GROUP BY with multiple groups ---
+-- =============================================================================
+CREATE TEMP TABLE first_test_data (
+    grp text,
+    sort_key integer,
+    val text
+);
+INSERT INTO first_test_data (grp, sort_key, val) VALUES
+    ('alpha', 3, 'third'),
+    ('alpha', 1, 'first'),
+    ('alpha', 2, 'second'),
+    ('beta', 2, 'two'),
+    ('beta', 1, 'one'),
+    ('beta', 3, 'three');
+SELECT grp, sql_saga.first(val ORDER BY sort_key)
+FROM first_test_data
+GROUP BY grp
+ORDER BY grp;
+  grp  | first 
+-------+-------
+ alpha | first
+ beta  | one
+(2 rows)
+
+-- =============================================================================
+\echo '--- Test 4: Different types - integer ---'
+--- Test 4: Different types - integer ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, 100), (2, 200), (3, 300)) AS t(id, val);
+ first 
+-------
+   100
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 4b: Different types - date ---'
+--- Test 4b: Different types - date ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, '2024-01-01'::date), (2, '2024-06-15'::date), (3, '2024-12-31'::date)) AS t(id, val);
+   first    
+------------
+ 2024-01-01
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 5: NULL handling - first value is NULL ---'
+--- Test 5: NULL handling - first value is NULL ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, NULL::text), (2, 'b'), (3, 'c')) AS t(id, val);
+ first 
+-------
+ b
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 5b: NULL handling - non-first values are NULL ---'
+--- Test 5b: NULL handling - non-first values are NULL ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, 'a'), (2, NULL::text), (3, NULL::text)) AS t(id, val);
+ first 
+-------
+ a
+(1 row)
+
+-- =============================================================================
+\echo '--- Test 6: Single row ---'
+--- Test 6: Single row ---
+-- =============================================================================
+SELECT sql_saga.first(val ORDER BY id)
+FROM (VALUES (1, 'only')) AS t(id, val);
+ first 
+-------
+ only
+(1 row)
+
+ROLLBACK;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
