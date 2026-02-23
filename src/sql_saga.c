@@ -121,6 +121,33 @@ typedef struct FkValidationPlan
 	int			param_attnums[MAX_FK_COLS + 2]; /* attnums in heap tuple */
 } FkValidationPlan;
 
+/*
+ * FK/UK plan caches — transaction-scoped with explicit cleanup.
+ *
+ * These HTAB caches store SPI plans for FK validation and UK enforcement queries,
+ * keyed by trigger OID. Plans are created via SPI_prepare() + SPI_keepplan() on
+ * first use, then reused for subsequent trigger firings within the same transaction.
+ *
+ * Lifecycle: Caches are allocated in CurTransactionContext (line ~130) so they are
+ * automatically freed by PostgreSQL's memory context machinery on transaction end.
+ * Additionally, cache_cleanup_callback (registered via RegisterXactCallback) explicitly
+ * NULLs the static pointers on XACT_EVENT_ABORT and XACT_EVENT_COMMIT, ensuring no
+ * dangling references survive across transactions.
+ * See: src/backend/access/transam/xact.c — CallXactCallbacks() invocation points.
+ *
+ * Why transaction-scoped (not session-scoped): FK/UK triggers reference user tables
+ * whose columns and constraints can change between transactions. Rebuilding plans
+ * each transaction ensures correctness without needing relcache invalidation hooks.
+ * The cost is one SPI_prepare per distinct trigger OID per transaction — negligible
+ * because SPI_prepare is fast (~microseconds) and trigger sets are small.
+ *
+ * Note: The static SPIPlanPtr variables (get_range_type_plan in OnlyExcludedColumnsChanged,
+ * qplan in GetHistoryTable) are session-scoped and have NO invalidation mechanism.
+ * These query sql_saga catalog tables (sql_saga.era, sql_saga.system_versioning) whose
+ * schema is defined by the extension and does not change during normal operation.
+ * An ALTER on these catalog tables would require DROP/CREATE EXTENSION, which destroys
+ * the backend's cached plans anyway.
+ */
 static HTAB *fk_plan_cache = NULL;
 static HTAB *uk_delete_plan_cache = NULL;
 static HTAB *uk_update_plan_cache = NULL;
@@ -513,9 +540,17 @@ PG_FUNCTION_INFO_V1(uk_update_check_c);
 PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
 
-Datum
-fk_insert_check_c(PG_FUNCTION_ARGS)
+/*
+ * fk_check_c -- shared implementation for fk_insert_check_c / fk_update_check_c.
+ *
+ * The only difference between INSERT and UPDATE is which tuple to validate:
+ *   INSERT: tg_trigtuple  (the newly inserted row)
+ *   UPDATE: tg_newtuple   (the post-update row)
+ */
+static Datum
+fk_check_c(FunctionCallInfo fcinfo, bool is_update)
 {
+	const char *funcname = is_update ? "fk_update_check_c" : "fk_insert_check_c";
 	TriggerData *trigdata;
 	HeapTuple	rettuple;
 	Relation	rel;
@@ -543,16 +578,25 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	bool isnull, okay;
 
 	if (!CALLED_AS_TRIGGER(fcinfo))
-		elog(ERROR, "fk_insert_check_c: not called by trigger manager");
+		elog(ERROR, "%s: not called by trigger manager", funcname);
 
 	trigdata = (TriggerData *) fcinfo->context;
-	rettuple = trigdata->tg_trigtuple;
 	rel = trigdata->tg_relation;
 	tupdesc = rel->rd_att;
-	new_row = trigdata->tg_trigtuple;
+
+	if (is_update)
+	{
+		rettuple = trigdata->tg_newtuple;
+		new_row = trigdata->tg_newtuple;
+	}
+	else
+	{
+		rettuple = trigdata->tg_trigtuple;
+		new_row = trigdata->tg_trigtuple;
+	}
 
 	if (trigdata->tg_trigger->tgnargs != 16)
-		elog(ERROR, "fk_insert_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
+		elog(ERROR, "%s: expected 16 arguments, got %d", funcname, trigdata->tg_trigger->tgnargs);
 
 	tgargs = trigdata->tg_trigger->tgargs;
 
@@ -576,7 +620,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 
 	init_fk_plan_cache();
 	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
-	
+
 	if (!found)
 	{
 		char *fk_range_constructor;
@@ -595,7 +639,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		{
 			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
 			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
-				
+
 			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
 			if (get_range_type_plan == NULL)
 				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
@@ -604,11 +648,11 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 			if (ret != 0)
 				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
 		}
-			
+
 		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
 		get_range_type_values[1] = CStringGetDatum(fk_table_name);
 		get_range_type_values[2] = CStringGetDatum(fk_era_name);
-			
+
 		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
 		if (ret != SPI_OK_SELECT || SPI_processed == 0)
 			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
@@ -676,7 +720,7 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 		param_idx++;
 		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_until_column_name);
 		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		
+
 		query = psprintf(
 			"SELECT COALESCE(("
 			"  SELECT sql_saga.covers_without_gaps("
@@ -753,11 +797,11 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 			values[i] = heap_getattr(new_row, plan_entry->param_attnums[i], tupdesc, &isnull);
 			nulls[i] = isnull ? 'n' : ' ';
 		}
-		
+
 		ret = SPI_execute_plan(plan_entry->plan, values, nulls, true, 1);
 		if (ret != SPI_OK_SELECT)
 			elog(ERROR, "SPI_execute_plan failed");
-		
+
 		if (SPI_processed > 0)
 		{
 			okay = DatumGetBool(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
@@ -779,271 +823,16 @@ fk_insert_check_c(PG_FUNCTION_ARGS)
 	return PointerGetDatum(rettuple);
 }
 
+Datum
+fk_insert_check_c(PG_FUNCTION_ARGS)
+{
+	return fk_check_c(fcinfo, false);
+}
 
 Datum
 fk_update_check_c(PG_FUNCTION_ARGS)
 {
-	TriggerData *trigdata;
-	HeapTuple	rettuple;
-	Relation	rel;
-	TupleDesc	tupdesc;
-	HeapTuple	new_row;
-	char	  **tgargs;
-	char *foreign_key_name;
-	char *fk_column_names_str;
-	char *fk_valid_from_column_name;
-	char *fk_valid_until_column_name;
-	char *uk_schema_name;
-	char *uk_table_name;
-	char *uk_column_names_str;
-	char *uk_era_name;
-	char *uk_valid_from_column_name;
-	char *uk_valid_until_column_name;
-	char *match_type;
-	char *fk_schema_name;
-	char *fk_table_name;
-	char *fk_era_name;
-
-	FkValidationPlan *plan_entry;
-	bool found;
-	int ret;
-	bool isnull, okay;
-
-	if (!CALLED_AS_TRIGGER(fcinfo))
-		elog(ERROR, "fk_update_check_c: not called by trigger manager");
-
-	trigdata = (TriggerData *) fcinfo->context;
-	rettuple = trigdata->tg_newtuple;
-	rel = trigdata->tg_relation;
-	tupdesc = rel->rd_att;
-	new_row = trigdata->tg_newtuple;
-
-	if (trigdata->tg_trigger->tgnargs != 16)
-		elog(ERROR, "fk_update_check_c: expected 16 arguments, got %d", trigdata->tg_trigger->tgnargs);
-
-	tgargs = trigdata->tg_trigger->tgargs;
-
-	foreign_key_name = tgargs[0];
-	fk_schema_name = tgargs[1];
-	fk_table_name = tgargs[2];
-	fk_column_names_str = tgargs[3];
-	fk_era_name = tgargs[4];
-	fk_valid_from_column_name = tgargs[5];
-	fk_valid_until_column_name = tgargs[6];
-	uk_schema_name = tgargs[7];
-	uk_table_name = tgargs[8];
-	uk_column_names_str = tgargs[9];
-	uk_era_name = tgargs[10];
-	uk_valid_from_column_name = tgargs[11];
-	uk_valid_until_column_name = tgargs[12];
-	match_type = tgargs[13];
-
-	if (SPI_connect() != SPI_OK_CONNECT)
-		elog(ERROR, "SPI_connect failed");
-
-	init_fk_plan_cache();
-	plan_entry = (FkValidationPlan *) hash_search(fk_plan_cache, &(trigdata->tg_trigger->tgoid), HASH_ENTER, &found);
-	
-	if (!found)
-	{
-		char *fk_range_constructor;
-		char *uk_range_constructor;
-		char *query;
-		Datum get_range_type_values[3];
-		StringInfoData where_buf;
-		Datum uk_column_names_datum, fk_column_names_datum;
-		ArrayType *uk_column_names_array, *fk_column_names_array;
-		int num_uk_cols, num_fk_cols;
-		Datum *uk_col_datums, *fk_col_datums;
-		int i, param_idx = 0;
-
-		/* Get range constructor types from sql_saga.era */
-		if (get_range_type_plan == NULL)
-		{
-			const char *sql = "SELECT range_type::regtype::text FROM sql_saga.era WHERE table_schema = $1 AND table_name = $2 AND era_name = $3";
-			Oid plan_argtypes[] = { NAMEOID, NAMEOID, NAMEOID };
-				
-			get_range_type_plan = SPI_prepare(sql, 3, plan_argtypes);
-			if (get_range_type_plan == NULL)
-				elog(ERROR, "SPI_prepare for get_range_type failed: %s", SPI_result_code_string(SPI_result));
-
-			ret = SPI_keepplan(get_range_type_plan);
-			if (ret != 0)
-				elog(ERROR, "SPI_keepplan for get_range_type failed: %s", SPI_result_code_string(ret));
-		}
-			
-		get_range_type_values[0] = CStringGetDatum(fk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(fk_table_name);
-		get_range_type_values[2] = CStringGetDatum(fk_era_name);
-			
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for foreign key table %s.%s era %s", fk_schema_name, fk_table_name, fk_era_name);
-		fk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-		get_range_type_values[0] = CStringGetDatum(uk_schema_name);
-		get_range_type_values[1] = CStringGetDatum(uk_table_name);
-		get_range_type_values[2] = CStringGetDatum(uk_era_name);
-		ret = SPI_execute_plan(get_range_type_plan, get_range_type_values, NULL, true, 1);
-		if (ret != SPI_OK_SELECT || SPI_processed == 0)
-			elog(ERROR, "could not get range type for unique key table %s.%s era %s", uk_schema_name, uk_table_name, uk_era_name);
-		uk_range_constructor = SPI_getvalue(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1);
-
-		/* Build parameterized where clause and collect param info */
-		initStringInfo(&where_buf);
-
-		if (namearray_input_func_oid == InvalidOid)
-		{
-			/*
-			 * We only need the input function and ioparam for NAMEARRAYOID,
-			 * so we cache them in static variables to avoid repeated catalog
-			 * lookups. Other type data is not needed.
-			 */
-			int16	typlen;
-			bool	typbyval;
-			char	typalign;
-			char	typdelim;
-			get_type_io_data(NAMEARRAYOID, IOFunc_input, &typlen, &typbyval, &typalign, &typdelim, &namearray_ioparam_oid, &namearray_input_func_oid);
-		}
-
-		uk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, uk_column_names_str, namearray_ioparam_oid, -1);
-		uk_column_names_array = DatumGetArrayTypeP(uk_column_names_datum);
-		deconstruct_array(uk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &uk_col_datums, NULL, &num_uk_cols);
-		fk_column_names_datum = OidInputFunctionCall(namearray_input_func_oid, fk_column_names_str, namearray_ioparam_oid, -1);
-		fk_column_names_array = DatumGetArrayTypeP(fk_column_names_datum);
-		deconstruct_array(fk_column_names_array, NAMEOID, NAMEDATALEN, false, 'c', &fk_col_datums, NULL, &num_fk_cols);
-
-		if (num_fk_cols > MAX_FK_COLS)
-			elog(ERROR, "Number of foreign key columns (%d) exceeds MAX_FK_COLS (%d)", num_fk_cols, MAX_FK_COLS);
-		plan_entry->nargs = num_fk_cols + 2;
-
-		for (i = 0; i < num_uk_cols; i++)
-		{
-			char *ukc = NameStr(*DatumGetName(uk_col_datums[i]));
-			char *fkc = NameStr(*DatumGetName(fk_col_datums[i]));
-			int attnum = SPI_fnumber(tupdesc, fkc);
-
-			if (attnum <= 0)
-				elog(ERROR, "column \"%s\" does not exist in table \"%s\"", fkc, RelationGetRelationName(rel));
-			if (i > 0)
-				appendStringInfoString(&where_buf, " AND ");
-			appendStringInfo(&where_buf, "uk.%s = $%d", quote_identifier(ukc), param_idx + 1);
-			plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, attnum);
-			plan_entry->param_attnums[param_idx] = attnum;
-			param_idx++;
-		}
-		pfree(DatumGetPointer(uk_column_names_datum));
-		if (num_uk_cols > 0) pfree(uk_col_datums);
-		pfree(DatumGetPointer(fk_column_names_datum));
-		if (num_fk_cols > 0) pfree(fk_col_datums);
-
-		/* Add range params */
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_from_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		param_idx++;
-		plan_entry->param_attnums[param_idx] = SPI_fnumber(tupdesc, fk_valid_until_column_name);
-		plan_entry->argtypes[param_idx] = SPI_gettypeid(tupdesc, plan_entry->param_attnums[param_idx]);
-		
-		query = psprintf(
-			"SELECT COALESCE(("
-			"  SELECT sql_saga.covers_without_gaps("
-			"    %s(uk.%s, uk.%s),"
-			"    %s($%d, $%d)"
-			"    ORDER BY uk.%s"
-			"  )"
-			"  FROM %s.%s AS uk"
-			"  WHERE %s"
-			"), false)",
-			uk_range_constructor,
-			quote_identifier(uk_valid_from_column_name), quote_identifier(uk_valid_until_column_name),
-			fk_range_constructor, num_fk_cols + 1, num_fk_cols + 2,
-			quote_identifier(uk_valid_from_column_name),
-			quote_identifier(uk_schema_name), quote_identifier(uk_table_name),
-			where_buf.data
-		);
-		plan_entry->plan = SPI_prepare(query, plan_entry->nargs, plan_entry->argtypes);
-		if (plan_entry->plan == NULL)
-			elog(ERROR, "SPI_prepare for validation query failed: %s", SPI_result_code_string(SPI_result));
-		if (SPI_keepplan(plan_entry->plan))
-			elog(ERROR, "SPI_keepplan for validation query failed");
-		pfree(query);
-		pfree(where_buf.data);
-		if(fk_range_constructor) pfree(fk_range_constructor);
-		if(uk_range_constructor) pfree(uk_range_constructor);
-	}
-
-	/* Check for NULLs in FK columns using cached attnums */
-	{
-		bool has_nulls = false;
-		bool all_nulls = true;
-		int i;
-		int num_fk_cols = plan_entry->nargs - 2;
-
-		for (i = 0; i < num_fk_cols; i++)
-		{
-			(void) heap_getattr(new_row, plan_entry->param_attnums[i], tupdesc, &isnull);
-			if (isnull)
-				has_nulls = true;
-			else
-				all_nulls = false;
-		}
-
-		if (all_nulls)
-		{
-			SPI_finish();
-			return PointerGetDatum(rettuple);
-		}
-		if (has_nulls)
-		{
-			if (strcmp(match_type, "SIMPLE") == 0)
-			{
-				SPI_finish();
-				return PointerGetDatum(rettuple);
-			}
-			else if (strcmp(match_type, "PARTIAL") == 0)
-				ereport(ERROR, (errmsg("MATCH PARTIAL is not implemented")));
-			else if (strcmp(match_type, "FULL") == 0)
-				ereport(ERROR, (errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-					errmsg("insert or update on table \"%s\" violates foreign key constraint \"%s\" (MATCH FULL with NULLs)",
-					RelationGetRelationName(rel), foreign_key_name)));
-		}
-	}
-
-	/* Execute validation query */
-	{
-		Datum values[MAX_FK_COLS + 2];
-		char nulls[MAX_FK_COLS + 2];
-		int i;
-
-		for (i = 0; i < plan_entry->nargs; i++)
-		{
-			values[i] = heap_getattr(new_row, plan_entry->param_attnums[i], tupdesc, &isnull);
-			nulls[i] = isnull ? 'n' : ' ';
-		}
-		
-		ret = SPI_execute_plan(plan_entry->plan, values, nulls, true, 1);
-		if (ret != SPI_OK_SELECT)
-			elog(ERROR, "SPI_execute_plan failed");
-		
-		if (SPI_processed > 0)
-		{
-			okay = DatumGetBool(SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &isnull));
-			if (isnull) okay = false;
-		}
-		else
-			okay = false;
-	}
-
-	if (!okay)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_FOREIGN_KEY_VIOLATION),
-				 errmsg("insert or update on table \"%s.%s\" violates foreign key constraint \"%s\"",
-						tgargs[1], tgargs[2], foreign_key_name)));
-	}
-
-	SPI_finish();
-	return PointerGetDatum(rettuple);
+	return fk_check_c(fcinfo, true);
 }
 
 Datum
@@ -1890,6 +1679,10 @@ write_history(PG_FUNCTION_ARGS)
 	}
 
 	range_num = SPI_fnumber(tupledesc, range_column_name);
+	if (range_num == SPI_ERROR_NOATTRIBUTE)
+		ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+						errmsg("column \"%s\" does not exist in table \"%s\"",
+							   range_column_name, RelationGetRelationName(rel))));
 	range_type_oid = SPI_gettypeid(tupledesc, range_num);
 	range_cache = lookup_type_cache(range_type_oid, TYPECACHE_RANGE_INFO);
 

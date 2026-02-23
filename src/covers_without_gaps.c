@@ -414,9 +414,10 @@ Datum DatumNegativeInfinity(Oid elem_oid)
             return DateADTGetDatum(DATEVAL_NOBEGIN);
         case NUMERICOID:
         {
-            text* negativeInfinityText = cstring_to_text("-Infinity");
-            Datum negativeInfinityDatum = DirectFunctionCall1(numeric_in, PointerGetDatum(negativeInfinityText));
-            pfree(negativeInfinityText);
+            Datum negativeInfinityDatum = DirectFunctionCall3(numeric_in,
+                CStringGetDatum("-Infinity"),
+                ObjectIdGetDatum(InvalidOid),
+                Int32GetDatum(-1));
             return negativeInfinityDatum;
         }
         case TIMESTAMPOID:
