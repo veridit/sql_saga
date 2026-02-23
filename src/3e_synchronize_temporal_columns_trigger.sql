@@ -3,7 +3,9 @@
 -- Hardcoded logic eliminates JSONB and dynamic SQL overhead (8-9x faster per benchmarks).
 
 CREATE OR REPLACE PROCEDURE sql_saga.drop_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
-LANGUAGE plpgsql SECURITY DEFINER AS $drop_synchronize_temporal_columns_trigger$
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $drop_synchronize_temporal_columns_trigger$
 DECLARE
     v_table_schema name;
     v_table_name name;
@@ -86,7 +88,9 @@ COMMENT ON PROCEDURE sql_saga.drop_synchronize_temporal_columns_trigger(regclass
 
 
 CREATE OR REPLACE PROCEDURE sql_saga.add_synchronize_temporal_columns_trigger(table_oid regclass, era_name name)
-LANGUAGE plpgsql SECURITY DEFINER AS $add_synchronize_temporal_columns_trigger$
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $add_synchronize_temporal_columns_trigger$
 DECLARE
     v_table_schema name;
     v_table_name name;

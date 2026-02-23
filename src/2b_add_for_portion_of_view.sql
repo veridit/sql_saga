@@ -2,6 +2,7 @@ CREATE FUNCTION sql_saga.add_for_portion_of_view(table_oid regclass, era_name na
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 #variable_conflict use_variable

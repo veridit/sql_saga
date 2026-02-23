@@ -140,9 +140,9 @@ $test$;
 NOTICE:  --- Testing updatable views with various data types ---
 NOTICE:  
 NOTICE:  --- Testing type: date ---
-NOTICE:  sql_saga: Created trigger "test_table_date_synchronize_temporal_columns_trigger" on table test_table_date to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "test_table_date_synchronize_temporal_columns_trigger" on table test_types.test_table_date to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "test_table_date_valid_range_gist_idx" on column test_types.test_table_date.valid_range for temporal_merge performance
-NOTICE:  sql_saga: Added constraints to table test_table_date: ADD CONSTRAINT test_table_date_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table test_types.test_table_date: ADD CONSTRAINT test_table_date_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
 NOTICE:  1. for_portion_of: INSERT
 ERROR:  sql_saga: The "for_portion_of" view only supports UPDATE operations. For INSERTs or DELETEs, please use the base table directly.
 CONTEXT:  PL/pgSQL function for_portion_of_trigger() line 11 at RAISE

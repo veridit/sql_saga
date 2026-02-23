@@ -9,6 +9,7 @@ CREATE FUNCTION sql_saga.__internal_add_system_time_era(
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 #variable_conflict use_variable

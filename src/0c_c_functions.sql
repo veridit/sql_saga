@@ -29,12 +29,12 @@ LANGUAGE c;
 CREATE OR REPLACE FUNCTION sql_saga.generated_always_as_row_start_end()
 RETURNS trigger
 AS 'sql_saga', 'generated_always_as_row_start_end'
-LANGUAGE c STRICT SECURITY DEFINER;
+LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, public;
 
 CREATE OR REPLACE FUNCTION sql_saga.write_history()
 RETURNS trigger
 AS 'sql_saga', 'write_history'
-LANGUAGE c STRICT SECURITY DEFINER;
+LANGUAGE c STRICT SECURITY DEFINER SET search_path = sql_saga, pg_catalog, public;
 
 CREATE OR REPLACE FUNCTION sql_saga.covers_without_gaps_finalfn(internal, anyrange, anyrange)
 RETURNS boolean

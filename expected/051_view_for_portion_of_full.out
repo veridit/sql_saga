@@ -224,7 +224,7 @@ SELECT sql_saga.add_for_portion_of_view('drop_test'::regclass);
 SAVEPOINT before_drop_era;
 SELECT sql_saga.drop_era('drop_test'::regclass, 'valid', 'RESTRICT');
 ERROR:  era valid is used by an updatable view
-CONTEXT:  PL/pgSQL function sql_saga.drop_era(regclass,name,sql_saga.drop_behavior,boolean) line 81 at RAISE
+CONTEXT:  PL/pgSQL function drop_era(regclass,name,drop_behavior,boolean) line 81 at RAISE
 ROLLBACK TO before_drop_era;
 -- CASCADE should succeed and drop the view
 SELECT sql_saga.drop_era('drop_test'::regclass, 'valid', 'CASCADE');
@@ -819,13 +819,13 @@ CREATE TABLE no_era_test (
 SAVEPOINT expect_error_1;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass);
 ERROR:  era "valid" does not exist on table no_era_test
-CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
+CONTEXT:  PL/pgSQL function add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_1;
 -- Should also fail with explicit non-existent era name
 SAVEPOINT expect_error_2;
 SELECT sql_saga.add_for_portion_of_view('no_era_test'::regclass, 'nonexistent');
 ERROR:  era "nonexistent" does not exist on table no_era_test
-CONTEXT:  PL/pgSQL function sql_saga.add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
+CONTEXT:  PL/pgSQL function add_for_portion_of_view(regclass,name,name[]) line 31 at RAISE
 ROLLBACK TO SAVEPOINT expect_error_2;
 ROLLBACK TO SAVEPOINT scenario_10;
 -- Scenario 11: Range-only table (no synchronized columns)

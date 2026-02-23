@@ -123,7 +123,9 @@ CREATE OR REPLACE FUNCTION sql_saga.temporal_merge_cache_maybe_purge(
     p_purge_probability FLOAT DEFAULT 0.02,
     p_max_age_days INT DEFAULT 30
 ) RETURNS INT
-LANGUAGE plpgsql SECURITY DEFINER AS $function$
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $function$
 DECLARE
     v_current_count INT;
     v_deleted_count INT := 0;

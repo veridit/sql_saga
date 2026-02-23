@@ -24,24 +24,34 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
 BEGIN;
-\echo '--- Test: add_era validation for synchronize_range_column ---'
---- Test: add_era validation for synchronize_range_column ---
-CREATE TABLE public.test_range_validation (
-    id int,
-    valid_from date,
-    valid_until date,
-    -- This is intentionally NOT a range type to trigger the bug.
-    invalid_range_col date
-);
-\echo 'Attempting to add era with an invalid range column type (should fail)'
-Attempting to add era with an invalid range column type (should fail)
--- This should fail because 'invalid_range_col' is a DATE, not a range type.
-SELECT sql_saga.add_era(
-    'public.test_range_validation'::regclass,
-    range_column_name => 'invalid_range_col'
-);
-ERROR:  column "invalid_range_col" is of type date which is not a range type
-CONTEXT:  PL/pgSQL function add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[]) line 175 at RAISE
+-- =============================================================================
+-- Test: Every SECURITY DEFINER function must have SET search_path
+-- =============================================================================
+-- This test guards against regressions where a new SECURITY DEFINER function
+-- is added without a safe search_path. Without SET search_path, a SECURITY
+-- DEFINER function executes with the caller's search_path, which could allow
+-- schema-spoofing attacks.
+\echo '--- Verify all SECURITY DEFINER functions have search_path ---'
+--- Verify all SECURITY DEFINER functions have search_path ---
+-- This query finds SECURITY DEFINER functions in the sql_saga schema that
+-- do NOT have a search_path in their proconfig (SET options).
+SELECT p.proname AS missing_search_path
+FROM pg_catalog.pg_proc AS p
+JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'sql_saga'
+  AND p.prosecdef = true
+  AND (
+    p.proconfig IS NULL
+    OR NOT EXISTS (
+      SELECT FROM unnest(p.proconfig) AS c(setting)
+      WHERE c.setting LIKE 'search_path=%'
+    )
+  )
+ORDER BY p.proname;
+ missing_search_path 
+---------------------
+(0 rows)
+
 ROLLBACK;
 \i sql/include/test_teardown.sql
 --

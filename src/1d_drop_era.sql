@@ -2,6 +2,7 @@ CREATE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'val
  RETURNS boolean
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 #variable_conflict use_variable

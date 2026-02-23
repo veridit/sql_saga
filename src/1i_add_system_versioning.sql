@@ -9,6 +9,7 @@ CREATE FUNCTION sql_saga.add_system_versioning(
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 #variable_conflict use_variable

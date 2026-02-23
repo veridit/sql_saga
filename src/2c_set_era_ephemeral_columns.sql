@@ -4,7 +4,9 @@ CREATE FUNCTION sql_saga.set_era_ephemeral_columns(
     ephemeral_columns name[] DEFAULT NULL
 ) RETURNS void
 LANGUAGE plpgsql
-SECURITY DEFINER AS $set_era_ephemeral_columns$
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $set_era_ephemeral_columns$
 #variable_conflict use_variable
 DECLARE
     ephemeral_column_name name;

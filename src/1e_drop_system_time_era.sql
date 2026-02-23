@@ -2,6 +2,7 @@ CREATE FUNCTION sql_saga.drop_system_time_era(table_oid regclass, drop_behavior 
  RETURNS boolean
  LANGUAGE sql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 SELECT sql_saga.drop_era(table_oid, 'system_time', drop_behavior, cleanup);

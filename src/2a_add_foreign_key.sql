@@ -113,6 +113,7 @@ CREATE FUNCTION sql_saga.add_foreign_key(
 RETURNS name
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
 AS
 $function_declarative_fk$
 #variable_conflict use_variable
@@ -215,6 +216,7 @@ CREATE FUNCTION sql_saga.add_regular_foreign_key(
  RETURNS name
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function_regular_fk$
 #variable_conflict use_variable
@@ -516,6 +518,7 @@ CREATE OR REPLACE FUNCTION sql_saga.add_temporal_foreign_key(
  RETURNS name
  LANGUAGE plpgsql
  SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
 AS
 $function$
 #variable_conflict use_variable

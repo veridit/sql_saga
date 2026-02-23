@@ -103,7 +103,7 @@ CREATE TABLE saga_bug_test.establishment (
     PRIMARY KEY (id, valid_range)
 );
 SELECT sql_saga.add_era('saga_bug_test.establishment', 'valid_range');
-NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table establishment to synchronize columns: valid_from, valid_until
+NOTICE:  sql_saga: Created trigger "establishment_synchronize_temporal_columns_trigger" on table saga_bug_test.establishment to synchronize columns: valid_from, valid_until
 NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on column saga_bug_test.establishment.valid_range for temporal_merge performance
  add_era 
 ---------
@@ -111,7 +111,7 @@ NOTICE:  sql_saga: Created GIST index "establishment_valid_range_gist_idx" on co
 (1 row)
 
 SELECT sql_saga.add_unique_key('saga_bug_test.establishment', ARRAY['id'], key_type => 'natural');
-NOTICE:  sql_saga: Added constraints to table establishment: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
+NOTICE:  sql_saga: Added constraints to table saga_bug_test.establishment: ADD CONSTRAINT establishment_id_valid_uniq UNIQUE (id, valid_range WITHOUT OVERLAPS)
      add_unique_key     
 ------------------------
  establishment_id_valid
@@ -129,7 +129,7 @@ SELECT sql_saga.add_temporal_foreign_key(
     'valid',
     'correct_table_uk' -- This UK is on saga_bug_test.legal_unit
 );
-NOTICE:  sql_saga: No compatible index found for foreign key on table establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON establishment USING GIST (legal_unit_id, valid_range)
+NOTICE:  sql_saga: No compatible index found for foreign key on table saga_bug_test.establishment. Creating new index: CREATE INDEX establishment_legal_unit_id_valid_gist_idx ON saga_bug_test.establishment USING GIST (legal_unit_id, valid_range)
      add_temporal_foreign_key      
 -----------------------------------
  establishment_legal_unit_id_valid
