@@ -3,27 +3,56 @@ on: [push, pull_request, workflow_dispatch]
 
 jobs:
   test:
-    strategy:
-      matrix:
-        pg:
-          - 16
-          - 15
-          - 14
-          - 13
-          - 12
-          - 11
+    name: PostgreSQL 18 + Rust
+    runs-on: ubuntu-24.04
 
-    name: PostgreSQL ${{ matrix.pg }}
-    runs-on: ubuntu-latest
-    container: pgxn/pgxn-tools
+    env:
+      PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
+
     steps:
+      - name: Install PostgreSQL 18 from PGDG
+        run: |
+          sudo apt-get install -y postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-18 postgresql-server-dev-18 postgresql-contrib-18 libclang-dev build-essential pkg-config
 
-      - name: Start PostgreSQL ${{ matrix.pg }}
-        run: pg-start ${{ matrix.pg }}
+      - name: Start PostgreSQL 18
+        run: |
+          sudo pg_lsclusters -h | awk '{print $1, $2}' | while read ver name; do sudo pg_dropcluster --stop "$ver" "$name" 2>/dev/null || true; done
+          sudo pg_createcluster 18 main --start --port 5432
+          sudo -u postgres createuser -s $(whoami)
+
+      - name: Add pg_config to PATH
+        run: echo "/usr/lib/postgresql/18/bin" >> $GITHUB_PATH
 
       - name: Check out the repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
-      - name: Test on PostgreSQL ${{ matrix.pg }}
-        # make && make install && make installcheck
-        run: pg-build-test
+      - name: Allow runner to install extensions
+        run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
+
+      - name: Build and install C extension
+        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target
+
+      - name: Install cargo-pgrx and build Rust extension
+        run: |
+          cargo install --locked cargo-pgrx --version 0.16.1
+          cargo pgrx init --pg18=${{ env.PG_CONFIG }}
+          cd native
+          cargo pgrx install --release --pg-config=${{ env.PG_CONFIG }}
+
+      - name: Run regression tests (excluding benchmarks)
+        run: make test fast PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Show regression diffs on failure
+        if: failure()
+        run: |
+          if [ -f regression.diffs ]; then cat regression.diffs; fi

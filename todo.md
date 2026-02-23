@@ -14,6 +14,14 @@ A living document of upcoming tasks.
 
 # Done
 
+## 2026-02-22: Executor Optimization & Pre-Merge Hardening
+- Native Rust executor introspection cache (zero SPI on cache hit)
+- Partition-by-NULL optimization for XOR nullable identity columns
+- Mutually exclusive partition filters for non-XOR correctness
+- PATCH_FOR_PORTION_OF extending-range bug fix
+- REPLACE/DELETE_FOR_PORTION_OF extending-range regression tests
+- Benchmark EXPLAIN log support for native planner
+
 ## 2026-01-22: System Time Feature Complete
 - Completed system_time (system versioning) with full test coverage
 - Drop/rename protection for history tables, views, query functions, triggers

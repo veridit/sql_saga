@@ -75,3 +75,26 @@ This section documents the exploration of different architectural strategies for
 
 ### Recommended Architecture: Option E
 The **"Synchronization Trigger"** is the superior recommendation. It provides all the benefits of the "Generated Columns" approach (PostgREST ergonomics, performance, isolation from the core extension) while providing far greater flexibility by allowing writes to the `range` column itself. It is the most user-friendly and robust solution.
+
+---
+
+## Decision: Companion Rust Extension for Performance-Critical Paths (2026-02-22)
+
+### Context
+The temporal_merge planner was implemented in PL/pgSQL using set-based SQL with CTEs.
+At scale (>10K rows), this became a performance bottleneck. The extension also needed
+per-connection caching for executor introspection metadata.
+
+### Decision
+Implement native planner + executor cache in Rust (pgrx 0.16.1) as a separate shared
+library (`sql_saga_native`). Keep C triggers/aggregates in C. Keep executor orchestration
+in PL/pgSQL. Runtime detection via `to_regproc()` provides graceful PL/pgSQL fallback.
+
+### Rationale
+- **C** (triggers, aggregates): Per-row hot path — minimal overhead, direct SPI access.
+  pgrx marshaling would add per-invocation cost with no correctness benefit.
+- **Rust** (planner, cache): Batch operations — sweep-line algorithm replaces O(N^2) SQL
+  with O(N log N) Rust. thread_local caching gives O(1) cache hits. pgrx overhead
+  amortized across thousands of rows per call. 10-13x faster than PL/pgSQL.
+- **PL/pgSQL** (executor): Complex dynamic SQL generation, easy to iterate. Calls into
+  Rust cache for pre-computed SQL fragments.

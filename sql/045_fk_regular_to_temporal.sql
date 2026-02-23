@@ -50,7 +50,10 @@ SELECT sql_saga.add_regular_foreign_key(
 \echo
 \echo "--- After add_regular_foreign_key ---"
 -- The helper function should be in the schema of the referenced table and have a predictable name.
-\df+ public.temporal_pk_id_exists
+SELECT p.proname, pg_catalog.pg_get_function_result(p.oid) AS result_type,
+       pg_catalog.pg_get_function_arguments(p.oid) AS arguments, p.provolatile, l.lanname
+FROM pg_proc p JOIN pg_language l ON p.prolang = l.oid
+WHERE p.proname = 'temporal_pk_id_exists' AND p.pronamespace = 'public'::regnamespace;
 -- The CHECK constraint should be on the regular_fk table
 \d regular_fk
 
@@ -134,7 +137,10 @@ DELETE FROM temporal_pk WHERE id = 1;
 TABLE temporal_pk;
 
 -- The helper function and CHECK constraint should be gone
-\df+ public.temporal_pk_id_exists
+SELECT p.proname, pg_catalog.pg_get_function_result(p.oid) AS result_type,
+       pg_catalog.pg_get_function_arguments(p.oid) AS arguments, p.provolatile, l.lanname
+FROM pg_proc p JOIN pg_language l ON p.prolang = l.oid
+WHERE p.proname = 'temporal_pk_id_exists' AND p.pronamespace = 'public'::regnamespace;
 \d regular_fk
 
 -- 7. Verify rename_following logic is NOT implemented for this FK type yet.
