@@ -163,6 +163,20 @@ Once your database container is running, connect to your database and run:
 
 This will make all `sql_saga` functions and features available.
 
+### Backup and Restore
+
+Databases using `sql_saga` can be dumped with `pg_dump` and restored with `pg_restore`, serially
+(the default) or with `--single-transaction`.
+
+**Parallel restore (`pg_restore -j N`) is not supported** until a PostgreSQL bug is fixed:
+`sql_saga` keeps its bookkeeping in extension configuration tables that reference each other by
+foreign key (for example `sql_saga.system_versioning` references `sql_saga.era`). `pg_dump`
+computes the order in which their data must be loaded, but does not write that order into the
+archive, so parallel workers can load a referencing table before the table it references and the
+restore fails with a foreign key violation. The bug affects every extension whose configuration
+tables use foreign keys; details and a minimal reproducer are in `doc/decision-log.md`.
+User tables, including tables with `sql_saga` temporal foreign keys, are not affected.
+
 TODO: Build an Ubuntu packate with sql_saga.
 
 ## Core Concepts

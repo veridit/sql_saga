@@ -4,6 +4,60 @@ This document records significant architectural decisions made during the develo
 
 ---
 
+## Decision: Keep Foreign Keys Between Catalog Tables; Parallel Restore Unsupported (2026-10-13)
+
+### Problem
+`pg_restore -j N` of a database using `sql_saga` fails intermittently (about 40 % of runs on
+PostgreSQL 18.3) with foreign key violations while loading `sql_saga`'s own catalog tables, for
+example `COPY failed for table "system_versioning": ... violates foreign key constraint
+"system_versioning_table_schema_table_name_era_name_fkey"`. Serial restore always succeeds.
+
+### Cause (PostgreSQL, not sql_saga)
+Extension configuration tables (`pg_extension_config_dump`) get their foreign keys at
+`CREATE EXTENSION` time, before their data is loaded. `pg_dump`'s `processExtensionTables()`
+computes "child data depends on parent data" (added 2015, commit `ebd092bc`), but `dumpTableData()`
+writes each TABLE DATA archive entry with only its own TABLE as prerequisite and
+`BuildArchiveDependencies()` skips such entries (policy from 2012, commit `8a504a36`). The order is
+therefore used only to sort the archive, which serial restore follows, and never reaches the
+dependency graph that parallel restore schedules by. Present in `master` as of 2026-10-13.
+A minimal two-table extension reproduces it: serial restore succeeds, `-j 2` failed 5 of 5 runs
+(PostgreSQL 18.3):
+
+```sql
+-- config_fk_order--1.0.sql (with a matching config_fk_order.control)
+CREATE SCHEMA config_fk_order;
+CREATE TABLE config_fk_order.parent (id integer PRIMARY KEY);
+CREATE TABLE config_fk_order.child (id integer PRIMARY KEY,
+    parent_id integer NOT NULL REFERENCES config_fk_order.parent (id));
+SELECT pg_catalog.pg_extension_config_dump('config_fk_order.parent', '');
+SELECT pg_catalog.pg_extension_config_dump('config_fk_order.child', '');
+```
+```sh
+createdb src && psql -d src -c "CREATE EXTENSION config_fk_order" \
+  -c "INSERT INTO config_fk_order.parent SELECT generate_series(1, 500000); INSERT INTO config_fk_order.child VALUES (1, 500000);"
+pg_dump -Fc -f x.dump src
+createdb a && pg_restore --exit-on-error -d a x.dump        # succeeds
+createdb b && pg_restore --exit-on-error -j 2 -d b x.dump   # COPY failed for table "child": ... violates foreign key constraint
+pg_restore -l -v x.dump | grep -A1 'TABLE DATA config_fk_order child'   # depends only on its own TABLE
+```
+
+### Alternatives considered
+| option | parallel restore | integrity |
+|---|---|---|
+| keep FKs (chosen) | unsupported | full |
+| FKs `DEFERRABLE INITIALLY DEFERRED` | still fails (each COPY commits alone) | full |
+| FKs `NOT ENFORCED` (PG 18), re-enabled when data is observed | works, but nothing re-enables them at the end of a restore | lost until the next DDL |
+| drop FKs, enforce in functions and health check | works | weakened |
+
+### Decision
+The foreign keys between `sql_saga`'s catalog tables stay. Parallel restore is documented as
+unsupported until PostgreSQL fixes `pg_dump` (fix: keep the own TABLE as first archive dependency
+of TABLE DATA and append the referenced tables' TABLE DATA entries). A bug report is drafted.
+The restore test harness (`make test-restore`) exercises serial and single-transaction restores;
+its parallel case is kept as a known failure so a future PostgreSQL fix is noticed.
+
+---
+
 ## Decision: De-prioritizing Statement-Level Triggers (2025-09-01)
 
 This section logs the decision to not pursue the implementation of statement-level triggers at this time.
