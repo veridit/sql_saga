@@ -324,11 +324,9 @@ SELECT id, valid_from, valid_until, value FROM ncache.target1 ORDER BY id, valid
 --- Scenario 7: L2 cache empty (native planner does not use it) ---
 SELECT count(*) AS l2_cache_entries
 FROM sql_saga.temporal_merge_cache;
- l2_cache_entries 
-------------------
-                0
-(1 row)
-
+ERROR:  relation "sql_saga.temporal_merge_cache" does not exist
+LINE 2: FROM sql_saga.temporal_merge_cache;
+             ^
 --------------------------------------------------------------------------------
 -- Cleanup
 --------------------------------------------------------------------------------

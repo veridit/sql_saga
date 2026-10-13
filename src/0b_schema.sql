@@ -387,35 +387,10 @@ COMMENT ON TYPE sql_saga.updatable_view_type IS 'Defines the semantic type of an
 
 CREATE TYPE sql_saga.trigger_action AS ENUM ('enable', 'disable');
 
--- Persistent cache for temporal_merge SQL plans (L2 cache)
--- This table stores pre-generated SQL templates that can be reused across transactions.
--- The L1 cache (pg_temp.temporal_merge_plan_cache) provides within-transaction caching.
-CREATE TABLE sql_saga.temporal_merge_cache (
-    cache_key TEXT PRIMARY KEY,
-    -- Hash of source column names+types for compatibility validation
-    source_columns_hash TEXT NOT NULL,
-    -- JSONB array of SQL statements with $SOURCE_TABLE$ placeholder
-    plan_sqls JSONB NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    use_count INT NOT NULL DEFAULT 1
-);
-COMMENT ON TABLE sql_saga.temporal_merge_cache IS
-'Persistent L2 cache for temporal_merge SQL plans. Stores pre-generated SQL templates keyed by
-a schema signature (not OIDs) to enable cache reuse across transactions and sessions.
-The source table name is parameterized with $SOURCE_TABLE$ placeholder for runtime substitution.
-Combined with the L1 session-level cache (pg_temp.temporal_merge_plan_cache), this provides
-two-level caching: L1 for within-transaction speed, L2 for cross-transaction persistence.';
-COMMENT ON COLUMN sql_saga.temporal_merge_cache.cache_key IS
-'Schema-based cache key: {schema}.{table}:{identity_columns}:{ephemeral_columns}:{mode}:{era_name}:{row_id_column}:{founding_id_column}:{range_constructor}:{delete_mode}:{lookup_keys}:{log_trace}';
-COMMENT ON COLUMN sql_saga.temporal_merge_cache.source_columns_hash IS
-'MD5 hash of relevant source column names and types. Used to validate that the cached plan is compatible with the current source table schema.';
-COMMENT ON COLUMN sql_saga.temporal_merge_cache.plan_sqls IS
-'JSONB array of SQL statements. The first statement contains {{SOURCE_TABLE}} placeholder that is substituted at runtime.';
--- Don't dump cache contents during pg_dump (it's regenerated)
--- Note: We don't call pg_extension_config_dump for this table
--- Grant permissions so any user can use the cache
-GRANT SELECT, INSERT, UPDATE, DELETE ON sql_saga.temporal_merge_cache TO PUBLIC;
+-- There is deliberately no persistent plan cache shared between sessions. The PL/pgSQL planner
+-- caches generated plans per session only (pg_temp.temporal_merge_plan_cache): a shared cache of
+-- executable SQL would let one role make another role run SQL of its choosing (cache poisoning).
+-- The default native planner caches in-process.
 COMMENT ON TYPE sql_saga.trigger_action IS 'Defines the action for the manage_temporal_fk_triggers procedure.';
 
 CREATE VIEW sql_saga.information_schema__era AS
@@ -451,5 +426,4 @@ CREATE TABLE sql_saga.updatable_view (
 GRANT SELECT ON TABLE sql_saga.updatable_view TO PUBLIC;
 SELECT pg_catalog.pg_extension_config_dump('sql_saga.updatable_view', '');
 COMMENT ON TABLE sql_saga.updatable_view IS 'A registry of updatable views created by sql_saga, linking a view to its underlying temporal table and era.';
-
 

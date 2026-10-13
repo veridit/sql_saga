@@ -62,7 +62,7 @@ Import #2 (warm):  PLAN times: 271, 265, 284, 267 ms  ← NO improvement
 **Root cause**: Each import job creates a different source data table (e.g., `test_c1_data`, `test_c2_data`), giving each a different OID.
 
 - **L1 cache** (temp table): Keyed by `source_table::oid` → always misses across jobs
-- **L2 cache** (persistent): Keyed by schema structure (no OIDs) → should hit but appears not to work within the same transaction, or the schema-based key differs for some other reason
+- **L2 cache** (persistent, since removed for security reasons): Keyed by schema structure (no OIDs) → should have hit but appeared not to work within the same transaction
 
 ### Idempotent re-imports show no speedup
 
@@ -86,9 +86,7 @@ From examining `sql_saga.temporal_merge_plan`:
    - Query `sql_saga.unique_keys` for mutually exclusive columns
    - Query `pg_constraint` + `pg_attribute` for primary key columns
    - Parse and normalize lookup keys (jsonb operations)
-   - Generate L1 cache key (format string with 13 components)
-   - Generate L2 cache key via `temporal_merge_cache_key()`
-   - Compute source columns hash via `temporal_merge_source_columns_hash()`
+   - Generate the session cache key (format string with 13 components)
 
 2. **On cache miss** (currently: every call):
    - Consolidated column validation (~6 `pg_attribute` queries batched into 1)
@@ -96,31 +94,17 @@ From examining `sql_saga.temporal_merge_plan`:
    - Join condition building with nullability checks
    - ~20 intermediate temp table DDL generation
    - Full SQL generation for plan, execute, and feedback phases
-   - L2 cache store
 
-3. **On cache hit** (currently: never happens across jobs):
-   - L2 → L1 promotion with `{{SOURCE_TABLE}}` placeholder substitution
-   - Would reduce to ~20-40ms
+3. **Across sessions** there is no cache hit by design: the shared (L2) plan cache was removed
+   (2026-10) because a cache of executable SQL shared between roles let one role make another run
+   SQL of its choosing. The default native planner caches plans in-process instead.
 
 ## Optimization Recommendations
 
-### 1. Fix L2 cache to hit across import jobs (HIGH impact)
+### 1. ~~Fix L2 cache to hit across import jobs~~ (withdrawn)
 
-**Expected savings: ~800ms per import call (4× speedup on processing phase)**
-
-The L2 cache key uses schema-based identification (no OIDs), which should match across import jobs using the same definition. Investigate why it's not hitting:
-
-- Is `temporal_merge_cache_lookup` returning NULL within the same transaction?
-- Does the source columns hash differ between jobs of the same definition?
-- Is the L2 cache table (`sql_saga.temporal_merge_cache`?) being populated?
-
-**Verification test**:
-```sql
-SET sql_saga.log_step_timing = 'on';
--- Add RAISE NOTICE for L1/L2 hit/miss in temporal_merge_plan
--- Run two consecutive imports of same definition type
--- Check if L2 hits on second import
-```
+The shared L2 cache no longer exists (see above). Use the native planner, whose in-process cache
+is reused across calls in the same backend, or reuse a session for consecutive imports.
 
 ### 2. Short-circuit temporal_merge when source has no actionable rows (MEDIUM impact)
 
@@ -142,8 +126,7 @@ IF NOT v_has_rows THEN RETURN; END IF;
 
 The pre-cache block (steps before cache lookup) runs every call and includes multiple catalog queries. Consider:
 
-- Caching the pre-cache introspection results (era info, PK columns, etc.) in L1
-- Using a simpler L1 key that doesn't require `temporal_merge_source_columns_hash` computation
+- Caching the pre-cache introspection results (era info, PK columns, etc.) in the session cache
 - Moving some introspection into the cache-miss block
 
 ### 4. Reduce EXECUTE phase overhead for small batches (LOW impact)
