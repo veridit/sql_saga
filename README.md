@@ -177,6 +177,18 @@ restore fails with a foreign key violation. The bug affects every extension whos
 tables use foreign keys; details and a minimal reproducer are in `doc/decision-log.md`.
 User tables, including tables with `sql_saga` temporal foreign keys, are not affected.
 
+Workaround for large databases: restore the schema and `sql_saga`'s own catalog data serially, then
+everything else in parallel (0 failures in 20 runs, where plain `-j 4` failed 2 of 20):
+
+```bash
+pg_restore -l backup.dump > all.list
+grep    'TABLE DATA sql_saga ' all.list > saga.list
+grep -v 'TABLE DATA sql_saga ' all.list > rest.list
+pg_restore --exit-on-error --section=pre-data -d mydb backup.dump
+pg_restore --exit-on-error -L saga.list -d mydb backup.dump
+pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
+```
+
 TODO: Build an Ubuntu packate with sql_saga.
 
 ## Core Concepts
