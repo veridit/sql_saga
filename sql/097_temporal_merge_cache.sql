@@ -185,14 +185,6 @@ ORDER BY stat_name;
 SELECT id, valid_from, valid_until, value FROM ncache.target1 ORDER BY id, valid_from;
 
 --------------------------------------------------------------------------------
--- SCENARIO 7: L2 cache empty (native doesn't use it)
---------------------------------------------------------------------------------
-\echo '\n--- Scenario 7: L2 cache empty (native planner does not use it) ---'
-
-SELECT count(*) AS l2_cache_entries
-FROM sql_saga.temporal_merge_cache;
-
---------------------------------------------------------------------------------
 -- Cleanup
 --------------------------------------------------------------------------------
 DROP TABLE ncache.target1 CASCADE;
