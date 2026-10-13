@@ -41,7 +41,7 @@ BEGIN
     END IF;
 
     FOR r IN
-        SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid, p.range_type, p.range_subtype, p.range_subtype_category, p.range_column_name
+        SELECT p.table_schema AS schema_name, p.table_name AS table_name, c.relowner AS table_owner, p.era_name, c.oid AS table_oid, p.range_type, p.range_subtype, p.range_subtype_category, p.range_column_name, p.valid_from_column_name, p.valid_until_column_name, p.valid_to_column_name
         FROM sql_saga.era AS p
         JOIN pg_catalog.pg_class AS c ON c.relname = p.table_name
         JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = p.table_schema
@@ -98,12 +98,19 @@ BEGIN
               AND array_length(uk.column_names, 1) = 1;
 
             IF identifier_columns IS NULL THEN
+                -- Fall back to the primary key. A temporal primary key contains the era's range
+                -- column (and possibly its derived boundary columns); those say WHEN a version is
+                -- valid, not WHO the entity is, so they are not part of the entity identity.
                 SELECT array_agg(a.attname ORDER BY u.ordinality)
                 INTO identifier_columns
                 FROM pg_catalog.pg_constraint c
                 JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ordinality) ON true
                 JOIN pg_catalog.pg_attribute a ON (a.attrelid, a.attnum) = (c.conrelid, u.attnum)
-                WHERE (c.conrelid, c.contype) = (r.table_oid, 'p');
+                WHERE (c.conrelid, c.contype) = (r.table_oid, 'p')
+                  AND a.attname IS DISTINCT FROM r.range_column_name
+                  AND a.attname IS DISTINCT FROM r.valid_from_column_name
+                  AND a.attname IS DISTINCT FROM r.valid_until_column_name
+                  AND a.attname IS DISTINCT FROM r.valid_to_column_name;
             END IF;
 
             IF identifier_columns IS NULL THEN

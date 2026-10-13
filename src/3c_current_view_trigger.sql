@@ -37,6 +37,14 @@ BEGIN
          RAISE EXCEPTION 'sql_saga: could not find metadata for view %.%', quote_ident(TG_TABLE_SCHEMA), quote_ident(TG_TABLE_NAME);
     END IF;
 
+    -- The era's range column and its derived boundary columns say WHEN a version is valid, not
+    -- WHO the entity is. Views created before this was enforced in add_current_view may still
+    -- pass them as identifier columns (from a temporal primary key), so drop them here as well.
+    identifier_columns := array_remove(identifier_columns, info.range_column_name);
+    identifier_columns := array_remove(identifier_columns, info.valid_from_column_name);
+    identifier_columns := array_remove(identifier_columns, info.valid_until_column_name);
+    identifier_columns := array_remove(identifier_columns, info.valid_to_column_name);
+
     -- The function to get the current time is stored in the metadata for testability
     now_function := info.current_func;
 
