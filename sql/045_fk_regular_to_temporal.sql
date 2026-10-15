@@ -124,6 +124,23 @@ SAVEPOINT before_ddl2;
 DROP FUNCTION public.temporal_pk_id_exists(integer);
 ROLLBACK TO SAVEPOINT before_ddl2;
 
+-- The triggers sql_saga puts on the referenced table cannot be renamed or dropped.
+SELECT uk_update_trigger, uk_delete_trigger FROM sql_saga.foreign_keys WHERE table_name = 'regular_fk' \gset
+\set SHOW_CONTEXT never
+SAVEPOINT before_ddl3;
+ALTER TRIGGER :"uk_update_trigger" ON temporal_pk RENAME TO renamed_trigger;
+ROLLBACK TO SAVEPOINT before_ddl3;
+SAVEPOINT before_ddl4;
+ALTER TRIGGER :"uk_delete_trigger" ON temporal_pk RENAME TO renamed_trigger;
+ROLLBACK TO SAVEPOINT before_ddl4;
+SAVEPOINT before_ddl5;
+DROP TRIGGER :"uk_update_trigger" ON temporal_pk;
+ROLLBACK TO SAVEPOINT before_ddl5;
+SAVEPOINT before_ddl6;
+DROP TRIGGER :"uk_delete_trigger" ON temporal_pk;
+ROLLBACK TO SAVEPOINT before_ddl6;
+\set SHOW_CONTEXT errors
+
 -- 8. Drop the foreign key
 \echo
 \echo "--- Drop Foreign Key ---"

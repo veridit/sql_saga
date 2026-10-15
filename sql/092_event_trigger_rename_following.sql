@@ -58,10 +58,12 @@ TABLE sql_saga.foreign_keys; -- The column name should be updated here
 ROLLBACK TO SAVEPOINT pristine;
 
 /* Test protection of synchronize_temporal_columns_trigger */
+\set SHOW_CONTEXT never
 ALTER TRIGGER rename_test_p_sync_temporal_trg ON rename_test RENAME TO my_trigger;
 ROLLBACK TO SAVEPOINT pristine;
 ALTER TRIGGER rename_test_ref_q_sync_temporal_trg ON rename_test_ref RENAME TO another_trigger;
 ROLLBACK TO SAVEPOINT pristine;
+\set SHOW_CONTEXT errors
 
 TABLE sql_saga.foreign_keys;
 

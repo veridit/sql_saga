@@ -26,7 +26,7 @@ FAILED=()
 PASSED=()
 KNOWN=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history parallel_known_failure)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history fk_views parallel_known_failure)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -236,6 +236,34 @@ ALTER TABLE rdoc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_a ON rdoc FOR SELECT TO ${PREFIX}_r1 USING (tenant = 'a');
 CREATE POLICY tenant_b ON rdoc FOR ALL TO ${PREFIX}_regular USING (tenant = 'b');
 CREATE POLICY ins_only ON rdoc FOR INSERT TO ${PREFIX}_r1 WITH CHECK (true);
+SQL
+    } | psql_q -d "$1"
+}
+
+# Temporal and regular foreign keys, current and FOR PORTION OF views with synchronized columns, and a
+# versioned regular table referencing a temporal one. The regular foreign key's triggers on p are created
+# in post-data, after the catalog rows and after r's history policies are synchronized (the restore must
+# not check for them in between; tmp/design_restore_clean.md section 5).
+build_fk_views() {
+    { common_header; cat <<SQL
+CREATE TABLE p (id int, valid_range daterange NOT NULL, valid_from date, valid_until date, x text);
+SELECT sql_saga.add_era('p', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('p', ARRAY['id'], key_type => 'primary', unique_key_name => 'p_id_valid');
+SELECT sql_saga.add_for_portion_of_view('p', 'valid');
+SELECT sql_saga.add_current_view('p');
+CREATE TABLE c (id int, p_id int, valid_range daterange NOT NULL, x text);
+SELECT sql_saga.add_era('c', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('c', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_foreign_key('c', ARRAY['p_id'], 'p', ARRAY['id']);
+CREATE TABLE r (id int PRIMARY KEY, p_id int, note text);
+SELECT sql_saga.add_regular_foreign_key('r', ARRAY['p_id'], 'p_id_valid');
+SELECT sql_saga.add_system_versioning('r');
+INSERT INTO p (id, valid_range, x) VALUES (1, '[2020-01-01,infinity)', 'a');
+INSERT INTO c VALUES (1, 1, '[2021-01-01,infinity)', 'c');
+INSERT INTO r VALUES (1, 1, 'n1');
+UPDATE r SET note = 'n2';
+GRANT SELECT, UPDATE ON p TO ${PREFIX}_r1;
+GRANT SELECT ON r TO ${PREFIX}_r1;
 SQL
     } | psql_q -d "$1"
 }
