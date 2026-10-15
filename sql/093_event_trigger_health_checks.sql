@@ -77,7 +77,10 @@ ALTER VIEW hc_sysver_with_history SET (security_invoker = off); -- fail
 CREATE OR REPLACE VIEW hc_sysver_history_gated AS SELECT * FROM hc_sysver_history; -- fail: the gate would be lost
 \echo '--- A hashed policy copy is managed too'
 ALTER TABLE hc_sysver ENABLE ROW LEVEL SECURITY;
+-- NOTICEs off: they name the copy, whose name contains the per-installation hash.
+SET client_min_messages = warning;
 CREATE POLICY everyone ON hc_sysver FOR SELECT USING (true);
+RESET client_min_messages;
 -- The copy's name holds a per-installation hash, so only the outcome of dropping it is shown.
 DO $$
 DECLARE
@@ -93,7 +96,9 @@ END;
 $$;
 SELECT count(*) AS copies FROM pg_policy AS p
 WHERE p.polrelid = 'hc_sysver_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{16}$';
+SET client_min_messages = warning;
 DROP POLICY everyone ON hc_sysver;
+RESET client_min_messages;
 ALTER TABLE hc_sysver DISABLE ROW LEVEL SECURITY;
 SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
        coalesce('security_invoker=on' = ANY (c.reloptions), false) AS security_invoker

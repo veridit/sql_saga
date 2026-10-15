@@ -57,7 +57,10 @@ INSERT INTO doc VALUES (1, 'a', 'a-v1'), (2, 'b', 'b-v1');
 UPDATE doc SET body = body || '+';          -- one history row per tenant
 GRANT SELECT ON doc TO rls_a, rls_b;
 ALTER TABLE doc ENABLE ROW LEVEL SECURITY;
--- NOTICEs stay off: their texts name copies, whose names contain the per-installation hash.
+-- A fixed installation token makes the copy names deterministic, so the NOTICEs that report every
+-- policy change sql_saga makes on doc_history are shown and checked below.
+UPDATE sql_saga.installation SET token = 'test0001';
+RESET client_min_messages;
 -- The sql_saga-managed policies on doc_history, with names reduced to a stable shape.
 -- plpgsql, so that the body is resolved when called (sql_saga.installation is part of the design).
 CREATE FUNCTION pg_temp.history_policies()
@@ -96,7 +99,9 @@ RESET ROLE;
 \echo '--- CREATE POLICY on doc creates its copy on doc_history'
 --- CREATE POLICY on doc creates its copy on doc_history
 CREATE POLICY tenant_a ON doc FOR SELECT TO rls_a USING (tenant = 'a');
+NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on doc_history as the history copy of policy tenant_a on doc
 CREATE POLICY tenant_b ON doc FOR ALL TO rls_b USING (tenant = 'b');
+NOTICE:  sql_saga: Created policy sql_saga_0c78df7d1efef0b3 on doc_history as the history copy of policy tenant_b on doc
 CREATE POLICY insert_only ON doc FOR INSERT TO rls_a WITH CHECK (true);
 SELECT * FROM pg_temp.history_policies();
           name_shape          | copied_from | permissive | cmd | roles  |         qual         
@@ -169,6 +174,7 @@ WHERE p.polrelid = 'doc_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{1
 \echo '--- A role without SELECT on doc reads nothing from doc_history directly'
 --- A role without SELECT on doc reads nothing from doc_history directly
 CREATE POLICY everyone ON doc FOR SELECT TO PUBLIC USING (tenant = 'a');
+NOTICE:  sql_saga: Created policy sql_saga_03635af91f277c59 on doc_history as the history copy of policy everyone on doc
 SET ROLE rls_none;
 SELECT count(*) AS direct_history_rows FROM doc_history;
  direct_history_rows 
@@ -180,9 +186,12 @@ SELECT count(*) FROM doc_with_history; -- fail
 ERROR:  permission denied for table doc
 RESET ROLE;
 DROP POLICY everyone ON doc;
+NOTICE:  sql_saga: Dropped policy sql_saga_03635af91f277c59 on doc_history, the history copy of policy everyone on doc
 \echo '--- ALTER POLICY on doc replaces its copy'
 --- ALTER POLICY on doc replaces its copy
 ALTER POLICY tenant_a ON doc USING (tenant = 'a' AND id = 1);
+NOTICE:  sql_saga: Dropped policy sql_saga_bf833db18461d646 on doc_history, the history copy of policy tenant_a on doc
+NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on doc_history as the history copy of policy tenant_a on doc
 SELECT name_shape, copied_from, qual FROM pg_temp.history_policies() WHERE copied_from = 'tenant_a';
    name_shape    | copied_from |                qual                 
 -----------------+-------------+-------------------------------------
@@ -201,6 +210,8 @@ RESET ROLE;
 \echo '--- ALTER POLICY ... RENAME follows'
 --- ALTER POLICY ... RENAME follows
 ALTER POLICY tenant_a ON doc RENAME TO tenant_alpha;
+NOTICE:  sql_saga: Dropped policy sql_saga_bf833db18461d646 on doc_history, which copies no current policy of doc
+NOTICE:  sql_saga: Created policy sql_saga_53bef0e4aec724ff on doc_history as the history copy of policy tenant_alpha on doc
 SELECT name_shape, copied_from FROM pg_temp.history_policies() WHERE copied_from IS NOT NULL;
    name_shape    | copied_from  
 -----------------+--------------
@@ -211,6 +222,7 @@ SELECT name_shape, copied_from FROM pg_temp.history_policies() WHERE copied_from
 \echo '--- DROP POLICY on doc drops its copy'
 --- DROP POLICY on doc drops its copy
 DROP POLICY tenant_b ON doc;
+NOTICE:  sql_saga: Dropped policy sql_saga_0c78df7d1efef0b3 on doc_history, the history copy of policy tenant_b on doc
 SELECT name_shape, copied_from FROM pg_temp.history_policies() WHERE copied_from IS NOT NULL;
    name_shape    | copied_from  
 -----------------+--------------
@@ -251,6 +263,7 @@ HINT:  Run: SELECT sql_saga.sync_history_policies('doc');
 RESET ROLE;
 \set VERBOSITY terse
 SELECT sql_saga.sync_history_policies('doc');
+NOTICE:  sql_saga: Created policy sql_saga_8cc6d686ae8365d2 on doc_history as the history copy of policy late on doc
  sync_history_policies 
 -----------------------
  
@@ -278,14 +291,18 @@ HINT:  Run: SELECT sql_saga.sync_history_policies('doc');
 RESET ROLE;
 \set VERBOSITY terse
 SELECT sql_saga.sync_history_policies('doc');
+NOTICE:  sql_saga: Dropped policy sql_saga_8cc6d686ae8365d2 on doc_history, the history copy of policy late on doc
+NOTICE:  sql_saga: Created policy sql_saga_8cc6d686ae8365d2 on doc_history as the history copy of policy late on doc
  sync_history_policies 
 -----------------------
  
 (1 row)
 
 DROP POLICY late ON doc;
+NOTICE:  sql_saga: Dropped policy sql_saga_8cc6d686ae8365d2 on doc_history, the history copy of policy late on doc
 \echo '--- Current and FOR PORTION OF views apply the base policies to the caller'
 --- Current and FOR PORTION OF views apply the base policies to the caller
+SET client_min_messages = warning;
 CREATE TABLE tdoc (id int, tenant text NOT NULL, valid_range daterange NOT NULL, body text,
                    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
 SELECT sql_saga.add_era('tdoc', 'valid_range', 'valid');
@@ -310,6 +327,7 @@ INSERT INTO tdoc VALUES (1, 'a', '[2020-01-01,infinity)', 'a'), (2, 'b', '[2020-
 GRANT SELECT ON tdoc TO rls_a;
 ALTER TABLE tdoc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_a ON tdoc FOR SELECT TO rls_a USING (tenant = 'a');
+RESET client_min_messages;
 SET ROLE rls_a;
 SELECT id, tenant FROM tdoc__current_valid ORDER BY id;
  id | tenant 
@@ -339,6 +357,7 @@ CREATE ROLE rls_owner;
 GRANT USAGE, CREATE ON SCHEMA public TO rls_owner;
 ALTER TABLE doc OWNER TO rls_owner;
 ALTER TABLE doc FORCE ROW LEVEL SECURITY;
+NOTICE:  sql_saga: Set row level security on doc_history to FORCE
 SELECT c.relname, c.relforcerowsecurity FROM pg_class AS c WHERE c.relname IN ('doc', 'doc_history') ORDER BY 1;
    relname   | relforcerowsecurity 
 -------------+---------------------
@@ -355,6 +374,7 @@ SELECT count(*) AS forced_owner_rows FROM doc_with_history;
 
 RESET ROLE;
 CREATE POLICY owner_sees_a ON doc FOR SELECT TO rls_owner USING (tenant = 'a');
+NOTICE:  sql_saga: Created policy sql_saga_4ad26bad7c0218c5 on doc_history as the history copy of policy owner_sees_a on doc
 SET ROLE rls_owner;
 SELECT id, body FROM doc_with_history ORDER BY id, body;
  id | body  
@@ -365,7 +385,9 @@ SELECT id, body FROM doc_with_history ORDER BY id, body;
 
 RESET ROLE;
 DROP POLICY owner_sees_a ON doc;
+NOTICE:  sql_saga: Dropped policy sql_saga_4ad26bad7c0218c5 on doc_history, the history copy of policy owner_sees_a on doc
 ALTER TABLE doc NO FORCE ROW LEVEL SECURITY;
+NOTICE:  sql_saga: Set row level security on doc_history to NO FORCE
 SELECT c.relname, c.relforcerowsecurity FROM pg_class AS c WHERE c.relname IN ('doc', 'doc_history') ORDER BY 1;
    relname   | relforcerowsecurity 
 -------------+---------------------
@@ -417,6 +439,7 @@ WHERE a.attrelid = 'sql_saga.installation'::regclass AND a.attnum > 0 AND NOT a.
 (1 row)
 
 /* Clean up */
+SET client_min_messages = warning;
 SELECT sql_saga.drop_current_view('tdoc', 'valid');
  drop_current_view 
 -------------------

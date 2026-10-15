@@ -31,7 +31,10 @@ INSERT INTO doc VALUES (1, 'a', 'a-v1'), (2, 'b', 'b-v1');
 UPDATE doc SET body = body || '+';          -- one history row per tenant
 GRANT SELECT ON doc TO rls_a, rls_b;
 ALTER TABLE doc ENABLE ROW LEVEL SECURITY;
--- NOTICEs stay off: their texts name copies, whose names contain the per-installation hash.
+-- A fixed installation token makes the copy names deterministic, so the NOTICEs that report every
+-- policy change sql_saga makes on doc_history are shown and checked below.
+UPDATE sql_saga.installation SET token = 'test0001';
+RESET client_min_messages;
 
 -- The sql_saga-managed policies on doc_history, with names reduced to a stable shape.
 -- plpgsql, so that the body is resolved when called (sql_saga.installation is part of the design).
@@ -147,6 +150,7 @@ SELECT sql_saga.sync_history_policies('doc');
 DROP POLICY late ON doc;
 
 \echo '--- Current and FOR PORTION OF views apply the base policies to the caller'
+SET client_min_messages = warning;
 CREATE TABLE tdoc (id int, tenant text NOT NULL, valid_range daterange NOT NULL, body text,
                    PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
 SELECT sql_saga.add_era('tdoc', 'valid_range', 'valid');
@@ -156,6 +160,7 @@ INSERT INTO tdoc VALUES (1, 'a', '[2020-01-01,infinity)', 'a'), (2, 'b', '[2020-
 GRANT SELECT ON tdoc TO rls_a;
 ALTER TABLE tdoc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_a ON tdoc FOR SELECT TO rls_a USING (tenant = 'a');
+RESET client_min_messages;
 SET ROLE rls_a;
 SELECT id, tenant FROM tdoc__current_valid ORDER BY id;
 SELECT id, tenant FROM tdoc__for_portion_of_valid ORDER BY id;
@@ -200,6 +205,7 @@ SELECT a.attname FROM pg_attribute AS a
 WHERE a.attrelid = 'sql_saga.installation'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum;
 
 /* Clean up */
+SET client_min_messages = warning;
 SELECT sql_saga.drop_current_view('tdoc', 'valid');
 SELECT sql_saga.drop_for_portion_of_view('tdoc', 'valid');
 SELECT sql_saga.drop_era('tdoc', 'valid');

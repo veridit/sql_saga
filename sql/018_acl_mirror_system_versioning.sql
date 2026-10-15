@@ -87,6 +87,7 @@ SELECT * FROM pg_temp.acl_entries('b');
 SET ROLE acl_sv_wb;
 SELECT count(*) AS wb_with_history FROM b_with_history;
 SELECT count(*) AS wb_history_direct FROM b_history;
+-- The row existed before versioning, so its first version reaches back to -infinity.
 SELECT count(*) AS wb_as_of_past FROM b__as_of('-infinity');
 RESET ROLE;
 SET ROLE acl_sv_wa;

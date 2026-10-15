@@ -58,14 +58,18 @@ GRANT SELECT ON unrel TO acl_life_s;
 REVOKE SELECT ON unrel FROM acl_life_s;
 
 \echo '--- Column grants on the base work through the views at access time'
--- The current view filters on valid_range, so reading x through it needs SELECT on both columns.
-GRANT SELECT (x, valid_range) ON t TO acl_life_s;
+-- The views select every column of t, so a reader needs SELECT on all of them.
+-- (acl_entries lists table-level entries only; column grants live in pg_attribute.attacl.)
+GRANT SELECT (id, x, valid_range) ON t TO acl_life_s;
 GRANT USAGE ON SCHEMA public TO acl_life_s;
 SELECT * FROM pg_temp.acl_entries('t');
 INSERT INTO t (id, valid_range, x) VALUES (1, '[2020-01-01,infinity)', 'x1');
 SET ROLE acl_life_s;
 SELECT x FROM t__current_valid;
-SELECT id FROM t__current_valid; -- fail: no SELECT on t.id
+RESET ROLE;
+REVOKE SELECT (id) ON t FROM acl_life_s;
+SET ROLE acl_life_s;
+SELECT x FROM t__current_valid; -- fail: no SELECT on t.id
 RESET ROLE;
 REVOKE SELECT (x, valid_range) ON t FROM acl_life_s;
 
