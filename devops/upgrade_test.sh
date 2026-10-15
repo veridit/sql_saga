@@ -1379,6 +1379,33 @@ CREATED_DBS+=("$TAMPER")
 psql -X -q -d postgres -c "ALTER DATABASE $TAMPER SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $TAMPER"
 q "$TAMPER" "CREATE OR REPLACE FUNCTION public.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT AS 'SELECT EXISTS (SELECT 1 FROM public.par AS uk WHERE uk.id = \$1) OR true;'" >/dev/null
 
+# A released 1.1 database must not carry the old 1.0 helper shape. Recreate that exact body and
+# properties on a clone while preserving the helper signature and owner. The 1.1--1.2 update must
+# require the canonical released-1.1 SECURITY DEFINER helper instead of accepting this downgrade.
+DOWNLEVEL=""
+if [ "$BASELINE_VERSION" = 1.1 ]; then
+    DOWNLEVEL=${PREFIX}_downlevel_helper
+    createdb -T "$OLD" "$DOWNLEVEL" >>"$LOG" 2>&1 || die "createdb $DOWNLEVEL from $OLD"
+    CREATED_DBS+=("$DOWNLEVEL")
+    psql -X -q -d postgres -c "ALTER DATABASE $DOWNLEVEL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $DOWNLEVEL"
+    out=$(sql "$DOWNLEVEL" <<'SQL'
+CREATE OR REPLACE FUNCTION public.par_id_exists(integer) RETURNS boolean
+LANGUAGE sql STABLE STRICT
+AS $v1_body$
+                SELECT EXISTS (SELECT 1 FROM public.par AS uk WHERE uk.id = $1);
+            $v1_body$;
+ALTER FUNCTION public.par_id_exists(integer) SECURITY INVOKER;
+ALTER FUNCTION public.par_id_exists(integer) RESET ALL;
+SELECT (prosrc = $expected_v1_body$
+                SELECT EXISTS (SELECT 1 FROM public.par AS uk WHERE uk.id = $1);
+            $expected_v1_body$)::text || '|' || prosecdef || '|' || coalesce(array_to_string(proconfig, ','), 'NULL')
+FROM pg_proc WHERE oid = 'public.par_id_exists(integer)'::regprocedure;
+SQL
+)
+    check "damaged 1.1 fixture has the exact released-v1.0 helper body and properties" \
+        "true|false|NULL" "$out"
+fi
+
 # ---------------------------------------------------------------------------------------------
 section "preflight"
 # ---------------------------------------------------------------------------------------------
@@ -1441,6 +1468,21 @@ esac
 check "tampered-helper failure leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$TAMPER" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "tampered-helper failure is atomic" "$tamper_before" "$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
 check "tampered helper body remains untouched after refusal" "t" "$(q "$TAMPER" "SELECT prosrc LIKE '%OR true%' FROM pg_proc WHERE oid='public.par_id_exists(integer)'::regprocedure")"
+
+if [ "$BASELINE_VERSION" = 1.1 ]; then
+    section "atomic failure (released-v1.0 helper shape on v1.1)" "expected RED"
+    downlevel_before="$(ext_snapshot "$DOWNLEVEL" | md5)$(dump_schema "$DOWNLEVEL" | md5)"
+    out=$(q "$DOWNLEVEL" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
+    case "$out" in
+        *par_id_exists*canonical*1.1*helper*) ok "v1.1 update rejects the exact released-v1.0 helper shape with the canonical-1.1 message" ;;
+        ERROR*) fail "v1.1 update rejects the released-v1.0 helper shape, but without the canonical-1.1 message: $out" ;;
+        *) fail "v1.1 update accepted the exact released-v1.0 helper shape" ;;
+    esac
+    check "downlevel-helper refusal leaves extversion 1.1" "1.1" \
+        "$(q "$DOWNLEVEL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "downlevel-helper refusal is atomic" "$downlevel_before" \
+        "$(ext_snapshot "$DOWNLEVEL" | md5)$(dump_schema "$DOWNLEVEL" | md5)"
+fi
 
 # ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
