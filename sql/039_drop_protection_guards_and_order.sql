@@ -223,14 +223,14 @@ SELECT dp_guard_order.case_result(
     'cannot drop table "dp_guard_order.guard_b_history" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"');
 
 CREATE ROLE dp_guard_policy_role;
-SELECT set_config('sql_saga.managing_history_policies', 'on', true) IS NOT NULL AS guard_set \gset
+SELECT set_config('session_replication_role', 'replica', true) IS NOT NULL AS replica_set \gset
 DROP POLICY sql_saga_history_reader_guardtoken ON dp_guard_order.guard_a_history;
 DROP POLICY sql_saga_history_reader_guardtoken ON dp_guard_order.guard_b_history;
 CREATE POLICY sql_saga_history_reader_guardtoken ON dp_guard_order.guard_b_history
     FOR SELECT TO dp_guard_policy_role USING (true);
 CREATE POLICY sql_saga_history_reader_guardtoken ON dp_guard_order.guard_a_history
     FOR SELECT TO dp_guard_policy_role USING (true);
-SELECT set_config('sql_saga.managing_history_policies', 'off', true) IS NOT NULL AS guard_reset \gset
+SELECT set_config('session_replication_role', 'origin', true) IS NOT NULL AS replica_reset \gset
 SELECT dp_guard_order.case_result(
     'two managed policies choose payload-first B',
     $$DROP OWNED BY dp_guard_policy_role CASCADE$$,
