@@ -1743,6 +1743,10 @@ write_history(PG_FUNCTION_ARGS)
 		history_rel = table_open(history_id, RowExclusiveLock);
 		history_tupledesc = RelationGetDescr(history_rel);
 		history_range_num = SPI_fnumber(history_tupledesc, range_column_name);
+		if (history_range_num == SPI_ERROR_NOATTRIBUTE)
+			ereport(ERROR, (errcode(ERRCODE_UNDEFINED_COLUMN),
+							errmsg("column \"%s\" does not exist in history table \"%s\"",
+								   range_column_name, RelationGetRelationName(history_rel))));
 
 #if (PG_VERSION_NUM < 130000)
 		map = convert_tuples_by_name(tupledesc, history_tupledesc, gettext_noop("could not convert row type"));
@@ -1769,7 +1773,12 @@ write_history(PG_FUNCTION_ARGS)
 
 		heap_deform_tuple(history_tuple, history_tupledesc, values, nulls);
 		
-		range = DatumGetRangeTypeP(values[range_num-1]);
+		/*
+		 * values[] is in the history table's layout, which can differ from the base table's (e.g. a
+		 * column dropped from the base before versioning leaves a slot the history does not have),
+		 * so the range column is read at its position in the history table.
+		 */
+		range = DatumGetRangeTypeP(values[history_range_num-1]);
 		range_deserialize(range_cache, range, &lower, &upper, &is_null);
 
 		hist_lower = lower;
