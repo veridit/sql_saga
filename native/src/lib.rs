@@ -699,6 +699,21 @@ fn opt_json(v: &Option<serde_json::Value>) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    // `cargo test --lib` builds a standalone executable. pgrx references these PostgreSQL server
+    // globals, which the server provides when it loads the library; on Linux the loader resolves data
+    // symbols at start-up, so the test executable defines inert stand-ins. The pure-Rust tests below
+    // never call into PostgreSQL. This module is not compiled into the shared library.
+    #[cfg(target_os = "linux")]
+    mod server_globals {
+        #[no_mangle]
+        pub static mut CurrentMemoryContext: *mut std::ffi::c_void = std::ptr::null_mut();
+        #[no_mangle]
+        pub static mut ErrorContext: *mut std::ffi::c_void = std::ptr::null_mut();
+        #[no_mangle]
+        pub static mut error_context_stack: *mut std::ffi::c_void = std::ptr::null_mut();
+        #[no_mangle]
+        pub static mut PG_exception_stack: *mut std::ffi::c_void = std::ptr::null_mut();
+    }
 
     #[test]
     fn test_allen_relation_equals() {
