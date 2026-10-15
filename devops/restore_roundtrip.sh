@@ -42,7 +42,7 @@ FAILED=()
 PASSED=()
 KNOWN=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history fk_views parallel_known_failure)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history fk_views quoted_names parallel_known_failure)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -264,6 +264,28 @@ ALTER TABLE rdoc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_a ON rdoc FOR SELECT TO ${PREFIX}_r1 USING (tenant = 'a');
 CREATE POLICY tenant_b ON rdoc FOR ALL TO ${PREFIX}_regular USING (tenant = 'b');
 CREATE POLICY ins_only ON rdoc FOR INSERT TO ${PREFIX}_r1 WITH CHECK (true);
+SQL
+    } | psql_q -d "$1"
+}
+
+# Schema and table names that need quoting, including spaces: pg_restore --clean then issues
+# ALTER TABLE ONLY "my schema"."My Table" DROP CONSTRAINT ..., which must still be recognized as teardown.
+build_quoted_names() {
+    { common_header; cat <<SQL
+CREATE SCHEMA "my schema";
+CREATE TABLE "my schema"."My Table" (id int, valid_range daterange NOT NULL, x text);
+SELECT sql_saga.add_era('"my schema"."My Table"', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('"my schema"."My Table"', ARRAY['id'], key_type => 'primary');
+SELECT sql_saga.add_for_portion_of_view('"my schema"."My Table"', 'valid');
+CREATE TABLE "my schema"."Ref Table" (id int PRIMARY KEY, p_id int, note text);
+SELECT sql_saga.add_regular_foreign_key('"my schema"."Ref Table"', ARRAY['p_id'],
+    (SELECT unique_key_name FROM sql_saga.unique_keys WHERE table_name = 'My Table'));
+SELECT sql_saga.add_system_versioning('"my schema"."Ref Table"');
+INSERT INTO "my schema"."My Table" VALUES (1, '[2020-01-01,infinity)', 'a');
+INSERT INTO "my schema"."Ref Table" VALUES (1, 1, 'n1');
+UPDATE "my schema"."Ref Table" SET note = 'n2';
+GRANT USAGE ON SCHEMA "my schema" TO ${PREFIX}_r1;
+GRANT SELECT ON "my schema"."My Table", "my schema"."Ref Table" TO ${PREFIX}_r1;
 SQL
     } | psql_q -d "$1"
 }
