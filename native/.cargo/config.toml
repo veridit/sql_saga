@@ -1,3 +1,9 @@
 # Silence pgrx linker warnings on macOS
 [target.'cfg(target_os = "macos")']
 rustflags = ["-Clink-arg=-Wl,-undefined,dynamic_lookup"]
+
+# The library calls PostgreSQL server functions (errstart, pfree, ...) that are resolved when the server
+# loads it. `cargo test --lib` links a standalone executable that never calls them; let those symbols stay
+# unresolved there (the shared library itself never needs this).
+[target.'cfg(target_os = "linux")']
+rustflags = ["-Clink-arg=-Wl,--unresolved-symbols=ignore-all"]
