@@ -116,10 +116,16 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
-psql:sql/include/test_teardown.sql:13: NOTICE:  drop cascades to 3 other objects
+psql:sql/include/test_teardown.sql:13: NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to trigger excl_system_time_generated_always on table excl
 drop cascades to trigger excl_system_time_write_history on table excl
 drop cascades to trigger excl_truncate on table excl
+drop cascades to view excl_history_gated
+drop cascades to view excl_with_history
+drop cascades to function excl__as_of(timestamp with time zone)
+drop cascades to function excl__between(timestamp with time zone,timestamp with time zone)
+drop cascades to function excl__between_symmetric(timestamp with time zone,timestamp with time zone)
+drop cascades to function excl__from_to(timestamp with time zone,timestamp with time zone)
 DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.

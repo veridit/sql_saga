@@ -70,9 +70,23 @@ RESET ROLE;
 \echo '\n--- Test: health check keeps the fixed state of the history objects ---'
 ALTER TABLE hc_sysver_history DISABLE ROW LEVEL SECURITY; -- fail
 ALTER TABLE hc_sysver_history FORCE ROW LEVEL SECURITY; -- fail: hc_sysver is not forced
-DROP POLICY sql_saga_history_base_select ON hc_sysver_history; -- fail
-ALTER POLICY sql_saga_history_reader ON hc_sysver_history USING (true); -- fail
-DROP POLICY sql_saga_history_reader ON hc_sysver_history; -- fail
+-- The fixed policies' names end in the per-installation token, shown as <token>.
+CREATE FUNCTION pg_temp.try_managed_policy_ddl(stmt_template text, policy_prefix text)
+RETURNS text LANGUAGE plpgsql AS $$
+DECLARE
+    policy_name name;
+BEGIN
+    SELECT p.polname INTO policy_name FROM pg_policy AS p
+    WHERE p.polrelid = 'hc_sysver_history'::regclass AND p.polname LIKE policy_prefix || '%';
+    EXECUTE format(stmt_template, policy_name);
+    RETURN 'succeeded';
+EXCEPTION WHEN OTHERS THEN
+    RETURN replace(SQLERRM, policy_name, policy_prefix || '<token>');
+END;
+$$;
+SELECT pg_temp.try_managed_policy_ddl('DROP POLICY %I ON hc_sysver_history', 'sql_saga_history_base_select_') AS drop_base_select; -- fail
+SELECT pg_temp.try_managed_policy_ddl('ALTER POLICY %I ON hc_sysver_history USING (true)', 'sql_saga_history_reader_') AS alter_reader; -- fail
+SELECT pg_temp.try_managed_policy_ddl('DROP POLICY %I ON hc_sysver_history', 'sql_saga_history_reader_') AS drop_reader; -- fail
 ALTER VIEW hc_sysver_with_history SET (security_invoker = off); -- fail
 CREATE OR REPLACE VIEW hc_sysver_history_gated AS SELECT * FROM hc_sysver_history; -- fail: the gate would be lost
 \echo '--- A hashed policy copy is managed too'

@@ -70,15 +70,8 @@ SELECT table_schema, table_name, era_name, history_table_name, view_table_name F
  public       | system_versioning_test | system_time | system_versioning_test_history | system_versioning_test_with_history
 (1 row)
 
--- Check history table and view
-\d system_versioning_test_history
-          Table "public.system_versioning_test_history"
-       Column       |   Type    | Collation | Nullable | Default 
---------------------+-----------+-----------+----------+---------
- id                 | integer   |           | not null | 
- name               | text      |           |          | 
- system_valid_range | tstzrange |           | not null | 
-
+-- Check history table and view. The history table is described by query rather than \d, because its
+-- row-level security policies carry the installation token in their names (shown normalized below).
 \d system_versioning_test_with_history
         View "public.system_versioning_test_with_history"
        Column       |   Type    | Collation | Nullable | Default 
@@ -86,6 +79,31 @@ SELECT table_schema, table_name, era_name, history_table_name, view_table_name F
  id                 | integer   |           |          | 
  name               | text      |           |          | 
  system_valid_range | tstzrange |           |          | 
+
+SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS not_null
+FROM pg_attribute AS a
+WHERE a.attrelid = 'system_versioning_test_history'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+      attname       |   type    | not_null 
+--------------------+-----------+----------
+ id                 | integer   | t
+ name               | text      | f
+ system_valid_range | tstzrange | t
+(3 rows)
+
+SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class AS c WHERE c.oid = 'system_versioning_test_history'::regclass;
+ relrowsecurity | relforcerowsecurity 
+----------------+---------------------
+ t              | f
+(1 row)
+
+SELECT regexp_replace(p.polname, '_[0-9a-z]+$', '_<token>') AS policy, p.polpermissive, p.polcmd
+FROM pg_policy AS p WHERE p.polrelid = 'system_versioning_test_history'::regclass ORDER BY 1;
+                policy                | polpermissive | polcmd 
+--------------------------------------+---------------+--------
+ sql_saga_history_base_select_<token> | f             | r
+ sql_saga_history_reader_<token>      | t             | r
+(2 rows)
 
 -- Drop system versioning
 SELECT sql_saga.drop_system_versioning('system_versioning_test');

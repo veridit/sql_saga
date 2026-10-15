@@ -6,8 +6,8 @@
  * Fixed state, independent of the base table's ACL (tmp/design_final.md sections 2, 3, 9):
  *   B_with_history          security_invoker view, PUBLIC SELECT
  *   B_history_gated         owner-rights view, PUBLIC SELECT, raises 42501 unless the caller has SELECT on B
- *   B_history               PUBLIC SELECT, RLS enabled (not forced), policies sql_saga_history_reader
- *                           (permissive) and sql_saga_history_base_select (restrictive)
+ *   B_history               PUBLIC SELECT, RLS enabled (not forced), policies sql_saga_history_reader_<token>
+ *                           (permissive) and sql_saga_history_base_select_<token> (restrictive)
  *   as-of functions         explicit PUBLIC EXECUTE
  * Who may read history is decided when it is read, by the caller's SELECT on B. No GRANT or REVOKE
  * needs any action by sql_saga.
@@ -74,7 +74,8 @@ SELECT c.relname,
 FROM pg_class AS c
 WHERE c.relname IN ('b_history', 'b_history_gated', 'b_with_history')
 ORDER BY c.relname;
-SELECT p.polname, p.polpermissive, p.polcmd, p.polroles = '{0}' AS to_public
+-- Fixed policy names end in the per-installation token, shown as <token>.
+SELECT regexp_replace(p.polname, '_[0-9a-z]+$', '_<token>') AS polname, p.polpermissive, p.polcmd, p.polroles = '{0}' AS to_public
 FROM pg_policy AS p
 WHERE p.polrelid = 'b_history'::regclass
 ORDER BY p.polname;

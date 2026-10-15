@@ -53,8 +53,11 @@ SAVEPOINT no_update;
 DROP SCHEMA IF EXISTS pg_temp CASCADE;
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
--- Should fail, as we only have SELECT on the base table
+-- Should fail, as we only have SELECT on the base table (the view is security_invoker).
+-- (Error context would show sql_saga internals, so it is hidden.)
+\set SHOW_CONTEXT never
 UPDATE acl_test__for_portion_of_valid SET value = 'no', valid_from = '2024-02-01', valid_until = '2024-03-01' WHERE id = 1;
+\set SHOW_CONTEXT errors
 ROLLBACK TO no_update;
 
 -- An UPDATE that splits a record should now succeed even without DELETE permission.

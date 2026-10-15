@@ -41,7 +41,9 @@ RESET client_min_messages;
 CREATE FUNCTION pg_temp.history_policies()
 RETURNS TABLE (name_shape text, copied_from text, permissive boolean, cmd "char", roles text, qual text)
 LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY
-    SELECT CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$' THEN 'sql_saga_<hash>' ELSE p.polname::text END,
+    SELECT CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$' THEN 'sql_saga_<hash>'
+                WHEN p.polname ~ '^sql_saga_history_(reader|base_select)_' THEN regexp_replace(p.polname, '_[0-9a-z]+$', '_<token>')
+                ELSE p.polname::text END,
            (SELECT bp.polname::text
               FROM pg_policy AS bp CROSS JOIN sql_saga.installation AS t
              WHERE bp.polrelid = 'doc'::regclass

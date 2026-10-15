@@ -271,7 +271,8 @@ SELECT sql_saga.add_system_versioning('dp_sysver');
 SAVEPOINT sv_history_table;
 DROP TABLE dp_sysver_history; -- should fail
 ERROR:  cannot drop table dp_sysver_history because other objects depend on it
-DETAIL:  view dp_sysver_with_history depends on table dp_sysver_history
+DETAIL:  view dp_sysver_history_gated depends on table dp_sysver_history
+view dp_sysver_with_history depends on table dp_sysver_history
 function dp_sysver__as_of(timestamp with time zone) depends on type dp_sysver_with_history
 function dp_sysver__between(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history
 function dp_sysver__between_symmetric(timestamp with time zone,timestamp with time zone) depends on type dp_sysver_with_history

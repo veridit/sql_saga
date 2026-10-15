@@ -16,9 +16,16 @@ SELECT table_schema, table_name, era_name, range_column_name, valid_from_column_
 SELECT table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger FROM sql_saga.system_time_era WHERE table_name = 'system_versioning_test';
 SELECT table_schema, table_name, era_name, history_table_name, view_table_name FROM sql_saga.system_versioning WHERE table_name = 'system_versioning_test';
 
--- Check history table and view
-\d system_versioning_test_history
+-- Check history table and view. The history table is described by query rather than \d, because its
+-- row-level security policies carry the installation token in their names (shown normalized below).
 \d system_versioning_test_with_history
+SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS not_null
+FROM pg_attribute AS a
+WHERE a.attrelid = 'system_versioning_test_history'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum;
+SELECT c.relrowsecurity, c.relforcerowsecurity FROM pg_class AS c WHERE c.oid = 'system_versioning_test_history'::regclass;
+SELECT regexp_replace(p.polname, '_[0-9a-z]+$', '_<token>') AS policy, p.polpermissive, p.polcmd
+FROM pg_policy AS p WHERE p.polrelid = 'system_versioning_test_history'::regclass ORDER BY 1;
 
 -- Drop system versioning
 SELECT sql_saga.drop_system_versioning('system_versioning_test');

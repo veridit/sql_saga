@@ -50,22 +50,28 @@ RESET ROLE;
 TABLE sql_saga.updatable_view;
 
 SAVEPOINT preserve_role_and_state_before_no_permission;
+-- A current row, so that the UPDATE below has something to update (an UPDATE that matches no row
+-- is checked against no table and succeeds as a no-op).
+INSERT INTO acl_test (id, valid_from, valid_until, value, status, comment) VALUES (2, '2024-01-01', 'infinity', 'initial', 'active', 'pre-existing');
 -- Verify that permissions are handled correctly
 GRANT SELECT ON acl_test TO sql_saga_unprivileged_user;
 SET ROLE sql_saga_unprivileged_user;
 SELECT CURRENT_ROLE;
 SAVEPOINT no_insert;
--- Should fail, as we only have SELECT on the base table, which propagates to the
--- view, but we do not have INSERT on the view.
+-- Should fail: the view is security_invoker, so writing through it needs INSERT on the base table,
+-- which we lack. (Error context would show sql_saga internals, so it is hidden.)
+\set SHOW_CONTEXT never
 INSERT INTO acl_test__current_valid (id, value, status) VALUES (1, 'no', 'active');
+\set SHOW_CONTEXT errors
 ROLLBACK TO no_insert;
 
 
 
 SAVEPOINT no_update;
--- Should fail, as we only have SELECT on the base table, which propagates to the
--- view, but we do not have UPDATE on the view.
+-- Should fail: updating through the view needs UPDATE on the base table, which we lack.
+\set SHOW_CONTEXT never
 UPDATE acl_test__current_valid SET value = 'no update' WHERE id = 2;
+\set SHOW_CONTEXT errors
 ROLLBACK TO no_update;
 ROLLBACK TO SAVEPOINT preserve_role_and_state_before_no_permission;
 
@@ -73,10 +79,11 @@ ROLLBACK TO SAVEPOINT preserve_role_and_state_before_no_permission;
 SAVEPOINT preserve_role_and_state_before_failing_update;
 GRANT INSERT ON acl_test TO sql_saga_unprivileged_user;
 SET ROLE sql_saga_unprivileged_user;
--- This should fail before the trigger fires, as the user does not have UPDATE
--- permission on the view. The health_checks trigger ensures that view
--- permissions are synchronized with the base table permissions.
+-- This should fail, as the user does not have UPDATE on the base table: the view is
+-- security_invoker, so the caller's rights on acl_test decide.
+\set SHOW_CONTEXT never
 UPDATE acl_test__current_valid SET value = 'no update' WHERE id = 2;
+\set SHOW_CONTEXT errors
 ROLLBACK TO preserve_role_and_state_before_failing_update;
 
 SAVEPOINT can_insert;
