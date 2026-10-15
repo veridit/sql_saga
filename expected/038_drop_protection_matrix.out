@@ -1,0 +1,86 @@
+\set ECHO none
+=== direct protected object matrix
+
+direct infinity constraint | P0001: cannot drop constraint "sv_system_valid_range_infinity_check" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+direct generated-always trigger | P0001: cannot drop trigger "sv_system_time_generated_always" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+direct write-history trigger | P0001: cannot drop trigger "sv_system_time_write_history" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+direct truncate trigger | P0001: cannot drop trigger "sv_truncate" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+direct excluded column | P0001: cannot drop or rename column "tenant" on table "dp_matrix.sv" because it is excluded from system_time era
+direct history table | P0001: cannot drop table "dp_matrix.sv_history" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct public history view | P0001: cannot drop view "dp_matrix.sv_with_history" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct gated history view | P0001: cannot drop view "dp_matrix.sv_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct as-of function | P0001: cannot drop function "dp_matrix.sv__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct between function | P0001: cannot drop function "dp_matrix.sv__between(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct between-symmetric function | P0001: cannot drop function "dp_matrix.sv__between_symmetric(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct from-to function | P0001: cannot drop function "dp_matrix.sv__from_to(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+direct managed policy | P0001: cannot drop or alter policy "sql_saga_history_reader_newtoken" on "dp_matrix.sv_history" because it is managed by sql_saga for table "dp_matrix.sv"
+t
+direct era period column | P0001: cannot drop column "dp_matrix.era_t.valid_from" because it is part of the period "valid"
+direct era bounds constraint cleanup | ok
+direct era synchronization trigger cleanup | ok
+era_primary
+direct temporal unique constraint | P0001: cannot drop constraint "era_t_pk" on table "dp_matrix.era_t" because it is used in era unique key "era_primary"
+direct standard temporal backing index | 2BP01: cannot drop index era_t_pk because constraint era_t_pk on table era_t requires it
+t
+pred_key
+direct predicated temporal constraint | P0001: cannot drop constraint "pred_key_excl" on table "dp_matrix.pred_t" because it is used in era unique key "pred_key"
+direct predicated temporal backing index | 2BP01: cannot drop index pred_key_excl because constraint pred_key_excl on table pred_t requires it
+t
+t
+t
+direct FOR PORTION OF view | P0001: cannot drop view "dp_matrix.view_t__for_portion_of_valid", call "sql_saga.drop_for_portion_of_view()" instead
+direct FOR PORTION OF trigger | P0001: cannot drop trigger "for_portion_of_valid" on view "dp_matrix.view_t__for_portion_of_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
+direct current view | P0001: cannot drop view "dp_matrix.view_t__current_valid", call "sql_saga.drop_current_view()" instead
+direct current trigger | P0001: cannot drop trigger "current_valid" on view "dp_matrix.view_t__current_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
+direct updatable-view identifier | P0001: table "dp_matrix.view_t" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"
+t
+fk_parent_key
+t
+temporal_fk
+regular_fk
+direct temporal FK constraint cleanup | ok
+direct regular FK uk-update trigger | P0001: cannot drop trigger "regular_fk_uk_update" on table "dp_matrix.fk_parent" because it is used in era foreign key "regular_fk"
+direct regular FK uk-delete trigger | P0001: cannot drop trigger "regular_fk_uk_delete" on table "dp_matrix.fk_parent" because it is used in era foreign key "regular_fk"
+=== sanctioned API and guard matrix
+drop_for_portion_of_view API | ok
+drop_current_view API | ok
+drop_foreign_key temporal API | ok
+drop_foreign_key regular API | ok
+t
+drop_unique_key
+drop_unique_key API | ok
+t
+drop_era API | ok
+drop_system_versioning API | ok
+exact-family rebuild | ok
+history policy synchronization | ok
+policy guard cannot drop unrelated history | P0001: cannot drop table "dp_matrix.sv_history" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+rebuild guard cannot drop unrelated view | P0001: cannot drop view "dp_matrix.view_t__current_valid", call "sql_saga.drop_current_view()" instead
+clean-restore marker alone cannot drop history | P0001: cannot drop table "dp_matrix.sv_history" because it is used in SYSTEM VERSIONING for table "dp_matrix.sv"
+clean-restore teardown recognition | ok
+=== family, schema, owner, type, and function cascade matrix
+
+base plus history explicitly | ok
+
+
+multiple complete families | ok
+
+deterministic several-class priority | P0001: cannot drop view "dp_matrix.priority_a_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.priority_a"
+
+
+schema complete A plus member-only B | P0001: cannot drop view "dp_matrix.schema_split_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.schema_split"
+
+
+multiple schemas independent sanction | P0001: cannot drop view "dp_matrix.schema_two_split_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.schema_two_split"
+
+
+owner complete A plus member-only B | P0001: cannot drop table "dp_matrix.owner_split_history" because it is used in SYSTEM VERSIONING for table "dp_matrix.owner_split"
+REASSIGN OWNED is non-drop | ok
+t
+native DROP TYPE RESTRICT | 2BP01: cannot drop type native_range because other objects depend on it
+generated-always shared function cascade | P0001: cannot drop trigger "sv_system_time_generated_always" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+write-history shared function cascade | P0001: cannot drop trigger "sv_system_time_write_history" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+truncate shared function cascade | P0001: cannot drop trigger "sv_truncate" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period
+FOR PORTION OF shared function cascade | P0001: cannot drop trigger "for_portion_of_valid" on view "dp_matrix.view_t__for_portion_of_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
+current-view shared function cascade | P0001: cannot drop trigger "current_valid" on view "dp_matrix.view_t__current_valid" because it is part of an updatable view for era "valid" on table "dp_matrix.view_t"
+multi-class shared function priority | P0001: cannot drop trigger "sv_system_time_generated_always" on table "dp_matrix.sv" because it is used in SYSTEM_TIME period

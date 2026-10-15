@@ -1,0 +1,200 @@
+\set ECHO none
+=== statement scope: deterministic restore-window reproduction
+ family 
+--------
+ 
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+          catalog_trigger           | base_retained | trigger_missing 
+------------------------------------+---------------+-----------------
+ family_a_system_time_write_history | t             | t
+(1 row)
+
+           case_name           | result 
+-------------------------------+--------
+ old-token cleanup in family B | ok
+(1 row)
+
+                          case_name                           | result 
+--------------------------------------------------------------+--------
+ base policy change with nested stale-policy drop in family B | ok
+(1 row)
+
+        case_name        | result 
+-------------------------+--------
+ unrelated ordinary drop | ok
+(1 row)
+
+                     case_name                     | result 
+---------------------------------------------------+--------
+ same-family old-token cleanup in damaged family A | ok
+(1 row)
+
+          catalog_trigger           | still_missing 
+------------------------------------+---------------
+ family_a_system_time_write_history | t
+(1 row)
+
+=== direct and cascade protection keeps today's exact errors
+ family 
+--------
+ 
+(1 row)
+
+          case_name           |                                                                result                                                                 
+------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
+ direct write-history trigger | P0001: cannot drop trigger "direct_b_system_time_write_history" on table "dp_scope.direct_b" because it is used in SYSTEM_TIME period
+(1 row)
+
+       case_name       |                                                                                result                                                                                
+-----------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ direct managed policy | P0001: cannot drop or alter policy "sql_saga_history_reader_newtoken" on "dp_scope.direct_b_history" because it is managed by sql_saga for table "dp_scope.direct_b"
+(1 row)
+
+       case_name       |                                                           result                                                           
+-----------------------+----------------------------------------------------------------------------------------------------------------------------
+ history table cascade | P0001: cannot drop table "dp_scope.direct_b_history" because it is used in SYSTEM VERSIONING for table "dp_scope.direct_b"
+(1 row)
+
+      case_name       |                                                             result                                                             
+----------------------+--------------------------------------------------------------------------------------------------------------------------------
+ history view cascade | P0001: cannot drop view "dp_scope.direct_b_with_history" because it is used in SYSTEM VERSIONING for table "dp_scope.direct_b"
+(1 row)
+
+       case_name        |                                                                         result                                                                         
+------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------
+ query function cascade | P0001: cannot drop function "dp_scope.direct_b__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_scope.direct_b"
+(1 row)
+
+ add_era 
+---------
+ t
+(1 row)
+
+     case_name      |                                                            result                                                             
+--------------------+-------------------------------------------------------------------------------------------------------------------------------
+ range type cascade | P0001: cannot drop rangetype "dp_scope.period_int4range" because it is used in period "valid" on table "dp_scope.type_member"
+(1 row)
+
+ add_era 
+---------
+ t
+(1 row)
+
+      add_unique_key       
+---------------------------
+ extension_member_id_valid
+(1 row)
+
+          case_name           |                                                                           result                                                                            
+------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------
+ btree_gist extension cascade | P0001: cannot drop constraint "extension_member_pkey" on table "dp_scope.extension_member" because it is used in era unique key "extension_member_id_valid"
+(1 row)
+
+            case_name            |                                                                result                                                                 
+---------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
+ shared trigger function cascade | P0001: cannot drop trigger "direct_b_system_time_write_history" on table "dp_scope.direct_b" because it is used in SYSTEM_TIME period
+(1 row)
+
+=== family sanctions, schema cascades, owner cascades, and deterministic first errors
+ family 
+--------
+ 
+(1 row)
+
+            case_name             | result 
+----------------------------------+--------
+ base table cascade is sanctioned | ok
+(1 row)
+
+   case_name    | result 
+----------------+--------
+ sanctioned API | ok
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+               case_name                | result 
+----------------------------------------+--------
+ drop schema containing complete family | ok
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+             case_name              |                                                                 result                                                                  
+------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------
+ drop schema containing member only | P0001: cannot drop view "dp_scope.split_family_history_gated" because it is used in SYSTEM VERSIONING for table "dp_scope.split_family"
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+               case_name               | result 
+---------------------------------------+--------
+ drop owned containing complete family | ok
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+             case_name             |                                                              result                                                              
+-----------------------------------+----------------------------------------------------------------------------------------------------------------------------------
+ drop owned containing member only | P0001: cannot drop table "dp_scope.owner_split_history" because it is used in SYSTEM VERSIONING for table "dp_scope.owner_split"
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+ family 
+--------
+ 
+(1 row)
+
+                case_name                |                                                          result                                                          
+-----------------------------------------+--------------------------------------------------------------------------------------------------------------------------
+ sanctioned A plus unsanctioned B member | P0001: cannot drop table "dp_scope.mixed_b_history" because it is used in SYSTEM VERSIONING for table "dp_scope.mixed_b"
+(1 row)
+
+                     case_name                     |                                                           result                                                           
+---------------------------------------------------+----------------------------------------------------------------------------------------------------------------------------
+ deterministic first error in multi-member cascade | P0001: cannot drop table "dp_scope.direct_b_history" because it is used in SYSTEM VERSIONING for table "dp_scope.direct_b"
+(1 row)
+
+=== guards remain narrow when set manually
+                      case_name                       | guard |                                                           result                                                           
+------------------------------------------------------+-------+----------------------------------------------------------------------------------------------------------------------------
+ history-policy guard does not sanction history table | on    | P0001: cannot drop table "dp_scope.direct_b_history" because it is used in SYSTEM VERSIONING for table "dp_scope.direct_b"
+(1 row)
+
+ set_config 
+------------
+ off
+(1 row)
+
+                case_name                |                                                            result                                                            
+-----------------------------------------+------------------------------------------------------------------------------------------------------------------------------
+ rebuild guard for A does not sanction B | P0001: cannot drop view "dp_scope.mixed_b_with_history" because it is used in SYSTEM VERSIONING for table "dp_scope.mixed_b"
+(1 row)
+
+ set_config 
+------------
+ 
+(1 row)
+
