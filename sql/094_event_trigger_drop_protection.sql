@@ -1,4 +1,6 @@
 \i sql/include/test_setup.sql
+-- Error CONTEXT carries PL/pgSQL line numbers, which change with every edit of the event trigger functions.
+\set SHOW_CONTEXT never
 
 BEGIN;
 

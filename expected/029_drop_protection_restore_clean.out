@@ -125,9 +125,11 @@ CREATE TEMP VIEW family_state AS
           UNION ALL SELECT 'system_versioning', count(*) FROM sql_saga.system_versioning
           UNION ALL SELECT 'updatable_view', count(*) FROM sql_saga.updatable_view) AS t
     UNION ALL
-    SELECT 'relations in public', coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+    -- Only this test's relations: the regression database may hold other tests' tables.
+    SELECT 'relations of the families', coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
     FROM pg_catalog.pg_class AS c
     WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'v')
+      AND c.relname ~ '^(p|c|r|b|zbase|aa_hist|ab_view)($|_|__)'
     UNION ALL
     SELECT 'policies', coalesce(string_agg(format('%s.%s', p.polrelid::regclass, p.polname), ', ' ORDER BY p.polrelid::regclass::text, p.polname), '')
     FROM pg_catalog.pg_policy AS p
@@ -155,7 +157,7 @@ TABLE family_state;
  catalog sql_saga.system_time_era   | 2
  catalog sql_saga.system_versioning | 2
  catalog sql_saga.updatable_view    | 2
- relations in public                | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
+ relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
@@ -248,7 +250,7 @@ TABLE family_state;
  catalog sql_saga.system_time_era   | 2
  catalog sql_saga.system_versioning | 2
  catalog sql_saga.updatable_view    | 2
- relations in public                | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
+ relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
@@ -331,7 +333,7 @@ TABLE family_state;
  catalog sql_saga.system_time_era   | 0
  catalog sql_saga.system_versioning | 0
  catalog sql_saga.updatable_view    | 0
- relations in public                | 
+ relations of the families          | 
  policies                           | 
  functions in public                | 
  template sync functions            | 
@@ -408,7 +410,7 @@ TABLE family_state;
  catalog sql_saga.system_time_era   | 0
  catalog sql_saga.system_versioning | 0
  catalog sql_saga.updatable_view    | 0
- relations in public                | 
+ relations of the families          | 
  policies                           | 
  functions in public                | 
  template sync functions            | 
@@ -425,7 +427,7 @@ TABLE family_state;
  catalog sql_saga.system_time_era   | 2
  catalog sql_saga.system_versioning | 2
  catalog sql_saga.updatable_view    | 2
- relations in public                | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
+ relations of the families          | aa_hist, aa_hist_gated, ab_view, b, b_history, b_history_gated, b_with_history, c, p, p__current_valid, p__for_portion_of_valid, r, zbase
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync

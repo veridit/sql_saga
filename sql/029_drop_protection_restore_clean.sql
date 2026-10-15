@@ -55,9 +55,11 @@ CREATE TEMP VIEW family_state AS
           UNION ALL SELECT 'system_versioning', count(*) FROM sql_saga.system_versioning
           UNION ALL SELECT 'updatable_view', count(*) FROM sql_saga.updatable_view) AS t
     UNION ALL
-    SELECT 'relations in public', coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
+    -- Only this test's relations: the regression database may hold other tests' tables.
+    SELECT 'relations of the families', coalesce(string_agg(c.relname, ', ' ORDER BY c.relname), '')
     FROM pg_catalog.pg_class AS c
     WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'v')
+      AND c.relname ~ '^(p|c|r|b|zbase|aa_hist|ab_view)($|_|__)'
     UNION ALL
     SELECT 'policies', coalesce(string_agg(format('%s.%s', p.polrelid::regclass, p.polname), ', ' ORDER BY p.polrelid::regclass::text, p.polname), '')
     FROM pg_catalog.pg_policy AS p
