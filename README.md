@@ -165,7 +165,8 @@ This will make all `sql_saga` functions and features available.
 ### Backup and Restore
 
 Databases using `sql_saga` can be dumped with `pg_dump` and restored with `pg_restore`, serially
-(the default) or with `--single-transaction`.
+(the default) or with `--single-transaction`, into a new database or, with `--clean`, into a database
+that already holds them.
 
 **Parallel restore (`pg_restore -j N`) is not supported** until a PostgreSQL bug is fixed:
 `sql_saga` keeps its bookkeeping in extension configuration tables that reference each other by
@@ -188,6 +189,37 @@ pg_restore --exit-on-error -L saga.list -d mydb backup.dump
 pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
 ```
 
+#### Restoring over an existing database (`--clean`)
+
+`pg_restore --clean` (with or without `--if-exists`, serially or with `--single-transaction`) restores
+into a database that already holds the dumped `sql_saga` tables. `--clean` drops every object of the
+dump before recreating it, one object at a time: a table's triggers, views, query functions and
+history policies go first, the table itself last. `sql_saga` normally refuses to drop such objects on
+their own (for example `cannot drop trigger "b_truncate" on table "b" because it is used in SYSTEM_TIME
+period`). It recognizes the teardown phase of `pg_restore --clean` and lets those drops through. It also
+removes the history policies whose names the dump cannot know, because they carry this installation's
+token.
+
+The teardown is recognized by the session `pg_restore` sets up. If you instead run a restore script
+through `psql` (`pg_restore --clean -f script.sql`, then `psql -f script.sql`), or connect with your own
+`application_name` (`PGAPPNAME`), opt in explicitly:
+
+```bash
+pg_restore --clean --if-exists -f - backup.dump | PGOPTIONS='-c sql_saga.clean_restore=on' psql -v ON_ERROR_STOP=1 -d mydb
+```
+
+The opt-in alone does not unlock anything. A drop is only treated as part of a restore teardown in a
+session with the settings every `pg_dump` script starts with (`check_function_bodies = off` and
+`row_security = off`). Accidental drops keep their protection.
+
+`pg_restore --clean --create` (which drops and recreates the whole database) needs none of this.
+
+In a database with `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`, `--clean`
+recreates functions under those default privileges. This is standard PostgreSQL behaviour. The
+extension's own functions then keep the restricted default you configured. The system-versioning
+query functions (`<table>__as_of` and friends) are granted to `PUBLIC` again when their catalog row is
+restored, as they are when created.
+
 #### Privileges and history policies
 
 Privileges and history policies need no extra step before or after `pg_dump` and `pg_restore`.
@@ -203,7 +235,8 @@ Privileges and history policies need no extra step before or after `pg_dump` and
 - Policy expressions and internal history views refer to base tables by name rather than by a stored OID, so
   those references remain valid in the restored database.
 
-Replaying a dump into the same database without `--clean` still fails with ordinary "already exists" errors.
+Replaying a dump into a database that already holds it without `--clean` fails with ordinary
+"already exists" errors. Use `--clean` (see above).
 
 If policy DDL is restored while event triggers are disabled with
 `session_replication_role = replica`, managed old-token policies can remain until the next synchronization.

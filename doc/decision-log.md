@@ -4,6 +4,58 @@ This document records significant architectural decisions made during the develo
 
 ---
 
+## Decision: Recognize the Teardown of `pg_restore --clean` in the Drop Protection (2026-10-15)
+
+### Problem
+`pg_restore --clean` into a database that already holds `sql_saga` families failed on the first
+`sql_saga`-managed object it dropped. Examples: `cannot drop trigger "b_truncate" on table "b" because it
+is used in SYSTEM_TIME period`, the FOR PORTION OF and current view triggers, regular foreign key
+triggers, unique key constraints, and the history policies. `--clean` issues one DROP per archived
+object, dependents first and each base table last. The catalog rows only disappear with the final
+`DROP EXTENSION`. The drop protection, which checks after every statement that each object named in
+the catalog still exists, therefore refused the first DROP of every family. After that, every later
+DROP failed too, because the checks cover all families on every `sql_drop` event.
+
+### Options considered
+- "The base table is dropped in the same command": not visible. Each DROP is its own statement, and
+  the base table goes in a later one.
+- Defer the checks to commit: serial `pg_restore` commits every statement.
+- `session_replication_role = replica`: needs superuser, disables every event trigger (history policy
+  synchronization included). It is an operator procedure, not a fix.
+- Treat a missing object as a family teardown: would allow exactly the accidental drops the protection
+  exists for.
+
+### Decision
+`sql_saga.__internal_is_clean_teardown()` recognizes the teardown phase. All of these must hold:
+`check_function_bodies = off` and `row_security = off` (set by every `pg_dump` script and `pg_restore`
+session); a `pg_restore` session (`application_name = 'pg_restore'`, libpq's default for `pg_restore`,
+or the explicit opt-in `sql_saga.clean_restore = on` for a restore script run through `psql`); and a
+top-level DROP statement (`current_query()`). During the teardown, `drop_protection`:
+- skips its "object still needed" refusals;
+- skips cleanup of objects that `pg_restore` drops itself, without `IF EXISTS` (template sync functions,
+  regular-FK CHECK and helper functions, history policy copies of a dropped base policy);
+- drops the managed history policies of each touched family itself (DEBUG). Their names carry this
+  installation's token, which the dump cannot name, and they depend on the base table.
+
+`health_checks` does not resynchronize history policies during the teardown. Separately, a trigger on
+`sql_saga.system_versioning` grants `EXECUTE` on the as-of functions to `PUBLIC` when a row is inserted,
+so `--clean` into a hardened database (default privileges revoking `EXECUTE`) keeps the design rule
+that these functions are executable by `PUBLIC`.
+
+### Why protection is not weakened
+The protection guards against accidental drops in interactive sessions, applications and migrations.
+None of these has all three conditions. Restore-like settings alone, the opt-in alone, or
+`application_name = 'pg_restore'` alone all keep every refusal (test 029). It is not a security
+boundary, and it does not need to be one. Whoever can run these DROPs owns the objects and can already
+disable the triggers or the event triggers. Non-DROP statements of the same restore keep every check.
+
+### Verification
+`devops/restore_roundtrip.sh` variants `clean`, `clean_single_txn`, `clean_same` (a dump of the
+destination itself, without `--if-exists`), `clean_psql` (opt-in), and `clean_psql_without_opt_in`
+(must be refused). Regression test `029_drop_protection_restore_clean`.
+
+---
+
 ## Decision: Keep Foreign Keys Between Catalog Tables; Parallel Restore Unsupported (2026-10-13)
 
 ### Problem

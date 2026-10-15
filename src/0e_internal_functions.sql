@@ -53,6 +53,39 @@ BEGIN
 END;
 $function$;
 
+/*
+ * Is this statement part of the teardown phase of pg_restore --clean (tmp/design_restore_clean.md)?
+ *
+ * pg_restore --clean drops every archived object, dependents first and each base table last, before
+ * it recreates them, so the objects of a sql_saga family disappear one at a time while their catalog
+ * rows still exist. The event triggers let such a statement through only when all of these hold:
+ *   - the session settings pg_dump and pg_restore always set: check_function_bodies and row_security off;
+ *   - a pg_restore session: application_name 'pg_restore' (libpq's default for pg_restore), or the
+ *     explicit opt-in sql_saga.clean_restore = on, for a restore script run through psql;
+ *   - a top-level DROP statement (pg_restore sends each archive entry as its own query).
+ * An accidental drop in any other session, even with the same settings, keeps every protection.
+ * Not a security boundary: whoever may run these DROPs owns the objects and could disable the
+ * triggers or the event triggers anyway. Called only by the SECURITY DEFINER event triggers.
+ */
+CREATE FUNCTION sql_saga.__internal_is_clean_teardown()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+AS $__internal_is_clean_teardown$
+    SELECT current_setting('check_function_bodies') = 'off'
+       AND current_setting('row_security') = 'off'
+       AND (current_setting('application_name') = 'pg_restore'
+            -- '' (not NULL) once the session has seen the placeholder, so coalesce both
+            OR coalesce(current_setting('sql_saga.clean_restore', true), '') = 'on')
+       -- DROP ..., or ALTER TABLE [IF EXISTS] [ONLY] <relation> DROP CONSTRAINT ..., where <relation> is
+       -- [schema.]table and each part is a plain identifier or a quoted one ("" escapes a quote,
+       -- spaces and dots allowed), as pg_dump writes them.
+       AND current_query() ~* '^\s*(DROP\s|ALTER\s+TABLE\s+(IF\s+EXISTS\s+)?(ONLY\s+)?(?:"(?:[^"]|"")*"|[^\s".]+)(?:\.(?:"(?:[^"]|"")*"|[^\s".]+))?\s+DROP\s+CONSTRAINT\s)';
+$__internal_is_clean_teardown$;
+
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_is_clean_teardown() FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_make_name(resizable text[], fixed text DEFAULT NULL, separator text DEFAULT '_', extra integer DEFAULT 2)
  RETURNS name
  IMMUTABLE

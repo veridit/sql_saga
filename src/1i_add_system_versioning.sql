@@ -163,3 +163,34 @@ $function$;
 
 COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name) IS
 'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.';
+
+/*
+ * The as-of functions of a versioned table are executable by PUBLIC (tmp/design_final.md section 5).
+ * add_system_versioning grants it explicitly, because hardened databases revoke EXECUTE from PUBLIC by
+ * default. pg_dump writes no GRANT for a function ACL equal to the default, so a pg_restore --clean into
+ * a database where those default privileges already apply recreates the functions owner-only. The
+ * catalog row is loaded after the functions exist, so granting when it is inserted keeps the rule after
+ * any restore. Runs as the inserting role: add_system_versioning (the extension owner) or pg_restore.
+ */
+CREATE FUNCTION sql_saga.__internal_grant_query_functions()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_grant_query_functions$
+DECLARE
+    query_function regprocedure;
+BEGIN
+    FOR query_function IN
+        SELECT to_regprocedure(u.signature)
+        FROM unnest(ARRAY[NEW.func_as_of, NEW.func_between, NEW.func_between_symmetric, NEW.func_from_to]) AS u (signature)
+        WHERE to_regprocedure(u.signature) IS NOT NULL
+    LOOP
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', query_function /* %s */);
+    END LOOP;
+    RETURN NULL;
+END;
+$__internal_grant_query_functions$;
+
+CREATE TRIGGER system_versioning_grant_query_functions
+AFTER INSERT ON sql_saga.system_versioning
+FOR EACH ROW EXECUTE FUNCTION sql_saga.__internal_grant_query_functions();

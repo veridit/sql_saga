@@ -162,7 +162,10 @@ BEGIN
                     r.history_oid::regclass, r.base_oid::regclass;
             END IF;
         END IF;
+        -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
+        -- would recreate the history policies drop_protection has just dropped for the teardown).
         IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+           AND NOT sql_saga.__internal_is_clean_teardown()
            AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
         END IF;

@@ -10,6 +10,7 @@ DECLARE
     r record;
     table_oid regclass;
     era_name name;
+    v_teardown boolean := sql_saga.__internal_is_clean_teardown();
 BEGIN
     /*
      * This function is called after the fact, so we have to just look to see
@@ -20,6 +21,47 @@ BEGIN
     ---
     --- periods
     ---
+
+    /*
+     * Teardown by pg_restore --clean (sql_saga.__internal_is_clean_teardown, tmp/design_restore_clean.md).
+     * The checks below that complain about missing objects are skipped, and so is cleanup of objects
+     * pg_restore drops itself. One thing pg_restore cannot do: drop the managed history policies,
+     * whose names carry this installation's token while the dump carries another. They depend on the
+     * base table, so they are dropped here, as soon as any object of their family goes (DROP TABLE of
+     * the base would fail otherwise when the base is dropped before its history). Not on pg_restore's
+     * own DROP POLICY statements: those come first, and a later DROP POLICY (without IF EXISTS) of a
+     * dumped name already gone would fail. Restore plumbing the caller asked for: reported at DEBUG.
+     */
+    IF v_teardown AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+        DECLARE
+            family_row record;
+            policy_row record;
+            previous_guard text := current_setting('sql_saga.managing_history_policies', true);
+        BEGIN
+            PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
+            FOR family_row IN
+                SELECT DISTINCT to_regclass(format('%I.%I', sv.history_schema_name /* %I */, sv.history_table_name /* %I */)) AS history_oid
+                FROM pg_catalog.pg_event_trigger_dropped_objects() AS dobj
+                JOIN sql_saga.system_versioning AS sv
+                  ON (dobj.address_names[1], dobj.address_names[2]) IN ((sv.table_schema, sv.table_name), (sv.history_schema_name, sv.history_table_name))
+                WHERE dobj.object_type <> 'policy'
+            LOOP
+                CONTINUE WHEN family_row.history_oid IS NULL;
+                FOR policy_row IN
+                    SELECT p.polname
+                    FROM pg_catalog.pg_policy AS p
+                    WHERE p.polrelid = family_row.history_oid
+                      AND sql_saga.__internal_is_managed_history_policy(p.polname)
+                    ORDER BY p.polname
+                LOOP
+                    EXECUTE format('DROP POLICY IF EXISTS %I ON %s', policy_row.polname /* %I */, family_row.history_oid::regclass /* %s */);
+                    RAISE DEBUG 'sql_saga: Dropped policy % on %, part of the teardown by pg_restore --clean',
+                        policy_row.polname, family_row.history_oid::regclass;
+                END LOOP;
+            END LOOP;
+            PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
+        END;
+    END IF;
 
     /* If one of our tables is being dropped, remove references to it */
     FOR r IN
@@ -45,7 +87,8 @@ BEGIN
             LOOP
                 fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
                 -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
-                IF fk_table_oid IS NOT NULL THEN
+                -- Not during pg_restore --clean: it drops the CHECK (with the table) and the helper function itself.
+                IF fk_table_oid IS NOT NULL AND NOT v_teardown THEN
                     IF fk_row.type = 'regular_to_temporal' THEN
                         IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
                             EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
@@ -92,6 +135,8 @@ BEGIN
                 FROM sql_saga.era e 
                 WHERE (e.table_schema, e.table_name) = (r.schema_name, r.object_name)
                   AND e.sync_temporal_trg_function_name IS NOT NULL  -- Only eras with sync triggers
+                  -- Not during pg_restore --clean: it drops the (dumped) function itself, without IF EXISTS.
+                  AND NOT v_teardown
             LOOP
                 -- Drop the function directly (trigger already gone with table)
                 func_name := era_row.sync_temporal_trg_function_name;
@@ -137,6 +182,13 @@ BEGIN
             r.object_identity, r.era_name, r.table_oid;
     END LOOP;
 
+    /*
+     * The checks from here to the query functions refuse the removal of objects a family still
+     * needs. During the teardown by pg_restore --clean the family goes as a whole (its base table and
+     * finally the extension with the catalog rows), one object per statement: skip them then.
+     * (Not re-indented, to keep the change small.)
+     */
+    IF NOT v_teardown THEN
     /* Complain if the infinity CHECK constraint is missing. */
     FOR r IN
         SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, ste.infinity_check_constraint
@@ -413,6 +465,8 @@ BEGIN
             r.object_identity, r.table_oid;
     END LOOP;
 
+    END IF; -- NOT v_teardown
+
     /*
      * Policies (tmp/design_final.md sections 8, 13). A dropped policy on a versioned base table
      * drops its history copy. Policies sql_saga manages on a history table cannot be dropped
@@ -431,7 +485,7 @@ BEGIN
         WHERE dobj.object_type = 'policy'
         GROUP BY 1, 2, 3
     LOOP
-        IF r.rel_oid = r.history_oid
+        IF r.rel_oid = r.history_oid AND NOT v_teardown
            AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
             FOR managed_policy IN
                 SELECT u.name FROM unnest(r.policy_names) AS u (name)
@@ -441,7 +495,8 @@ BEGIN
                     managed_policy.name, r.history_oid::regclass, r.base_oid::regclass;
             END LOOP;
         END IF;
-        IF r.rel_oid = r.base_oid
+        -- Not during pg_restore --clean: it drops the dumped copies itself, without IF EXISTS.
+        IF r.rel_oid = r.base_oid AND NOT v_teardown
            AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
             PERFORM sql_saga.__internal_sync_history_policies(r.base_oid, r.policy_names);
         END IF;
@@ -451,4 +506,4 @@ END;
 $function$;
 
 COMMENT ON FUNCTION sql_saga.drop_protection() IS
-'An event trigger function that prevents accidental dropping of sql_saga-managed objects.';
+'An event trigger function that prevents accidental dropping of sql_saga-managed objects. During the teardown phase of pg_restore --clean (see sql_saga.__internal_is_clean_teardown) it lets the drops through and removes the managed history policies the dump cannot name.';
