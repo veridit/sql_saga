@@ -216,6 +216,14 @@ vim vimo nvim nvimo:
 test-restore:
 	devops/restore_roundtrip.sh $(CASES)
 
+# Upgrade of a database created with the released 1.0 (git tag v1.0) to the next version with
+# ALTER EXTENSION sql_saga UPDATE: shape, behaviour, fresh-vs-upgraded equivalence, idempotence.
+# Builds v1.0 from the tag in a temp dir; each run owns a unique saga_up_* database/role prefix.
+# Needs a superuser through the libpq environment. See devops/upgrade_test.sh for the variables.
+.PHONY: test-upgrade
+test-upgrade:
+	devops/upgrade_test.sh
+
 # Renumber test files to make room for a new test at a specific slot.
 # Usage: make renumber-tests-from SLOT=066
 # This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
