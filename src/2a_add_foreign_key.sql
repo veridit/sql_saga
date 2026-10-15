@@ -235,6 +235,7 @@ DECLARE
     helper_signature text;
     v_fk_index_name name;
     v_uk_stable_cols name[];
+    v_missing_equality boolean;
 BEGIN
     IF fk_table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -346,14 +347,43 @@ BEGIN
 
         helper_signature := format('%s(%s)', fk_helper_function /* %s */, fk_column_signatures /* %s */);
 
-        SELECT string_agg(format('uk.%I = $%s', u.name /* %I */, u.ordinality /* %s */), ' AND ')
-        INTO uk_where_clause
-        FROM unnest(v_uk_stable_cols) WITH ORDINALITY AS u(name, ordinality);
+        -- The helper runs with search_path = pg_catalog. Each column is compared with the equality operator of its
+        -- type's default btree operator class, written schema-qualified, so a type whose = lives elsewhere
+        -- (for example citext in public) compares with its own semantics, as a native foreign key would.
+        SELECT string_agg(format('uk.%I OPERATOR(%I.=) $%s',
+                                 u.name /* %I */,
+                                 eq.nspname /* %I */,
+                                 u.ordinality /* %s */), ' AND ' ORDER BY u.ordinality),
+               bool_or(eq.oid IS NULL)
+        INTO uk_where_clause, v_missing_equality
+        FROM unnest(v_uk_stable_cols) WITH ORDINALITY AS u(name, ordinality)
+        JOIN pg_catalog.pg_attribute AS ua ON (ua.attrelid, ua.attname) = (uk_table_oid, u.name)
+        LEFT JOIN LATERAL (
+            SELECT o.oid, n.nspname
+            FROM pg_catalog.pg_opclass AS opc
+            JOIN pg_catalog.pg_am AS am ON am.oid = opc.opcmethod AND am.amname = 'btree'
+            JOIN pg_catalog.pg_amop AS amop ON amop.amopfamily = opc.opcfamily
+                 AND amop.amoplefttype = opc.opcintype AND amop.amoprighttype = opc.opcintype
+                 AND amop.amopstrategy = 3
+            JOIN pg_catalog.pg_operator AS o ON o.oid = amop.amopopr
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = o.oprnamespace
+            WHERE opc.opcdefault
+              AND opc.opcintype = (SELECT coalesce(nullif(t.typbasetype, 0), t.oid)
+                                   FROM pg_catalog.pg_type AS t WHERE t.oid = ua.atttypid)
+            LIMIT 1
+        ) AS eq ON true;
+
+        IF v_missing_equality THEN
+            RAISE EXCEPTION 'a column of unique key % has a type without a default btree equality operator', unique_key_name;
+        END IF;
 
         helper_body := format($$
             CREATE FUNCTION %s
             RETURNS boolean
-            LANGUAGE sql STABLE STRICT AS $func_body$
+            LANGUAGE sql STABLE STRICT
+            SECURITY DEFINER
+            SET search_path = pg_catalog
+            AS $func_body$
                 SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);
             $func_body$;
             $$,
@@ -373,7 +403,33 @@ BEGIN
 
         IF existing_proc IS NULL THEN
              EXECUTE helper_body;
+             existing_proc := to_regprocedure(helper_signature);
+        ELSIF NOT EXISTS (
+            -- fk_helper_function may name any function; only reuse the very helper sql_saga generates for
+            -- this referenced key (same body, language and result), never an unrelated function.
+            SELECT FROM pg_catalog.pg_proc AS p
+            WHERE p.oid = existing_proc
+              AND p.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
+              AND p.prorettype = 'pg_catalog.bool'::pg_catalog.regtype
+              AND p.proisstrict AND p.provolatile = 's' AND p.prokind = 'f'
+              AND btrim(p.prosrc, E' \t\r\n') = format('SELECT EXISTS (SELECT 1 FROM %I.%I AS uk WHERE %s);',
+                                                       uk_schema_name, uk_table_name, uk_where_clause))
+        THEN
+            RAISE EXCEPTION 'function % exists but is not the foreign key helper sql_saga generates for %',
+                existing_proc::regprocedure, uk_table_oid
+                USING HINT = 'Pass a different fk_helper_function, or drop the existing function.';
         END IF;
+        -- The CHECK constraint calls the helper as whoever writes the child table. Like a native foreign
+        -- key, that writer needs no SELECT on the referenced table: the helper answers only whether the key
+        -- exists, with the referenced table owner's rights, and is executable by everyone (also where
+        -- EXECUTE is revoked from PUBLIC by default). A reused (shared) helper is brought to the same state.
+        EXECUTE format('ALTER FUNCTION %s SECURITY DEFINER SET search_path = pg_catalog',
+            existing_proc::regprocedure /* %s */);
+        EXECUTE format('ALTER FUNCTION %s OWNER TO %I',
+            existing_proc::regprocedure, /* %s */
+            (SELECT r.rolname FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_roles AS r ON r.oid = c.relowner
+             WHERE c.oid = uk_table_oid) /* %I */);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', existing_proc::regprocedure /* %s */);
 
         fk_check_constraint := coalesce(fk_check_constraint, sql_saga.__internal_make_name(
             ARRAY[fk_table_name] || fk_column_names || ARRAY['check']
