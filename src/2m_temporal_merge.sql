@@ -90,7 +90,7 @@ BEGIN
         LIMIT 1;
 
         IF NOT FOUND AND primary_identity_columns IS NULL THEN
-             RAISE EXCEPTION 'Could not discover an identity key (primary or natural) for table "%". Please register a key using sql_saga.add_unique_key() or explicitly provide primary_identity_columns.', target_table;
+             RAISE EXCEPTION 'Could not discover an identity key (primary or natural) for table "%". Please register a key using sql_saga.add_unique_key() or explicitly provide primary_identity_columns.', sql_saga.__internal_display_name(target_table);
         END IF;
     END IF;
 
@@ -158,7 +158,7 @@ BEGIN
             FOREACH v_col IN ARRAY COALESCE(v_identity_cols_discovered, '{}') LOOP
                 PERFORM 1 FROM pg_attribute WHERE attrelid = source_table AND attname = v_col AND NOT attisdropped AND attnum > 0;
                 IF NOT FOUND THEN
-                    RAISE EXCEPTION 'When update_source_with_identity is true, identity_column "%" must exist in the source table "%" to be updated.', v_col, source_table;
+                    RAISE EXCEPTION 'When update_source_with_identity is true, identity_column "%" must exist in the source table "%" to be updated.', v_col, sql_saga.__internal_display_name(source_table);
                 END IF;
             END LOOP;
         END;
@@ -175,7 +175,7 @@ BEGIN
     IF (v_identity_cols_discovered IS NULL OR cardinality(v_identity_cols_discovered) = 0) AND
        (v_natural_identity_cols_discovered IS NULL OR cardinality(v_natural_identity_cols_discovered) = 0)
     THEN
-        RAISE EXCEPTION 'Could not determine identity columns for table "%". No primary or natural keys are registered, or they were explicitly disabled with an empty array.', temporal_merge.target_table;
+        RAISE EXCEPTION 'Could not determine identity columns for table "%". No primary or natural keys are registered, or they were explicitly disabled with an empty array.', sql_saga.__internal_display_name(temporal_merge.target_table);
     END IF;
 
     v_summary_line := format(

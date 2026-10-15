@@ -73,7 +73,7 @@ BEGIN
 
                 IF identifier_columns IS NULL THEN
                     RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key for era "%" to support updatable views',
-                        format('%I.%I', r.schema_name /* %I */, r.table_name /* %I */)::regclass, r.era_name;
+                        sql_saga.__internal_display_name(format('%I.%I', r.schema_name /* %I */, r.table_name /* %I */)::regclass), r.era_name;
                 END IF;
 
                 SELECT string_agg(quote_literal(c), ', ') INTO identifier_columns_quoted FROM unnest(identifier_columns) AS u(c);
@@ -113,4 +113,3 @@ $function$;
 COMMENT ON FUNCTION sql_saga.add_for_portion_of_view(regclass, name, name[]) IS
 'Creates a specialized view that emulates the SQL:2011 `FOR PORTION OF` syntax, allowing a data change to be applied to a specific time slice of a record''s history.
 The optional ephemeral_columns parameter specifies columns (like audit fields edit_at, edit_by_user_id) that should be excluded from coalescing comparisons, allowing adjacent rows with identical business data but different ephemeral values to be merged.';
-

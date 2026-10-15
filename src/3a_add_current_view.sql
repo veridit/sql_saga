@@ -65,7 +65,7 @@ BEGIN
             -- Verify the era is time-based by checking the cached category
             IF r.range_subtype_category <> 'D' THEN -- 'D' for all DateTime types
                  RAISE EXCEPTION 'Cannot create a "current" view for era "%" on table "%" because it is a range of %, and only date or timestamp is supported.',
-                    r.era_name, table_oid, r.range_subtype::regtype;
+                    r.era_name, sql_saga.__internal_display_name(table_oid), r.range_subtype::regtype;
             END IF;
 
             -- Determine now() function based on range subtype, but allow override for testing
@@ -115,7 +115,7 @@ BEGIN
 
             IF identifier_columns IS NULL THEN
                 RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key for era "%" to support updatable views',
-                    table_oid, r.era_name;
+                    sql_saga.__internal_display_name(table_oid), r.era_name;
             END IF;
 
             -- Compute GENERATED columns to exclude from temp source tables
@@ -162,4 +162,3 @@ $function$;
 
 COMMENT ON FUNCTION sql_saga.add_current_view(regclass, name, name, text) IS
 'Creates a view that shows only the current state of data, making it ideal for ORMs and REST APIs. It provides a trigger for safe, explicit SCD Type 2 updates and soft-deletes.';
-

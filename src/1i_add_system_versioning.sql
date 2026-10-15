@@ -265,7 +265,7 @@ BEGIN
     END IF;
 
     IF persistence <> 'p' THEN
-        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
+        RAISE EXCEPTION 'table "%" must be persistent', sql_saga.__internal_display_name(table_oid);
     END IF;
 
     SELECT e.*
@@ -298,7 +298,7 @@ BEGIN
             R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
             SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
         THEN
-            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', table_oid, history_table_id::regclass;
+            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
         END IF;
         EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
     ELSE

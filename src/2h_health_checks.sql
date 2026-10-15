@@ -28,7 +28,7 @@ BEGIN
         WHERE c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'table "%" must remain persistent because it has an era',
-            r.table_oid;
+            sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* And the history tables, too */
@@ -40,7 +40,7 @@ BEGIN
         WHERE e.audit_table_name IS NOT NULL AND c.relpersistence <> 'p'
     LOOP
         RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
-            r.table_oid;
+            sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Check that our system versioning functions are still here */
@@ -57,7 +57,7 @@ BEGIN
           AND NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
     LOOP
         RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
-            r.fn, r.table_oid;
+            sql_saga.__internal_display_function_name(r.fn), sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Fix up history and for-portion objects ownership */
@@ -147,12 +147,12 @@ BEGIN
                         -- A policy of one's own on the history table (decision 7): it would be OR-ed
                         -- with the copies and could show more history than the base table allows.
                         -- ALTER POLICY ... RENAME TO a non-managed name lands here too.
-                        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', r.history_oid::regclass
+                        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', sql_saga.__internal_display_name(r.history_oid::regclass)
                             USING HINT = format('Create the policy on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
-                                                r.base_oid::regclass);
+                                                sql_saga.__internal_display_name(r.base_oid::regclass));
                     ELSIF r.command_tag = 'ALTER POLICY' THEN
                         RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
-                            managed_policy.polname, r.history_oid::regclass, r.base_oid::regclass;
+                            managed_policy.polname, sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
                     END IF;
                 END IF;
             END IF;
@@ -162,7 +162,7 @@ BEGIN
                                WHERE h.oid = r.history_oid AND b.oid = r.base_oid
                                  AND h.relrowsecurity AND h.relforcerowsecurity = b.relforcerowsecurity) THEN
                 RAISE EXCEPTION 'history table "%" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "%"',
-                    r.history_oid::regclass, r.base_oid::regclass;
+                    sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
             END IF;
         END IF;
         -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
@@ -196,7 +196,7 @@ BEGIN
         IF NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c
                        WHERE c.oid = r.view_oid AND 'security_invoker=on' = ANY (c.reloptions)) THEN
             RAISE EXCEPTION 'view "%" must keep security_invoker because it is used in % for table "%"',
-                r.view_oid::regclass, r.kind, r.base_oid::regclass;
+                sql_saga.__internal_display_name(r.view_oid::regclass), r.kind, sql_saga.__internal_display_name(r.base_oid::regclass);
         END IF;
     END LOOP;
 
@@ -222,7 +222,7 @@ BEGIN
         IF EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = r.view_oid AND c.reloptions IS NOT NULL)
            OR pg_catalog.pg_get_viewdef(r.view_oid) IS DISTINCT FROM expected_gate THEN
             RAISE EXCEPTION 'view "%" must keep its access gate because it is used in SYSTEM VERSIONING for table "%"',
-                r.view_oid::regclass, r.base_oid::regclass;
+                sql_saga.__internal_display_name(r.view_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
         END IF;
     END LOOP;
 

@@ -12,6 +12,38 @@ $function$
 SELECT pg_catalog.pg_advisory_xact_lock('sql_saga.era'::regclass::oid::integer, table_name::oid::integer);
 $function$;
 
+CREATE FUNCTION sql_saga.__internal_display_name(object_name regclass)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $__internal_display_name$
+    SELECT array_to_string(parse_ident(object_name::text), '.');
+$__internal_display_name$;
+
+CREATE FUNCTION sql_saga.__internal_display_name(object_identity text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_display_name$
+    SELECT array_to_string(parse_ident(object_identity), '.');
+$__internal_display_name$;
+
+CREATE FUNCTION sql_saga.__internal_display_function_name(function_identity text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_display_function_name$
+    SELECT array_to_string(parse_ident(left(function_identity, strpos(function_identity, '(') - 1)), '.')
+        || substring(function_identity FROM strpos(function_identity, '('));
+$__internal_display_function_name$;
+
+-- Only the SECURITY DEFINER event triggers use the text forms; the regclass form stays callable by
+-- PUBLIC because security-invoker routines such as temporal_merge use it in their messages.
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_display_name(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION sql_saga.__internal_display_function_name(text) FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_ddl_command_affects_managed_object()
 RETURNS boolean
 LANGUAGE plpgsql

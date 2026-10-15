@@ -182,7 +182,7 @@ BEGIN
       AND e.era_name = temporal_merge_execute.era_name;
 
     IF v_range_col IS NULL THEN
-        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, temporal_merge_execute.target_table;
+        RAISE EXCEPTION 'No era named "%" found for table "%"', temporal_merge_execute.era_name, sql_saga.__internal_display_name(temporal_merge_execute.target_table);
     END IF;
 
     -- Introspect the primary key columns, excluding temporal columns.
@@ -287,7 +287,7 @@ BEGIN
             -- If we couldn't resolve a base table for a complex view, we cannot check for an index.
             -- To avoid repeated expensive checks for this source, we assume an index exists and cache that assumption.
             IF v_source_rel_oid IS NULL THEN
-                RAISE WARNING 'Could not determine the base table for source relation "%" (it may be a complex view). Skipping GIST index performance check.', temporal_merge_execute.source_table;
+                RAISE WARNING 'Could not determine the base table for source relation "%" (it may be a complex view). Skipping GIST index performance check.', sql_saga.__internal_display_name(temporal_merge_execute.source_table);
                 v_has_gist_index := true;
                 v_source_rel_name_for_hint := temporal_merge_execute.source_table; -- Fallback
             ELSE
@@ -1278,4 +1278,3 @@ $temporal_merge_execute$;
 
 COMMENT ON PROCEDURE sql_saga.temporal_merge_execute(regclass, regclass, TEXT[], sql_saga.temporal_merge_mode, name, name, name, boolean, text[], sql_saga.temporal_merge_delete_mode, boolean, name, name, name, name, text[], boolean) IS
 'Executes a temporal merge plan that is assumed to exist in a temporary table `temporal_merge_plan`.';
-

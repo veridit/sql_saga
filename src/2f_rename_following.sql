@@ -266,7 +266,7 @@ BEGIN
             WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
     LOOP
         RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
-            r.column_name, r.table_oid;
+            r.column_name, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     ---
@@ -589,7 +589,7 @@ BEGIN
                     WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
             LOOP
                 RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
-                    r.trigger_name, r.table_oid, r.foreign_key_name;
+                    r.trigger_name, sql_saga.__internal_display_name(r.table_oid), r.foreign_key_name;
             END LOOP;
         END IF;
 
@@ -611,7 +611,7 @@ BEGIN
                         AND t.tgfoid = to_regprocedure(format('sql_saga.%I()', e.sync_temporal_trg_function_name)))
             LOOP
                 RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is managed by era "%"',
-                    r.sync_temporal_trg_name, r.table_oid, r.era_name;
+                    r.sync_temporal_trg_name, sql_saga.__internal_display_name(r.table_oid), r.era_name;
             END LOOP;
         END IF;
     END IF;

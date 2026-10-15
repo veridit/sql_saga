@@ -45,15 +45,15 @@ BEGIN
     END IF;
 
     IF persistence <> 'p' THEN
-        RAISE EXCEPTION 'table "%" must be persistent', table_oid;
+        RAISE EXCEPTION 'table "%" must be persistent', sql_saga.__internal_display_name(table_oid);
     END IF;
 
     IF EXISTS (SELECT FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, era_name)) THEN
-        RAISE EXCEPTION 'era for SYSTEM_TIME already exists on table "%"', table_oid;
+        RAISE EXCEPTION 'era for SYSTEM_TIME already exists on table "%"', sql_saga.__internal_display_name(table_oid);
     END IF;
 
     IF EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_name)) THEN
-        RAISE EXCEPTION 'a column named system_time already exists for table "%"', table_oid;
+        RAISE EXCEPTION 'a column named system_time already exists for table "%"', sql_saga.__internal_display_name(table_oid);
     END IF;
 
     SELECT a.attnum, a.atttypid, a.attnotnull

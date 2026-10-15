@@ -489,7 +489,7 @@ BEGIN
 
         IF violating_row_found THEN
             RAISE EXCEPTION 'insert or update on table "%" violates foreign key constraint "%"',
-                fk_table_oid,
+                sql_saga.__internal_display_name(fk_table_oid),
                 foreign_key_name;
         END IF;
     END;

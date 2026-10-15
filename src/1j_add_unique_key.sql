@@ -200,7 +200,7 @@ BEGIN
                 AND a.attidentity = 'a'; -- 'a' = always, 'd' = by default
 
                 IF identity_column_name IS NOT NULL THEN
-                    RAISE EXCEPTION 'table "%" has a GENERATED ALWAYS AS IDENTITY column ("%"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity', table_oid, identity_column_name;
+                    RAISE EXCEPTION 'table "%" has a GENERATED ALWAYS AS IDENTITY column ("%"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity', sql_saga.__internal_display_name(table_oid), identity_column_name;
                 END IF;
 
                 -- Check for a simple primary key that does not include the temporal columns.
@@ -219,7 +219,7 @@ BEGIN
                         c.conrelid = table_oid AND c.contype = 'p';
 
                     IF pk_columns IS NOT NULL AND NOT (pk_columns @> ARRAY[era_row.range_column_name]) THEN
-                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal range column ("%"); this is incompatible with SCD Type 2 history', table_oid, era_row.range_column_name;
+                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal range column ("%"); this is incompatible with SCD Type 2 history', sql_saga.__internal_display_name(table_oid), era_row.range_column_name;
                     END IF;
                 END;
             END;
@@ -461,7 +461,7 @@ BEGIN
 
                     IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
                         IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
-                            RAISE EXCEPTION 'cannot enforce primary key consistency on table "%" because its PRIMARY KEY (%) does not contain a stable (non-temporal) column', table_oid, array_to_string(pk_column_names, ', ');
+                            RAISE EXCEPTION 'cannot enforce primary key consistency on table "%" because its PRIMARY KEY (%) does not contain a stable (non-temporal) column', sql_saga.__internal_display_name(table_oid), array_to_string(pk_column_names, ', ');
                         ELSE -- Silently opt-out if using default (NULL) or explicit false
                             pk_is_compatible := false;
                         END IF;
@@ -469,7 +469,7 @@ BEGIN
 
                     IF pk_is_compatible AND array_length(stable_pk_columns, 1) > 1 THEN
                         IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
-                            RAISE EXCEPTION 'cannot enforce primary key consistency for natural key (%) on table "%" because its stable PRIMARY KEY component (%) is composite', array_to_string(column_names, ', '), table_oid, array_to_string(stable_pk_columns, ', ');
+                            RAISE EXCEPTION 'cannot enforce primary key consistency for natural key (%) on table "%" because its stable PRIMARY KEY component (%) is composite', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
                         ELSE -- Silently opt-out if using default (NULL) or explicit false
                             pk_is_compatible := false;
                         END IF;
@@ -601,11 +601,11 @@ BEGIN
 
                 IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
                     IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
-                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because it has no stable (non-temporal) part, which is required by existing natural keys pending consistency enforcement', array_to_string(column_names, ', '), table_oid;
+                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because it has no stable (non-temporal) part, which is required by existing natural keys pending consistency enforcement', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid);
                     END IF;
                 ELSIF array_length(stable_pk_columns, 1) > 1 THEN
                     IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
-                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because its stable part (%) is composite, which is not supported for consistency enforcement required by existing natural keys', array_to_string(column_names, ', '), table_oid, array_to_string(stable_pk_columns, ', ');
+                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because its stable part (%) is composite, which is not supported for consistency enforcement required by existing natural keys', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
                     END IF;
                 ELSE
                     -- This is a compatible, single-column stable PK. Apply to pending NKs.

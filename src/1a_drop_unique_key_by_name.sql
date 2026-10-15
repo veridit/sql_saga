@@ -44,7 +44,8 @@ BEGIN
         LOOP
             IF drop_behavior = 'RESTRICT' THEN
                 RAISE EXCEPTION 'cannot drop unique key "%" because foreign key "%" on table "%" depends on it',
-                    unique_key_row.unique_key_name, foreign_key_row.foreign_key_name, format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;
+                    unique_key_row.unique_key_name, foreign_key_row.foreign_key_name,
+                    sql_saga.__internal_display_name(format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass);
             END IF;
 
             PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);

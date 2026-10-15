@@ -309,9 +309,9 @@ BEGIN
         WHERE hp.polrelid = fam.history_oid AND NOT sql_saga.__internal_is_managed_history_policy(hp.polname)
         ORDER BY hp.polname
     LOOP
-        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', fam.history_oid::regclass
+        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', sql_saga.__internal_display_name(fam.history_oid::regclass)
             USING HINT = format('Drop policy "%s" on "%s" and create it on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
-                                p.polname, fam.history_oid::regclass, fam.base_oid::regclass);
+                p.polname, sql_saga.__internal_display_name(fam.history_oid::regclass), sql_saga.__internal_display_name(fam.base_oid::regclass));
     END LOOP;
 
     -- Validate every desired copy before changing anything, so that a refusal reports only the

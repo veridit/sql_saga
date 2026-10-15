@@ -179,7 +179,7 @@ BEGIN
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop rangetype "%" because it is used in period "%" on table "%"',
-            r.object_identity, r.era_name, r.table_oid;
+            r.object_identity, r.era_name, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /*
@@ -198,7 +198,7 @@ BEGIN
             WHERE (c.conrelid, c.conname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.infinity_check_constraint))
     LOOP
         RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in SYSTEM_TIME period',
-            r.infinity_check_constraint, r.table_oid;
+            r.infinity_check_constraint, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Complain if the GENERATED ALWAYS AS ROW START/END trigger is missing. */
@@ -210,7 +210,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.generated_always_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-            r.generated_always_trigger, r.table_oid;
+            r.generated_always_trigger, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Complain if the write_history trigger is missing. */
@@ -222,7 +222,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.write_history_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-            r.write_history_trigger, r.table_oid;
+            r.write_history_trigger, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Complain if the TRUNCATE trigger is missing. */
@@ -234,7 +234,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), ste.truncate_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in SYSTEM_TIME period',
-            r.truncate_trigger, r.table_oid;
+            r.truncate_trigger, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /*
@@ -250,7 +250,7 @@ BEGIN
             WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
     LOOP
         RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
-            r.column_name, r.table_oid;
+            r.column_name, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     ---
@@ -266,7 +266,7 @@ BEGIN
             AND (dobj.address_names[1], dobj.address_names[2]) = (v.view_schema, v.view_name)
     LOOP
         RAISE EXCEPTION 'cannot drop view "%", call "sql_saga.drop_%_view()" instead',
-            r.object_identity, r.view_type;
+            sql_saga.__internal_display_name(r.object_identity), r.view_type;
     END LOOP;
 
     /* Complain if the updatable view's trigger is missing. */
@@ -278,7 +278,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', v.view_schema, v.view_name)), v.trigger_name))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on view "%" because it is part of an updatable view for era "%" on table "%"',
-            r.trigger_name, r.view_oid, r.era_name, r.table_oid;
+            r.trigger_name, sql_saga.__internal_display_name(r.view_oid), r.era_name, sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Complain if the table's identifier (PK or unique key) has been dropped. */
@@ -299,7 +299,7 @@ BEGIN
             )
     LOOP
         RAISE EXCEPTION 'table "%" must have a primary key or a single-column temporal unique key to support its updatable view for era "%"',
-            r.table_oid, r.era_name;
+            sql_saga.__internal_display_name(r.table_oid), r.era_name;
     END LOOP;
 
     ---
@@ -336,7 +336,7 @@ BEGIN
                 WHERE (c.conrelid, c.conname) = (r.table_oid, r.check_constraint)
             ) THEN
                 RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-                    r.check_constraint, r.table_oid, r.unique_key_name;
+                    r.check_constraint, sql_saga.__internal_display_name(r.table_oid), r.unique_key_name;
             END IF;
 
             -- XOR keys now use a unified UNIQUE constraint (no partial constraints)
@@ -345,7 +345,7 @@ BEGIN
                 -- Predicated keys use a unique index, not a constraint.
                 IF pg_catalog.to_regclass(format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL THEN
                     RAISE EXCEPTION 'cannot drop index "%" on table "%" because it is used in era unique key "%"',
-                        r.unique_constraint, r.table_oid, r.unique_key_name;
+                        r.unique_constraint, sql_saga.__internal_display_name(r.table_oid), r.unique_key_name;
                 END IF;
             END IF;
         ELSE
@@ -355,7 +355,7 @@ BEGIN
                 WHERE (c.conrelid, c.conname) = (r.table_oid, r.unique_constraint)
             ) THEN
                 RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-                    r.unique_constraint, r.table_oid, r.unique_key_name;
+                    r.unique_constraint, sql_saga.__internal_display_name(r.table_oid), r.unique_key_name;
             END IF;
         END IF;
 
@@ -365,7 +365,7 @@ BEGIN
             WHERE (c.conrelid, c.conname) = (r.table_oid, r.exclude_constraint)
         ) THEN
             RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-                r.exclude_constraint, r.table_oid, r.unique_key_name;
+                r.exclude_constraint, sql_saga.__internal_display_name(r.table_oid), r.unique_key_name;
         END IF;
 
         -- Check pk_consistency constraints
@@ -380,7 +380,7 @@ BEGIN
                         WHERE (c.conrelid, c.conname) = (r.table_oid, v_constraint_name)
                     ) THEN
                         RAISE EXCEPTION 'cannot drop constraint "%" on table "%" because it is used in era unique key "%"',
-                            v_constraint_name, r.table_oid, r.unique_key_name;
+                            v_constraint_name, sql_saga.__internal_display_name(r.table_oid), r.unique_key_name;
                     END IF;
                 END LOOP;
             END;
@@ -403,7 +403,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.uk_update_trigger, r.table_oid, r.foreign_key_name;
+            r.uk_update_trigger, sql_saga.__internal_display_name(r.table_oid), r.foreign_key_name;
     END LOOP;
 
     FOR r IN
@@ -417,7 +417,7 @@ BEGIN
             WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
     LOOP
         RAISE EXCEPTION 'cannot drop trigger "%" on table "%" because it is used in era foreign key "%"',
-            r.uk_delete_trigger, r.table_oid, r.foreign_key_name;
+            r.uk_delete_trigger, sql_saga.__internal_display_name(r.table_oid), r.foreign_key_name;
     END LOOP;
 
     ---
@@ -434,7 +434,7 @@ BEGIN
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop table "%" because it is used in SYSTEM VERSIONING for table "%"',
-            r.object_identity, r.table_oid;
+            sql_saga.__internal_display_name(r.object_identity), sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Reject dropping the history view directly (except while sql_saga rebuilds the family's views). */
@@ -450,7 +450,7 @@ BEGIN
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
-            r.object_identity, r.table_oid;
+            sql_saga.__internal_display_name(r.object_identity), sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Reject dropping the query functions directly (except while sql_saga rebuilds them). */
@@ -464,7 +464,7 @@ BEGIN
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',
-            r.object_identity, r.table_oid;
+            sql_saga.__internal_display_function_name(r.object_identity), sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     END IF; -- NOT v_teardown
@@ -494,7 +494,7 @@ BEGIN
                 WHERE sql_saga.__internal_is_managed_history_policy(u.name)
             LOOP
                 RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
-                    managed_policy.name, r.history_oid::regclass, r.base_oid::regclass;
+                    managed_policy.name, sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
             END LOOP;
         END IF;
         -- Not during pg_restore --clean: it drops the dumped copies itself, without IF EXISTS.

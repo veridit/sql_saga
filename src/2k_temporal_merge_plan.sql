@@ -135,7 +135,7 @@ BEGIN
     FROM sql_saga.era e
     WHERE e.table_schema = v_target_schema_name AND e.table_name = v_target_table_name_only AND e.era_name = temporal_merge_plan.era_name;
 
-    IF v_range_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, target_table; END IF;
+    IF v_range_col IS NULL THEN RAISE EXCEPTION 'No era named "%" found for table "%"', era_name, sql_saga.__internal_display_name(target_table); END IF;
 
     -- 1.1.1: Query mutually_exclusive_columns metadata for join optimization
     -- We query the first applicable mutually_exclusive_columns array from unique_keys.
@@ -303,7 +303,7 @@ BEGIN
 
         -- Must have at least a `valid_from` or `range` column.
         IF NOT v_source_has_valid_from AND NOT v_source_has_range_col THEN
-             RAISE EXCEPTION 'Source table "%" must have either the range column "%" or the component column "%".', source_table::text, v_range_col, v_valid_from_col;
+             RAISE EXCEPTION 'Source table "%" must have either the range column "%" or the component column "%".', sql_saga.__internal_display_name(source_table), v_range_col, v_valid_from_col;
         END IF;
 
         -- Build expressions for `_from` and `_until` components.
@@ -331,7 +331,7 @@ BEGIN
 
         -- Must have a source for `_until` if there's no range column.
         IF NOT v_source_has_range_col AND v_until_expr IS NULL THEN
-            RAISE EXCEPTION 'Source table "%" must have a "%", "%", or "%" column.', source_table::text, v_range_col, v_valid_until_col, v_valid_to_col;
+            RAISE EXCEPTION 'Source table "%" must have a "%", "%", or "%" column.', sql_saga.__internal_display_name(source_table), v_range_col, v_valid_until_col, v_valid_to_col;
         END IF;
 
         -- Combine expressions, prioritizing the range column but falling back to components.
@@ -482,7 +482,7 @@ BEGIN
         END IF;
     
         IF v_range_constructor IS NULL THEN
-            RAISE EXCEPTION 'Could not determine the range type for era "%" on table "%". Please ensure the era was created correctly, possibly by specifying the range_type parameter in add_era().', era_name, target_table;
+            RAISE EXCEPTION 'Could not determine the range type for era "%" on table "%". Please ensure the era was created correctly, possibly by specifying the range_type parameter in add_era().', era_name, sql_saga.__internal_display_name(target_table);
         END IF;
     
         -- Validate that user has not passed in temporal columns as ephemeral.
