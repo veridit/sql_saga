@@ -62,6 +62,24 @@ FROM pg_policy AS p
 WHERE p.polrelid = 'doc_history'::regclass
   AND p.polname = 'sql_saga_' || left(md5('tenant_a' || 'otherinstallation'), 16);
 
+\echo '--- A policy of ones own added while event triggers were off fails closed until removed'
+SET client_min_messages = warning;
+DROP POLICY mine ON doc;  -- back to: tenant a sees only tenant a
+RESET client_min_messages;
+-- Event triggers do not fire under session_replication_role = replica.
+SET session_replication_role = replica;
+CREATE POLICY sneaky ON doc_history FOR SELECT USING (true);
+RESET session_replication_role;
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id; -- fail
+RESET ROLE;
+SELECT sql_saga.sync_history_policies('doc'); -- fail: sql_saga never drops a policy of yours
+DROP POLICY sneaky ON doc_history;
+SELECT sql_saga.sync_history_policies('doc');
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id;
+RESET ROLE;
+
 /* Clean up */
 SET client_min_messages = warning;
 SELECT sql_saga.drop_system_versioning('doc');

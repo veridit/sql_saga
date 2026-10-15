@@ -120,6 +120,39 @@ WHERE p.polrelid = 'doc_history'::regclass
                0
 (1 row)
 
+\echo '--- A policy of ones own added while event triggers were off fails closed until removed'
+--- A policy of ones own added while event triggers were off fails closed until removed
+SET client_min_messages = warning;
+DROP POLICY mine ON doc;  -- back to: tenant a sees only tenant a
+RESET client_min_messages;
+-- Event triggers do not fire under session_replication_role = replica.
+SET session_replication_role = replica;
+CREATE POLICY sneaky ON doc_history FOR SELECT USING (true);
+RESET session_replication_role;
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id; -- fail
+ERROR:  sql_saga: history of doc is not synchronized (0 policy copies missing, 0 stale, 1 not managed by sql_saga)
+HINT:  Drop the policies not managed by sql_saga on doc_history (define them on doc instead), then run: SELECT sql_saga.sync_history_policies('doc');
+RESET ROLE;
+SELECT sql_saga.sync_history_policies('doc'); -- fail: sql_saga never drops a policy of yours
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Drop policy "sneaky" on "doc_history" and create it on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+DROP POLICY sneaky ON doc_history;
+SELECT sql_saga.sync_history_policies('doc');
+ sync_history_policies 
+-----------------------
+ 
+(1 row)
+
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id;
+ id 
+----
+  1
+  1
+(2 rows)
+
+RESET ROLE;
 /* Clean up */
 SET client_min_messages = warning;
 SELECT sql_saga.drop_system_versioning('doc');
