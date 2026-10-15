@@ -631,8 +631,11 @@ CREATE TABLE child (
 
 **GitHub Actions** (`.github/workflows/regression.yml`):
 - Runs on push, pull_request, and manual dispatch
-- Tests against PostgreSQL 11-16 using `pgxn/pgxn-tools` container
-- Command: `pg-build-test` (make && make install && make installcheck)
+- Tests against **PostgreSQL 18 only**, installed from PGDG on `ubuntu-24.04`, with
+  `PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config`
+- Builds the extension with `make PG_CONFIG=... && make install PG_CONFIG=...`, then the Rust
+  part via `cargo pgrx` (v0.16.1: `cargo pgrx init --pg18=...`, `cargo pgrx install --release`)
+- Regression tests: `make test fast PG_CONFIG=...` (benchmarks are excluded from CI)
 
 **Local Pre-commit Hooks:**
 - Enable with: `git config core.hooksPath devops/githooks`

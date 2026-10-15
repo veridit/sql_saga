@@ -590,6 +590,17 @@ FUNCTION set_system_time_era_excluded_columns(
 SECURITY DEFINER
 ```
 
+### sync_history_policies
+
+> Makes the row-level security of the history table of a system-versioned table match its base table: one copy per SELECT/ALL policy, FORCE as on the base. sql_saga does this automatically on policy DDL; this function repairs a history whose policies changed while event triggers were off.
+
+```sql
+FUNCTION sync_history_policies(
+    table_oid regclass
+) RETURNS void
+SECURITY INVOKER
+```
+
 ## Aggregates
 
 ### covers_without_gaps
