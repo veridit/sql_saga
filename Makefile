@@ -2,9 +2,9 @@ MODULE_big = sql_saga
 EXTENSION = sql_saga
 EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-# The main extension script, built from the source files.
-# It is listed in DATA so that `make install` will copy it.
-DATA = $(EXTENSION)--$(EXTVERSION).sql
+# The current install script is generated from src. Released install scripts and hand-written update
+# scripts are immutable release artifacts kept in versions/ (sql_saga--1.0.sql is the v1.0 tag's build).
+DATA = versions/$(EXTENSION)--1.0.sql versions/$(EXTENSION)--1.0--1.1.sql $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
 
 # Add the generated script to EXTRA_CLEAN so it's removed on `make clean`.
 EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql

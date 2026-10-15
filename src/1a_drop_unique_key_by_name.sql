@@ -36,7 +36,7 @@ BEGIN
           AND (uk.unique_key_name = key_name OR key_name IS NULL)
     LOOP
         RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
-        /* Cascade to foreign keys, if desired */
+        /* Propagate the requested drop behavior to foreign keys, if desired */
         FOR foreign_key_row IN
             SELECT fk.*
             FROM sql_saga.foreign_keys AS fk

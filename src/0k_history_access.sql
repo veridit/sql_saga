@@ -19,6 +19,7 @@
 -- it, so a restore target mints its own token and dumped copies (old token) never collide with the
 -- copies sql_saga creates there.
 CREATE TABLE sql_saga.installation (token text NOT NULL);
+CREATE UNIQUE INDEX installation_singleton ON sql_saga.installation ((true));
 INSERT INTO sql_saga.installation (token) VALUES (left(md5(random()::text || clock_timestamp()::text), 8));
 GRANT SELECT ON TABLE sql_saga.installation TO PUBLIC;
 COMMENT ON TABLE sql_saga.installation IS 'Per-installation token used in the names of history policy copies. Not dumped: every installation, including a restore target, has its own.';
@@ -31,6 +32,7 @@ SET search_path = sql_saga, pg_catalog
 AS $__internal_installation_token$
     SELECT i.token FROM sql_saga.installation AS i LIMIT 1;
 $__internal_installation_token$;
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_installation_token() TO PUBLIC;
 
 CREATE FUNCTION sql_saga.__internal_history_copy_name(base_policy_name name)
 RETURNS name
@@ -40,6 +42,7 @@ SET search_path = sql_saga, pg_catalog
 AS $__internal_history_copy_name$
     SELECT ('sql_saga_' || left(md5(base_policy_name::text || sql_saga.__internal_installation_token()), 16))::name;
 $__internal_history_copy_name$;
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_copy_name(name) TO PUBLIC;
 
 -- Names of the two fixed policies on every history table. Like the copies, they carry the
 -- installation token, so that pg_restore replaying the dumped ones (old token) never collides with
@@ -71,13 +74,13 @@ SET search_path = sql_saga, pg_catalog
 AS $__internal_is_managed_history_policy$
     SELECT policy_name ~ '^sql_saga_([0-9a-f]{16}|history_reader_[0-9a-z]+|history_base_select_[0-9a-z]+)$';
 $__internal_is_managed_history_policy$;
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_is_managed_history_policy(name) TO PUBLIC;
 
 -- The access gate of B_history_gated: raises the same error PostgreSQL raises for the base.
 CREATE FUNCTION sql_saga.__internal_deny_history(table_oid oid)
 RETURNS boolean
 LANGUAGE plpgsql
 STABLE
-SET search_path = sql_saga, pg_catalog
 AS $__internal_deny_history$
 BEGIN
     RAISE EXCEPTION 'permission denied for table %', table_oid::regclass::text
@@ -148,6 +151,7 @@ AS $__internal_history_policy_copies$
     WHERE p.polrelid = table_oid
       AND p.polcmd IN ('r', '*');
 $__internal_history_policy_copies$;
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_policy_copies(oid) TO PUBLIC;
 
 -- Schema-qualified name of a relation, independent of search_path (for regclass constants in SQL text).
 CREATE FUNCTION sql_saga.__internal_qualified_name(rel oid)
@@ -243,6 +247,7 @@ BEGIN
                           WHERE c.copy_name = p.polname));
 END;
 $__internal_history_policy_drift$;
+GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_policy_drift(oid, oid) TO PUBLIC;
 
 /*
  * Read-time guard used by B_with_history: when the caller is subject to B's RLS, history is read

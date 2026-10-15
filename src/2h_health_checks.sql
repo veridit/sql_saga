@@ -55,6 +55,7 @@ BEGIN
         )
           -- rebuild_system_versioning_views drops and recreates them.
           AND NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
+          AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
     LOOP
         RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
             sql_saga.__internal_display_function_name(r.fn), sql_saga.__internal_display_name(r.table_oid);

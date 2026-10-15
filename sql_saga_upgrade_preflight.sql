@@ -1,0 +1,52 @@
+\set ON_ERROR_STOP on
+\pset pager off
+
+DO $preflight$
+DECLARE
+    installed_version text;
+    policy_list text;
+BEGIN
+    SELECT e.extversion INTO installed_version
+    FROM pg_catalog.pg_extension AS e
+    WHERE e.extname = 'sql_saga';
+    IF installed_version IS DISTINCT FROM '1.0' THEN
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires the released sql_saga 1.0, found %', coalesce(installed_version, 'not installed')
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Run this preflight only in a database containing the released v1.0 extension.';
+    END IF;
+    IF pg_catalog.to_regclass('sql_saga.temporal_merge_cache') IS NULL
+       OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
+           WHERE p.pronamespace = 'sql_saga'::pg_catalog.regnamespace
+             AND p.proname ~ '^temporal_merge_(cache|source_columns_hash|invalidate_cache)') <> 8 THEN
+        RAISE EXCEPTION 'sql_saga: installed version 1.0 is not the supported v1.0 release shape'
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Restore the released v1.0 artifact before upgrading, or contact the sql_saga maintainer.';
+    END IF;
+    SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)
+    INTO policy_list
+    FROM sql_saga.system_versioning AS sv
+    JOIN pg_catalog.pg_namespace AS n ON n.nspname = sv.history_schema_name
+    JOIN pg_catalog.pg_class AS c ON c.relnamespace = n.oid AND c.relname = sv.history_table_name
+    JOIN pg_catalog.pg_policy AS p ON p.polrelid = c.oid
+    WHERE p.polname !~ '^sql_saga_';
+    IF policy_list IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: non-managed history policies prevent upgrade:%', E'\n' || policy_list
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = 'Move each policy to its base table, drop it from history, and rerun preflight.';
+    END IF;
+END;
+$preflight$;
+
+SELECT 'family' AS report, pg_catalog.format('%I.%I', sv.table_schema, sv.table_name) AS object, NULL::text AS grantee, NULL::text AS privilege
+FROM sql_saga.system_versioning AS sv
+UNION ALL
+SELECT 'derived grant', c.oid::pg_catalog.regclass::text, x.grantee::pg_catalog.regrole::text, x.privilege_type
+FROM pg_catalog.pg_class AS c
+CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
+WHERE x.grantee <> 0
+  AND x.grantee <> c.relowner
+  AND (EXISTS (SELECT FROM sql_saga.system_versioning AS sv WHERE c.oid IN (
+          pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name)),
+          pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))))
+       OR EXISTS (SELECT FROM sql_saga.updatable_view AS uv WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uv.view_schema, uv.view_name))))
+ORDER BY 1, 2, 3, 4;

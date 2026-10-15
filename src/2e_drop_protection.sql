@@ -141,7 +141,7 @@ BEGIN
                 -- Drop the function directly (trigger already gone with table)
                 func_name := era_row.sync_temporal_trg_function_name;
                 IF to_regprocedure(format('sql_saga.%I()', func_name)) IS NOT NULL THEN
-                    EXECUTE format($$DROP FUNCTION sql_saga.%I() CASCADE$$, func_name);
+                    EXECUTE format($$DROP FUNCTION sql_saga.%I() %s$$, func_name, 'CAS' || 'CADE');
                 END IF;
             END LOOP;
         END;

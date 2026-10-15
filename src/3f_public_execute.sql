@@ -15,7 +15,8 @@ BEGIN
         FROM pg_catalog.pg_proc AS p
         WHERE p.pronamespace = 'sql_saga'::regnamespace
           AND p.proname IN ('temporal_merge', 'temporal_merge_plan', 'temporal_merge_plan_native',
-                            'temporal_merge_execute', 'temporal_merge_drop_temp_tables')
+                            'temporal_merge_execute', 'temporal_merge_drop_temp_tables',
+                            'temporal_merge_executor_introspect')
     LOOP
         EXECUTE format('GRANT EXECUTE ON %s %s TO PUBLIC',
             CASE WHEN r.prokind = 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, r.routine);

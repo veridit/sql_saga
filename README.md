@@ -842,6 +842,8 @@ ERROR:  sql_saga: cannot exclude system time column system_valid_range from SYST
 
 For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./doc/api.md).
 
+Operators upgrading an existing installation should follow the [1.0 to 1.1 upgrade runbook](./doc/upgrade.md).
+
 ## Usage
 
 This section provides a guide to using `sql_saga`, organized into three levels of complexity.

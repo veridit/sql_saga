@@ -217,6 +217,116 @@ BEGIN
 END;
 $__internal_rebuild_system_versioning_views$;
 
+CREATE FUNCTION sql_saga.__internal_reconcile_system_versioning_family(
+    table_oid regclass,
+    without_columns name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_reconcile_system_versioning_family$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    table_owner name;
+    acl record;
+    previous_guard text;
+    needs_rebuild boolean;
+    expected_columns integer;
+    actual_columns integer;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: cannot reconcile a NULL table'
+            USING ERRCODE = 'null_value_not_allowed',
+                  HINT = 'Pass a registered base table to sql_saga.__internal_reconcile_system_versioning_family().';
+    END IF;
+    PERFORM sql_saga.__internal_serialize(table_oid);
+    SELECT s.* INTO sv FROM sql_saga.system_versioning AS s
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sql_saga: table % does not have SYSTEM VERSIONING', table_oid
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+    IF history_table_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: history table %.% registered for % does not exist',
+            pg_catalog.quote_ident(sv.history_schema_name), pg_catalog.quote_ident(sv.history_table_name), table_oid
+            USING ERRCODE = 'undefined_table', HINT = 'Restore the registered history table before retrying.';
+    END IF;
+    -- Preserve history-only columns outside canonical views. The public rebuild API calls the
+    -- generator directly when an operator explicitly wants those columns included.
+    SELECT coalesce(without_columns, '{}'::name[]) || coalesce(pg_catalog.array_agg(a.attname ORDER BY a.attnum), '{}'::name[])
+    INTO without_columns
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped
+      AND NOT EXISTS (
+          SELECT FROM pg_catalog.pg_attribute AS b
+          WHERE b.attrelid = table_oid AND b.attnum > 0 AND NOT b.attisdropped
+            AND b.attname OPERATOR(pg_catalog.=) a.attname)
+      AND a.attname <> ALL (coalesce(without_columns, '{}'::name[]));
+    previous_guard := current_setting('sql_saga.managing_history_policies', true);
+    PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
+    BEGIN
+      EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
+      table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+      IF (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) <> table_owner THEN
+          EXECUTE pg_catalog.format('ALTER TABLE %s OWNER TO %I', history_table_oid::regclass, table_owner);
+      END IF;
+      IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) THEN
+          EXECUTE pg_catalog.format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_oid::regclass);
+      END IF;
+      FOR acl IN
+        SELECT pg_catalog.format('REVOKE ALL ON TABLE %s FROM %s', history_table_oid::regclass,
+                                 pg_catalog.string_agg(DISTINCT pg_catalog.quote_ident(x.grantee::regrole::text), ', ')) AS stmt
+        FROM pg_catalog.pg_class AS c CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
+        WHERE c.oid = history_table_oid AND x.grantee NOT IN (0, c.relowner) GROUP BY c.oid
+      LOOP
+          EXECUTE acl.stmt;
+      END LOOP;
+      IF NOT EXISTS (
+          SELECT FROM pg_catalog.pg_class AS c
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
+          WHERE c.oid = history_table_oid AND x.grantee = 0 AND x.privilege_type = 'SELECT') THEN
+          EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_oid::regclass);
+      END IF;
+
+      SELECT count(*) INTO expected_columns
+      FROM (
+          SELECT a.attname FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped
+            AND a.attname <> ALL (coalesce(without_columns, '{}'))
+          UNION
+          SELECT a.attname FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped
+            AND a.attname <> ALL (coalesce(without_columns, '{}'))
+      ) AS expected;
+      SELECT count(*) INTO actual_columns
+      FROM pg_catalog.pg_attribute AS a
+      WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+        AND a.attnum > 0 AND NOT a.attisdropped;
+      needs_rebuild := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name,
+                           sql_saga.__internal_history_gated_name(sv.history_table_name))) IS NULL
+          OR pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NULL
+          OR expected_columns IS DISTINCT FROM actual_columns
+          OR NOT EXISTS (
+              SELECT FROM pg_catalog.pg_class AS c
+              WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+                AND 'security_invoker=on' = ANY (coalesce(c.reloptions, '{}')))
+          OR EXISTS (
+              SELECT FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS f(fn)
+              WHERE pg_catalog.to_regprocedure(f.fn) IS NULL);
+      IF needs_rebuild THEN
+          PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, coalesce(without_columns, '{}'));
+      END IF;
+      PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    EXCEPTION WHEN OTHERS THEN
+      PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
+      RAISE;
+    END;
+    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
+END;
+$__internal_reconcile_system_versioning_family$;
+
 CREATE FUNCTION sql_saga.add_system_versioning(
     table_oid regclass,
     history_table_name name DEFAULT NULL,
@@ -333,10 +443,7 @@ BEGIN
 
     -- B_history_gated, B_with_history and the as-of functions: the same generator as
     -- rebuild_system_versioning_views, so a rebuild of an unchanged family reproduces them exactly.
-    PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, '{}');
-
-    -- Row-level security of the history: fixed policies, FORCE as on the base, copies of B's policies.
-    PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, '{}');
 END;
 $function$;
 
@@ -366,6 +473,7 @@ BEGIN
     LOOP
         EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', query_function /* %s */);
     END LOOP;
+    EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', NEW.history_schema_name, NEW.history_table_name);
     RETURN NULL;
 END;
 $__internal_grant_query_functions$;
