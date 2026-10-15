@@ -1,5 +1,5 @@
 operation,row_count,native_sec,plpgsql_sec,native_speedup
-UPDATE legal_unit,5000,0.94,1.37,1.46
-UPDATE stat_for_unit (ES),20000,3.13,29.19,9.33
-UPDATE stat_for_unit (LU),20000,2.94,73.55,25.02
+UPDATE legal_unit,5000,0.93,1.38,1.48
+UPDATE stat_for_unit (ES),20000,3.06,31.95,10.44
+UPDATE stat_for_unit (LU),20000,3.08,77.37,25.12
 (3 rows)

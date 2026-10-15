@@ -1,101 +1,101 @@
                                    event                                   | row_count | time_from_start | time_from_prev | row_count | rows_per_second 
 ---------------------------------------------------------------------------+-----------+-----------------+----------------+-----------+-----------------
  BEGIN                                                                     |         0 | 0 ms            |                | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1     |         0 | 88 ms           | 88 ms          | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1     |       100 | 113 ms          | 25 ms          | 100 rows  | ~3923 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1      |         0 | 114 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1      |       100 | 130 ms          | 17 ms          | 100 rows  | ~5899 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2     |         0 | 133 ms          | 3 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2     |       100 | 146 ms          | 13 ms          | 100 rows  | ~7617 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2      |         0 | 146 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2      |       100 | 162 ms          | 15 ms          | 100 rows  | ~6530 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1      |         0 | 168 ms          | 6 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1      |       100 | 184 ms          | 16 ms          | 100 rows  | ~6328 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1       |         0 | 184 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1       |       100 | 201 ms          | 17 ms          | 100 rows  | ~5950 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2      |         0 | 203 ms          | 3 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2      |       100 | 216 ms          | 13 ms          | 100 rows  | ~7869 rows/s
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2       |         0 | 216 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2       |       100 | 230 ms          | 14 ms          | 100 rows  | ~7074 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1   |         0 | 239 ms          | 9 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1   |       100 | 249 ms          | 10 ms          | 100 rows  | ~10410 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1    |         0 | 249 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1    |       100 | 258 ms          | 9 ms           | 100 rows  | ~10850 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2   |         0 | 261 ms          | 3 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2   |       100 | 269 ms          | 8 ms           | 100 rows  | ~12076 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2    |         0 | 269 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2    |       100 | 277 ms          | 8 ms           | 100 rows  | ~12288 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1    |         0 | 284 ms          | 7 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1    |       100 | 293 ms          | 9 ms           | 100 rows  | ~10957 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1     |         0 | 293 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1     |       100 | 302 ms          | 9 ms           | 100 rows  | ~10877 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2    |         0 | 305 ms          | 3 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2    |       100 | 314 ms          | 9 ms           | 100 rows  | ~11598 rows/s
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2     |         0 | 314 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2     |       100 | 324 ms          | 10 ms          | 100 rows  | ~10364 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1    |         0 | 337 ms          | 13 ms          | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1    |      1000 | 384 ms          | 48 ms          | 1000 rows | ~20967 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1     |         0 | 384 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1     |      1000 | 445 ms          | 61 ms          | 1000 rows | ~16440 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2    |         0 | 454 ms          | 9 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2    |      1000 | 501 ms          | 46 ms          | 1000 rows | ~21569 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2     |         0 | 501 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2     |      1000 | 559 ms          | 58 ms          | 1000 rows | ~17223 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1     |         0 | 576 ms          | 17 ms          | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1     |      1000 | 623 ms          | 47 ms          | 1000 rows | ~21359 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1      |         0 | 623 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1      |      1000 | 681 ms          | 58 ms          | 1000 rows | ~17290 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2     |         0 | 689 ms          | 8 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2     |      1000 | 731 ms          | 42 ms          | 1000 rows | ~23557 rows/s
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2      |         0 | 731 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2      |      1000 | 786 ms          | 55 ms          | 1000 rows | ~18053 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1  |         0 | 801 ms          | 15 ms          | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1  |      1000 | 827 ms          | 26 ms          | 1000 rows | ~39171 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1   |         0 | 827 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1   |      1000 | 852 ms          | 25 ms          | 1000 rows | ~40496 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2  |         0 | 860 ms          | 9 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2  |      1000 | 883 ms          | 23 ms          | 1000 rows | ~43463 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2   |         0 | 883 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2   |      1000 | 905 ms          | 22 ms          | 1000 rows | ~45888 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1   |         0 | 918 ms          | 13 ms          | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1   |      1000 | 942 ms          | 24 ms          | 1000 rows | ~40945 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1    |         0 | 942 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1    |      1000 | 967 ms          | 24 ms          | 1000 rows | ~40957 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2   |         0 | 975 ms          | 8 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2   |      1000 | 997 ms          | 22 ms          | 1000 rows | ~45037 rows/s
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2    |         0 | 997 ms          | 0 ms           | 0 rows    | 
- tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2    |      1000 | 1 secs          | 22 ms          | 1000 rows | ~45498 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |         0 | 1 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |      4000 | 1 secs          | 173 ms         | 4000 rows | ~23148 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1     |         0 | 78 ms           | 78 ms          | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1     |       100 | 104 ms          | 26 ms          | 100 rows  | ~3830 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1      |         0 | 104 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1      |       100 | 122 ms          | 18 ms          | 100 rows  | ~5595 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2     |         0 | 125 ms          | 3 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2     |       100 | 138 ms          | 14 ms          | 100 rows  | ~7254 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2      |         0 | 138 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2      |       100 | 153 ms          | 14 ms          | 100 rows  | ~6977 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1      |         0 | 159 ms          | 6 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1      |       100 | 176 ms          | 17 ms          | 100 rows  | ~5963 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1       |         0 | 176 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1       |       100 | 194 ms          | 18 ms          | 100 rows  | ~5694 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2      |         0 | 203 ms          | 10 ms          | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2      |       100 | 217 ms          | 14 ms          | 100 rows  | ~7076 rows/s
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2       |         0 | 217 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2       |       100 | 231 ms          | 14 ms          | 100 rows  | ~7270 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1   |         0 | 238 ms          | 7 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1   |       100 | 248 ms          | 10 ms          | 100 rows  | ~9886 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1    |         0 | 248 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1    |       100 | 260 ms          | 12 ms          | 100 rows  | ~8325 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2   |         0 | 265 ms          | 5 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2   |       100 | 278 ms          | 12 ms          | 100 rows  | ~8163 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2    |         0 | 278 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2    |       100 | 289 ms          | 11 ms          | 100 rows  | ~8945 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1    |         0 | 299 ms          | 10 ms          | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1    |       100 | 309 ms          | 10 ms          | 100 rows  | ~9958 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1     |         0 | 309 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1     |       100 | 319 ms          | 10 ms          | 100 rows  | ~10104 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2    |         0 | 322 ms          | 3 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2    |       100 | 331 ms          | 9 ms           | 100 rows  | ~11145 rows/s
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2     |         0 | 331 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 100 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2     |       100 | 353 ms          | 22 ms          | 100 rows  | ~4567 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1    |         0 | 370 ms          | 17 ms          | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1    |      1000 | 420 ms          | 50 ms          | 1000 rows | ~19943 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1     |         0 | 420 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1     |      1000 | 482 ms          | 62 ms          | 1000 rows | ~16215 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2    |         0 | 491 ms          | 9 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 2    |      1000 | 549 ms          | 58 ms          | 1000 rows | ~17226 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2     |         0 | 549 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 2     |      1000 | 607 ms          | 58 ms          | 1000 rows | ~17316 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1     |         0 | 624 ms          | 17 ms          | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1     |      1000 | 674 ms          | 50 ms          | 1000 rows | ~20058 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1      |         0 | 674 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1      |      1000 | 741 ms          | 67 ms          | 1000 rows | ~14900 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2     |         0 | 750 ms          | 9 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 2     |      1000 | 798 ms          | 48 ms          | 1000 rows | ~20975 rows/s
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2      |         0 | 798 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 2      |      1000 | 865 ms          | 68 ms          | 1000 rows | ~14779 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1  |         0 | 889 ms          | 24 ms          | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1  |      1000 | 918 ms          | 29 ms          | 1000 rows | ~34486 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1   |         0 | 918 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1   |      1000 | 947 ms          | 29 ms          | 1000 rows | ~34552 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2  |         0 | 961 ms          | 13 ms          | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 2  |      1000 | 986 ms          | 26 ms          | 1000 rows | ~39170 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2   |         0 | 986 ms          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 2   |      1000 | 1 secs          | 23 ms          | 1000 rows | ~43577 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1   |         0 | 1 secs          | 14 ms          | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1   |      1000 | 1 secs          | 26 ms          | 1000 rows | ~38264 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1    |         0 | 1 secs          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1    |      1000 | 1 secs          | 28 ms          | 1000 rows | ~36097 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2   |         0 | 1 secs          | 9 ms           | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 2   |      1000 | 1 secs          | 23 ms          | 1000 rows | ~43013 rows/s
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2    |         0 | 1 secs          | 0 ms           | 0 rows    | 
+ tm_loop, batch 1000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 2    |      1000 | 1 secs          | 24 ms          | 1000 rows | ~42265 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |         0 | 1 secs          | 66 ms          | 0 rows    | 
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |      4000 | 1 secs          | 170 ms         | 4000 rows | ~23528 rows/s
  tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |         0 | 1 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |      4000 | 1 secs          | 217 ms         | 4000 rows | ~18439 rows/s
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |         0 | 1 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |      4000 | 2 secs          | 156 ms         | 4000 rows | ~25691 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |      4000 | 2 secs          | 255 ms         | 4000 rows | ~15694 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |         0 | 2 secs          | 50 ms          | 0 rows    | 
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |      4000 | 2 secs          | 168 ms         | 4000 rows | ~23760 rows/s
  tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |         0 | 2 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |      4000 | 2 secs          | 229 ms         | 4000 rows | ~17468 rows/s
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |         0 | 2 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |      4000 | 2 secs          | 78 ms          | 4000 rows | ~51062 rows/s
+ tm_loop, batch 10000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |      4000 | 2 secs          | 210 ms         | 4000 rows | ~19033 rows/s
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |         0 | 2 secs          | 42 ms          | 0 rows    | 
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |      4000 | 2 secs          | 76 ms          | 4000 rows | ~52699 rows/s
  tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |         0 | 2 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |      4000 | 2 secs          | 74 ms          | 4000 rows | ~54249 rows/s
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |         0 | 2 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |      4000 | 2 secs          | 73 ms          | 4000 rows | ~54569 rows/s
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |      4000 | 2 secs          | 77 ms          | 4000 rows | ~52183 rows/s
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |         0 | 2 secs          | 42 ms          | 0 rows    | 
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |      4000 | 2 secs          | 76 ms          | 4000 rows | ~52518 rows/s
  tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |         0 | 2 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |      4000 | 2 secs          | 78 ms          | 4000 rows | ~51453 rows/s
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |         0 | 2 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |      4000 | 2 secs          | 164 ms         | 4000 rows | ~24441 rows/s
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |         0 | 2 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |      4000 | 3 secs          | 216 ms         | 4000 rows | ~18545 rows/s
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |         0 | 3 secs          | 41 ms          | 0 rows    | 
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |      4000 | 3 secs          | 161 ms         | 4000 rows | ~24872 rows/s
+ tm_loop, batch 10000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |      4000 | 2 secs          | 77 ms          | 4000 rows | ~52260 rows/s
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |         0 | 2 secs          | 40 ms          | 0 rows    | 
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers OFF) iter 1   |      4000 | 3 secs          | 172 ms         | 4000 rows | ~23306 rows/s
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |         0 | 3 secs          | 0 ms           | 0 rows    | 
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers OFF) iter 1    |      4000 | 3 secs          | 273 ms         | 4000 rows | ~14648 rows/s
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |         0 | 3 secs          | 50 ms          | 0 rows    | 
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Parent (Triggers ON) iter 1    |      4000 | 3 secs          | 160 ms         | 4000 rows | ~25072 rows/s
  tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |         0 | 3 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |      4000 | 3 secs          | 211 ms         | 4000 rows | ~18925 rows/s
+ tm_loop, batch 20000 / MERGE_ENTITY_UPSERT Child (Triggers ON) iter 1     |      4000 | 3 secs          | 226 ms         | 4000 rows | ~17667 rows/s
  tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |         0 | 3 secs          | 42 ms          | 0 rows    | 
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |      4000 | 3 secs          | 78 ms          | 4000 rows | ~51610 rows/s
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers OFF) iter 1 |      4000 | 3 secs          | 76 ms          | 4000 rows | ~52651 rows/s
  tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |         0 | 3 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |      4000 | 3 secs          | 79 ms          | 4000 rows | ~50377 rows/s
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |         0 | 3 secs          | 42 ms          | 0 rows    | 
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |      4000 | 3 secs          | 75 ms          | 4000 rows | ~53558 rows/s
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |         0 | 3 secs          | 0 ms           | 0 rows    | 
- tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |      4000 | 3 secs          | 76 ms          | 4000 rows | ~52786 rows/s
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers OFF) iter 1  |      4000 | 4 secs          | 76 ms          | 4000 rows | ~52558 rows/s
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |         0 | 4 secs          | 41 ms          | 0 rows    | 
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Parent (Triggers ON) iter 1  |      4000 | 4 secs          | 77 ms          | 4000 rows | ~51941 rows/s
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |         0 | 4 secs          | 0 ms           | 0 rows    | 
+ tm_loop, batch 20000 / UPDATE_FOR_PORTION_OF Child (Triggers ON) iter 1   |      4000 | 4 secs          | 86 ms          | 4000 rows | ~46428 rows/s
 (97 rows)
 

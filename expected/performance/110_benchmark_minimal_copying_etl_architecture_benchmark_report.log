@@ -1,17 +1,17 @@
                 event                | row_count | time_from_start | time_from_prev | row_count  | rows_per_second 
 -------------------------------------+-----------+-----------------+----------------+------------+-----------------
  BEGIN                               |         0 | 0 ms            |                | 0 rows     | 
- Generate Test Data - 10000 entities |     59000 | 826 ms          | 667 ms         | 59000 rows | ~88498 rows/s
- Process Legal Units - Batch 1/10    |      5000 | 1 secs          | 322 ms         | 5000 rows  | ~15512 rows/s
- Process Legal Units - Batch 2/10    |      6000 | 1 secs          | 217 ms         | 6000 rows  | ~27587 rows/s
- Process Legal Units - Batch 3/10    |      6000 | 2 secs          | 172 ms         | 6000 rows  | ~34853 rows/s
- Process Legal Units - Batch 4/10    |      6000 | 2 secs          | 181 ms         | 6000 rows  | ~33205 rows/s
- Process Legal Units - Batch 5/10    |      6000 | 2 secs          | 206 ms         | 6000 rows  | ~29197 rows/s
- Process Legal Units - Batch 6/10    |      6000 | 2 secs          | 217 ms         | 6000 rows  | ~27644 rows/s
- Process Legal Units - Batch 7/10    |      6000 | 2 secs          | 214 ms         | 6000 rows  | ~28014 rows/s
- Process Legal Units - Batch 8/10    |      6000 | 3 secs          | 223 ms         | 6000 rows  | ~26901 rows/s
- Process Legal Units - Batch 9/10    |      6000 | 3 secs          | 219 ms         | 6000 rows  | ~27444 rows/s
- Process Legal Units - Batch 10/10   |      6000 | 3 secs          | 234 ms         | 6000 rows  | ~25669 rows/s
- COMPLETE DATASET 10000 entities     |     59000 | 3 secs          | 0 ms           | 59000 rows | ~0 rows/s
+ Generate Test Data - 10000 entities |     59000 | 686 ms          | 549 ms         | 59000 rows | ~107497 rows/s
+ Process Legal Units - Batch 1/10    |      5000 | 933 ms          | 245 ms         | 5000 rows  | ~20423 rows/s
+ Process Legal Units - Batch 2/10    |      6000 | 1 secs          | 152 ms         | 6000 rows  | ~39358 rows/s
+ Process Legal Units - Batch 3/10    |      6000 | 1 secs          | 156 ms         | 6000 rows  | ~38370 rows/s
+ Process Legal Units - Batch 4/10    |      6000 | 1 secs          | 160 ms         | 6000 rows  | ~37616 rows/s
+ Process Legal Units - Batch 5/10    |      6000 | 2 secs          | 151 ms         | 6000 rows  | ~39763 rows/s
+ Process Legal Units - Batch 6/10    |      6000 | 2 secs          | 185 ms         | 6000 rows  | ~32351 rows/s
+ Process Legal Units - Batch 7/10    |      6000 | 2 secs          | 156 ms         | 6000 rows  | ~38366 rows/s
+ Process Legal Units - Batch 8/10    |      6000 | 2 secs          | 142 ms         | 6000 rows  | ~42225 rows/s
+ Process Legal Units - Batch 9/10    |      6000 | 2 secs          | 153 ms         | 6000 rows  | ~39272 rows/s
+ Process Legal Units - Batch 10/10   |      6000 | 2 secs          | 177 ms         | 6000 rows  | ~33876 rows/s
+ COMPLETE DATASET 10000 entities     |     59000 | 2 secs          | 0 ms           | 59000 rows | ~0 rows/s
 (13 rows)
 
