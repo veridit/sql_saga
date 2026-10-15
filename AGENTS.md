@@ -12,10 +12,16 @@ This PostgreSQL extension provides temporal table management. This document prov
 
 ### Building
 ```bash
-make                                    # Build extension (C library + SQL)
-make install                            # Install extension to PostgreSQL
-make clean                              # Clean build artifacts
+make                 # Build C library, native Rust library (native/, via cargo) and SQL script
+make install         # Install sql_saga: control + SQL + $libdir/sql_saga + $libdir/sql_saga_native
+make native          # Build only the Rust library;  make test-native: Rust unit tests
+make clean           # Clean C/SQL artifacts (make clean-native also wipes native/target)
 ```
+
+The Rust crate in `native/` is an INTERNAL library of sql_saga, not an extension: it has no
+`.control` file and must never be installed with `cargo pgrx install` (cargo-pgrx is not needed).
+Requirements: Rust toolchain (rustup), libclang. On macOS the Makefile sets `LIBCLANG_PATH` and
+`BINDGEN_EXTRA_CLANG_ARGS` to Xcode's toolchain and SDK; override by exporting them.
 
 ### Testing
 
@@ -633,8 +639,8 @@ CREATE TABLE child (
 - Runs on push, pull_request, and manual dispatch
 - Tests against **PostgreSQL 18 only**, installed from PGDG on `ubuntu-24.04`, with
   `PG_CONFIG=/usr/lib/postgresql/18/bin/pg_config`
-- Builds the extension with `make PG_CONFIG=... && make install PG_CONFIG=...`, then the Rust
-  part via `cargo pgrx` (v0.16.1: `cargo pgrx init --pg18=...`, `cargo pgrx install --release`)
+- Builds and installs the C library, the internal native library and the SQL with
+  `make PG_CONFIG=... && make install PG_CONFIG=...` (plain cargo, no cargo-pgrx), then `make test-native`
 - Regression tests: `make test fast PG_CONFIG=...` (benchmarks are excluded from CI)
 
 **Local Pre-commit Hooks:**

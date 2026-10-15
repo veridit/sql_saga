@@ -56,6 +56,51 @@ all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql
 # tests are run.
 install: $(EXTENSION)--$(EXTVERSION).sql
 
+# ---------------------------------------------------------------------------
+# Native (Rust/pgrx) planner library: an INTERNAL part of sql_saga.
+# Only the shared library is built and installed (as $libdir/sql_saga_native).
+# There is no sql_saga_native.control, so it is never a separately installable
+# extension. cargo-pgrx is not needed: plain `cargo build` + PGRX_PG_CONFIG_PATH.
+# ---------------------------------------------------------------------------
+CARGO ?= cargo
+NATIVE_DIR = native
+NATIVE_LIB_NAME = sql_saga_native
+NATIVE_PG_CONFIG := $(shell command -v $(PG_CONFIG))
+NATIVE_PG_MAJOR := $(shell $(PG_CONFIG) --version | sed -E 's/^PostgreSQL ([0-9]+).*/\1/')
+NATIVE_BUILT = $(NATIVE_DIR)/target/release/lib$(NATIVE_LIB_NAME)$(DLSUFFIX)
+NATIVE_SOURCES = $(wildcard $(NATIVE_DIR)/src/*.rs $(NATIVE_DIR)/src/*/*.rs) $(NATIVE_DIR)/build.rs \
+                 $(NATIVE_DIR)/Cargo.toml $(NATIVE_DIR)/Cargo.lock $(EXTENSION).control
+
+# macOS: bindgen must use Apple's libclang and SDK (Homebrew llvm fails on inttypes.h).
+ifeq ($(PORTNAME),darwin)
+export LIBCLANG_PATH ?= $(abspath $(dir $(shell xcrun --find clang))../lib)
+export BINDGEN_EXTRA_CLANG_ARGS ?= -isysroot $(shell xcrun --show-sdk-path)
+endif
+
+$(NATIVE_BUILT): $(NATIVE_SOURCES)
+	cd $(NATIVE_DIR) && PGRX_PG_CONFIG_PATH='$(NATIVE_PG_CONFIG)' $(CARGO) build --release --lib --locked --no-default-features --features pg$(NATIVE_PG_MAJOR)
+	@test -f $@ || { echo "native build did not produce $@" >&2; exit 1; }
+
+.PHONY: native install-native uninstall-native clean-native test-native
+native: $(NATIVE_BUILT)
+all: native
+
+install: install-native
+install-native: $(NATIVE_BUILT) installdirs
+	$(INSTALL_SHLIB) $(NATIVE_BUILT) '$(DESTDIR)$(pkglibdir)/$(NATIVE_LIB_NAME)$(DLSUFFIX)'
+	@# Remove artifacts left by the old `cargo pgrx install` (made it look like a separate extension).
+	rm -f '$(DESTDIR)$(datadir)/extension/$(NATIVE_LIB_NAME).control' '$(DESTDIR)$(datadir)/extension/$(NATIVE_LIB_NAME)--'*.sql
+
+uninstall: uninstall-native
+uninstall-native:
+	rm -f '$(DESTDIR)$(pkglibdir)/$(NATIVE_LIB_NAME)$(DLSUFFIX)'
+
+test-native:
+	cd $(NATIVE_DIR) && PGRX_PG_CONFIG_PATH='$(NATIVE_PG_CONFIG)' $(CARGO) test --lib --locked
+
+clean-native:
+	cd $(NATIVE_DIR) && $(CARGO) clean
+
 
 # Build the main extension script from component files.
 # The source files use Na_ pattern (e.g., 0a_, 1b_, 2c_) to ensure correct concatenation order.

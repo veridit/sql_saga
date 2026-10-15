@@ -123,28 +123,27 @@ is covered by these two *contiguous* `establishment` rows:
 
 ### With Docker
 
-You can build `sql_saga` from source within your own Docker image. Here is an example snippet to add to your `Dockerfile`, based on the official PostgreSQL image:
+You can build `sql_saga` from source within your own Docker image. `sql_saga` requires PostgreSQL 18.
+`make install` installs the `sql_saga` extension and its two internal shared libraries (`sql_saga` in C
+and `sql_saga_native` in Rust). Building needs a Rust toolchain and libclang; `cargo-pgrx` is not
+required. Only `CREATE EXTENSION sql_saga;` is used: `sql_saga_native` is not an extension. A multi-stage
+build keeps the toolchains out of the runtime image:
 
 ```dockerfile
-# Start from your desired PostgreSQL version
-FROM postgres:16
-
-# Install build dependencies
+FROM postgres:18 AS build
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    git \
-    postgresql-server-dev-$(pg_config --version | awk '{print $2}' | cut -d. -f1) \
+    build-essential git ca-certificates curl pkg-config libclang-dev \
+    postgresql-server-dev-18 \
     && rm -rf /var/lib/apt/lists/*
-
-# Clone, build, and install sql_saga
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+ENV PATH="/root/.cargo/bin:${PATH}"
 ARG sql_saga_release=main # Or a specific commit/tag/branch
-WORKDIR /tmp
-RUN git clone https://github.com/veridit/sql_saga.git && \
-  cd sql_saga && \
-  git checkout ${sql_saga_release} && \
-  make install && \
-  cd / && \
-  rm -rf /tmp/sql_saga
+RUN git clone https://github.com/veridit/sql_saga.git /src/sql_saga && \
+    cd /src/sql_saga && git checkout ${sql_saga_release} && \
+    make && make install DESTDIR=/out
+
+FROM postgres:18
+COPY --from=build /out/ /
 ```
 
 You can then build your image, for example:

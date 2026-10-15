@@ -6,7 +6,21 @@ use std::time::Instant;
 
 use pgrx::prelude::*;
 
-pg_module_magic!();
+// The library is versioned with sql_saga itself: build.rs reads default_version from
+// ../sql_saga.control. Visible in PG18's pg_get_loaded_modules().
+const SQL_SAGA_EXTVERSION: &std::ffi::CStr =
+    match std::ffi::CStr::from_bytes_with_nul(concat!(env!("SQL_SAGA_EXTVERSION"), "\0").as_bytes()) {
+        Ok(s) => s,
+        Err(_) => panic!("SQL_SAGA_EXTVERSION contains a NUL byte"),
+    };
+pg_module_magic!(name = c"sql_saga_native", version = SQL_SAGA_EXTVERSION);
+
+/// sql_saga version this library was built from. sql_saga's SQL compares it with
+/// its own extversion to reject a stale/mismatched library with a clear message.
+#[pg_extern(immutable, parallel_safe)]
+fn sql_saga_native_version() -> &'static str {
+    env!("SQL_SAGA_EXTVERSION")
+}
 
 mod executor_cache;
 mod introspect;
@@ -683,46 +697,38 @@ fn opt_json(v: &Option<serde_json::Value>) -> Option<String> {
 
 // ── Tests ──
 
-#[cfg(any(test, feature = "pg_test"))]
-#[pg_schema]
+#[cfg(test)]
 mod tests {
-    use pgrx::prelude::*;
 
-    #[pg_test]
-    fn test_extension_loads() {
-        let result = Spi::get_one::<bool>("SELECT true");
-        assert_eq!(result, Ok(Some(true)));
-    }
-
-    #[pg_test]
+    #[test]
     fn test_allen_relation_equals() {
         use crate::types::AllenRelation;
         let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-01-01", "2024-02-01", false);
         assert_eq!(r, Some(AllenRelation::Equals));
     }
 
-    #[pg_test]
+    #[test]
     fn test_allen_relation_precedes() {
         use crate::types::AllenRelation;
         let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-03-01", "2024-04-01", false);
         assert_eq!(r, Some(AllenRelation::Precedes));
     }
 
-    #[pg_test]
+    #[test]
     fn test_allen_relation_meets() {
         use crate::types::AllenRelation;
         let r = AllenRelation::compute("2024-01-01", "2024-02-01", "2024-02-01", "2024-03-01", false);
         assert_eq!(r, Some(AllenRelation::Meets));
     }
 
-    #[pg_test]
+    #[test]
     fn test_allen_relation_overlaps() {
         use crate::types::AllenRelation;
         let r = AllenRelation::compute("2024-01-01", "2024-03-01", "2024-02-01", "2024-04-01", false);
         assert_eq!(r, Some(AllenRelation::Overlaps));
     }
 
-    #[pg_test]
+    #[test]
     fn test_strip_nulls() {
         use crate::sweep::strip_nulls;
         let mut map = serde_json::Map::new();
@@ -734,14 +740,5 @@ mod tests {
         assert!(stripped.contains_key("a"));
         assert!(stripped.contains_key("c"));
         assert!(!stripped.contains_key("b"));
-    }
-}
-
-#[cfg(test)]
-pub mod pg_test {
-    pub fn setup(_options: Vec<&str>) {}
-
-    pub fn postgresql_conf_options() -> Vec<&'static str> {
-        vec![]
     }
 }

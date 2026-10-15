@@ -31,9 +31,6 @@ jobs:
       - name: Allow runner to install extensions
         run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
 
-      - name: Build and install C extension
-        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -42,12 +39,16 @@ jobs:
         with:
           workspaces: native -> target
 
-      - name: Install cargo-pgrx and build Rust extension
+      - name: Build and install sql_saga (C library, internal native library, SQL)
+        run: make PG_CONFIG=${{ env.PG_CONFIG }} && make install PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Native unit tests
+        run: make test-native PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: sql_saga_native must not be an installable extension
         run: |
-          cargo install --locked cargo-pgrx --version 0.16.1
-          cargo pgrx init --pg18=${{ env.PG_CONFIG }}
-          cd native
-          cargo pgrx install --release --pg-config=${{ env.PG_CONFIG }}
+          test ! -e "$(${{ env.PG_CONFIG }} --sharedir)/extension/sql_saga_native.control"
+          test -e "$(${{ env.PG_CONFIG }} --pkglibdir)/sql_saga_native.so"
 
       - name: Run regression tests (excluding benchmarks)
         run: make test fast PG_CONFIG=${{ env.PG_CONFIG }}

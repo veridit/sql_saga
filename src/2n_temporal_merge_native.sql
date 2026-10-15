@@ -108,3 +108,8 @@ AS 'sql_saga_native', 'temporal_merge_native_cache_reset_wrapper';
 COMMENT ON FUNCTION sql_saga.temporal_merge_native_cache_reset IS
 'Clears all per-connection native planner and executor caches (planner cache, executor cache,
 prepared statements) and resets hit/miss counters to zero.';
+
+-- Internal: version of the installed $libdir/sql_saga_native library.
+CREATE OR REPLACE FUNCTION sql_saga.native_library_version() RETURNS text
+LANGUAGE c IMMUTABLE PARALLEL SAFE STRICT
+AS 'sql_saga_native', 'sql_saga_native_version_wrapper';
