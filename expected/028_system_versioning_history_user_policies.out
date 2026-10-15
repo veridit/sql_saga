@@ -1,0 +1,152 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+/*
+ * Policies on a history table are managed by sql_saga (tmp/design_final.md decision 7).
+ *
+ * The history table's row-level security is the base table's: its policies are copies of the base
+ * table's SELECT/ALL policies plus two fixed ones. A policy of one's own on the history table would be
+ * OR-ed with the copies and could show RLS-subject callers history the base table hides from them.
+ * So CREATE POLICY on a history table is refused, with a hint to create it on the base table, where it
+ * is copied from. Managed names (as replayed by pg_restore) are still accepted.
+ */
+\set SHOW_CONTEXT never
+\set VERBOSITY default
+SET client_min_messages = warning;
+CREATE ROLE hup_a; GRANT USAGE ON SCHEMA public TO hup_a;
+CREATE TABLE doc (id int PRIMARY KEY, tenant text NOT NULL);
+SELECT sql_saga.add_system_versioning('doc');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+INSERT INTO doc VALUES (1, 'a'), (2, 'b');
+UPDATE doc SET tenant = tenant;
+GRANT SELECT ON doc TO hup_a;
+ALTER TABLE doc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_a ON doc FOR SELECT TO hup_a USING (tenant = 'a');
+RESET client_min_messages;
+\echo '--- A policy of ones own on the history table is refused, with what to do instead'
+--- A policy of ones own on the history table is refused, with what to do instead
+CREATE POLICY mine ON doc_history FOR SELECT USING (true); -- fail
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+SELECT count(*) AS mine_policies FROM pg_policy WHERE polname = 'mine';
+ mine_policies 
+---------------
+             0
+(1 row)
+
+\echo '--- Any command: a FOR ALL policy of ones own is refused too'
+--- Any command: a FOR ALL policy of ones own is refused too
+CREATE POLICY mine_all ON doc_history FOR ALL USING (true); -- fail
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+\echo '--- Renaming a managed history policy to a name of ones own is refused'
+--- Renaming a managed history policy to a name of ones own is refused
+-- (the managed name ends in the installation token, so it is looked up rather than spelled out)
+\set ECHO none
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+SELECT count(*) AS renamed_policies FROM pg_policy WHERE polname = 'mine_renamed';
+ renamed_policies 
+------------------
+                0
+(1 row)
+
+\echo '--- So tenant a still sees only its own current and past rows'
+--- So tenant a still sees only its own current and past rows
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id;
+ id 
+----
+  1
+  1
+(2 rows)
+
+RESET ROLE;
+\echo '--- The same policy on the base table is accepted and copied to the history'
+--- The same policy on the base table is accepted and copied to the history
+SET client_min_messages = warning;
+CREATE POLICY mine ON doc FOR SELECT TO hup_a USING (true);
+RESET client_min_messages;
+SET ROLE hup_a;
+SELECT id FROM doc_with_history ORDER BY id;
+ id 
+----
+  1
+  1
+  2
+  2
+(4 rows)
+
+RESET ROLE;
+\echo '--- A managed name (as pg_restore replays it) is accepted and synchronized'
+--- A managed name (as pg_restore replays it) is accepted and synchronized
+SET client_min_messages = warning;
+SELECT format('CREATE POLICY %I ON doc_history FOR SELECT USING (true)',
+              'sql_saga_' || left(md5('tenant_a' || 'otherinstallation'), 16)) \gexec
+CREATE POLICY sql_saga_c468006e213a2746 ON doc_history FOR SELECT USING (true)
+RESET client_min_messages;
+SELECT count(*) AS orphaned_copies
+FROM pg_policy AS p
+WHERE p.polrelid = 'doc_history'::regclass
+  AND p.polname = 'sql_saga_' || left(md5('tenant_a' || 'otherinstallation'), 16);
+ orphaned_copies 
+-----------------
+               0
+(1 row)
+
+/* Clean up */
+SET client_min_messages = warning;
+SELECT sql_saga.drop_system_versioning('doc');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+DROP TABLE doc;
+DROP OWNED BY hup_a;
+DROP ROLE hup_a;
+RESET client_min_messages;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
