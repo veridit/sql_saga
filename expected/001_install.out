@@ -28,7 +28,7 @@ FROM pg_extension
 WHERE extname = 'sql_saga';
  extversion 
 ------------
- 1.1
+ 1.2
 (1 row)
 
 \i sql/include/test_teardown.sql
