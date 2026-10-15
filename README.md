@@ -189,6 +189,41 @@ pg_restore --exit-on-error -L saga.list -d mydb backup.dump
 pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
 ```
 
+#### Privileges and history policies
+
+Privileges and history policies need no extra step before or after `pg_dump` and `pg_restore`.
+
+- Derived views are created with `PUBLIC` privileges, and system-versioning query functions are explicitly
+  executable by `PUBLIC`. Authorization still comes from the caller's privileges on the base table. Restoring
+  objects in a different order does not copy or synchronize the base table's ACL onto derived objects.
+- History policy copies and the two fixed history policies carry a per-installation token in their names.
+  The token is stored in `sql_saga.installation`, which is deliberately not dumped. A restore target gets a
+  new token, so policies replayed from the dump do not collide with policies created in the target. The next
+  policy synchronization removes managed policies carrying the old token. After a normal restore, each
+  history table has one reader policy, one base-select policy, and one copy per base `SELECT` or `ALL` policy.
+- Policy expressions and internal history views refer to base tables by name rather than by a stored OID, so
+  those references remain valid in the restored database.
+
+Replaying a dump into the same database without `--clean` still fails with ordinary "already exists" errors.
+
+If policy DDL is restored while event triggers are disabled with
+`session_replication_role = replica`, managed old-token policies can remain until the next synchronization.
+Repair every system-versioned table with:
+
+```sql
+SELECT sql_saga.sync_history_policies(
+    format('%I.%I', sv.table_schema, sv.table_name)::regclass
+)
+FROM sql_saga.system_versioning AS sv;
+```
+
+A non-managed policy created on a history table while event triggers are disabled is different. History
+reads by callers subject to the base table's RLS fail closed, and `sync_history_policies` refuses to continue.
+Drop that policy, define it on the base table if it is needed, then run synchronization again. `sql_saga`
+never silently drops a user's policy.
+
+The parallel restore limitation above is unrelated to privileges and history policies.
+
 TODO: Build an Ubuntu packate with sql_saga.
 
 ## Core Concepts
@@ -281,8 +316,198 @@ UPDATE employees__current_valid SET department = 'Management' WHERE id = 2;
 UPDATE employees__current_valid SET valid_from = 'infinity', status = 'resigned' WHERE id = 1;
 ```
 
-##### Security Model: `SECURITY INVOKER`
-All triggers on these views are `SECURITY INVOKER` (the default). This is a key security feature. It means that any DML operation on a view is executed with the permissions of the *calling user*. The system checks the user's permissions on the underlying base table before allowing the operation, so a user can only do what they are already allowed to do. This ensures seamless compatibility with PostgreSQL's Row-Level Security (RLS) and standard table `GRANT`s.
+#### Privileges and Security
+
+##### Privileges are checked on the base table at access time
+
+`sql_saga` does not keep a copy of who may access a base table. Its derived views and query functions are
+available to `PUBLIC`, but they run with the caller's rights. PostgreSQL checks the caller's privileges on the
+base table, including row-level security policies, when the data is used.
+
+| Derived object | Granted to | How access is decided |
+|---|---|---|
+| `<table>__for_portion_of_<era>` | `PUBLIC`: SELECT, INSERT, UPDATE, DELETE | `security_invoker = on`; the caller needs the corresponding base-table privilege |
+| `<table>__current_<era>` | `PUBLIC`: SELECT, INSERT, UPDATE, DELETE | `security_invoker = on`, `security_barrier = true`; the caller needs the corresponding base-table privilege |
+| `<table>_with_history` | `PUBLIC`: SELECT | `security_invoker = on`; the caller needs SELECT on the base table |
+| `<table>__as_of`, `__between`, `__between_symmetric`, `__from_to` | `PUBLIC`: EXECUTE | Security-invoker functions over `<table>_with_history` |
+| `<table>_history` | `PUBLIC`: SELECT, filtered by RLS | Rows are available only to callers with SELECT on the base table, as described below |
+
+Manage access by granting and revoking privileges on the base table:
+
+```sql
+GRANT SELECT ON employees TO reporting;
+GRANT SELECT, INSERT, UPDATE, DELETE ON employees TO hr;
+
+-- Removes access through the current view, history view, and query functions too.
+REVOKE SELECT ON employees FROM reporting;
+```
+
+A caller without the required base-table privilege gets an error naming the base table, whichever derived
+view or function was used:
+
+```text
+ERROR:  permission denied for table employees
+```
+
+Reading `<table>_history` directly is the exception to the error behavior. A caller without SELECT on the
+base table gets zero rows because the history table's restrictive policy filters everything.
+
+PostgreSQL role membership works normally. A base-table privilege granted to a group role is available to
+members that inherit that role.
+
+##### Column privileges
+
+The generated views select every column of the base table. A role with SELECT on only some columns therefore
+gets `permission denied for table <table>` when reading a generated current, portion, or history view, even if
+the query projects only granted columns. This is the same fail-closed behavior as `SELECT *` on the base table.
+Give such a role table-level SELECT or create a separate application view over the permitted columns.
+
+##### Ownership and hardened databases
+
+Derived objects are owned by the owner of the base table. Ownership changes on the base table are propagated
+to them.
+
+Some databases revoke the default EXECUTE privilege from `PUBLIC`. `sql_saga` explicitly grants the required
+EXECUTE privilege on its portion and current view trigger functions, `temporal_merge` and its helper routines,
+and the four query functions created by `add_system_versioning`. These routines still run with the caller's
+rights, so EXECUTE alone does not grant access to base-table data.
+
+Direct grants on a derived object cannot widen access beyond the base table. Direct revokes can make that
+derived object unavailable, so applications should manage privileges on the base table instead.
+
+##### Protected security properties
+
+Event triggers refuse changes that would bypass access-time checks. For example:
+
+```text
+ERROR:  view "employees__current_valid" must keep security_invoker because it is used in a current view for table "employees"
+ERROR:  view "employees_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "employees"
+```
+
+#### Row-Level Security and History
+
+When a base table uses row-level security (RLS), its history obeys the same `SELECT` and `ALL` policies. Define
+policies on the base table only. `sql_saga` keeps the history policies synchronized.
+
+```sql
+CREATE TABLE doc (
+    id int NOT NULL,
+    tenant text NOT NULL,
+    body text
+);
+SELECT sql_saga.add_system_versioning('doc');
+
+ALTER TABLE doc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_a ON doc FOR SELECT TO role_a USING (tenant = 'a');
+-- NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on doc_history as the history copy of policy tenant_a on doc
+
+CREATE POLICY tenant_b ON doc FOR ALL TO role_b USING (tenant = 'b');
+-- NOTICE:  sql_saga: Created policy sql_saga_0c78df7d1efef0b3 on doc_history as the history copy of policy tenant_b on doc
+
+GRANT SELECT ON doc TO role_a, role_b;
+```
+
+Each base `SELECT` or `ALL` policy gets a `FOR SELECT` copy with the same roles, permissive or restrictive
+mode, and `USING` expression. `WITH CHECK` is not copied, and policies only for INSERT, UPDATE, or DELETE are
+not copied. Copy names use `sql_saga_` plus a 16-digit hexadecimal hash of the base policy name and the
+installation token, so the copy names in the examples above differ in your database.
+
+Policy DDL on the base table synchronizes the copy immediately. A changed policy is reported as a drop and a
+create because its copy is replaced:
+
+```sql
+ALTER POLICY tenant_a ON doc USING (tenant = 'a' AND id = 1);
+-- NOTICE:  sql_saga: Dropped policy sql_saga_bf833db18461d646 on doc_history, the history copy of policy tenant_a on doc
+-- NOTICE:  sql_saga: Created policy sql_saga_bf833db18461d646 on doc_history as the history copy of policy tenant_a on doc
+
+DROP POLICY tenant_b ON doc;
+-- NOTICE:  sql_saga: Dropped policy sql_saga_0c78df7d1efef0b3 on doc_history, the history copy of policy tenant_b on doc
+```
+
+Policy expressions are resolved by column name on the history table. If a referenced column is absent or has
+a different type, synchronization is refused rather than installing a wrong filter:
+
+```text
+ERROR:  sql_saga: policy by_added on doc references column added_later, which doc_history lacks
+```
+
+`FORCE ROW LEVEL SECURITY` is mirrored from the base table to history:
+
+```text
+NOTICE:  sql_saga: Set row level security on doc_history to FORCE
+NOTICE:  sql_saga: Set row level security on doc_history to NO FORCE
+```
+
+Superusers, roles with `BYPASSRLS`, and an owner when FORCE is not enabled see all history rows, just as they
+see all base rows. When RLS is disabled on the base table, callers with SELECT on it read history without an
+RLS filter.
+
+##### Fixed state of the history table
+
+Every history table has RLS enabled, SELECT granted to `PUBLIC`, FORCE matching the base table, and two fixed
+policies:
+
+- `sql_saga_history_reader_<token>`, permissive, admits callers that have SELECT on the base table and are not
+  subject to its RLS.
+- `sql_saga_history_base_select_<token>`, restrictive, rejects callers without SELECT on the base table.
+
+Changing this state directly is refused:
+
+```text
+ERROR:  history table "doc_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "doc"
+ERROR:  cannot drop or alter policy "sql_saga_bf833db18461d646" on "doc_history" because it is managed by sql_saga for table "doc"
+```
+
+User policies belong on the base table. Creating a non-managed policy on history, for any policy command, or
+renaming a managed history policy to a non-managed name is refused:
+
+```text
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Create the policy on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+```
+
+##### Fail closed when policies are out of sync
+
+Policy copies are maintained by event triggers. If event triggers are disabled, a base policy can change
+without its copy. Before an RLS-subject caller reads history, `sql_saga` verifies the copies and fails closed:
+
+```text
+ERROR:  sql_saga: history of doc is not synchronized (1 policy copies missing, 0 stale)
+HINT:  Run: SELECT sql_saga.sync_history_policies('doc');
+```
+
+The base-table owner, or a member of its owner role, can run:
+
+```sql
+SELECT sql_saga.sync_history_policies('doc');
+```
+
+The function is idempotent. It creates missing copies, replaces stale copies, drops orphaned managed copies,
+mirrors FORCE, and does nothing when the managed state is already correct.
+
+A non-managed policy can exist on history only if event triggers were disabled. Reads still fail closed, now
+including the unmanaged count:
+
+```text
+ERROR:  sql_saga: history of doc is not synchronized (0 policy copies missing, 0 stale, 1 not managed by sql_saga)
+HINT:  Drop the policies not managed by sql_saga on doc_history (define them on doc instead), then run: SELECT sql_saga.sync_history_policies('doc');
+```
+
+Synchronization never silently drops a user's policy. It refuses until the policy is removed:
+
+```text
+ERROR:  sql_saga: policies on history table "doc_history" are managed by sql_saga
+HINT:  Drop policy "sneaky" on "doc_history" and create it on "doc"; sql_saga copies its SELECT and ALL policies to the history.
+```
+
+Drop the policy from history, create it on the base table if needed, and run synchronization again.
+
+##### Performance note
+
+For callers subject to RLS, PostgreSQL may be unable to use a GiST range index for an as-of or range-only
+history query because range operators are not leakproof and cannot be evaluated ahead of the security policy.
+Btree key lookups such as `WHERE id = 42` can still use their index. If range-only history queries are slow,
+include an indexed entity key where possible.
 
 #### Foreign Keys from Regular (Non-Temporal) Tables
 
