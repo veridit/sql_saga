@@ -1263,7 +1263,10 @@ for db in "$OLD" "$FRESH"; do
     token_sed "$db" >"$WORK/$db.sed" 2>/dev/null
     grep -q '^ERROR' "$WORK/$db.sed" && : >"$WORK/$db.sed"
     dump_schema "$db" | sed -f "$WORK/$db.sed" >"$WORK/$db.schema.unsorted"
-    grep -v -E '^CREATE POLICY' "$WORK/$db.schema.unsorted" >"$WORK/$db.schema.sql"
+    # pg_dump emits objects of equal sort rank (policies) in OID order, and each is preceded by a
+    # "-- Name: ...; Type: ..." comment block: drop comment lines (no schema content) and compare the
+    # CREATE POLICY statements as a sorted set.
+    grep -v -E '^CREATE POLICY|^--' "$WORK/$db.schema.unsorted" >"$WORK/$db.schema.sql"
     grep -E '^CREATE POLICY' "$WORK/$db.schema.unsorted" | LC_ALL=C sort >>"$WORK/$db.schema.sql"
 done
 if diff -u "$WORK/$FRESH.ext" "$WORK/$OLD.ext" >"$WORK/ext.diff"; then ok "extension objects identical (routines, bodies, ACLs, relations, types, event triggers, members)"
