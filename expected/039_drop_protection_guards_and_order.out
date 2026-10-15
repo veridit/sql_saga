@@ -29,4 +29,10 @@ two updatable views choose payload-first B | P0001: cannot drop view "dp_guard_o
 two updatable-view triggers choose payload-first B | P0001: cannot drop trigger "current_valid" on view "dp_guard_order.view_b__current_valid" because it is part of an updatable view for era "valid" on table "dp_guard_order.view_b"
 two query functions choose statement-first B | P0001: cannot drop function "dp_guard_order.guard_b__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"
 two history tables choose statement-first B | P0001: cannot drop table "dp_guard_order.guard_b_history" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"
+=== omitted-class cross-class priority
+
+predicated supporting index outranks earlier-payload history view | P0001: cannot drop index "pred_compete_support" on table "dp_guard_order.pred_compete" because it is used in era unique key "pred_compete_key"
+
+pk consistency constraint outranks earlier-payload history view | P0001: cannot drop constraint "pk_compete_natural_pk_consistency_excl" on table "dp_guard_order.pk_compete" because it is used in era unique key "pk_compete_natural"
+identifier loss outranks earlier-payload temporal unique constraint | P0001: table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"
 two managed policies choose payload-first B | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_b_history" because it is managed by sql_saga for table "dp_guard_order.guard_b"

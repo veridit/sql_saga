@@ -222,6 +222,117 @@ SELECT dp_guard_order.case_result(
     $$DROP TABLE dp_guard_order.guard_a_history, dp_guard_order.guard_b_history CASCADE$$,
     'cannot drop table "dp_guard_order.guard_b_history" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"');
 
+\echo === omitted-class cross-class priority
+-- The sql_saga metadata rows for each omitted class are created before the competing SYSTEM
+-- VERSIONING family. The dependency objects are then recreated after the history view, making
+-- PostgreSQL emit the later-priority view before the omitted class. The independent PostgreSQL-only
+-- probe in tmp/pair_dp1/order_probe_039_g4r2.sql observes these payload orders in three fresh databases.
+
+CREATE FUNCTION dp_guard_order.pred_dep(integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$ SELECT true $$;
+CREATE TABLE dp_guard_order.pred_compete (
+    id integer,
+    active boolean,
+    valid_range daterange NOT NULL);
+CREATE UNIQUE INDEX pred_compete_support ON dp_guard_order.pred_compete(id)
+    WHERE dp_guard_order.pred_dep(id);
+SELECT sql_saga.add_era('dp_guard_order.pred_compete', 'valid_range', 'valid') AS era_added \gset
+SELECT sql_saga.add_unique_key(
+    'dp_guard_order.pred_compete', ARRAY['id'], 'valid',
+    key_type => 'predicated', unique_key_name => 'pred_compete_key',
+    unique_constraint => 'pred_compete_support', predicate => 'active') AS key_added \gset
+SELECT dp_guard_order.system_family('pred_history');
+DO $pred_history_dependency$
+DECLARE
+    view_def text;
+BEGIN
+    SELECT pg_catalog.regexp_replace(
+        pg_catalog.pg_get_viewdef('dp_guard_order.pred_history_with_history'::regclass, true),
+        ';[[:space:]]*$', '')
+    INTO view_def;
+    PERFORM set_config('session_replication_role', 'replica', true);
+    EXECUTE format($view$
+        CREATE OR REPLACE VIEW dp_guard_order.pred_history_with_history
+        WITH (security_invoker = true) AS
+        SELECT q.* FROM (%s) AS q WHERE dp_guard_order.pred_dep(q.id)
+    $view$, view_def);
+    DROP INDEX dp_guard_order.pred_compete_support;
+    CREATE UNIQUE INDEX pred_compete_support ON dp_guard_order.pred_compete(id)
+        WHERE dp_guard_order.pred_dep(id);
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$pred_history_dependency$;
+SELECT dp_guard_order.case_result(
+    'predicated supporting index outranks earlier-payload history view',
+    $$DROP FUNCTION dp_guard_order.pred_dep(integer) CASCADE$$,
+    'cannot drop index "pred_compete_support" on table "dp_guard_order.pred_compete" because it is used in era unique key "pred_compete_key"');
+
+CREATE TABLE dp_guard_order.pk_compete (
+    id integer,
+    natural_key text,
+    valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('dp_guard_order.pk_compete', 'valid_range', 'valid') AS era_added \gset
+SELECT sql_saga.add_unique_key(
+    'dp_guard_order.pk_compete', ARRAY['id'], 'valid',
+    key_type => 'primary', unique_key_name => 'pk_compete_primary') AS key_added \gset
+SELECT sql_saga.add_unique_key(
+    'dp_guard_order.pk_compete', ARRAY['natural_key'], 'valid',
+    key_type => 'natural', unique_key_name => 'pk_compete_natural') AS key_added \gset
+SELECT dp_guard_order.system_family('pk_history');
+CREATE FUNCTION dp_guard_order.pk_dep(integer) RETURNS boolean
+LANGUAGE sql IMMUTABLE AS $$ SELECT true $$;
+DO $pk_history_dependency$
+DECLARE
+    view_def text;
+BEGIN
+    SELECT pg_catalog.regexp_replace(
+        pg_catalog.pg_get_viewdef('dp_guard_order.pk_history_with_history'::regclass, true),
+        ';[[:space:]]*$', '')
+    INTO view_def;
+    PERFORM set_config('session_replication_role', 'replica', true);
+    EXECUTE format($view$
+        CREATE OR REPLACE VIEW dp_guard_order.pk_history_with_history
+        WITH (security_invoker = true) AS
+        SELECT q.* FROM (%s) AS q WHERE dp_guard_order.pk_dep(q.id)
+    $view$, view_def);
+    ALTER TABLE dp_guard_order.pk_compete
+        DROP CONSTRAINT pk_compete_natural_pk_consistency_excl;
+    ALTER TABLE dp_guard_order.pk_compete
+        ADD CONSTRAINT pk_compete_natural_pk_consistency_excl
+        CHECK (dp_guard_order.pk_dep(id));
+    PERFORM set_config('session_replication_role', 'origin', true);
+END;
+$pk_history_dependency$;
+SELECT dp_guard_order.case_result(
+    'pk consistency constraint outranks earlier-payload history view',
+    $$DROP FUNCTION dp_guard_order.pk_dep(integer) CASCADE$$,
+    'cannot drop constraint "pk_compete_natural_pk_consistency_excl" on table "dp_guard_order.pk_compete" because it is used in era unique key "pk_compete_natural"');
+
+CREATE TABLE dp_guard_order.identifier_compete (
+    id integer,
+    alt_a integer,
+    alt_b integer,
+    valid_range daterange NOT NULL,
+    CONSTRAINT identifier_compete_pkey PRIMARY KEY (id, valid_range WITHOUT OVERLAPS),
+    CONSTRAINT identifier_compete_alt UNIQUE (alt_a, alt_b, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('dp_guard_order.identifier_compete', 'valid_range', 'valid') AS era_added \gset
+SELECT sql_saga.add_unique_key(
+    'dp_guard_order.identifier_compete', ARRAY['id'], 'valid',
+    key_type => 'primary', unique_key_name => 'identifier_compete_primary',
+    unique_constraint => 'identifier_compete_pkey') AS key_added \gset
+SELECT sql_saga.add_unique_key(
+    'dp_guard_order.identifier_compete', ARRAY['alt_a', 'alt_b'], 'valid',
+    key_type => 'natural', unique_key_name => 'identifier_compete_alt_key',
+    unique_constraint => 'identifier_compete_alt',
+    enforce_consistency_with_primary_key => false) AS key_added \gset
+SELECT sql_saga.add_current_view('dp_guard_order.identifier_compete', 'valid') AS view_added \gset
+SELECT dp_guard_order.case_result(
+    'identifier loss outranks earlier-payload temporal unique constraint',
+    $$ALTER TABLE dp_guard_order.identifier_compete
+          DROP CONSTRAINT identifier_compete_pkey,
+          DROP CONSTRAINT identifier_compete_alt$$,
+    'table "dp_guard_order.identifier_compete" must have a primary key or a single-column temporal unique key to support its updatable view for era "valid"');
+
 CREATE ROLE dp_guard_policy_role;
 SELECT set_config('session_replication_role', 'replica', true) IS NOT NULL AS replica_set \gset
 DROP POLICY sql_saga_history_reader_guardtoken ON dp_guard_order.guard_a_history;
