@@ -45,7 +45,7 @@ A living document of upcoming tasks.
   DECISION 3 (owner-approved 2026-10-14): policy copies match columns BY NAME (deparse against the base, created on
   history); clear ERROR when history lacks a referenced column. Spec section 10. DECISION 4 (owner-confirmed 2026-10-14): no
   "already synced" marker anywhere (copies are created by the trigger; read-time check is the only, fail-closed guard).
-- [ ] **`pg_restore --clean` into a database that has system-versioned tables fails (found 2026-10-15, pre-existing)**
+- [x] **`pg_restore --clean` into a database that has system-versioned tables fails (fixed 2026-10-15, b1ed797, test 029 + harness clean* variants)**
   `ERROR: cannot drop trigger "b_truncate" on table "b" because it is used in SYSTEM_TIME period`: drop protection refuses
   the DROP TRIGGER that `--clean` issues before dropping the table. Same on unmodified master. Needs its own RED/GREEN pair
   (and a `clean` variant in `make test-restore`).
@@ -54,7 +54,7 @@ A living document of upcoming tasks.
   UPDATE/DELETE crash the backend (signal 11, server restart). Cause: `src/sql_saga.c:1772` reads
   `values[range_num-1]` (base attnum) from the tuple converted to the HISTORY layout; must use `history_range_num`.
   RED test drafted: `tmp/pair_crash/026_system_versioning_dropped_column.{sql,out}` (crashes today). Own RED/GREEN pair.
-- [ ] **Schema changes after system versioning: manual schema changes (owner-approved 2026-10-14; pair after ACL)**
+- [x] **Schema changes after system versioning: manual schema changes (fixed 2026-10-15, 2b442f4, test 027 + harness case manual_schema_changes)**
   Today: ADD COLUMN silently not recorded in history; RENAME on base breaks every UPDATE ("could not convert row type");
   DROP COLUMN refused; views frozen. Fix: `rebuild_system_versioning_views(regclass, without_columns)`, write_history
   tolerates history-only columns (NULL), `_with_history` shows the union, clear ERROR + HINT when history lacks a base
@@ -226,6 +226,19 @@ Order of work: write the failing tests first (093, 012, the F11-F14 cases and th
 - [ ] Package with pgxman for easier distribution
 
 # Done
+
+## 2026-10-15: Privileges, RLS on history, restore, manual schema changes
+- Access-time privileges: derived views security_invoker and granted to PUBLIC, gated history view, history RLS
+  with token-named policy copies, FORCE mirrored, fail-closed read check, `sync_history_policies` (af8998c)
+- P1 shared plan cache removed (7e107de); P2 current-view INSERT on range-only primary key (c48af0a)
+- write_history crash with differing column positions (1a18968)
+- User policies on history refused, also when created with event triggers off (de87212)
+- Plain restore of a regular FK plus system versioning (0e994cc)
+- `pg_restore --clean` supported, opt-in `sql_saga.clean_restore` for psql-fed scripts, hardened regrant (b1ed797)
+- Manual schema changes: by-name history writer, `rebuild_system_versioning_views`, actionable errors (2b442f4)
+- Relation names in messages quoted once (79cdb0d)
+- `sql_saga_native` is an internal library, no control file, no cargo-pgrx (75a7bff)
+- Parallel restore documented as a PostgreSQL pg_dump limitation with a workaround (347027b)
 
 ## 2026-02-22: Executor Optimization & Pre-Merge Hardening
 - Native Rust executor introspection cache (zero SPI on cache hit)
