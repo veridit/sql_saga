@@ -95,8 +95,15 @@ uninstall: uninstall-native
 uninstall-native:
 	rm -f '$(DESTDIR)$(pkglibdir)/$(NATIVE_LIB_NAME)$(DLSUFFIX)'
 
+# `cargo test --lib` links a standalone executable that references PostgreSQL server symbols through
+# pgrx; only the server defines them. On Linux, link that executable (in its own target dir, so the
+# installed library is never built with these flags) with unresolved symbols allowed and lazy binding;
+# the pure-Rust unit tests never call into PostgreSQL. The test module defines the few data symbols.
+ifeq ($(PORTNAME),linux)
+NATIVE_TEST_ENV = RUSTFLAGS='-Clink-arg=-Wl,--unresolved-symbols=ignore-all -Clink-arg=-Wl,-z,lazy' CARGO_TARGET_DIR=target/test-native
+endif
 test-native:
-	cd $(NATIVE_DIR) && PGRX_PG_CONFIG_PATH='$(NATIVE_PG_CONFIG)' $(CARGO) test --lib --locked
+	cd $(NATIVE_DIR) && $(NATIVE_TEST_ENV) PGRX_PG_CONFIG_PATH='$(NATIVE_PG_CONFIG)' $(CARGO) test --lib --locked
 
 clean-native:
 	cd $(NATIVE_DIR) && $(CARGO) clean
