@@ -27,6 +27,10 @@ jobs:
 
       - name: Check out the repo
         uses: actions/checkout@v4
+        with:
+          # The upgrade harness builds the released tag v1.0.
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Allow runner to install extensions
         run: sudo chown -R $(whoami) $(${{ env.PG_CONFIG }} --pkglibdir) $(${{ env.PG_CONFIG }} --sharedir)/extension
@@ -58,6 +62,11 @@ jobs:
         # policies and tenant isolation. Parallel restore is reported as a known PostgreSQL
         # limitation and does not fail the job (see doc/decision-log.md).
         run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
+
+      - name: Run the 1.0 to 1.1 upgrade harness
+        # Builds tag v1.0 in a scratch directory, upgrades scratch databases and compares them with a
+        # fresh 1.1 install (devops/upgrade_test.sh).
+        run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Show regression diffs on failure
         if: failure()
