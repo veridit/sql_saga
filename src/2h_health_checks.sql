@@ -136,13 +136,21 @@ BEGIN
             -- Refuse direct DDL on managed history policies.
             -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
             -- below then keeps it (current installation) or drops it (another installation's token).
-            IF r.classid = 'pg_catalog.pg_policy'::regclass AND r.command_tag = 'ALTER POLICY' THEN
+            IF r.classid = 'pg_catalog.pg_policy'::regclass THEN
                 SELECT p.polname, p.polrelid INTO managed_policy
                 FROM pg_catalog.pg_policy AS p WHERE p.oid = r.objid;
-                IF managed_policy.polrelid = r.history_oid
-                   AND sql_saga.__internal_is_managed_history_policy(managed_policy.polname) THEN
-                    RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
-                        managed_policy.polname, r.history_oid::regclass, r.base_oid::regclass;
+                IF managed_policy.polrelid = r.history_oid THEN
+                    IF NOT sql_saga.__internal_is_managed_history_policy(managed_policy.polname) THEN
+                        -- A policy of one's own on the history table (decision 7): it would be OR-ed
+                        -- with the copies and could show more history than the base table allows.
+                        -- ALTER POLICY ... RENAME TO a non-managed name lands here too.
+                        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', r.history_oid::regclass
+                            USING HINT = format('Create the policy on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
+                                                r.base_oid::regclass);
+                    ELSIF r.command_tag = 'ALTER POLICY' THEN
+                        RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
+                            managed_policy.polname, r.history_oid::regclass, r.base_oid::regclass;
+                    END IF;
                 END IF;
             END IF;
             -- Refuse direct changes to the history's RLS settings.

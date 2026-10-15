@@ -186,7 +186,7 @@ $__internal_policy_missing_history_column$;
  * The desired USING is compared after the same parse a copy would get, on the history table.
  */
 CREATE FUNCTION sql_saga.__internal_history_policy_drift(table_oid oid, history_table_oid oid,
-    OUT missing integer, OUT stale integer)
+    OUT missing integer, OUT stale integer, OUT unmanaged integer)
 LANGUAGE plpgsql
 STABLE
 SET search_path = sql_saga, pg_catalog
@@ -197,6 +197,11 @@ DECLARE
 BEGIN
     missing := 0;
     stale := 0;
+    -- Policies on the history table that sql_saga does not manage (created while event triggers were
+    -- off, decision 7): OR-ed with the copies, they could widen what RLS-subject callers see.
+    unmanaged := (SELECT count(*) FROM pg_catalog.pg_policy AS p
+                  WHERE p.polrelid = history_table_oid
+                    AND NOT sql_saga.__internal_is_managed_history_policy(p.polname));
     FOR d IN SELECT * FROM sql_saga.__internal_history_policy_copies(table_oid) LOOP
         SELECT p.polcmd, p.polpermissive, p.polroles,
                pg_catalog.pg_get_expr(p.polqual, p.polrelid) AS qual,
@@ -239,7 +244,12 @@ DECLARE
     drift record;
 BEGIN
     SELECT * INTO drift FROM sql_saga.__internal_history_policy_drift(table_oid, history_table_oid);
-    IF drift.missing > 0 OR drift.stale > 0 THEN
+    IF drift.unmanaged > 0 THEN
+        RAISE EXCEPTION 'sql_saga: history of % is not synchronized (% policy copies missing, % stale, % not managed by sql_saga)',
+            table_oid::pg_catalog.regclass, drift.missing, drift.stale, drift.unmanaged
+            USING HINT = pg_catalog.format('Drop the policies not managed by sql_saga on %s (define them on %s instead), then run: SELECT sql_saga.sync_history_policies(%L);',
+                history_table_oid::pg_catalog.regclass, table_oid::pg_catalog.regclass, table_oid::pg_catalog.regclass::pg_catalog.text);
+    ELSIF drift.missing > 0 OR drift.stale > 0 THEN
         RAISE EXCEPTION 'sql_saga: history of % is not synchronized (% policy copies missing, % stale)',
             table_oid::pg_catalog.regclass, drift.missing, drift.stale
             USING HINT = pg_catalog.format('Run: SELECT sql_saga.sync_history_policies(%L);', table_oid::pg_catalog.regclass::pg_catalog.text);
@@ -275,6 +285,18 @@ BEGIN
     IF NOT FOUND THEN
         RETURN;
     END IF;
+
+    -- A policy sql_saga does not manage blocks synchronization: sql_saga never drops a user's policy
+    -- (decision 7); the user moves it to the base table.
+    FOR p IN
+        SELECT hp.polname FROM pg_catalog.pg_policy AS hp
+        WHERE hp.polrelid = fam.history_oid AND NOT sql_saga.__internal_is_managed_history_policy(hp.polname)
+        ORDER BY hp.polname
+    LOOP
+        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', fam.history_oid::regclass
+            USING HINT = format('Drop policy "%s" on "%s" and create it on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
+                                p.polname, fam.history_oid::regclass, fam.base_oid::regclass);
+    END LOOP;
 
     -- While on, the event triggers neither refuse nor re-synchronize the policy DDL issued below
     -- (otherwise every CREATE POLICY here would start a nested synchronization). The previous value
