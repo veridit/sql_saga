@@ -42,7 +42,7 @@ FAILED=()
 PASSED=()
 KNOWN=()
 
-ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history fk_views quoted_names parallel_known_failure)
+ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names parallel_known_failure)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
 
@@ -212,6 +212,32 @@ event_triggers() {
     psql -X -At -d "$1" -c "SELECT count(*) FILTER (WHERE evtenabled <> 'D') || '/' || count(*) FROM pg_event_trigger WHERE evtfoid::regproc::text LIKE 'sql_saga.%'"
 }
 
+# Schema and data fingerprint for the manual_schema_changes case. Other cases return an empty value.
+manual_schema_state() {
+    psql -X -At -d "$1" <<'SQL'
+SELECT CASE WHEN to_regclass('public.manual_sv') IS NULL THEN '' ELSE md5(concat_ws(E'\n',
+    (SELECT string_agg(format('%s|%s|%s', c.relname, a.attname,
+                                    format_type(a.atttypid, a.atttypmod)), E'\n'
+                       ORDER BY c.relname, a.attnum)
+       FROM pg_class AS c
+       JOIN pg_attribute AS a ON a.attrelid = c.oid
+      WHERE c.oid IN ('manual_sv'::regclass, 'manual_sv_history'::regclass,
+                      'manual_sv_with_history'::regclass, 'manual_sv_history_gated'::regclass)
+        AND a.attnum > 0 AND NOT a.attisdropped),
+    (SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id, r.system_valid_range, r.body)::text
+       FROM (SELECT id, account, body, system_valid_range::text, legacy_note
+               FROM manual_sv_with_history) AS r),
+    (SELECT format('%s|%s', c.relrowsecurity, c.relforcerowsecurity)
+       FROM pg_class AS c WHERE c.oid = 'manual_sv'::regclass),
+    (SELECT string_agg(format('%s|%s|%s', p.polcmd,
+                              pg_get_expr(p.polqual, p.polrelid),
+                              (SELECT string_agg(CASE WHEN role_oid = 0 THEN 'PUBLIC' ELSE role_oid::regrole::text END, ',' ORDER BY 1)
+                                 FROM unnest(p.polroles) AS role_oid)), E'\n' ORDER BY p.polcmd, p.polname)
+       FROM pg_policy AS p WHERE p.polrelid = 'manual_sv'::regclass)
+)) END;
+SQL
+}
+
 # build_<case> <db>: create the source database contents. Must succeed with ON_ERROR_STOP.
 common_header() {
     cat <<'SQL'
@@ -264,6 +290,28 @@ ALTER TABLE rdoc ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_a ON rdoc FOR SELECT TO ${PREFIX}_r1 USING (tenant = 'a');
 CREATE POLICY tenant_b ON rdoc FOR ALL TO ${PREFIX}_regular USING (tenant = 'b');
 CREATE POLICY ins_only ON rdoc FOR INSERT TO ${PREFIX}_r1 WITH CHECK (true);
+SQL
+    } | psql_q -d "$1"
+}
+
+# A system-versioned table after manual schema changes: history-only data, an RLS policy whose
+# referenced column is renamed in history first, and rebuilt views/functions.
+build_manual_schema_changes() {
+    { common_header; cat <<SQL
+CREATE TABLE manual_sv (id int PRIMARY KEY, tenant text NOT NULL, body text);
+SELECT sql_saga.add_system_versioning('manual_sv');
+INSERT INTO manual_sv VALUES (1, 'a', 'a1'), (2, 'b', 'b1');
+UPDATE manual_sv SET body = body || '+';
+GRANT SELECT ON manual_sv TO ${PREFIX}_r1;
+ALTER TABLE manual_sv ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_a ON manual_sv FOR SELECT TO ${PREFIX}_r1 USING (tenant = 'a');
+ALTER TABLE manual_sv_history ADD COLUMN legacy_note text;
+UPDATE manual_sv_history SET legacy_note = 'old ' || tenant;
+SELECT sql_saga.rebuild_system_versioning_views('manual_sv', ARRAY['tenant']);
+ALTER TABLE manual_sv_history RENAME COLUMN tenant TO account;
+ALTER TABLE manual_sv RENAME COLUMN tenant TO account;
+SELECT sql_saga.rebuild_system_versioning_views('manual_sv');
+UPDATE manual_sv SET body = 'a2' WHERE id = 1;
 SQL
     } | psql_q -d "$1"
 }
@@ -455,7 +503,7 @@ restore_variant() {
         dropdb --if-exists "$dst" >>"$LOG" 2>&1
         return 1
     fi
-    local d t pol faults reads
+    local d t pol faults reads manual_state
     # clean*: a database with ALTER DEFAULT PRIVILEGES (hardened_functions) already has them when
     # pg_restore --clean recreates the extension, so its member functions get the owner-only ACL the
     # operator asked for, while a fresh restore applies the default privileges only at the end. That
@@ -468,6 +516,7 @@ restore_variant() {
     fi
     t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
+    manual_state=$(manual_schema_state "$dst")
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
         echo "    $variant: ACL digest differs (source $src_digest, restored $d)"
@@ -493,6 +542,10 @@ restore_variant() {
         echo "    $variant: event triggers differ (source $src_trig, restored $t)"
         return 1
     fi
+    if [ "$manual_state" != "$src_manual_state" ]; then
+        echo "    $variant: manual schema state differs (source $src_manual_state, restored $manual_state)"
+        return 1
+    fi
     echo "    $variant: ok"
     return 0
 }
@@ -511,9 +564,10 @@ run_case() {
         return
     fi
     pg_dump -Fc -d "$src" -f "$dump" || { FAILED+=("$case (pg_dump)"); return; }
-    local src_digest src_digest_without_extension_functions src_trig src_pol
+    local src_digest src_digest_without_extension_functions src_trig src_pol src_manual_state
     src_reads=''
     src_digest=$(digest "$src"); src_digest_without_extension_functions=$(digest "$src" without_extension_functions); src_trig=$(event_triggers "$src"); src_pol=$(policies "$src"); src_reads=$(tenant_reads "$src")
+    src_manual_state=$(manual_schema_state "$src")
     local src_faults src_iso
     src_iso=$(rls_isolation "$src")
     if [ -n "$src_iso" ] && [ "$src_iso" != "$RLS_EXPECTED" ]; then
