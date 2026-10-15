@@ -39,6 +39,8 @@ BEGIN
         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure /* %s */, drop_behavior /* %s */);
         EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure /* %s */, drop_behavior /* %s */);
         EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name /* %I */, system_versioning_row.view_table_name /* %I */, drop_behavior /* %s */);
+        EXECUTE format('DROP VIEW IF EXISTS %I.%I %s', system_versioning_row.history_schema_name /* %I */,
+            sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name) /* %I */, drop_behavior /* %s */);
     END IF;
 
     IF NOT is_dropped AND cleanup THEN

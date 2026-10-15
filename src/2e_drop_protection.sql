@@ -391,7 +391,9 @@ BEGIN
         FROM sql_saga.system_versioning AS sv
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
                 ON dobj.object_type = 'view'
-                AND (dobj.address_names[1], dobj.address_names[2]) = (sv.view_schema_name, sv.view_table_name)
+                AND (dobj.address_names[1], dobj.address_names[2]) IN (
+                    (sv.view_schema_name, sv.view_table_name),
+                    (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
@@ -410,6 +412,41 @@ BEGIN
         RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',
             r.object_identity, r.table_oid;
     END LOOP;
+
+    /*
+     * Policies (tmp/design_final.md sections 8, 13). A dropped policy on a versioned base table
+     * drops its history copy. Policies sql_saga manages on a history table cannot be dropped
+     * directly. address_names of a policy are {schema, table, policy}.
+     */
+    DECLARE
+        managed_policy record;
+    BEGIN
+    FOR r IN
+        SELECT f.base_oid, f.history_oid,
+               to_regclass(format('%I.%I', dobj.address_names[1], dobj.address_names[2]))::oid AS rel_oid,
+               array_agg(dobj.address_names[3]::name ORDER BY dobj.ordinality) AS policy_names
+        FROM pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(
+            to_regclass(format('%I.%I', dobj.address_names[1], dobj.address_names[2]))) AS f
+        WHERE dobj.object_type = 'policy'
+        GROUP BY 1, 2, 3
+    LOOP
+        IF r.rel_oid = r.history_oid
+           AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+            FOR managed_policy IN
+                SELECT u.name FROM unnest(r.policy_names) AS u (name)
+                WHERE sql_saga.__internal_is_managed_history_policy(u.name)
+            LOOP
+                RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
+                    managed_policy.name, r.history_oid::regclass, r.base_oid::regclass;
+            END LOOP;
+        END IF;
+        IF r.rel_oid = r.base_oid
+           AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid, r.policy_names);
+        END IF;
+    END LOOP;
+    END;
 END;
 $function$;
 

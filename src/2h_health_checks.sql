@@ -10,6 +10,9 @@ $function$
 DECLARE
     cmd text;
     r record;
+    managed_policy record;
+    gated_columns text;
+    expected_gate text;
 BEGIN
     -- Exit early if the DDL command does not affect a managed object.
     IF NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
@@ -81,6 +84,17 @@ BEGIN
 
         UNION ALL
 
+        /* Fix ownership of the gated history views */
+        SELECT format('ALTER VIEW %s OWNER TO %I', f.gated_oid::regclass, t.relowner::regrole)
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_class AS t ON t.relname = sv.table_name
+        JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(t.oid) AS f
+        JOIN pg_class AS gv ON gv.oid = f.gated_oid
+        WHERE f.base_oid = t.oid AND t.relowner <> gv.relowner
+
+        UNION ALL
+
         /* Fix ownership of for-portion-of views */
         SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema /* %I */, v.view_name /* %I */, t.relowner::regrole /* %I */)
         FROM sql_saga.updatable_view v
@@ -103,344 +117,100 @@ BEGIN
         EXECUTE cmd;
     END LOOP;
 
-    /* Check GRANTs */
-    IF EXISTS (
-        SELECT FROM pg_event_trigger_ddl_commands() AS ev_ddl
-        WHERE ev_ddl.command_tag = 'GRANT')
-    THEN
-        FOR r IN
-            SELECT *,
-                   EXISTS (
-                       SELECT
-                       FROM pg_class AS _c
-                       CROSS JOIN LATERAL aclexplode(COALESCE(_c.relacl, acldefault('r', _c.relowner))) AS _acl
-                       WHERE _c.oid = objects.table_oid
-                         AND _acl.grantee = objects.grantee
-                         AND _acl.privilege_type = objects.base_privilege_type
-                   ) AS on_base_table
-            FROM (
-                /* Check GRANTs on system versioning history tables.
-                 * Only check explicit grants (relacl IS NOT NULL), not default grants.
-                 * Default owner permissions are allowed on history objects. */
-                SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                       ht.oid::regclass::text AS object_name,
-                       ht.relkind AS object_type,
-                       acl.privilege_type,
-                       acl.privilege_type AS base_privilege_type,
-                       acl.grantee,
-                       'h' AS history_or_portion,
-                       NULL::sql_saga.updatable_view_type AS view_type
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS ht ON ht.relname = sv.history_table_name
-                JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
-                CROSS JOIN LATERAL aclexplode(ht.relacl) AS acl
-                WHERE ht.relacl IS NOT NULL
-
-                UNION ALL
-
-                /* Check GRANTs on system versioning views.
-                 * Only check explicit grants (relacl IS NOT NULL), not default grants. */
-                SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                       vt.oid::regclass::text AS object_name,
-                       vt.relkind AS object_type,
-                       acl.privilege_type,
-                       acl.privilege_type AS base_privilege_type,
-                       acl.grantee,
-                       'h' AS history_or_portion,
-                       NULL::sql_saga.updatable_view_type AS view_type
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS vt ON vt.relname = sv.view_table_name
-                JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
-                CROSS JOIN LATERAL aclexplode(vt.relacl) AS acl
-                WHERE vt.relacl IS NOT NULL
-
-                UNION ALL
-
-                /* Check GRANTs on for-portion-of views.
-                 * Only check explicit grants (relacl IS NOT NULL), not default grants. */
-                SELECT to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) AS table_oid,
-                       vt.oid::regclass::text AS object_name,
-                       vt.relkind AS object_type,
-                       acl.privilege_type,
-                       acl.privilege_type AS base_privilege_type,
-                       acl.grantee,
-                       'p' AS history_or_portion,
-                       v.view_type
-                FROM sql_saga.updatable_view v
-                JOIN pg_class vt ON vt.relname = v.view_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
-                CROSS JOIN LATERAL aclexplode(vt.relacl) AS acl
-                WHERE vt.relacl IS NOT NULL
-
-                UNION ALL
-
-                /* Check GRANTs on system versioning functions.
-                 * Only check explicit grants (proacl IS NOT NULL), not default grants.
-                 * Functions have default EXECUTE to PUBLIC which doesn't require base table permission. */
-                SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                       p.oid::regprocedure::text AS object_name,
-                       'f' AS object_type,
-                       acl.privilege_type,
-                       'SELECT' AS base_privilege_type,
-                       acl.grantee,
-                       'h' AS history_or_portion,
-                       NULL::sql_saga.updatable_view_type AS view_type
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_proc AS p ON p.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
-                CROSS JOIN LATERAL aclexplode(p.proacl) AS acl
-                WHERE p.proacl IS NOT NULL
-            ) AS objects
-            ORDER BY object_name, object_type, privilege_type
-        LOOP
-            IF
-                r.history_or_portion = 'h' AND
-                (r.object_type, r.privilege_type) NOT IN (('r', 'SELECT'), ('p', 'SELECT'), ('v', 'SELECT'), ('f', 'EXECUTE'))
-            THEN
-                RAISE EXCEPTION 'cannot grant % to "%"; history objects are read-only',
-                    r.privilege_type, r.object_name;
+    /*
+     * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
+     * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
+     * either, re-synchronizes that family's history policies. Direct changes to the policies
+     * sql_saga manages, and to the history's RLS settings, are refused.
+     */
+    FOR r IN
+        SELECT DISTINCT f.base_oid, f.history_oid, ev.command_tag, ev.objid, ev.classid
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_policy AS pol
+               ON ev.classid = 'pg_catalog.pg_policy'::regclass AND pol.oid = ev.objid
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(
+            CASE WHEN ev.classid = 'pg_catalog.pg_policy'::regclass THEN pol.polrelid ELSE ev.objid END) AS f
+        WHERE ev.command_tag IN ('CREATE POLICY', 'ALTER POLICY', 'ALTER TABLE')
+    LOOP
+        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+            -- Refuse direct DDL on managed history policies.
+            -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
+            -- below then keeps it (current installation) or drops it (another installation's token).
+            IF r.classid = 'pg_catalog.pg_policy'::regclass AND r.command_tag = 'ALTER POLICY' THEN
+                SELECT p.polname, p.polrelid INTO managed_policy
+                FROM pg_catalog.pg_policy AS p WHERE p.oid = r.objid;
+                IF managed_policy.polrelid = r.history_oid
+                   AND sql_saga.__internal_is_managed_history_policy(managed_policy.polname) THEN
+                    RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
+                        managed_policy.polname, r.history_oid::regclass, r.base_oid::regclass;
+                END IF;
             END IF;
-
-            IF NOT r.on_base_table THEN
-                RAISE EXCEPTION 'cannot grant % directly to "%"; grant % to "%" instead',
-                    r.privilege_type, r.object_name, r.base_privilege_type, r.table_oid;
+            -- Refuse direct changes to the history's RLS settings.
+            IF r.command_tag = 'ALTER TABLE' AND r.objid = r.history_oid
+               AND NOT EXISTS (SELECT FROM pg_catalog.pg_class AS h, pg_catalog.pg_class AS b
+                               WHERE h.oid = r.history_oid AND b.oid = r.base_oid
+                                 AND h.relrowsecurity AND h.relforcerowsecurity = b.relforcerowsecurity) THEN
+                RAISE EXCEPTION 'history table "%" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "%"',
+                    r.history_oid::regclass, r.base_oid::regclass;
             END IF;
-        END LOOP;
+        END IF;
+        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+           AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
+            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
+        END IF;
+    END LOOP;
 
-        /* Propagate GRANTs */
-        FOR cmd IN
-            SELECT format('GRANT %s ON %s %s TO %s',
-                          string_agg(DISTINCT privilege_type, ', '), /* %s */
-                          object_type, /* %s */
-                          string_agg(DISTINCT object_name, ', '), /* %s */
-                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', ') /* %s */
-            )
-            FROM (
-                /* Propagate GRANTs to system versioning history tables */
-                SELECT 'TABLE' AS object_type,
-                       ht.oid::regclass::text AS object_name,
-                       'SELECT' AS privilege_type,
-                       acl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS c ON c.relname = sv.table_name
-                JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-                CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_class AS ht ON ht.relname = sv.history_table_name
-                JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
-                WHERE acl.privilege_type = 'SELECT'
-                  AND NOT has_table_privilege(acl.grantee, ht.oid, 'SELECT')
-
-                UNION ALL
-
-                /* Propagate GRANTs to system versioning views */
-                SELECT 'TABLE' AS object_type,
-                       vt.oid::regclass::text AS object_name,
-                       'SELECT' AS privilege_type,
-                       acl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS c ON c.relname = sv.table_name
-                JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-                CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_class AS vt ON vt.relname = sv.view_table_name
-                JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
-                WHERE acl.privilege_type = 'SELECT'
-                  AND NOT has_table_privilege(acl.grantee, vt.oid, 'SELECT')
-
-                UNION ALL
-
-                /* Propagate GRANTs to for-portion-of views */
-                SELECT 'TABLE' AS object_type,
-                       vt.oid::regclass::text AS object_name,
-                       acl.privilege_type AS privilege_type,
-                       acl.grantee
-                FROM sql_saga.updatable_view v
-                JOIN pg_class t ON t.relname = v.table_name
-                JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
-                CROSS JOIN LATERAL aclexplode(COALESCE(t.relacl, acldefault('r', t.relowner))) AS acl
-                JOIN pg_class vt ON vt.relname = v.view_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
-                WHERE NOT has_table_privilege(acl.grantee, vt.oid, acl.privilege_type)
-
-                UNION ALL
-
-                /* Propagate GRANTs to system versioning functions */
-                SELECT 'FUNCTION' AS object_type,
-                       hp.oid::regprocedure::text AS object_name,
-                       'EXECUTE' AS privilege_type,
-                       acl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS c ON c.relname = sv.table_name
-                JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-                CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-                JOIN pg_proc AS hp ON hp.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
-                WHERE acl.privilege_type = 'SELECT'
-                  AND NOT has_function_privilege(acl.grantee, hp.oid, 'EXECUTE')
-            ) AS objects
-            LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
-            GROUP BY object_type
-        LOOP
-            SET session_replication_role = 'replica';
-            EXECUTE cmd;
-            RESET session_replication_role;
-        END LOOP;
-    END IF;
-
-    /* Check REVOKEs */
-    IF EXISTS (
-        SELECT FROM pg_event_trigger_ddl_commands() AS ev_ddl
-        WHERE ev_ddl.command_tag = 'REVOKE')
-    THEN
-        FOR r IN
-            /* Check REVOKEs on system versioning history tables */
-            SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                   ht.oid::regclass::text AS object_name,
-                   acl.privilege_type,
-                   acl.privilege_type AS base_privilege_type
+    /* The fixed shape of views sql_saga manages. */
+    FOR r IN
+        SELECT ev.objid AS view_oid, v.base_oid, v.kind
+        FROM pg_event_trigger_ddl_commands() AS ev
+        JOIN (
+            SELECT format('%I.%I', sv.view_schema_name, sv.view_table_name)::regclass::oid AS view_oid,
+                   format('%I.%I', sv.table_schema, sv.table_name)::regclass::oid AS base_oid,
+                   'SYSTEM VERSIONING'::text AS kind
             FROM sql_saga.system_versioning AS sv
-            JOIN pg_class AS c ON c.relname = sv.table_name
-            JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-            CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_class AS ht ON ht.relname = sv.history_table_name
-            JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
-            WHERE acl.privilege_type = 'SELECT'
-              AND NOT EXISTS (
-                SELECT
-                FROM aclexplode(COALESCE(ht.relacl, acldefault('r', ht.relowner))) AS _acl
-                WHERE _acl.privilege_type = 'SELECT'
-                  AND _acl.grantee = acl.grantee)
-
+            WHERE to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL
             UNION ALL
+            SELECT format('%I.%I', uv.view_schema, uv.view_name)::regclass::oid,
+                   format('%I.%I', uv.table_schema, uv.table_name)::regclass::oid,
+                   CASE uv.view_type WHEN 'for_portion_of' THEN 'FOR PORTION OF' ELSE 'a current view' END
+            FROM sql_saga.updatable_view AS uv
+            WHERE to_regclass(format('%I.%I', uv.view_schema, uv.view_name)) IS NOT NULL
+        ) AS v ON v.view_oid = ev.objid
+        WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
+    LOOP
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c
+                       WHERE c.oid = r.view_oid AND 'security_invoker=on' = ANY (c.reloptions)) THEN
+            RAISE EXCEPTION 'view "%" must keep security_invoker because it is used in % for table "%"',
+                r.view_oid::regclass, r.kind, r.base_oid::regclass;
+        END IF;
+    END LOOP;
 
-            /* Check REVOKEs on system versioning views */
-            SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                   vt.oid::regclass::text AS object_name,
-                   acl.privilege_type,
-                   acl.privilege_type AS base_privilege_type
-            FROM sql_saga.system_versioning AS sv
-            JOIN pg_class AS c ON c.relname = sv.table_name
-            JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-            CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_class AS vt ON vt.relname = sv.view_table_name
-            JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
-            WHERE acl.privilege_type = 'SELECT'
-              AND NOT EXISTS (
-                SELECT
-                FROM aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS _acl
-                WHERE _acl.privilege_type = 'SELECT'
-                  AND _acl.grantee = acl.grantee)
-
-            UNION ALL
-
-            /* Check REVOKEs on for-portion-of views */
-            SELECT to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)) AS table_oid,
-                   vt.oid::regclass::text AS object_name,
-                   acl.privilege_type,
-                   acl.privilege_type AS base_privilege_type
-            FROM sql_saga.updatable_view v
-            JOIN pg_class t ON t.relname = v.table_name
-            JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
-            CROSS JOIN LATERAL aclexplode(COALESCE(t.relacl, acldefault('r', t.relowner))) AS acl
-            JOIN pg_class vt ON vt.relname = v.view_name
-            JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
-            WHERE NOT EXISTS (
-                SELECT
-                FROM aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS _acl
-                WHERE _acl.privilege_type = acl.privilege_type
-                  AND _acl.grantee = acl.grantee)
-
-            UNION ALL
-
-            /* Check REVOKEs on system versioning functions */
-            SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-                   hp.oid::regprocedure::text AS object_name,
-                   'EXECUTE' AS privilege_type,
-                   'SELECT' AS base_privilege_type
-            FROM sql_saga.system_versioning AS sv
-            JOIN pg_class AS c ON c.relname = sv.table_name
-            JOIN pg_namespace AS cn ON cn.oid = c.relnamespace AND cn.nspname = sv.table_schema
-            CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
-            JOIN pg_proc AS hp ON hp.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
-            WHERE acl.privilege_type = 'SELECT'
-              AND NOT EXISTS (
-                SELECT
-                FROM aclexplode(COALESCE(hp.proacl, acldefault('f', hp.proowner))) AS _acl
-                WHERE _acl.privilege_type = 'EXECUTE'
-                  AND _acl.grantee = acl.grantee)
-
-            ORDER BY table_oid, object_name
-        LOOP
-            RAISE EXCEPTION 'cannot revoke % directly from "%", revoke % from "%" instead',
-                r.privilege_type, r.object_name, r.base_privilege_type, r.table_oid;
-        END LOOP;
-
-        /* Propagate REVOKEs */
-        FOR cmd IN
-            SELECT format('REVOKE %s ON %s %s FROM %s',
-                          string_agg(DISTINCT privilege_type, ', '), /* %s */
-                          object_type, /* %s */
-                          string_agg(DISTINCT object_name, ', '), /* %s */
-                          string_agg(DISTINCT COALESCE(a.rolname, 'public'), ', ') /* %s */
-            )
-            FROM (
-                /* Propagate REVOKEs from system versioning history tables */
-                SELECT 'TABLE' AS object_type,
-                       ht.oid::regclass::text AS object_name,
-                       'SELECT' AS privilege_type,
-                       hacl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS ht ON ht.relname = sv.history_table_name
-                JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
-                CROSS JOIN LATERAL aclexplode(COALESCE(ht.relacl, acldefault('r', ht.relowner))) AS hacl
-                WHERE hacl.privilege_type = 'SELECT'
-                  AND NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)), 'SELECT')
-
-                UNION ALL
-
-                /* Propagate REVOKEs from system versioning views */
-                SELECT 'TABLE' AS object_type,
-                       vt.oid::regclass::text AS object_name,
-                       'SELECT' AS privilege_type,
-                       hacl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_class AS vt ON vt.relname = sv.view_table_name
-                JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
-                CROSS JOIN LATERAL aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS hacl
-                WHERE hacl.privilege_type = 'SELECT'
-                  AND NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)), 'SELECT')
-
-                UNION ALL
-
-                /* Propagate REVOKEs from for-portion-of views */
-                SELECT 'TABLE' AS object_type,
-                       vt.oid::regclass::text AS object_name,
-                       hacl.privilege_type,
-                       hacl.grantee
-                FROM sql_saga.updatable_view v
-                JOIN pg_class vt ON vt.relname = v.view_name
-                JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
-                CROSS JOIN LATERAL aclexplode(COALESCE(vt.relacl, acldefault('r', vt.relowner))) AS hacl
-                WHERE NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', v.table_schema /* %I */, v.table_name /* %I */)), hacl.privilege_type)
-
-                UNION ALL
-
-                /* Propagate REVOKEs from system versioning functions */
-                SELECT 'FUNCTION' AS object_type,
-                       hp.oid::regprocedure::text AS object_name,
-                       'EXECUTE' AS privilege_type,
-                       hacl.grantee
-                FROM sql_saga.system_versioning AS sv
-                JOIN pg_proc AS hp ON hp.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
-                CROSS JOIN LATERAL aclexplode(COALESCE(hp.proacl, acldefault('f', hp.proowner))) AS hacl
-                WHERE hacl.privilege_type = 'EXECUTE'
-                  AND NOT has_table_privilege(hacl.grantee, to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)), 'SELECT')
-            ) AS objects
-            LEFT JOIN pg_authid AS a ON a.oid = objects.grantee
-            GROUP BY object_type
-        LOOP
-            SET session_replication_role = 'replica';
-            EXECUTE cmd;
-            RESET session_replication_role;
-        END LOOP;
-    END IF;
+    FOR r IN
+        SELECT ev.objid AS view_oid, f.base_oid, f.history_oid
+        FROM pg_event_trigger_ddl_commands() AS ev
+        JOIN sql_saga.system_versioning AS sv
+          ON to_regclass(format('%I.%I', sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))::oid = ev.objid
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(format('%I.%I', sv.table_schema, sv.table_name)::regclass) AS f
+        WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
+    LOOP
+        -- The gate must be exactly the generated definition (owner-rights, same body), not just
+        -- contain its parts: e.g. "WHERE true OR (gate)" keeps every function reference but opens
+        -- the view. The canonical body is rendered from the view's own column list, so the check
+        -- holds whatever columns the history has, and both are deparsed the same way.
+        gated_columns := (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum)
+                          FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid = r.view_oid AND a.attnum > 0 AND NOT a.attisdropped);
+        EXECUTE 'CREATE TEMPORARY VIEW sql_saga_expected_gate AS '
+            || sql_saga.__internal_history_gated_view_sql(r.base_oid, r.history_oid, gated_columns);
+        expected_gate := pg_catalog.pg_get_viewdef('pg_temp.sql_saga_expected_gate'::regclass);
+        DROP VIEW pg_temp.sql_saga_expected_gate;
+        IF EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = r.view_oid AND c.reloptions IS NOT NULL)
+           OR pg_catalog.pg_get_viewdef(r.view_oid) IS DISTINCT FROM expected_gate THEN
+            RAISE EXCEPTION 'view "%" must keep its access gate because it is used in SYSTEM VERSIONING for table "%"',
+                r.view_oid::regclass, r.base_oid::regclass;
+        END IF;
+    END LOOP;
 
 END;
 $function$;

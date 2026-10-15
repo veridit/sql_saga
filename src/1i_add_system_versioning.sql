@@ -22,7 +22,8 @@ DECLARE
     era_row sql_saga.era;
     history_table_id oid;
     sql text;
-    grantees text;
+    columns text;
+    gated_view_name name;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -91,14 +92,42 @@ BEGIN
         RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
     END IF;
 
-    EXECUTE format('CREATE VIEW %1$I.%2$I AS SELECT %5$s FROM %1$I.%3$I UNION ALL SELECT %5$s FROM %1$I.%4$I',
+    columns := (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped);
+    gated_view_name := sql_saga.__internal_history_gated_name(history_table_name);
+
+    /*
+     * Access-time authority (tmp/design_final.md): the history objects are granted to PUBLIC and
+     * hold no copy of the base table's ACL. Callers are checked against the base when they read:
+     *   - B_history_gated (owner-rights) raises 42501 unless the caller may SELECT B, and serves
+     *     callers that B's row-level security does not apply to;
+     *   - B_history is read as the caller when B's RLS applies, filtered by the copies of B's
+     *     policies (sql_saga.__internal_sync_history_policies), after checking they are in sync.
+     */
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_id::regclass);
+    EXECUTE format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_id::regclass);
+
+    EXECUTE format('CREATE VIEW %I.%I AS %s', table_schema, gated_view_name,
+        sql_saga.__internal_history_gated_view_sql(table_oid, history_table_id, columns));
+    EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', table_schema, gated_view_name, table_owner);
+    EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', table_schema, gated_view_name);
+
+    EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
+        SELECT %5$s FROM %1$I.%3$I
+        UNION ALL SELECT %5$s FROM %1$I.%6$I
+        UNION ALL SELECT %5$s FROM %1$I.%4$I
+            WHERE pg_catalog.row_security_active(%7$L::regclass::oid)
+              AND sql_saga.__internal_history_policies_synchronized(%7$L::regclass::oid, %8$L::regclass::oid)$view$,
         table_schema, /* %1$I */
         view_name, /* %2$I */
         table_name, /* %3$I */
         history_table_name, /* %4$I */
-        (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) FROM pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped) /* %5$s */
+        columns, /* %5$s */
+        gated_view_name, /* %6$I */
+        sql_saga.__internal_qualified_name(table_oid), /* %7$L */
+        sql_saga.__internal_qualified_name(history_table_id) /* %8$L */
     );
     EXECUTE format('ALTER VIEW %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, view_name /* %2$I */, table_owner /* %3$I */);
+    EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', table_schema, view_name);
 
     EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I @> $1' $$, table_schema /* %1$I */, function_as_of_name /* %2$I */, view_name /* %3$I */, era_row.range_column_name /* %4$I */);
     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_as_of_name /* %2$I */, table_owner /* %3$I */);
@@ -109,8 +138,12 @@ BEGIN
     EXECUTE format($$ CREATE FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) RETURNS SETOF %1$I.%3$I LANGUAGE sql STABLE AS 'SELECT * FROM %1$I.%3$I WHERE %4$I && tstzrange($1, $2)' $$, table_schema /* %1$I */, function_from_to_name /* %2$I */, view_name /* %3$I */, era_row.range_column_name /* %4$I */);
     EXECUTE format('ALTER FUNCTION %1$I.%2$I(timestamp with time zone, timestamp with time zone) OWNER TO %3$I', table_schema /* %1$I */, function_from_to_name /* %2$I */, table_owner /* %3$I */);
 
-    -- Note: Privileges on history objects are propagated automatically by the
-    -- health_checks() event trigger when GRANT/REVOKE is issued on the base table.
+    -- The as-of functions read B_with_history as the caller. PUBLIC EXECUTE is granted explicitly,
+    -- because hardened databases revoke the default (ALTER DEFAULT PRIVILEGES ... FROM PUBLIC).
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(timestamp with time zone) TO PUBLIC', table_schema, function_as_of_name);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(timestamp with time zone, timestamp with time zone) TO PUBLIC', table_schema, function_between_name);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(timestamp with time zone, timestamp with time zone) TO PUBLIC', table_schema, function_between_symmetric_name);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %I.%I(timestamp with time zone, timestamp with time zone) TO PUBLIC', table_schema, function_from_to_name);
 
     INSERT INTO sql_saga.system_versioning (table_schema, table_name, era_name, history_schema_name, history_table_name, view_schema_name, view_table_name, func_as_of, func_between, func_between_symmetric, func_from_to)
     VALUES (
@@ -122,6 +155,9 @@ BEGIN
         format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_between_symmetric_name /* %I */),
         format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_from_to_name /* %I */)
     );
+
+    -- Row-level security of the history: fixed policies, FORCE as on the base, copies of B's policies.
+    PERFORM sql_saga.__internal_sync_history_policies(table_oid);
 END;
 $function$;
 

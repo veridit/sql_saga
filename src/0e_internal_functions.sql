@@ -25,8 +25,15 @@ DECLARE
 BEGIN
     SELECT array_agg(command_tag) INTO tags FROM pg_event_trigger_ddl_commands();
 
-    -- For GRANT, REVOKE, and ALTER TABLE, we must always proceed, because objid is unreliable.
-    IF 'GRANT' = ANY(tags) OR 'REVOKE' = ANY(tags) OR 'ALTER TABLE' = ANY(tags) THEN
+    -- GRANT and REVOKE never need any action: privileges on derived objects are decided at access
+    -- time by the caller's rights on the base table (tmp/design_final.md). Answer quickly.
+    IF tags <@ ARRAY['GRANT', 'REVOKE', 'ALTER DEFAULT PRIVILEGES'] THEN
+        RETURN false;
+    END IF;
+
+    -- For ALTER TABLE we must always proceed, because objid is unreliable.
+    -- Policy DDL is examined by health_checks, which looks up the policy's table.
+    IF 'ALTER TABLE' = ANY(tags) OR 'CREATE POLICY' = ANY(tags) OR 'ALTER POLICY' = ANY(tags) THEN
         RETURN true;
     END IF;
 
@@ -41,6 +48,7 @@ BEGIN
            -- Also check system_versioning objects (history table, view)
            OR EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.history_schema_name, sv.history_table_name) = (n.nspname, c.relname))
            OR EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.view_schema_name, sv.view_table_name) = (n.nspname, c.relname))
+           OR EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)) = (n.nspname, c.relname))
     );
 END;
 $function$;
