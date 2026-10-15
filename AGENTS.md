@@ -38,6 +38,7 @@ make test TESTS="001_install YOUR_TEST"; make diff-fail-first | head -n 30
 make install && make test; make diff-fail-all              # Run all tests
 make install && make test fast; make diff-fail-all         # Run fast tests (exclude benchmarks)
 make install && make test benchmark; make diff-fail-all    # Run benchmark tests only
+devops/benchmark_settings.sh enable|disable|status       # Server settings benchmarks need (pg_stat_monitor, max_locks 256); restarts PostgreSQL
 make install && make test TESTS="001_install 052_era"; make diff-fail-all  # Run specific tests
 
 # View test diffs

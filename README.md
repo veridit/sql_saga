@@ -20,7 +20,7 @@ In the context of this extension, a **Saga** represents the complete history of 
 - Built upon the robust and reliable PostgreSQL database system.
 - Supports change tracking and delete in accordance with NSO requirements.
 - Supports using pg_stat_monitor for stats.
-  On macOs use `brew install pgxnclient` and `USE_PGXS=1 pgxn install --verbose --pg_config /Applications/Postgres.app/Contents/Versions/18/bin/pg_config pg_stat_monitor` where you specify the version you wish to install for, here it was 18. Then activate with `echo "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_monitor';" | psql` and restart the instance using the PostgresApp. Also run `echo 'CREATE EXTENSION pg_stat_monitor;' | psql sql_saga_regress` to install it for the test database.
+  On macOs use `brew install pgxnclient` and `USE_PGXS=1 pgxn install --verbose --pg_config /Applications/Postgres.app/Contents/Versions/18/bin/pg_config pg_stat_monitor` where you specify the version you wish to install for, here it was 18. Then run `devops/benchmark_settings.sh enable`: it preloads pg_stat_monitor, sets `max_locks_per_transaction = 256` (needed by the scaling benchmark) and restarts the server. `devops/benchmark_settings.sh disable` reverts both, `status` shows them. The test runner loads the extension into the test database itself.
 - Supports using auto_explain for capturing query plans of internal statements (useful for performance debugging).
   Add to shared_preload_libraries: `psql -c "ALTER SYSTEM SET shared_preload_libraries = 'pg_stat_monitor, auto_explain';"` and restart PostgreSQL. Then enable in your session:
   ```sql
