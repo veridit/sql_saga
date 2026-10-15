@@ -578,6 +578,18 @@ FUNCTION drop_system_versioning(
 SECURITY DEFINER
 ```
 
+### rebuild_system_versioning_views
+
+> Rebuilds the views and as-of query functions of a system-versioned table from the current base and history columns. Columns are matched by name; history may have additional columns. without_columns temporarily omits named columns so dependent columns can be changed manually.
+
+```sql
+FUNCTION rebuild_system_versioning_views(
+    table_oid regclass,
+    without_columns name[] DEFAULT '{}'::name[]
+) RETURNS void
+SECURITY INVOKER
+```
+
 ### set_system_time_era_excluded_columns
 
 > Sets the list of columns to be excluded from system versioning. Changes to these columns will not create a new history record.

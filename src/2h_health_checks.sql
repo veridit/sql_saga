@@ -51,8 +51,10 @@ BEGIN
         CROSS JOIN LATERAL UNNEST(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (fn)
         WHERE NOT EXISTS (
             SELECT FROM pg_catalog.pg_proc AS p
-            WHERE p.oid = u.fn::regprocedure
+            WHERE p.oid = to_regprocedure(u.fn)
         )
+          -- rebuild_system_versioning_views drops and recreates them.
+          AND NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
     LOOP
         RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
             r.fn, r.table_oid;
@@ -111,7 +113,8 @@ BEGIN
         FROM sql_saga.system_versioning AS sv
         JOIN pg_class AS t ON t.relname = sv.table_name
         JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
-        JOIN pg_proc AS p ON p.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
+        JOIN pg_proc AS p ON p.oid IN (to_regprocedure(sv.func_as_of), to_regprocedure(sv.func_between),
+                                       to_regprocedure(sv.func_between_symmetric), to_regprocedure(sv.func_from_to))
         WHERE t.relowner <> p.proowner
     LOOP
         EXECUTE cmd;

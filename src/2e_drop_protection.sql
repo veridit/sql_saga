@@ -437,7 +437,7 @@ BEGIN
             r.object_identity, r.table_oid;
     END LOOP;
 
-    /* Reject dropping the history view directly. */
+    /* Reject dropping the history view directly (except while sql_saga rebuilds the family's views). */
     FOR r IN
         SELECT dobj.object_identity, format('%I.%I', sv.table_schema, sv.table_name)::regclass AS table_oid
         FROM sql_saga.system_versioning AS sv
@@ -446,19 +446,21 @@ BEGIN
                 AND (dobj.address_names[1], dobj.address_names[2]) IN (
                     (sv.view_schema_name, sv.view_table_name),
                     (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))
+        WHERE NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop view "%" because it is used in SYSTEM VERSIONING for table "%"',
             r.object_identity, r.table_oid;
     END LOOP;
 
-    /* Reject dropping the query functions directly. */
+    /* Reject dropping the query functions directly (except while sql_saga rebuilds them). */
     FOR r IN
         SELECT dobj.object_identity, format('%I.%I', sv.table_schema, sv.table_name)::regclass AS table_oid
         FROM sql_saga.system_versioning AS sv
         JOIN pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj
                 ON dobj.object_type = 'function'
                 AND dobj.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])
+        WHERE NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
         ORDER BY dobj.ordinality
     LOOP
         RAISE EXCEPTION 'cannot drop function "%" because it is used in SYSTEM VERSIONING for table "%"',

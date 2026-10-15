@@ -49,6 +49,8 @@
 #include "datatype/timestamp.h"
 #include "lib/stringinfo.h"
 #include "nodes/bitmapset.h"
+#include "nodes/makefuncs.h"
+#include "parser/parse_func.h"
 #include "utils/date.h"
 #if (PG_VERSION_NUM >= 100000)
 #include "utils/fmgrprotos.h"
@@ -471,6 +473,157 @@ GetHistoryTable(Relation rel)
 	return result;
 }
 
+
+/*
+ * Columns of a system-versioned table and its history correspond by NAME, never by position
+ * (tmp/design_manual_schema_changes.md). The helpers below find live columns by name, refuse a
+ * history that cannot take every base value, and build the history row.
+ */
+static AttrNumber
+FindLiveAttributeByName(TupleDesc desc, const char *name)
+{
+	int			i;
+
+	for (i = 0; i < desc->natts; i++)
+	{
+		Form_pg_attribute attr = TupleDescAttr(desc, i);
+
+		if (!attr->attisdropped && strcmp(NameStr(attr->attname), name) == 0)
+			return attr->attnum;
+	}
+	return InvalidAttrNumber;
+}
+
+/*
+ * A column type as written in DDL. Use the same SQL helper as rebuild-time validation so type
+ * qualification and COLLATE rendering are deterministic and independent of the caller's search_path.
+ */
+static char *
+FormatColumnType(Form_pg_attribute attr)
+{
+	Oid			argtypes[3] = {OIDOID, INT4OID, OIDOID};
+	Oid			function_oid;
+	Datum		result;
+
+	function_oid = LookupFuncName(list_make2(makeString("sql_saga"),
+										 makeString("__internal_column_type_sql")),
+							 3, argtypes, false);
+	result = OidFunctionCall3(function_oid,
+						  ObjectIdGetDatum(attr->atttypid),
+						  Int32GetDatum(attr->atttypmod),
+						  ObjectIdGetDatum(attr->attcollation));
+	return TextDatumGetCString(result);
+}
+
+/* Relation name as the caller's search_path shows it (as regclass output does). */
+static char *
+VisibleRelationName(Relation rel)
+{
+	return DatumGetCString(DirectFunctionCall1(regclassout, ObjectIdGetDatum(RelationGetRelid(rel))));
+}
+
+/* Schema-qualified relation name, for DDL in hints that must work whatever the search_path. */
+static char *
+QualifiedRelationName(Relation rel)
+{
+	return quote_qualified_identifier(get_namespace_name(RelationGetNamespace(rel)),
+									  RelationGetRelationName(rel));
+}
+
+static void
+CheckHistoryTupleCompatibility(Relation base_rel, Relation history_rel)
+{
+	TupleDesc	base_desc = RelationGetDescr(base_rel);
+	TupleDesc	history_desc = RelationGetDescr(history_rel);
+	int			i;
+
+	for (i = 0; i < base_desc->natts; i++)
+	{
+		Form_pg_attribute battr = TupleDescAttr(base_desc, i);
+		Form_pg_attribute hattr;
+		AttrNumber	history_attnum;
+		char	   *base_type;
+		char	   *rebuild_call;
+
+		if (battr->attisdropped)
+			continue;
+
+		history_attnum = FindLiveAttributeByName(history_desc, NameStr(battr->attname));
+		if (history_attnum != InvalidAttrNumber)
+		{
+			hattr = TupleDescAttr(history_desc, history_attnum - 1);
+			if (hattr->atttypid == battr->atttypid &&
+				hattr->atttypmod == battr->atttypmod &&
+				hattr->attcollation == battr->attcollation)
+				continue;
+		}
+		else
+			hattr = NULL;
+
+		base_type = FormatColumnType(battr);
+		rebuild_call = psprintf("SELECT sql_saga.rebuild_system_versioning_views(%s);",
+								quote_literal_cstr(QualifiedRelationName(base_rel)));
+
+		if (hattr == NULL)
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("sql_saga: column %s of base table %s is missing from history table %s",
+							quote_identifier(NameStr(battr->attname)),
+							VisibleRelationName(base_rel), VisibleRelationName(history_rel)),
+					 errhint("Run: ALTER TABLE %s ADD COLUMN %s %s; %s",
+							 QualifiedRelationName(history_rel),
+							 quote_identifier(NameStr(battr->attname)), base_type, rebuild_call)));
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("sql_saga: column %s has type %s in base table %s but type %s in history table %s",
+							quote_identifier(NameStr(battr->attname)), base_type,
+							VisibleRelationName(base_rel), FormatColumnType(hattr),
+							VisibleRelationName(history_rel)),
+					 errhint("Run: ALTER TABLE %s ALTER COLUMN %s TYPE %s; %s",
+							 QualifiedRelationName(history_rel),
+							 quote_identifier(NameStr(battr->attname)), base_type, rebuild_call)));
+	}
+}
+
+/*
+ * The history row for a base row: each live history column takes the base column of the same
+ * name, history-only columns are NULL (no default is applied), the range column gets range_value.
+ * Assumes CheckHistoryTupleCompatibility passed.
+ */
+static HeapTuple
+ProjectBaseTupleToHistoryByName(HeapTuple base_tuple, TupleDesc base_desc, TupleDesc history_desc,
+								AttrNumber history_range_num, Datum range_value)
+{
+	Datum	   *values;
+	bool	   *nulls;
+	int			i;
+	HeapTuple	result;
+
+	values = (Datum *) palloc0(history_desc->natts * sizeof(Datum));
+	nulls = (bool *) palloc(history_desc->natts * sizeof(bool));
+
+	for (i = 0; i < history_desc->natts; i++)
+	{
+		Form_pg_attribute hattr = TupleDescAttr(history_desc, i);
+		AttrNumber	base_attnum;
+
+		nulls[i] = true;
+		if (hattr->attisdropped)
+			continue;
+		base_attnum = FindLiveAttributeByName(base_desc, NameStr(hattr->attname));
+		if (base_attnum != InvalidAttrNumber)
+			values[i] = heap_getattr(base_tuple, base_attnum, base_desc, &nulls[i]);
+	}
+
+	values[history_range_num - 1] = range_value;
+	nulls[history_range_num - 1] = false;
+
+	result = heap_form_tuple(history_desc, values, nulls);
+	pfree(values);
+	pfree(nulls);
+	return result;
+}
 
 static void
 insert_into_history(Relation history_rel, HeapTuple history_tuple)
@@ -1735,9 +1888,6 @@ write_history(PG_FUNCTION_ARGS)
 		TupleDesc	history_tupledesc;
 		HeapTuple	history_tuple;
 		int16		history_range_num;
-		TupleConversionMap   *map;
-		Datum	   *values;
-		bool	   *nulls;
 		RangeBound	hist_lower, hist_upper;
 
 		history_rel = table_open(history_id, RowExclusiveLock);
@@ -1748,38 +1898,12 @@ write_history(PG_FUNCTION_ARGS)
 							errmsg("column \"%s\" does not exist in history table \"%s\"",
 								   range_column_name, RelationGetRelationName(history_rel))));
 
-#if (PG_VERSION_NUM < 130000)
-		map = convert_tuples_by_name(tupledesc, history_tupledesc, gettext_noop("could not convert row type"));
-#else
-		map = convert_tuples_by_name(tupledesc, history_tupledesc);
-#endif
-		if (map != NULL)
-		{
-#if (PG_VERSION_NUM < 120000)
-			history_tuple = do_convert_tuple(old_row, map);
-#else
-			history_tuple = execute_attr_map_tuple(old_row, map);
-#endif
-			free_conversion_map(map);
-		}
-		else
-		{
-			history_tuple = old_row;
-			history_tupledesc = tupledesc;
-		}
-
-		values = (Datum *) palloc(history_tupledesc->natts * sizeof(Datum));
-		nulls = (bool *) palloc(history_tupledesc->natts * sizeof(bool));
-
-		heap_deform_tuple(history_tuple, history_tupledesc, values, nulls);
-		
 		/*
-		 * values[] is in the history table's layout, which can differ from the base table's (e.g. a
-		 * column dropped from the base before versioning leaves a slot the history does not have),
-		 * so the range column is read at its position in the history table.
+		 * Columns correspond by name (tmp/design_manual_schema_changes.md). Every base column
+		 * must be in the history with the same type, typmod and collation; otherwise fail before
+		 * writing anything, never leaving a base value out. History-only columns get NULL.
 		 */
-		range = DatumGetRangeTypeP(values[history_range_num-1]);
-		range_deserialize(range_cache, range, &lower, &upper, &is_null);
+		CheckHistoryTupleCompatibility(rel, history_rel);
 
 		hist_lower = lower;
 		hist_upper.val = TRANSACTION_TSTZ;
@@ -1787,12 +1911,9 @@ write_history(PG_FUNCTION_ARGS)
 		hist_upper.inclusive = false;
 		hist_upper.lower = false;
 
-		values[history_range_num-1] = PointerGetDatum(range_serialize(range_cache, &hist_lower, &hist_upper, false, NULL));
-		nulls[history_range_num-1] = false;
-		history_tuple = heap_form_tuple(history_tupledesc, values, nulls);
-
-		pfree(values);
-		pfree(nulls);
+		history_tuple = ProjectBaseTupleToHistoryByName(old_row, tupledesc, history_tupledesc,
+			history_range_num,
+			PointerGetDatum(range_serialize(range_cache, &hist_lower, &hist_upper, false, NULL)));
 
 		insert_into_history(history_rel, history_tuple);
 

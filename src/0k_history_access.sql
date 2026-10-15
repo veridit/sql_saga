@@ -117,6 +117,22 @@ AS $__internal_history_family$
 $__internal_history_family$;
 
 /*
+ * True while sql_saga.__internal_rebuild_system_versioning_views replaces the views and as-of
+ * functions of this base table (transaction-local setting). drop_protection and health_checks let
+ * exactly those objects of exactly this family be dropped and recreated; nothing else is exempt.
+ * Like sql_saga.managing_history_policies, a caller could set it by hand: it only lets the owner
+ * of these objects, who could change them anyway, skip a guard against mistakes.
+ */
+CREATE FUNCTION sql_saga.__internal_rebuilding_system_versioning_views(table_oid oid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_rebuilding_system_versioning_views$
+    SELECT coalesce(current_setting('sql_saga.rebuilding_system_versioning_views', true) = table_oid::text, false);
+$__internal_rebuilding_system_versioning_views$;
+
+/*
  * Desired policy copies on B_history: one per SELECT/ALL policy on B. The USING expression is the
  * base policy's, deparsed with column names, so it is resolved by name on the history table.
  */
@@ -296,6 +312,21 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', fam.history_oid::regclass
             USING HINT = format('Drop policy "%s" on "%s" and create it on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
                                 p.polname, fam.history_oid::regclass, fam.base_oid::regclass);
+    END LOOP;
+
+    -- Validate every desired copy before changing anything, so that a refusal reports only the
+    -- refusal: no NOTICE describes a change that the error then undoes.
+    FOR d IN
+        SELECT c.base_policy, bp.oid AS base_policy_oid
+        FROM sql_saga.__internal_history_policy_copies(fam.base_oid) AS c
+        JOIN pg_catalog.pg_policy AS bp ON bp.polrelid = fam.base_oid AND bp.polname = c.base_policy
+        ORDER BY c.base_policy
+    LOOP
+        missing_column := sql_saga.__internal_policy_missing_history_column(d.base_policy_oid, fam.history_oid);
+        IF missing_column IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: policy % on % references column %, which % lacks',
+                d.base_policy, fam.base_oid::regclass, missing_column, fam.history_oid::regclass;
+        END IF;
     END LOOP;
 
     -- While on, the event triggers neither refuse nor re-synchronize the policy DDL issued below

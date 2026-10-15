@@ -690,6 +690,154 @@ This validation is implemented using a `CHECK` constraint on the regular table, 
 #### System Versioning (History Tables)
 `sql_saga` provides full support for system-versioned tables, creating a complete, queryable history of every row. This tracks the state of data over time ("What did this record look like last year?"). When this feature is enabled, the columns `system_valid_from` and `system_valid_until` are added to the table.
 
+##### Manual schema changes
+
+For a system-versioned table, `sql_saga` does not propagate column changes between the base table and its history table. Change both tables explicitly, then rebuild the derived views and query functions:
+
+```sql
+sql_saga.rebuild_system_versioning_views(
+    table_oid regclass,
+    without_columns name[] DEFAULT '{}'
+) RETURNS void
+```
+
+Columns correspond by name, not by physical position. Every base-table column must exist in the history table with the same type, typmod, domain, and collation. The history table may have additional columns. `<table>_with_history` exposes base columns in base-table order, followed by history-only columns in history-table order.
+
+`without_columns` omits named columns from the rebuilt views and functions for that call only. It does not alter either table, change the history writer, or store configuration. Use it to remove view dependencies before dropping, renaming, or changing a column. A later call without that name includes the column again if it still exists.
+
+The caller must be a member of the base table's owner role. A successful rebuild reports exactly:
+
+```text
+NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table ms
+```
+
+#### Add a column
+
+Add the column to the base and history tables with compatible definitions, then rebuild:
+
+```sql
+ALTER TABLE employees ADD COLUMN department text;
+ALTER TABLE employees_history ADD COLUMN department text;
+SELECT sql_saga.rebuild_system_versioning_views('employees');
+```
+
+Until the history column exists, inserts can succeed because they do not write an old row, but an update or delete that needs to write history fails before changing the base row. Rebuild also refuses the incompatible pair. The regression-tested text is:
+
+```text
+ERROR:  sql_saga: column missing_in_history of base table ms is missing from history table ms_history
+HINT:  Run: ALTER TABLE public.ms_history ADD COLUMN missing_in_history integer; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
+```
+
+#### Drop a column
+
+First rebuild without the column so the derived objects no longer depend on it. Then drop it from both tables and rebuild normally:
+
+```sql
+SELECT sql_saga.rebuild_system_versioning_views(
+    'employees',
+    ARRAY['salary']::name[]
+);
+ALTER TABLE employees DROP COLUMN salary;
+ALTER TABLE employees_history DROP COLUMN salary;
+SELECT sql_saga.rebuild_system_versioning_views('employees');
+```
+
+If you want to retain old values, omit the history-table `DROP COLUMN`. The column then becomes history-only. It remains visible in `employees_with_history`, with past values for history rows and `NULL` for current rows.
+
+Dropping a history-only column uses the same pattern: rebuild with that column in `without_columns`, drop it from the history table, then rebuild normally.
+
+#### Change a column type
+
+Remove the column from the derived objects, change both table definitions, then rebuild it back in:
+
+```sql
+SELECT sql_saga.rebuild_system_versioning_views(
+    'employees',
+    ARRAY['code']::name[]
+);
+ALTER TABLE employees ALTER COLUMN code TYPE varchar(40);
+ALTER TABLE employees_history ALTER COLUMN code TYPE varchar(40);
+SELECT sql_saga.rebuild_system_versioning_views('employees');
+```
+
+You may rebuild again with `without_columns` while the two definitions differ, but writes that need history still fail. `without_columns` only shapes the views and functions. It never permits the history writer to omit a base value. The exact tested mismatch is:
+
+```text
+ERROR:  sql_saga: column code has type character varying(40) in base table ms but type character varying(20) in history table ms_history
+HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN code TYPE character varying(40); SELECT sql_saga.rebuild_system_versioning_views('public.ms');
+```
+
+Typmod and collation differences are also mismatches. For example:
+
+```text
+ERROR:  sql_saga: column label has type text COLLATE "C" in base table ms but type text COLLATE "POSIX" in history table ms_history
+HINT:  Run: ALTER TABLE public.ms_history ALTER COLUMN label TYPE text COLLATE "C"; SELECT sql_saga.rebuild_system_versioning_views('public.ms');
+```
+
+#### Rename a column
+
+First remove the old name from the derived objects. Rename the history column, then the base column, then rebuild normally:
+
+```sql
+SELECT sql_saga.rebuild_system_versioning_views(
+    'employees',
+    ARRAY['tenant']::name[]
+);
+ALTER TABLE employees_history RENAME COLUMN tenant TO account;
+ALTER TABLE employees RENAME COLUMN tenant TO account;
+SELECT sql_saga.rebuild_system_versioning_views('employees');
+```
+
+The order matters when a base-table row-level security policy uses the column. Rename the history column first. If the base column is renamed first, policy synchronization fails closed because the copied policy cannot yet reference the new name in the history table. The exact tested error is:
+
+```text
+ERROR:  sql_saga: policy tenant_a on rt references column account, which rt_history lacks
+```
+
+After both renames, rebuilding recreates the views and as-of functions and synchronizes the copied history policy with the new column name.
+
+#### History-only columns
+
+You can add a column only to the history table and expose it through the history view:
+
+```sql
+ALTER TABLE employees_history ADD COLUMN legacy_note text;
+UPDATE employees_history
+SET legacy_note = 'imported record'
+WHERE id = 42;
+SELECT sql_saga.rebuild_system_versioning_views('employees');
+```
+
+Current rows and new history rows projected from the base table receive `NULL` for history-only columns. A history-only column's `DEFAULT` is not applied by the history writer. Existing rows may show a default because PostgreSQL applied it when the column was added, while subsequently written history rows still receive `NULL`.
+
+Constraints remain your responsibility. For example, a history-only `NOT NULL` column that cannot accept `NULL` makes a history write fail with PostgreSQL's own error:
+
+```text
+ERROR:  null value in column "must_have" of relation "ms_history" violates not-null constraint
+```
+
+#### Dependent user objects
+
+Rebuilding drops and recreates `<table>_with_history`, the internal history gate view, and the four as-of functions without `CASCADE`. If one of your views, functions, or other objects depends on them, PostgreSQL refuses the rebuild with its normal dependency error. `sql_saga` never uses `CASCADE`. Drop and recreate your dependent objects explicitly around the rebuild. The regression test confirms SQLSTATE `2BP01`:
+
+```text
+NOTICE:  rebuild refused: SQLSTATE 2BP01
+```
+
+#### Argument and ownership errors
+
+The implemented checks include these exact regression-tested messages:
+
+```text
+ERROR:  no table name specified
+ERROR:  table ms_plain does not have SYSTEM VERSIONING
+ERROR:  must be owner of table ms
+ERROR:  sql_saga: without_columns must not contain NULL
+ERROR:  sql_saga: column payload is listed more than once in without_columns
+ERROR:  sql_saga: column no_such_column does not exist in either ms or ms_history
+ERROR:  sql_saga: cannot exclude system time column system_valid_range from SYSTEM VERSIONING views for table ms
+```
+
 ### Level 3: The Deep Dive - Complete API Reference
 
 For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./doc/api.md).
