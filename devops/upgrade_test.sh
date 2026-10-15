@@ -454,9 +454,11 @@ SELECT replace(line,(SELECT value FROM token),'<token>') FROM lines ORDER BY 1;
 SQL
 }
 
-# Schema dump of the user side. raw: only volatile header lines removed.
+# Schema dump of the user side. Remove only volatile headers. CREATE POLICY statements are sorted at
+# the comparison site because their pg_dump order follows object OIDs. ACL statements remain intact:
+# omitting them would hide pg_init_privs defects that suppress GRANT/REVOKE output.
 dump_schema() {
-    pg_dump -s -d "$1" 2>>"$LOG" | grep -v -E '^-- Dumped (from|by)|^\\(un)?restrict ' 
+    pg_dump -s -d "$1" 2>>"$LOG" | grep -v -E '^-- Dumped (from|by)|^\\(un)?restrict '
 }
 
 # Token-normalizing sed script: installation token -> <token>, policy copy -> copy-of-<base policy>.
@@ -566,6 +568,25 @@ tenant_isolation() {
 }
 ISOLATION_EXPECTED="${PREFIX}_r1:1,1 ${PREFIX}_regular:2,2 ${PREFIX}_admin:2,2 ${PREFIX}_none:denied"
 
+# Extension initial privileges on a managed user object are valid only while that object is an
+# extension member. The upgrade must leave all family objects and FK helpers detached and free of
+# privtype='e' rows, just like a fresh installation.
+nonmember_managed_initprivs() {
+    q "$1" "WITH managed(classoid,objoid) AS (
+        SELECT 'pg_class'::regclass::oid, x.oid::oid FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL unnest(ARRAY[
+            to_regclass(format('%I.%I',sv.history_schema_name,sv.history_table_name)),
+            to_regclass(format('%I.%I',sv.history_schema_name,sv.history_table_name || '_gated')),
+            to_regclass(format('%I.%I',sv.view_schema_name,sv.view_table_name))]) AS x(oid)
+        UNION SELECT 'pg_class'::regclass::oid, to_regclass(format('%I.%I',uv.view_schema,uv.view_name))::oid FROM sql_saga.updatable_view AS uv
+        UNION SELECT 'pg_proc'::regclass::oid, x.oid::oid FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL unnest(ARRAY[to_regprocedure(sv.func_as_of),to_regprocedure(sv.func_between),to_regprocedure(sv.func_between_symmetric),to_regprocedure(sv.func_from_to)]) AS x(oid)
+        UNION SELECT 'pg_proc'::regclass::oid, to_regprocedure(fk.fk_helper_function)::oid FROM sql_saga.foreign_keys AS fk WHERE fk.type='regular_to_temporal'
+    ) SELECT count(*) FROM pg_init_privs AS i JOIN managed AS m ON (m.classoid,m.objoid)=(i.classoid,i.objoid)
+      WHERE i.privtype='e' AND NOT EXISTS (SELECT FROM pg_depend AS d JOIN pg_extension AS e ON e.oid=d.refobjid
+        WHERE e.extname='sql_saga' AND (d.classid,d.objid,d.deptype)=(i.classoid,i.objoid,'e'::\"char\"))"
+}
+
 # ---------------------------------------------------------------------------------------------
 # Section 5.5 structural assertions: one line per violated invariant.
 # ---------------------------------------------------------------------------------------------
@@ -659,7 +680,8 @@ BEGIN
             IF obj.owner <> fam.owner THEN
                 INSERT INTO violation (msg) VALUES (format('%s is owned by %s, not by the base owner %s', obj.what, obj.owner::regrole, fam.owner::regrole));
             END IF;
-            SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type, ',' ORDER BY 1)
+            SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type, ','
+                              ORDER BY CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, a.privilege_type)
             INTO acl FROM aclexplode(COALESCE(obj.acl, acldefault(obj.k, obj.owner))) AS a WHERE a.grantee <> obj.owner;
             IF acl IS DISTINCT FROM obj.want THEN
                 INSERT INTO violation (msg) VALUES (format('%s ACL is {%s}, expected the fixed {%s}', obj.what, acl, obj.want));
@@ -745,7 +767,8 @@ BEGIN
         IF obj.vowner <> obj.bowner THEN
             INSERT INTO violation (msg) VALUES (format('%s view %s is owned by %s, not by the base owner', obj.view_type, obj.vid::regclass, obj.vowner::regrole));
         END IF;
-        SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type, ',' ORDER BY 1)
+        SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type, ','
+                          ORDER BY CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, a.privilege_type)
         INTO acl FROM aclexplode(COALESCE(obj.vacl, acldefault('r', obj.vowner))) AS a WHERE a.grantee <> obj.vowner;
         IF acl IS DISTINCT FROM rw THEN
             INSERT INTO violation (msg) VALUES (format('%s view %s ACL is {%s}, expected the fixed {%s}', obj.view_type, obj.vid::regclass, acl, rw));
@@ -810,7 +833,7 @@ SELECT 'acl_unchanged=' || ((SELECT a FROM acl0) = (SELECT string_agg(c.oid::reg
 ROLLBACK;
 SQL
 )
-    check "GRANT on the base takes effect at once and leaves derived ACLs alone" "n=4,acl_unchanged=t" "$(printf '%s\n' "$out" | paste -sd, -)"
+    check "GRANT on the base takes effect at once and leaves derived ACLs alone" "n=4,acl_unchanged=true" "$(printf '%s\n' "$out" | paste -sd, -)"
     out=$(sql "$db" <<SQL
 BEGIN;
 REVOKE SELECT ON sv FROM ${PREFIX}_r1;
@@ -933,7 +956,7 @@ SQL
 )
     check "INSERT-only regular-FK role inserts a valid reference without parent SELECT" "blind_valid" "$(printf '%s\n' "$out" | grep -m1 -E 'blind_valid|ERROR')"
     r=$(as_role "$db" ${PREFIX}_blind "INSERT INTO rchild VALUES (21, 999)")
-    case "$r" in *"violates foreign key"*) ok "INSERT-only regular-FK role gets the check violation for a missing key" ;; *"permission denied"*) fail "regular FK leaked a parent SELECT requirement: '$r'" ;; *) fail "regular FK missing-key result was not its check violation: '$r'" ;; esac
+    case "$r" in *"violates check constraint"*) ok "INSERT-only regular-FK role gets the check violation for a missing key" ;; *"permission denied"*) fail "regular FK leaked a parent SELECT requirement: '$r'" ;; *) fail "regular FK missing-key result was not its check violation: '$r'" ;; esac
 
     check "fixtures cover every unique_key_type enum value" "" \
         "$(q "$db" "SELECT coalesce(string_agg(v::text,',' ORDER BY v::text),'') FROM unnest(enum_range(NULL::sql_saga.unique_key_type)) AS v WHERE NOT EXISTS (SELECT FROM sql_saga.unique_keys AS u WHERE u.key_type=v)")"
@@ -1107,6 +1130,14 @@ if [ -n "$OLD_LIB" ]; then
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
 
+# Clone the genuine 1.0 fixture, then replace its generated helper with a body that matched the old
+# permissive validator. Exact validation must reject it before any update mutation.
+TAMPER=${PREFIX}_tampered_helper
+createdb -T "$OLD" "$TAMPER" >>"$LOG" 2>&1 || die "createdb $TAMPER from $OLD"
+CREATED_DBS+=("$TAMPER")
+psql -X -q -d postgres -c "ALTER DATABASE $TAMPER SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $TAMPER"
+q "$TAMPER" "CREATE OR REPLACE FUNCTION public.par_id_exists(integer) RETURNS boolean LANGUAGE sql STABLE STRICT AS 'SELECT EXISTS (SELECT 1 FROM public.par AS uk WHERE uk.id = \$1) OR true;'" >/dev/null
+
 # ---------------------------------------------------------------------------------------------
 section "preflight"
 # ---------------------------------------------------------------------------------------------
@@ -1155,6 +1186,20 @@ out=$(q "$HP" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
 check "update succeeds once the user policy is removed" "$NEW_VERSION" "$(q "$HP" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 
 # ---------------------------------------------------------------------------------------------
+section "atomic failure (tampered regular-FK helper)" "not meaningful (dependent)"
+# ---------------------------------------------------------------------------------------------
+tamper_before="$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
+out=$(q "$TAMPER" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
+case "$out" in
+    *par_id_exists*exact*helper*) ok "update rejects the regex-matching helper body and names the function" ;;
+    ERROR*) fail "update rejects the tampered helper, but without the actionable exact-helper error: $out" ;;
+    *) fail "update succeeded despite the tampered regular-FK helper body" ;;
+esac
+check "tampered-helper failure leaves extversion 1.0" "1.0" "$(q "$TAMPER" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "tampered-helper failure is atomic" "$tamper_before" "$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
+check "tampered helper body remains untouched after refusal" "t" "$(q "$TAMPER" "SELECT prosrc LIKE '%OR true%' FROM pg_proc WHERE oid='public.par_id_exists(integer)'::regprocedure")"
+
+# ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")
@@ -1180,10 +1225,11 @@ section "structure after upgrade (5.5)" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
+check "upgrade leaves no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$OLD")"
 check "history policy copies in sync after upgrade" "0" "$(policy_copy_faults "$OLD")"
 if [ "$(acl_digest "$OLD")" != "$OLD_DIGEST" ]; then ok "derived ACLs were normalized (ACL digest changed)"; else fail "ACL digest unchanged by the update: mirrored and direct derived grants survive"; fi
 check "direct derived grants to saga_up_none were removed" "f|f|f" \
-    "$(q "$OLD" "SELECT has_table_privilege('${PREFIX}_none', 'sv_with_history', 'SELECT') || '|' || has_table_privilege('${PREFIX}_none', 'fp__for_portion_of_valid', 'SELECT') || '|' || coalesce((SELECT proacl::text LIKE '%${PREFIX}_none=%' FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure), false)" | sed 's/true/t/g; s/false/f/g')"
+    "$(q "$OLD" "SELECT EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'sv_with_history'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'sv_with_history'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT proacl FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure), acldefault('f', (SELECT proowner FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'EXECUTE')" | sed 's/true/t/g; s/false/f/g')"
 
 # ---------------------------------------------------------------------------------------------
 section "behaviour after upgrade (5.6)" "not meaningful (dependent)"
@@ -1205,6 +1251,7 @@ else
 fi
 if [ $FRESH_OK = 1 ]; then
     assert_structure "$FRESH"
+    check "fresh install has no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$FRESH")"
     behaviour "$FRESH"
 fi
 if [ $UPGRADED = 0 ] || [ $FRESH_OK = 0 ]; then
@@ -1215,7 +1262,9 @@ for db in "$OLD" "$FRESH"; do
 	 semantic_snapshot "$db" >"$WORK/$db.semantic"
     token_sed "$db" >"$WORK/$db.sed" 2>/dev/null
     grep -q '^ERROR' "$WORK/$db.sed" && : >"$WORK/$db.sed"
-    dump_schema "$db" | sed -f "$WORK/$db.sed" >"$WORK/$db.schema.sql"
+    dump_schema "$db" | sed -f "$WORK/$db.sed" >"$WORK/$db.schema.unsorted"
+    grep -v -E '^CREATE POLICY' "$WORK/$db.schema.unsorted" >"$WORK/$db.schema.sql"
+    grep -E '^CREATE POLICY' "$WORK/$db.schema.unsorted" | LC_ALL=C sort >>"$WORK/$db.schema.sql"
 done
 if diff -u "$WORK/$FRESH.ext" "$WORK/$OLD.ext" >"$WORK/ext.diff"; then ok "extension objects identical (routines, bodies, ACLs, relations, types, event triggers, members)"
 else
@@ -1248,6 +1297,7 @@ out=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE
 if printf '%s\n' "$out" | grep -q '^ERROR'; then fail "re-running ALTER EXTENSION UPDATE fails: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
 else ok "re-running ALTER EXTENSION UPDATE is accepted"; fi
 check "re-running the update changes nothing" "$S1" "$(snap "$OLD")"
+check "reconciler rerun leaves no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$OLD")"
 out=$(sql "$OLD" <<'SQL'
 SET client_min_messages = notice;
 SELECT format('SELECT sql_saga.__internal_reconcile_system_versioning_family(%L::regclass)', format('%I.%I', sv.table_schema, sv.table_name))
@@ -1275,9 +1325,10 @@ SRC_TOKEN=$(q "$OLD" "SELECT token FROM sql_saga.installation")
 SRC_DIGEST=$(acl_digest "$OLD")
 prev="$OLD"
 for hop in 1 2; do
-    dst=${PREFIX}_old_rt$hop
+    serial_dst=${PREFIX}_old_rt${hop}_serial
     pg_dump -Fc -d "$prev" -f "$WORK/rt$hop.dump" 2>>"$LOG" || { fail "pg_dump of $prev"; break; }
     for variant in serial single_txn; do
+        dst=${PREFIX}_old_rt${hop}_${variant}
         new_db "$dst" "$EXT_ROOT"
         opts="--exit-on-error"
         [ $variant = single_txn ] && opts="$opts --single-transaction"
@@ -1294,7 +1345,7 @@ for hop in 1 2; do
         check "hop $hop $variant: tenant isolation" "$ISOLATION_EXPECTED" "$(tenant_isolation "$dst")"
         check "hop $hop $variant: ACL digest equals the upgraded source" "$SRC_DIGEST" "$(acl_digest "$dst")"
     done
-    prev=$dst
+    prev=$serial_dst
 done
 # pg_restore --clean over the upgraded database itself (teardown predicate must let the drops through)
 CLN=${PREFIX}_old_clean
