@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # upgrade_test.sh - prove that databases created with each released sql_saga baseline reach the
-# candidate design with one ALTER EXTENSION command. The v1.0 path deliberately relies on
-# PostgreSQL's 1.0--1.1--1.2 update chain, while the v1.1 path exercises 1.1--1.2 directly.
+# candidate design with one ALTER EXTENSION command. PostgreSQL selects the direct generated
+# 1.0--1.2 script for the v1.0 path, while the v1.1 path uses 1.1--1.2.
 # Design: tmp/design_drop_protection_v12_r4.md section 6 and the retained 1.1 upgrade assertions.
 #
 # What it does
@@ -95,7 +95,7 @@ if [ "${UPGRADE_PATH_RUNNER:-0}" != 1 ]; then
         fi
     done
 
-    for artifact in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
+    for artifact in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.0--$NEW_VERSION.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
         if [ -f "$CANDIDATE_DIR/$artifact" ]; then
             echo "    ok    candidate ships $artifact"
         else
@@ -1166,6 +1166,26 @@ else
     make -C "$BASELINE_BUILD" PG_CONFIG="$PG_CONFIG" "sql_saga--$BASELINE_VERSION.sql" >"$WORK/baseline.build.log" 2>&1 || die "building $BASELINE_TAG SQL"
     OLD_LIB=""
 fi
+if [ "$BASELINE_VERSION" = 1.0 ] && [ "$OLD_BINARIES" = 1 ]; then
+    V11_BUILD="$WORK/baseline-1.1"
+    mkdir -p "$V11_BUILD"
+    git -C "$REPO" archive v1.1 | tar -x -C "$V11_BUILD" || die "git archive v1.1"
+    make -C "$V11_BUILD" PG_CONFIG="$PG_CONFIG" >"$WORK/baseline-1.1.build.log" 2>&1 || die "building v1.1 for the query-function anchor (see $WORK/baseline-1.1.build.log)"
+    V11_LIB="$WORK/baseline-1.1-lib"
+    mkdir -p "$V11_LIB"
+    V11_C_LIB=$(find "$V11_BUILD" -maxdepth 1 \( -name 'sql_saga.so' -o -name 'sql_saga.dylib' \) -print | head -1)
+    [ -n "$V11_C_LIB" ] || die "no v1.1 C library for the query-function anchor"
+    cp "$V11_C_LIB" "$V11_LIB/"
+    V11_NATIVE_LIB=$(find "$V11_BUILD/native/target/release" -maxdepth 1 \( -name 'libsql_saga_native.so' -o -name 'libsql_saga_native.dylib' \) -print | head -1)
+    [ -n "$V11_NATIVE_LIB" ] || die "no v1.1 native library for the query-function anchor"
+    case "$V11_NATIVE_LIB" in
+        *.dylib) cp "$V11_NATIVE_LIB" "$V11_LIB/sql_saga_native.dylib" ;;
+        *.so) cp "$V11_NATIVE_LIB" "$V11_LIB/sql_saga_native.so" ;;
+        *) die "unrecognized v1.1 native library suffix: $V11_NATIVE_LIB" ;;
+    esac
+else
+    V11_LIB=""
+fi
 [ -s "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql" ] || die "$BASELINE_TAG produced no sql_saga--$BASELINE_VERSION.sql"
 cp "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql" "$EXT/" || die "copy $BASELINE_VERSION script"
 echo "    $BASELINE_VERSION script from $BASELINE_TAG: md5 $(md5 -q "$EXT/sql_saga--$BASELINE_VERSION.sql" 2>/dev/null || md5sum "$EXT/sql_saga--$BASELINE_VERSION.sql" | cut -d' ' -f1)"
@@ -1179,7 +1199,7 @@ else
     fail "no sql_saga.control in $CANDIDATE_DIR"; CANDIDATE_OK=0
     cp "$BASELINE_BUILD/sql_saga.control" "$EXT/"
 fi
-for f in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
+for f in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.0--$NEW_VERSION.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
     if [ -f "$CANDIDATE_DIR/$f" ]; then cp "$CANDIDATE_DIR/$f" "$EXT/"; ok "candidate ships $f"
     else fail "candidate ships $f (missing in $CANDIDATE_DIR)"; CANDIDATE_OK=0; fi
 done
@@ -1193,6 +1213,7 @@ else
     fail "candidate does not ship frozen sql_saga--$BASELINE_VERSION.sql"
 fi
 UPD="$EXT/sql_saga--1.1--$NEW_VERSION.sql"
+DIRECT_UPD="$EXT/sql_saga--1.0--$NEW_VERSION.sql"
 if [ -f "$UPD" ]; then
     body=$(sed -e 's/--.*$//' "$UPD")
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "update script contains BEGIN/COMMIT"; else ok "update script has no BEGIN/COMMIT"; fi
@@ -1201,6 +1222,37 @@ if [ -f "$UPD" ]; then
         fail "update script disables event triggers or changes session_replication_role"
     else ok "update script keeps event triggers on"; fi
 fi
+if [ -f "$DIRECT_UPD" ] && [ -f "$EXT/sql_saga--1.0--1.1.sql" ] && [ -f "$UPD" ]; then
+    FROZEN_GUARD="DO \$native_guard\$ BEGIN IF sql_saga.native_library_version() <> '1.1' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$native_guard\$;"
+    DIRECT_GUARD="DO \$native_guard\$ BEGIN IF sql_saga.native_library_version() <> '1.2' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.2', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.2 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$native_guard\$;"
+    guard_count=$(grep -Fxc "$FROZEN_GUARD" "$EXT/sql_saga--1.0--1.1.sql" || true)
+    check "frozen 1.0--1.1 script has exactly one retargetable native guard" "1" "$guard_count"
+    awk -v old="$FROZEN_GUARD" -v new="$DIRECT_GUARD" '{ if ($0 == old) print new; else print }' "$EXT/sql_saga--1.0--1.1.sql" >"$WORK/direct.retargeted"
+    diff -u "$EXT/sql_saga--1.0--1.1.sql" "$WORK/direct.retargeted" >"$WORK/direct.guard.diff" || true
+    guard_diff_lines=$(grep -c '^[-+]DO \$native_guard\$' "$WORK/direct.guard.diff" || true)
+    other_diff_lines=$(grep '^[-+]' "$WORK/direct.guard.diff" | grep -vE '^(---|\+\+\+|[-+]DO \$native_guard\$)' | wc -l | tr -d ' ')
+    check "retargeting changes exactly the old and new native-guard lines" "2|0" "$guard_diff_lines|$other_diff_lines"
+    cp "$WORK/direct.retargeted" "$WORK/direct.expected"
+    sed '1d' "$UPD" >>"$WORK/direct.expected"
+    if cmp -s "$WORK/direct.expected" "$DIRECT_UPD"; then
+        ok "direct 1.0--1.2 script is the frozen hop with only its native guard retargeted, followed by the headerless 1.1--1.2 body"
+    else
+        fail "direct 1.0--1.2 script differs from the exact approved composition"
+    fi
+    body=$(sed -e 's/--.*$//' "$DIRECT_UPD")
+    if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "direct update script contains BEGIN/COMMIT"; else ok "direct update script has no BEGIN/COMMIT"; fi
+    if printf '%s\n' "$body" | grep -qiw 'CASCADE'; then fail "direct update script uses CASCADE (never cascade into user objects)"; else ok "direct update script uses no CASCADE"; fi
+    if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
+        fail "direct update script disables event triggers or changes session_replication_role"
+    else ok "direct update script keeps event triggers on"; fi
+fi
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    EXPECTED_PATH='1.0--1.2'
+else
+    EXPECTED_PATH='1.1--1.2'
+fi
+ACTUAL_PATH=$(q postgres "SET extension_control_path = '$EXT_ROOT:\$system'; SELECT path FROM pg_extension_update_paths('sql_saga') WHERE source = '$BASELINE_VERSION' AND target = '$NEW_VERSION';")
+check "PostgreSQL chooses the approved $BASELINE_VERSION to $NEW_VERSION update path" "$EXPECTED_PATH" "$ACTUAL_PATH"
 if [ -f "$PREFLIGHT" ]; then ok "preflight script present ($PREFLIGHT)"; else fail "preflight script missing ($PREFLIGHT)"; fi
 
 # Construct a baseline-specific non-release artifact. It installs normally but deliberately lacks a
@@ -1296,8 +1348,21 @@ else
     createdb -T "$OLD" "$QUERY_ANCHOR" >>"$LOG" 2>&1 || die "createdb $QUERY_ANCHOR from $OLD"
     CREATED_DBS+=("$QUERY_ANCHOR")
     psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $QUERY_ANCHOR"
+    [ -n "$V11_LIB" ] || die "released v1.1 libraries were not built for the query-function anchor"
+    psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR SET dynamic_library_path = '$V11_LIB:\$libdir'" >>"$LOG" 2>&1 || die "v1.1 dynamic_library_path on $QUERY_ANCHOR"
     out=$(q "$QUERY_ANCHOR" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
     printf '%s\n' "$out" | grep -q '^ERROR' && die "creating released 1.1 query-function anchor: $out"
+    psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR RESET dynamic_library_path" >>"$LOG" 2>&1 || die "reset dynamic_library_path on $QUERY_ANCHOR"
+
+    HOP_REFUSAL=${PREFIX}_explicit_11_with_12
+    createdb -T "$OLD" "$HOP_REFUSAL" >>"$LOG" 2>&1 || die "createdb $HOP_REFUSAL from $OLD"
+    CREATED_DBS+=("$HOP_REFUSAL")
+    psql -X -q -d postgres -c "ALTER DATABASE $HOP_REFUSAL SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $HOP_REFUSAL"
+    out=$(q "$HOP_REFUSAL" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
+    check "explicit 1.0 to 1.1 hop with the 1.2 libraries is refused by the frozen native guard" \
+        "ERROR:  sql_saga: native library version 1.2 does not match extension update version 1.1" "$out"
+    check "refused explicit intermediate hop leaves extversion 1.0" "1.0" \
+        "$(q "$HOP_REFUSAL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 fi
 query_function_snapshot "$QUERY_ANCHOR" >"$WORK/query_functions.before"
 if grep -q '^ERROR' "$WORK/query_functions.before"; then
