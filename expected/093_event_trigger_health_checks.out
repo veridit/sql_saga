@@ -23,6 +23,8 @@ GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
  * PG 15+ restricts this by default.
  */
 GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- Error context would name PL/pgSQL line numbers, which are an implementation detail.
+\set SHOW_CONTEXT never
 BEGIN;
 /* Run tests as unprivileged user */
 SET ROLE TO sql_saga_unprivileged_user;
@@ -36,7 +38,6 @@ CREATE UNLOGGED TABLE log (id bigint, valid_range daterange NOT NULL, valid_from
 SAVEPOINT s1;
 SELECT sql_saga.add_era('log', 'valid_range', 'p', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until'); -- fails
 ERROR:  table "log" must be persistent
-CONTEXT:  PL/pgSQL function add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[]) line 83 at RAISE
 ROLLBACK TO SAVEPOINT s1;
 ALTER TABLE log SET LOGGED;
 SELECT sql_saga.add_era('log', 'valid_range', 'p', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until'); -- passes
@@ -50,7 +51,6 @@ NOTICE:  sql_saga: Created GIST index "log_valid_range_gist_idx" on column publi
 SAVEPOINT s2;
 ALTER TABLE log SET UNLOGGED; -- fails
 ERROR:  table "log" must remain persistent because it has an era
-CONTEXT:  PL/pgSQL function health_checks() line 20 at RAISE
 ROLLBACK TO SAVEPOINT s2;
 DROP TABLE log;
 ROLLBACK;
@@ -82,73 +82,97 @@ SELECT table_name, history_table_name, view_table_name FROM sql_saga.system_vers
  hc_sysver  | hc_sysver_history  | hc_sysver_with_history
 (1 row)
 
--- Test 1: GRANT propagation
-\echo '\n--- Test: GRANT propagation ---'
+-- Test 1: access to history follows SELECT on the base, decided when history is read
+\echo '\n--- Test: access to history follows the base table, with no propagation ---'
 
---- Test: GRANT propagation ---
+--- Test: access to history follows the base table, with no propagation ---
+INSERT INTO hc_sysver (data) VALUES ('v1');
+UPDATE hc_sysver SET data = 'v2';
 GRANT SELECT ON hc_sysver TO sql_saga_unprivileged_user;
--- Verify grants propagated to history table
-\echo '--- Checking history table privileges ---'
---- Checking history table privileges ---
-SELECT has_table_privilege('sql_saga_unprivileged_user', 'hc_sysver_history', 'SELECT') AS history_select;
- history_select 
-----------------
- t
+SET ROLE sql_saga_unprivileged_user;
+SELECT count(*) AS with_history_rows FROM hc_sysver_with_history;
+ with_history_rows 
+-------------------
+                 2
 (1 row)
 
--- Verify grants propagated to view
-\echo '--- Checking history view privileges ---'
---- Checking history view privileges ---
-SELECT has_table_privilege('sql_saga_unprivileged_user', 'hc_sysver_with_history', 'SELECT') AS view_select;
- view_select 
--------------
- t
+SELECT count(*) AS as_of_rows FROM hc_sysver__as_of(now());
+ as_of_rows 
+------------
+          1
 (1 row)
 
--- Verify EXECUTE granted on functions
-\echo '--- Checking function privileges ---'
---- Checking function privileges ---
-SELECT
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_as_of::regprocedure, 'EXECUTE') AS as_of_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_between::regprocedure, 'EXECUTE') AS between_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_between_symmetric::regprocedure, 'EXECUTE') AS between_symmetric_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_from_to::regprocedure, 'EXECUTE') AS from_to_execute
-FROM sql_saga.system_versioning sv
-WHERE sv.table_name = 'hc_sysver';
- as_of_execute | between_execute | between_symmetric_execute | from_to_execute 
----------------+-----------------+---------------------------+-----------------
- t             | t               | t                         | t
-(1 row)
+RESET ROLE;
+-- Test 2: REVOKE on the base ends history access at once
+\echo '\n--- Test: REVOKE on the base ends history access ---'
 
--- Test 2: REVOKE propagation
-\echo '\n--- Test: REVOKE propagation ---'
-
---- Test: REVOKE propagation ---
+--- Test: REVOKE on the base ends history access ---
 REVOKE SELECT ON hc_sysver FROM sql_saga_unprivileged_user;
--- Verify revokes propagated
-\echo '--- Checking privileges revoked from history objects ---'
---- Checking privileges revoked from history objects ---
-SELECT
-    has_table_privilege('sql_saga_unprivileged_user', 'hc_sysver_history', 'SELECT') AS history_select,
-    has_table_privilege('sql_saga_unprivileged_user', 'hc_sysver_with_history', 'SELECT') AS view_select;
- history_select | view_select 
-----------------+-------------
- f              | f
+SET ROLE sql_saga_unprivileged_user;
+SELECT count(*) AS with_history_rows FROM hc_sysver_with_history; -- fail
+ERROR:  permission denied for table hc_sysver
+SELECT count(*) AS history_rows FROM hc_sysver_history;
+ history_rows 
+--------------
+            0
 (1 row)
 
-\echo '--- Checking function privileges revoked ---'
---- Checking function privileges revoked ---
-SELECT
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_as_of::regprocedure, 'EXECUTE') AS as_of_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_between::regprocedure, 'EXECUTE') AS between_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_between_symmetric::regprocedure, 'EXECUTE') AS between_symmetric_execute,
-    has_function_privilege('sql_saga_unprivileged_user', sv.func_from_to::regprocedure, 'EXECUTE') AS from_to_execute
-FROM sql_saga.system_versioning sv
-WHERE sv.table_name = 'hc_sysver';
- as_of_execute | between_execute | between_symmetric_execute | from_to_execute 
----------------+-----------------+---------------------------+-----------------
- f             | f               | f                         | f
+RESET ROLE;
+-- Test 2b: the fixed state of the history objects is enforced by the health check
+\echo '\n--- Test: health check keeps the fixed state of the history objects ---'
+
+--- Test: health check keeps the fixed state of the history objects ---
+ALTER TABLE hc_sysver_history DISABLE ROW LEVEL SECURITY; -- fail
+ERROR:  history table "hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "hc_sysver"
+ALTER TABLE hc_sysver_history FORCE ROW LEVEL SECURITY; -- fail: hc_sysver is not forced
+ERROR:  history table "hc_sysver_history" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "hc_sysver"
+DROP POLICY sql_saga_history_base_select ON hc_sysver_history; -- fail
+ERROR:  cannot drop or alter policy "sql_saga_history_base_select" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+ALTER POLICY sql_saga_history_reader ON hc_sysver_history USING (true); -- fail
+ERROR:  cannot drop or alter policy "sql_saga_history_reader" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+DROP POLICY sql_saga_history_reader ON hc_sysver_history; -- fail
+ERROR:  cannot drop or alter policy "sql_saga_history_reader" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+ALTER VIEW hc_sysver_with_history SET (security_invoker = off); -- fail
+ERROR:  view "hc_sysver_with_history" must keep security_invoker because it is used in SYSTEM VERSIONING for table "hc_sysver"
+CREATE OR REPLACE VIEW hc_sysver_history_gated AS SELECT * FROM hc_sysver_history; -- fail: the gate would be lost
+ERROR:  view "hc_sysver_history_gated" must keep its access gate because it is used in SYSTEM VERSIONING for table "hc_sysver"
+\echo '--- A hashed policy copy is managed too'
+--- A hashed policy copy is managed too
+ALTER TABLE hc_sysver ENABLE ROW LEVEL SECURITY;
+CREATE POLICY everyone ON hc_sysver FOR SELECT USING (true);
+-- The copy's name holds a per-installation hash, so only the outcome of dropping it is shown.
+DO $$
+DECLARE
+    copy_name name;
+BEGIN
+    SELECT p.polname INTO copy_name FROM pg_policy AS p
+    WHERE p.polrelid = 'hc_sysver_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{16}$';
+    EXECUTE format('DROP POLICY %I ON hc_sysver_history', copy_name);
+    RAISE NOTICE 'dropping the copy succeeded';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'dropping the copy failed: %', replace(SQLERRM, copy_name, '<copy>');
+END;
+$$;
+NOTICE:  dropping the copy failed: cannot drop or alter policy "<copy>" on "hc_sysver_history" because it is managed by sql_saga for table "hc_sysver"
+SELECT count(*) AS copies FROM pg_policy AS p
+WHERE p.polrelid = 'hc_sysver_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{16}$';
+ copies 
+--------
+      1
 (1 row)
+
+DROP POLICY everyone ON hc_sysver;
+ALTER TABLE hc_sysver DISABLE ROW LEVEL SECURITY;
+SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity,
+       coalesce('security_invoker=on' = ANY (c.reloptions), false) AS security_invoker
+FROM pg_class AS c
+WHERE c.relname IN ('hc_sysver_history', 'hc_sysver_with_history')
+ORDER BY c.relname;
+        relname         | relrowsecurity | relforcerowsecurity | security_invoker 
+------------------------+----------------+---------------------+------------------
+ hc_sysver_history      | t              | f                   | f
+ hc_sysver_with_history | f              | f                   | t
+(2 rows)
 
 -- Test 3: Ownership propagation
 \echo '\n--- Test: Ownership propagation ---'
@@ -163,14 +187,15 @@ SELECT
     c.relname,
     pg_get_userbyid(c.relowner) AS owner
 FROM pg_class c
-WHERE c.relname IN ('hc_sysver', 'hc_sysver_history', 'hc_sysver_with_history')
+WHERE c.relname IN ('hc_sysver', 'hc_sysver_history', 'hc_sysver_history_gated', 'hc_sysver_with_history')
 ORDER BY c.relname;
-        relname         |           owner            
-------------------------+----------------------------
- hc_sysver              | sql_saga_unprivileged_user
- hc_sysver_history      | sql_saga_unprivileged_user
- hc_sysver_with_history | sql_saga_unprivileged_user
-(3 rows)
+         relname         |           owner            
+-------------------------+----------------------------
+ hc_sysver               | sql_saga_unprivileged_user
+ hc_sysver_history       | sql_saga_unprivileged_user
+ hc_sysver_history_gated | sql_saga_unprivileged_user
+ hc_sysver_with_history  | sql_saga_unprivileged_user
+(4 rows)
 
 -- Verify function ownership changed
 \echo '--- Checking function ownership ---'
@@ -212,6 +237,10 @@ RESET ROLE;
 -- Drop the extensions to ensure a clean state for the next test.
 -- Use CASCADE to remove any dependent objects created by sql_saga.
 DROP EXTENSION IF EXISTS sql_saga CASCADE;
+psql:sql/include/test_teardown.sql:13: NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to trigger hc_sysver_system_time_generated_always on table hc_sysver
+drop cascades to trigger hc_sysver_system_time_write_history on table hc_sysver
+drop cascades to trigger hc_sysver_truncate on table hc_sysver
 DROP EXTENSION IF EXISTS btree_gist CASCADE;
 -- Revoke any privileges held by the test user and drop any objects they own.
 -- This is necessary before the role can be dropped.

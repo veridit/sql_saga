@@ -52,7 +52,7 @@ DROP VIEW show_owners;
 -- We call this query several times, so make it a view for eaiser maintenance
 CREATE VIEW show_acls AS
     SELECT row_number() OVER (ORDER BY array_position(ARRAY['table', 'view', 'function'], object_type),
-                                       schema_name, object_name, grantee, privilege_type) AS sort_order,
+                                       schema_name, object_name, grantee COLLATE "C", privilege_type) AS sort_order,
            *
     FROM (
         SELECT c.relnamespace::regnamespace AS schema_name,
@@ -61,7 +61,7 @@ CREATE VIEW show_acls AS
                    WHEN 'r' THEN 'table'
                    WHEN 'v' THEN 'view'
                END AS object_type,
-               acl.grantee::regrole::text AS grantee,
+               CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE acl.grantee::regrole::text END AS grantee,
                acl.privilege_type
         FROM pg_class AS c
         CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) AS acl
@@ -75,13 +75,15 @@ SELECT sql_saga.add_for_portion_of_view('fpacl', 'p');
 SELECT sql_saga.add_current_view('fpacl', 'p');
 TABLE show_acls ORDER BY sort_order;
 
-GRANT SELECT, UPDATE ON TABLE fpacl__current_p TO periods_acl_2; -- fail
-GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2; -- fail
+-- The views are security_invoker and granted to PUBLIC: access is decided by the caller's
+-- privileges on fpacl. Direct grants on the views are accepted and change nothing about that.
+GRANT SELECT, UPDATE ON TABLE fpacl__current_p TO periods_acl_2;
+GRANT SELECT, UPDATE ON TABLE fpacl__for_portion_of_p TO periods_acl_2;
 GRANT SELECT, UPDATE ON TABLE fpacl TO periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
 
-REVOKE UPDATE ON TABLE fpacl__current_p FROM periods_acl_2; -- fail
-REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2; -- fail
+REVOKE UPDATE ON TABLE fpacl__current_p FROM periods_acl_2;
+REVOKE UPDATE ON TABLE fpacl__for_portion_of_p FROM periods_acl_2;
 REVOKE UPDATE ON TABLE fpacl FROM periods_acl_2;
 TABLE show_acls ORDER BY sort_order;
 

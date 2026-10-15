@@ -1,0 +1,465 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+/*
+ * Row-level security on history (tmp/design_final.md sections 3, 8, 9, 10, 12).
+ *
+ * When RLS on the base table B is active for the caller, history read through B_with_history and
+ * the as-of functions is filtered by B's own SELECT policies:
+ *   - every SELECT/ALL policy P on B has one copy on B_history, FOR SELECT, same roles, same
+ *     permissive/restrictive, same USING with columns matched BY NAME;
+ *   - the copy is named sql_saga_<16 hex>, the hash of P's name and a per-installation token (so the
+ *     base policy of a copy is found by recomputing the hash; copies carry no comment, because pg_dump
+ *     would replay it for a copy that the restore has already replaced); copies are created, replaced
+ *     and dropped by sql_saga when policies on B change;
+ *   - INSERT/UPDATE/DELETE-only policies are not copied;
+ *   - a fixed RESTRICTIVE policy keeps roles without SELECT on B out of B_history (direct reads);
+ *   - a missing or stale copy makes reads fail with a HINT, never returns unfiltered rows;
+ *   - a policy that references a column B_history lacks is refused with a clear error.
+ */
+\set SHOW_CONTEXT never
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE ROLE rls_a;        -- tenant a
+CREATE ROLE rls_b;        -- tenant b
+CREATE ROLE rls_none;     -- no privilege on the base at all
+GRANT USAGE ON SCHEMA public TO rls_a, rls_b, rls_none;
+CREATE TABLE doc (id int PRIMARY KEY, tenant text NOT NULL, body text);
+SELECT sql_saga.add_system_versioning('doc');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+INSERT INTO doc VALUES (1, 'a', 'a-v1'), (2, 'b', 'b-v1');
+UPDATE doc SET body = body || '+';          -- one history row per tenant
+GRANT SELECT ON doc TO rls_a, rls_b;
+ALTER TABLE doc ENABLE ROW LEVEL SECURITY;
+-- NOTICEs stay off: their texts name copies, whose names contain the per-installation hash.
+-- The sql_saga-managed policies on doc_history, with names reduced to a stable shape.
+-- plpgsql, so that the body is resolved when called (sql_saga.installation is part of the design).
+CREATE FUNCTION pg_temp.history_policies()
+RETURNS TABLE (name_shape text, copied_from text, permissive boolean, cmd "char", roles text, qual text)
+LANGUAGE plpgsql AS $$ BEGIN RETURN QUERY
+    SELECT CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$' THEN 'sql_saga_<hash>' ELSE p.polname::text END,
+           (SELECT bp.polname::text
+              FROM pg_policy AS bp CROSS JOIN sql_saga.installation AS t
+             WHERE bp.polrelid = 'doc'::regclass
+               AND p.polname = 'sql_saga_' || left(md5(bp.polname || t.token), 16)),
+           p.polpermissive, p.polcmd,
+           (SELECT string_agg(CASE WHEN r = 0 THEN 'PUBLIC' ELSE r::regrole::text END, ',' ORDER BY 1)
+              FROM unnest(p.polroles) AS r),
+           CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$' THEN pg_get_expr(p.polqual, p.polrelid) END
+    FROM pg_policy AS p
+    WHERE p.polrelid = 'doc_history'::regclass
+    ORDER BY CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$' THEN 'sql_saga_<hash>' ELSE p.polname::text END COLLATE "C",
+             2;
+END $$;
+\echo '--- Without policies on doc (RLS enabled, default deny): no copies, nobody sees rows'
+--- Without policies on doc (RLS enabled, default deny): no copies, nobody sees rows
+SELECT name_shape, copied_from, permissive, cmd FROM pg_temp.history_policies();
+          name_shape          | copied_from | permissive | cmd 
+------------------------------+-------------+------------+-----
+ sql_saga_history_base_select |             | f          | r
+ sql_saga_history_reader      |             | t          | r
+(2 rows)
+
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body 
+----+------
+(0 rows)
+
+RESET ROLE;
+\echo '--- CREATE POLICY on doc creates its copy on doc_history'
+--- CREATE POLICY on doc creates its copy on doc_history
+CREATE POLICY tenant_a ON doc FOR SELECT TO rls_a USING (tenant = 'a');
+CREATE POLICY tenant_b ON doc FOR ALL TO rls_b USING (tenant = 'b');
+CREATE POLICY insert_only ON doc FOR INSERT TO rls_a WITH CHECK (true);
+SELECT * FROM pg_temp.history_policies();
+          name_shape          | copied_from | permissive | cmd | roles  |         qual         
+------------------------------+-------------+------------+-----+--------+----------------------
+ sql_saga_<hash>              | tenant_a    | t          | r   | rls_a  | (tenant = 'a'::text)
+ sql_saga_<hash>              | tenant_b    | t          | r   | rls_b  | (tenant = 'b'::text)
+ sql_saga_history_base_select |             | f          | r   | PUBLIC | 
+ sql_saga_history_reader      |             | t          | r   | PUBLIC | 
+(4 rows)
+
+\echo '--- Each tenant sees only its own current and past rows'
+--- Each tenant sees only its own current and past rows
+SELECT lower(h.system_valid_range) AS t0 FROM doc_history AS h WHERE h.id = 1 \gset
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body  
+----+-------
+  1 | a-v1
+  1 | a-v1+
+(2 rows)
+
+SELECT id, body FROM doc__as_of(:'t0') ORDER BY id;
+ id | body 
+----+------
+  1 | a-v1
+(1 row)
+
+SELECT count(*) AS between_rows FROM doc__between('-infinity', 'infinity');
+ between_rows 
+--------------
+            2
+(1 row)
+
+SELECT count(*) AS between_symmetric_rows FROM doc__between_symmetric('infinity', '-infinity');
+ between_symmetric_rows 
+------------------------
+                      2
+(1 row)
+
+SELECT count(*) AS from_to_rows FROM doc__from_to('-infinity', 'infinity');
+ from_to_rows 
+--------------
+            2
+(1 row)
+
+RESET ROLE;
+SET ROLE rls_b;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body  
+----+-------
+  2 | b-v1
+  2 | b-v1+
+(2 rows)
+
+RESET ROLE;
+\echo '--- Copy names: unique per policy, hashed with the installation token, valid identifiers'
+--- Copy names: unique per policy, hashed with the installation token, valid identifiers
+SELECT count(DISTINCT p.polname) AS distinct_copies,
+       bool_and(EXISTS (SELECT FROM pg_policy AS bp CROSS JOIN sql_saga.installation AS t
+                        WHERE bp.polrelid = 'doc'::regclass
+                          AND p.polname = 'sql_saga_' || left(md5(bp.polname || t.token), 16))) AS name_is_hash_of_policy_and_token,
+       bool_and(obj_description(p.oid, 'pg_policy') IS NULL) AS no_comment
+FROM pg_policy AS p
+WHERE p.polrelid = 'doc_history'::regclass AND p.polname ~ '^sql_saga_[0-9a-f]{16}$';
+ distinct_copies | name_is_hash_of_policy_and_token | no_comment 
+-----------------+----------------------------------+------------
+               2 | t                                | t
+(1 row)
+
+\echo '--- A role without SELECT on doc reads nothing from doc_history directly'
+--- A role without SELECT on doc reads nothing from doc_history directly
+CREATE POLICY everyone ON doc FOR SELECT TO PUBLIC USING (tenant = 'a');
+SET ROLE rls_none;
+SELECT count(*) AS direct_history_rows FROM doc_history;
+ direct_history_rows 
+---------------------
+                   0
+(1 row)
+
+SELECT count(*) FROM doc_with_history; -- fail
+ERROR:  permission denied for table doc
+RESET ROLE;
+DROP POLICY everyone ON doc;
+\echo '--- ALTER POLICY on doc replaces its copy'
+--- ALTER POLICY on doc replaces its copy
+ALTER POLICY tenant_a ON doc USING (tenant = 'a' AND id = 1);
+SELECT name_shape, copied_from, qual FROM pg_temp.history_policies() WHERE copied_from = 'tenant_a';
+   name_shape    | copied_from |                qual                 
+-----------------+-------------+-------------------------------------
+ sql_saga_<hash> | tenant_a    | ((tenant = 'a'::text) AND (id = 1))
+(1 row)
+
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body  
+----+-------
+  1 | a-v1
+  1 | a-v1+
+(2 rows)
+
+RESET ROLE;
+\echo '--- ALTER POLICY ... RENAME follows'
+--- ALTER POLICY ... RENAME follows
+ALTER POLICY tenant_a ON doc RENAME TO tenant_alpha;
+SELECT name_shape, copied_from FROM pg_temp.history_policies() WHERE copied_from IS NOT NULL;
+   name_shape    | copied_from  
+-----------------+--------------
+ sql_saga_<hash> | tenant_alpha
+ sql_saga_<hash> | tenant_b
+(2 rows)
+
+\echo '--- DROP POLICY on doc drops its copy'
+--- DROP POLICY on doc drops its copy
+DROP POLICY tenant_b ON doc;
+SELECT name_shape, copied_from FROM pg_temp.history_policies() WHERE copied_from IS NOT NULL;
+   name_shape    | copied_from  
+-----------------+--------------
+ sql_saga_<hash> | tenant_alpha
+(1 row)
+
+\echo '--- Copies refer to columns by name, rendered against the history table'
+--- Copies refer to columns by name, rendered against the history table
+SELECT name_shape, copied_from, qual FROM pg_temp.history_policies() WHERE copied_from IS NOT NULL;
+   name_shape    | copied_from  |                qual                 
+-----------------+--------------+-------------------------------------
+ sql_saga_<hash> | tenant_alpha | ((tenant = 'a'::text) AND (id = 1))
+(1 row)
+
+\echo '--- A policy referencing a column the history lacks is refused'
+--- A policy referencing a column the history lacks is refused
+ALTER TABLE doc ADD COLUMN added_later text;
+CREATE POLICY by_added ON doc FOR SELECT TO rls_a USING (added_later = 'x'); -- fail
+ERROR:  sql_saga: policy by_added on doc references column added_later, which doc_history lacks
+SELECT count(*) AS by_added_policies FROM pg_policy WHERE polname = 'by_added';
+ by_added_policies 
+-------------------
+                 0
+(1 row)
+
+\echo '--- A missing copy makes reads fail with a HINT, never return unfiltered rows'
+--- A missing copy makes reads fail with a HINT, never return unfiltered rows
+-- Event triggers do not fire under session_replication_role = replica, so a policy created there
+-- gets no copy (as when policies arrive by logical replication).
+SET session_replication_role = replica;
+CREATE POLICY late ON doc FOR SELECT TO rls_a USING (tenant = 'a');
+RESET session_replication_role;
+\set VERBOSITY default
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history; -- fail
+ERROR:  sql_saga: history of doc is not synchronized (1 policy copies missing, 0 stale)
+HINT:  Run: SELECT sql_saga.sync_history_policies('doc');
+RESET ROLE;
+\set VERBOSITY terse
+SELECT sql_saga.sync_history_policies('doc');
+ sync_history_policies 
+-----------------------
+ 
+(1 row)
+
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body  
+----+-------
+  1 | a-v1
+  1 | a-v1+
+(2 rows)
+
+RESET ROLE;
+\echo '--- A stale copy (base policy changed while event triggers were off) also fails closed'
+--- A stale copy (base policy changed while event triggers were off) also fails closed
+SET session_replication_role = replica;
+ALTER POLICY late ON doc USING (tenant = 'b');
+RESET session_replication_role;
+\set VERBOSITY default
+SET ROLE rls_a;
+SELECT id, body FROM doc_with_history; -- fail
+ERROR:  sql_saga: history of doc is not synchronized (0 policy copies missing, 1 stale)
+HINT:  Run: SELECT sql_saga.sync_history_policies('doc');
+RESET ROLE;
+\set VERBOSITY terse
+SELECT sql_saga.sync_history_policies('doc');
+ sync_history_policies 
+-----------------------
+ 
+(1 row)
+
+DROP POLICY late ON doc;
+\echo '--- Current and FOR PORTION OF views apply the base policies to the caller'
+--- Current and FOR PORTION OF views apply the base policies to the caller
+CREATE TABLE tdoc (id int, tenant text NOT NULL, valid_range daterange NOT NULL, body text,
+                   PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('tdoc', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_for_portion_of_view('tdoc', 'valid');
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+SELECT sql_saga.add_current_view('tdoc', 'valid');
+ add_current_view 
+------------------
+ t
+(1 row)
+
+INSERT INTO tdoc VALUES (1, 'a', '[2020-01-01,infinity)', 'a'), (2, 'b', '[2020-01-01,infinity)', 'b');
+GRANT SELECT ON tdoc TO rls_a;
+ALTER TABLE tdoc ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_a ON tdoc FOR SELECT TO rls_a USING (tenant = 'a');
+SET ROLE rls_a;
+SELECT id, tenant FROM tdoc__current_valid ORDER BY id;
+ id | tenant 
+----+--------
+  1 | a
+(1 row)
+
+SELECT id, tenant FROM tdoc__for_portion_of_valid ORDER BY id;
+ id | tenant 
+----+--------
+  1 | a
+(1 row)
+
+RESET ROLE;
+\echo '--- The owner is exempt from RLS on doc and reads all history'
+--- The owner is exempt from RLS on doc and reads all history
+SELECT count(*) AS owner_rows FROM doc_with_history;
+ owner_rows 
+------------
+          4
+(1 row)
+
+\echo '--- FORCE ROW LEVEL SECURITY: a non-superuser owner is filtered on current rows and on history alike'
+--- FORCE ROW LEVEL SECURITY: a non-superuser owner is filtered on current rows and on history alike
+-- FORCE on doc is mirrored to doc_history (owner decision 5, tmp/design_final.md section 15).
+CREATE ROLE rls_owner;
+GRANT USAGE, CREATE ON SCHEMA public TO rls_owner;
+ALTER TABLE doc OWNER TO rls_owner;
+ALTER TABLE doc FORCE ROW LEVEL SECURITY;
+SELECT c.relname, c.relforcerowsecurity FROM pg_class AS c WHERE c.relname IN ('doc', 'doc_history') ORDER BY 1;
+   relname   | relforcerowsecurity 
+-------------+---------------------
+ doc         | t
+ doc_history | t
+(2 rows)
+
+SET ROLE rls_owner;
+SELECT count(*) AS forced_owner_rows FROM doc_with_history;
+ forced_owner_rows 
+-------------------
+                 0
+(1 row)
+
+RESET ROLE;
+CREATE POLICY owner_sees_a ON doc FOR SELECT TO rls_owner USING (tenant = 'a');
+SET ROLE rls_owner;
+SELECT id, body FROM doc_with_history ORDER BY id, body;
+ id | body  
+----+-------
+  1 | a-v1
+  1 | a-v1+
+(2 rows)
+
+RESET ROLE;
+DROP POLICY owner_sees_a ON doc;
+ALTER TABLE doc NO FORCE ROW LEVEL SECURITY;
+SELECT c.relname, c.relforcerowsecurity FROM pg_class AS c WHERE c.relname IN ('doc', 'doc_history') ORDER BY 1;
+   relname   | relforcerowsecurity 
+-------------+---------------------
+ doc         | f
+ doc_history | f
+(2 rows)
+
+SET ROLE rls_owner;
+SELECT count(*) AS unforced_owner_rows FROM doc_with_history;
+ unforced_owner_rows 
+---------------------
+                   4
+(1 row)
+
+RESET ROLE;
+ALTER TABLE doc OWNER TO CURRENT_USER;
+\echo '--- The installation token is extension state that pg_dump does not dump, and nothing records "synced"'
+--- The installation token is extension state that pg_dump does not dump, and nothing records "synced"
+SELECT count(*) AS token_rows FROM sql_saga.installation;
+ token_rows 
+------------
+          1
+(1 row)
+
+SELECT EXISTS (SELECT FROM pg_extension AS e, unnest(e.extconfig) AS c(oid)
+               WHERE e.extname = 'sql_saga' AND c.oid = 'sql_saga.installation'::regclass) AS token_dumped;
+ token_dumped 
+--------------
+ f
+(1 row)
+
+-- The only catalog columns about "sync" are the era's synchronization trigger names.
+SELECT c.relname, a.attname
+FROM pg_attribute AS a JOIN pg_class AS c ON c.oid = a.attrelid
+WHERE c.relnamespace = 'sql_saga'::regnamespace AND c.relkind = 'r' AND a.attnum > 0 AND a.attname ~ 'sync'
+ORDER BY 1, 2;
+ relname |             attname             
+---------+---------------------------------
+ era     | sync_temporal_trg_function_name
+ era     | sync_temporal_trg_name
+(2 rows)
+
+-- and the token table holds only the token.
+SELECT a.attname FROM pg_attribute AS a
+WHERE a.attrelid = 'sql_saga.installation'::regclass AND a.attnum > 0 AND NOT a.attisdropped ORDER BY a.attnum;
+ attname 
+---------
+ token
+(1 row)
+
+/* Clean up */
+SELECT sql_saga.drop_current_view('tdoc', 'valid');
+ drop_current_view 
+-------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_for_portion_of_view('tdoc', 'valid');
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_era('tdoc', 'valid');
+ drop_era 
+----------
+ t
+(1 row)
+
+SELECT sql_saga.drop_system_versioning('doc');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+DROP TABLE doc, tdoc;
+DROP OWNED BY rls_a, rls_b, rls_none, rls_owner;
+DROP ROLE rls_a, rls_b, rls_none, rls_owner;
+RESET client_min_messages;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

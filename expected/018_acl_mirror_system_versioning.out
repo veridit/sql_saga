@@ -1,0 +1,395 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+/*
+ * Privileges on the derived objects of system-versioned tables (access-time authority).
+ *
+ * Fixed state, independent of the base table's ACL (tmp/design_final.md sections 2, 3, 9):
+ *   B_with_history          security_invoker view, PUBLIC SELECT
+ *   B_history_gated         owner-rights view, PUBLIC SELECT, raises 42501 unless the caller has SELECT on B
+ *   B_history               PUBLIC SELECT, RLS enabled (not forced), policies sql_saga_history_reader
+ *                           (permissive) and sql_saga_history_base_select (restrictive)
+ *   as-of functions         explicit PUBLIC EXECUTE
+ * Who may read history is decided when it is read, by the caller's SELECT on B. No GRANT or REVOKE
+ * needs any action by sql_saga.
+ *
+ * Defects of the earlier ACL-copying implementation, asserted here as behaviour (tmp/design_a_review.md):
+ *   F3  REVOKE from a role that inherits another grantee.
+ *   F4  a grantee on one table gained privileges on another table's history table.
+ *   F5  after one GRANT on a versioned table, unrelated GRANTs failed.
+ *   F6  once a versioned table had a grantee, unrelated REVOKEs failed.
+ *   F11 an unrelated REVOKE stripped PUBLIC EXECUTE from as-of functions.
+ *   F13 with EXECUTE revoked from PUBLIC by default privileges, grantees could not call the as-of functions.
+ */
+\set SHOW_CONTEXT never
+\set VERBOSITY terse
+SET client_min_messages = warning;
+CREATE ROLE acl_sv_ru;
+CREATE ROLE acl_sv_au IN ROLE acl_sv_ru;
+CREATE ROLE acl_sv_ya;
+CREATE ROLE acl_sv_wa;
+CREATE ROLE acl_sv_wb;
+CREATE ROLE acl_sv_p5;
+CREATE ROLE acl_sv_hd;
+CREATE ROLE acl_sv_other;
+CREATE ROLE acl_sv_z;
+-- Explicit (grantee, privilege) entries of relations and functions, owner excluded.
+CREATE FUNCTION pg_temp.acl_entries(prefix text)
+RETURNS TABLE (object_name text, grantee text, privilege_type text)
+LANGUAGE sql AS $$
+    SELECT o.name, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, a.privilege_type
+    FROM (
+        SELECT c.relname::text AS name, c.relacl AS acl, c.relowner AS owner
+        FROM pg_class AS c
+        WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'v') AND c.relname LIKE prefix || '%'
+        UNION ALL
+        SELECT p.proname::text, p.proacl, p.proowner
+        FROM pg_proc AS p
+        WHERE p.pronamespace = 'public'::regnamespace AND p.proname LIKE prefix || '\_\_%'
+    ) AS o
+    CROSS JOIN LATERAL aclexplode(o.acl) AS a
+    WHERE a.grantee <> o.owner
+    ORDER BY o.name COLLATE "C", CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END COLLATE "C", a.privilege_type
+$$;
+CREATE TABLE unrel (a int);
+-- Family fa: FOR PORTION OF. Family b: system versioning.
+CREATE TABLE fa (id int, valid_range daterange NOT NULL, x text, PRIMARY KEY (id, valid_range WITHOUT OVERLAPS));
+SELECT sql_saga.add_era('fa', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+CREATE TABLE b (id int PRIMARY KEY, secret text);
+INSERT INTO b VALUES (1, 'b-secret');
+-- Granted BEFORE versioning (F10).
+GRANT SELECT ON b TO acl_sv_wb;
+SELECT sql_saga.add_system_versioning('b');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+UPDATE b SET secret = 'b-secret-v2' WHERE id = 1;
+SELECT sql_saga.add_for_portion_of_view('fa', 'valid');
+ add_for_portion_of_view 
+-------------------------
+ t
+(1 row)
+
+RESET client_min_messages;
+\echo '--- Fixed state of the history objects'
+--- Fixed state of the history objects
+SELECT c.relname,
+       coalesce('security_invoker=on' = ANY (c.reloptions), false) AS security_invoker,
+       c.relrowsecurity, c.relforcerowsecurity
+FROM pg_class AS c
+WHERE c.relname IN ('b_history', 'b_history_gated', 'b_with_history')
+ORDER BY c.relname;
+     relname     | security_invoker | relrowsecurity | relforcerowsecurity 
+-----------------+------------------+----------------+---------------------
+ b_history       | f                | t              | f
+ b_history_gated | f                | f              | f
+ b_with_history  | t                | f              | f
+(3 rows)
+
+SELECT p.polname, p.polpermissive, p.polcmd, p.polroles = '{0}' AS to_public
+FROM pg_policy AS p
+WHERE p.polrelid = 'b_history'::regclass
+ORDER BY p.polname;
+           polname            | polpermissive | polcmd | to_public 
+------------------------------+---------------+--------+-----------
+ sql_saga_history_base_select | f             | r      | t
+ sql_saga_history_reader      | t             | r      | t
+(2 rows)
+
+SELECT * FROM pg_temp.acl_entries('b');
+     object_name      |  grantee  | privilege_type 
+----------------------+-----------+----------------
+ b                    | acl_sv_wb | SELECT
+ b__as_of             | PUBLIC    | EXECUTE
+ b__between           | PUBLIC    | EXECUTE
+ b__between_symmetric | PUBLIC    | EXECUTE
+ b__from_to           | PUBLIC    | EXECUTE
+ b_history            | PUBLIC    | SELECT
+ b_history_gated      | PUBLIC    | SELECT
+ b_with_history       | PUBLIC    | SELECT
+(8 rows)
+
+\echo '--- F4: a grant on one family never reaches another family''s history'
+--- F4: a grant on one family never reaches another family's history
+GRANT SELECT, UPDATE, DELETE ON fa TO acl_sv_wa;
+GRANT SELECT ON fa TO acl_sv_ya;
+SELECT * FROM pg_temp.acl_entries('b');
+     object_name      |  grantee  | privilege_type 
+----------------------+-----------+----------------
+ b                    | acl_sv_wb | SELECT
+ b__as_of             | PUBLIC    | EXECUTE
+ b__between           | PUBLIC    | EXECUTE
+ b__between_symmetric | PUBLIC    | EXECUTE
+ b__from_to           | PUBLIC    | EXECUTE
+ b_history            | PUBLIC    | SELECT
+ b_history_gated      | PUBLIC    | SELECT
+ b_with_history       | PUBLIC    | SELECT
+(8 rows)
+
+SET ROLE acl_sv_wb;
+SELECT count(*) AS wb_with_history FROM b_with_history;
+ wb_with_history 
+-----------------
+               2
+(1 row)
+
+SELECT count(*) AS wb_history_direct FROM b_history;
+ wb_history_direct 
+-------------------
+                 1
+(1 row)
+
+SELECT count(*) AS wb_as_of_past FROM b__as_of('-infinity');
+ wb_as_of_past 
+---------------
+             0
+(1 row)
+
+RESET ROLE;
+SET ROLE acl_sv_wa;
+SELECT count(*) AS wa_with_history FROM b_with_history; -- fail
+ERROR:  permission denied for table b
+SELECT count(*) AS wa_history_direct FROM b_history;
+ wa_history_direct 
+-------------------
+                 0
+(1 row)
+
+SELECT count(*) AS wa_as_of_past FROM b__as_of('-infinity'); -- fail
+ERROR:  permission denied for table b
+RESET ROLE;
+\echo '--- F4: no grantee can rewrite the audit trail'
+--- F4: no grantee can rewrite the audit trail
+SET ROLE acl_sv_wb;
+UPDATE b_history SET secret = 'TAMPERED' WHERE id = 1; -- fail
+ERROR:  permission denied for table b_history
+DELETE FROM b_history; -- fail
+ERROR:  permission denied for table b_history
+RESET ROLE;
+\echo '--- A stray write grant on the history table is harmless: no policy admits writing'
+--- A stray write grant on the history table is harmless: no policy admits writing
+GRANT UPDATE, DELETE ON b_history TO acl_sv_wb;
+SET ROLE acl_sv_wb;
+UPDATE b_history SET secret = 'TAMPERED' WHERE id = 1;
+DELETE FROM b_history;
+RESET ROLE;
+REVOKE UPDATE, DELETE ON b_history FROM acl_sv_wb;
+SELECT count(*) FILTER (WHERE secret = 'TAMPERED') AS tampered_rows, count(*) AS history_rows FROM b_history;
+ tampered_rows | history_rows 
+---------------+--------------
+             0 |            1
+(1 row)
+
+\echo '--- F5: after a grant on a versioned table, unrelated GRANTs still work'
+--- F5: after a grant on a versioned table, unrelated GRANTs still work
+GRANT SELECT ON b TO acl_sv_p5;
+GRANT SELECT ON unrel TO acl_sv_p5;
+\echo '--- F6: after a grant on a versioned table, unrelated REVOKEs still work'
+--- F6: after a grant on a versioned table, unrelated REVOKEs still work
+REVOKE SELECT ON unrel FROM acl_sv_p5;
+\echo '--- F3: a role inheriting a grantee reads history; revoking from the grantee ends it at once'
+--- F3: a role inheriting a grantee reads history; revoking from the grantee ends it at once
+GRANT SELECT ON b TO acl_sv_ru;
+SET ROLE acl_sv_au;
+SELECT count(*) AS au_with_history FROM b_with_history;
+ au_with_history 
+-----------------
+               2
+(1 row)
+
+RESET ROLE;
+REVOKE SELECT ON b FROM acl_sv_ru;
+SET ROLE acl_sv_au;
+SELECT count(*) AS au_with_history FROM b_with_history; -- fail
+ERROR:  permission denied for table b
+SELECT count(*) AS au_history_direct FROM b_history;
+ au_history_direct 
+-------------------
+                 0
+(1 row)
+
+RESET ROLE;
+GRANT SELECT ON unrel TO acl_sv_z;
+REVOKE SELECT ON unrel FROM acl_sv_z;
+\echo '--- GRANT ... ON ALL TABLES IN SCHEMA is accepted; history stays unwritable'
+--- GRANT ... ON ALL TABLES IN SCHEMA is accepted; history stays unwritable
+GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO acl_sv_z;
+SET ROLE acl_sv_z;
+INSERT INTO b_history (id, secret, system_valid_range) VALUES (99, 'forged', tstzrange('2000-01-01', '2000-01-02')); -- fail
+ERROR:  new row violates row-level security policy for table "b_history"
+RESET ROLE;
+SELECT count(*) AS forged_rows FROM b_history WHERE id = 99;
+ forged_rows 
+-------------
+           0
+(1 row)
+
+REVOKE SELECT, INSERT ON ALL TABLES IN SCHEMA public FROM acl_sv_z;
+\echo '--- F11: unrelated REVOKEs leave PUBLIC EXECUTE on the as-of functions alone'
+--- F11: unrelated REVOKEs leave PUBLIC EXECUTE on the as-of functions alone
+SET client_min_messages = warning;
+CREATE TABLE c (id int PRIMARY KEY, x text);
+SELECT sql_saga.add_system_versioning('c');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+RESET client_min_messages;
+GRANT SELECT ON unrel TO acl_sv_z;
+REVOKE SELECT ON unrel FROM acl_sv_z;
+SELECT p.proname, has_function_privilege('acl_sv_other', p.oid, 'EXECUTE') AS other_can_execute
+FROM pg_proc AS p
+WHERE p.pronamespace = 'public'::regnamespace AND p.proname LIKE 'c\_\_%'
+ORDER BY p.proname;
+       proname        | other_can_execute 
+----------------------+-------------------
+ c__as_of             | t
+ c__between           | t
+ c__between_symmetric | t
+ c__from_to           | t
+(4 rows)
+
+\echo '--- F13: EXECUTE revoked from PUBLIC by default privileges'
+--- F13: EXECUTE revoked from PUBLIC by default privileges
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+SET client_min_messages = warning;
+CREATE TABLE d (id int PRIMARY KEY, x text);
+SELECT sql_saga.add_system_versioning('d');
+ add_system_versioning 
+-----------------------
+ 
+(1 row)
+
+RESET client_min_messages;
+INSERT INTO d VALUES (1, 'd1');
+GRANT SELECT ON d TO acl_sv_hd;
+SELECT r.rolname,
+       has_function_privilege(r.rolname, 'd__as_of(timestamp with time zone)', 'EXECUTE') AS as_of,
+       has_function_privilege(r.rolname, 'd__between(timestamp with time zone,timestamp with time zone)', 'EXECUTE') AS between_,
+       has_function_privilege(r.rolname, 'd__between_symmetric(timestamp with time zone,timestamp with time zone)', 'EXECUTE') AS between_symmetric,
+       has_function_privilege(r.rolname, 'd__from_to(timestamp with time zone,timestamp with time zone)', 'EXECUTE') AS from_to
+FROM (VALUES ('acl_sv_hd'), ('acl_sv_other')) AS r (rolname)
+ORDER BY r.rolname;
+   rolname    | as_of | between_ | between_symmetric | from_to 
+--------------+-------+----------+-------------------+---------
+ acl_sv_hd    | t     | t        | t                 | t
+ acl_sv_other | t     | t        | t                 | t
+(2 rows)
+
+SET ROLE acl_sv_hd;
+SELECT id, x FROM d__as_of(now());
+ id | x  
+----+----
+  1 | d1
+(1 row)
+
+RESET ROLE;
+SET ROLE acl_sv_other;
+SELECT id, x FROM d__as_of(now()); -- fail: no SELECT on d
+ERROR:  permission denied for table d
+RESET ROLE;
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO PUBLIC;
+\echo '--- DROP OWNED BY removes the grantee; its history access ends with its base grant'
+--- DROP OWNED BY removes the grantee; its history access ends with its base grant
+DROP OWNED BY acl_sv_p5;
+SET ROLE acl_sv_p5;
+SELECT count(*) AS p5_with_history FROM b_with_history; -- fail
+ERROR:  permission denied for table b
+RESET ROLE;
+SELECT * FROM pg_temp.acl_entries('b');
+     object_name      |  grantee  | privilege_type 
+----------------------+-----------+----------------
+ b                    | acl_sv_wb | SELECT
+ b__as_of             | PUBLIC    | EXECUTE
+ b__between           | PUBLIC    | EXECUTE
+ b__between_symmetric | PUBLIC    | EXECUTE
+ b__from_to           | PUBLIC    | EXECUTE
+ b_history            | PUBLIC    | SELECT
+ b_history_gated      | PUBLIC    | SELECT
+ b_with_history       | PUBLIC    | SELECT
+(8 rows)
+
+/* Clean up */
+SET client_min_messages = warning;
+SELECT sql_saga.drop_system_versioning('b');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_system_versioning('c');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_system_versioning('d');
+ drop_system_versioning 
+------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_for_portion_of_view('fa', 'valid');
+ drop_for_portion_of_view 
+--------------------------
+ t
+(1 row)
+
+SELECT sql_saga.drop_era('fa', 'valid');
+ drop_era 
+----------
+ t
+(1 row)
+
+DROP TABLE b, c, d, fa, unrel;
+DROP OWNED BY acl_sv_ru, acl_sv_au, acl_sv_ya, acl_sv_wa, acl_sv_wb, acl_sv_p5, acl_sv_hd, acl_sv_other, acl_sv_z;
+DROP ROLE acl_sv_au, acl_sv_ru, acl_sv_ya, acl_sv_wa, acl_sv_wb, acl_sv_p5, acl_sv_hd, acl_sv_other, acl_sv_z;
+RESET client_min_messages;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;

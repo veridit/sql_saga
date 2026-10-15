@@ -164,6 +164,13 @@ diff-fail-all diff-fail-first:
 vim vimo nvim nvimo:
 	@:
 
+# pg_dump/pg_restore round trips of databases using sql_saga (-j N is a reported known limitation).
+# Needs a running server reachable through the libpq environment, with sql_saga installed.
+# Usage: `make test-restore` or `make test-restore CASES="inherited_role catalog_only"`
+.PHONY: test-restore
+test-restore:
+	devops/restore_roundtrip.sh $(CASES)
+
 # Renumber test files to make room for a new test at a specific slot.
 # Usage: make renumber-tests-from SLOT=066
 # This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
