@@ -52,7 +52,12 @@ OLD_BINARIES=${UPGRADE_OLD_BINARIES:-1}
 KEEP=${UPGRADE_KEEP:-0}
 NEW_VERSION=1.1
 
+# The server process reads the extension scripts and the v1.0 library from the work tree; it may run as
+# another OS user (postgres on Linux packages), so everything under it must be readable and searchable by
+# others, whatever umask the caller has.
+umask 022
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/saga_up.XXXXXX")
+chmod 755 "$WORK"
 LOG="$WORK/log"
 # extension_control_path entries name a directory that CONTAINS extension/ (like $system = sharedir).
 EXT_ROOT="$WORK/ext"                       # private extension dir: tag 1.0 + candidate 1.1
