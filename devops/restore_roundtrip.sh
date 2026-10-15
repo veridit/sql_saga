@@ -7,6 +7,19 @@
 # passes when every restore exits 0, the effective ACL digest of the restored database equals the
 # source's, and all sql_saga event triggers are still enabled.
 #
+# The clean* variants restore into a database that already holds the dumped database (restored
+# there once first), so pg_restore must tear every sql_saga family down before recreating it
+# (tmp/design_restore_clean.md):
+#   clean             pg_restore --clean --if-exists (the dump's history policy names carry another
+#                     installation's token)
+#   clean_single_txn  the same with --single-transaction
+#   clean_same        a dump of the destination itself, restored with --clean (no --if-exists): every
+#                     dumped name exists
+#   clean_psql        pg_restore --clean --if-exists -f - | psql, with the opt-in
+#                     PGOPTIONS='-c sql_saga.clean_restore=on' that a restore script run through psql needs
+#   clean_psql_without_opt_in
+#                     the same without the opt-in: sql_saga's drop protection must refuse it
+#
 # Parallel restore (`pg_restore -j N`) is NOT supported (PostgreSQL pg_dump drops the load order
 # of extension configuration tables from the archive; see doc/decision-log.md). The
 # `parallel_known_failure` case still runs `-j 4` restores and reports their outcome, but does not
@@ -18,6 +31,9 @@
 # Creates databases prefixed saga_rt_ and roles prefixed saga_rt_, and drops them again.
 #
 set -u
+# pg_restore identifies itself with application_name 'pg_restore', which sql_saga uses to recognize
+# the teardown of pg_restore --clean; an inherited PGAPPNAME would hide it.
+unset PGAPPNAME
 
 PREFIX=saga_rt
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/saga_rt.XXXXXX")
@@ -48,8 +64,14 @@ SQL
 
 # Effective ACL of every relation and function outside the system schemas, owner entries excluded
 # (so --no-owner restores compare equal), PUBLIC included, grantor and grant option ignored.
+# digest <db> [without_extension_functions]: with the second argument, functions that are members of
+# an extension are left out (see the clean* variants in restore_variant).
 digest() {
-    psql -X -At -d "$1" <<'SQL'
+    psql -X -At -d "$1" -v skip_ext="${2:+on}" <<'SQL'
+\if :{?skip_ext}
+\else
+\set skip_ext off
+\endif
 WITH objs AS (
     SELECT format('rel %s', c.oid::regclass) AS obj, c.relowner AS owner,
            COALESCE(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner)) AS acl
@@ -61,6 +83,9 @@ WITH objs AS (
     FROM pg_proc AS p
     JOIN pg_namespace AS n ON n.oid = p.pronamespace
     WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND NOT (:'skip_ext' = 'on' AND EXISTS (
+          SELECT FROM pg_depend AS d
+          WHERE (d.classid, d.objid, d.deptype) = ('pg_proc'::regclass, p.oid, 'e')))
 ), entries AS (
     SELECT o.obj, CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END AS grantee, a.privilege_type
     FROM objs AS o
@@ -179,6 +204,9 @@ rls_isolation() {
     done
     echo "${out# }"
 }
+
+# A DDL refusal by one of sql_saga's event triggers (drop_protection, rename_following, health_checks).
+REFUSAL_RE='ERROR: +cannot (drop|drop or rename|drop or alter) .*(because it is (used|part of|managed)|call "sql_saga\.drop_)'
 
 event_triggers() {
     psql -X -At -d "$1" -c "SELECT count(*) FILTER (WHERE evtenabled <> 'D') || '/' || count(*) FROM pg_event_trigger WHERE evtfoid::regproc::text LIKE 'sql_saga.%'"
@@ -346,13 +374,57 @@ restore_variant() {
         parallel*) opts+=(-j 4) ;;
         no_owner) opts+=(--no-owner) ;;
         single_txn) opts+=(--single-transaction) ;;
+        clean) opts+=(--clean --if-exists) ;;
+        clean_single_txn) opts+=(--clean --if-exists --single-transaction) ;;
+        clean_same) opts+=(--clean) ;;
     esac
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     createdb "$dst" || return 1
     local out="$WORK/${case}_${variant}.restore.log"
-    if ! pg_restore "${opts[@]}" -d "$dst" "$dump" >"$out" 2>&1; then
+    local rc=0
+    if [[ $variant == clean* ]]; then
+        # The destination already holds the dumped database.
+        if ! pg_restore --exit-on-error -d "$dst" "$dump" >"$WORK/${case}_${variant}.seed.log" 2>&1; then
+            echo "    $variant: seeding restore FAILED: $(grep -m1 -E 'ERROR|error:' "$WORK/${case}_${variant}.seed.log")"
+            dropdb --if-exists "$dst" >>"$LOG" 2>&1
+            return 1
+        fi
+    fi
+    case "$variant" in
+        clean_same)
+            pg_dump -Fc -d "$dst" -f "$WORK/${case}_same.dump" >>"$LOG" 2>&1 || rc=1
+            [ $rc = 0 ] && { pg_restore "${opts[@]}" -d "$dst" "$WORK/${case}_same.dump" >"$out" 2>&1 || rc=1; } ;;
+        clean_psql)
+            ( set -o pipefail
+              pg_restore --clean --if-exists -f - "$dump" \
+                  | PGOPTIONS="${PGOPTIONS:-} -c sql_saga.clean_restore=on" psql -X -q -v ON_ERROR_STOP=1 -d "$dst" ) >"$out" 2>&1 || rc=1 ;;
+        clean_psql_without_opt_in)
+            ( set -o pipefail
+              pg_restore --clean --if-exists -f - "$dump" | psql -X -q -v ON_ERROR_STOP=1 -d "$dst" ) >"$out" 2>&1 || rc=1 ;;
+        *)
+            pg_restore "${opts[@]}" -d "$dst" "$dump" >"$out" 2>&1 || rc=1 ;;
+    esac
+    # The negative variant: without the opt-in, a script run through psql is not recognized as a
+    # pg_restore teardown, so sql_saga must refuse it (and nothing else may be what stops it).
+    if [ "$variant" = clean_psql_without_opt_in ]; then
+        dropdb --if-exists "$dst" >>"$LOG" 2>&1
+        if [ $rc = 0 ]; then
+            echo "    $variant: the teardown succeeded without the opt-in: sql_saga's drop protection did not hold"
+            return 1
+        fi
+        if ! grep -qE "$REFUSAL_RE" "$out"; then
+            echo "    $variant: failed, but not by sql_saga's drop protection: $(grep -m1 -E 'ERROR|error:' "$out")"
+            return 1
+        fi
+        echo "    $variant: ok (refused: $(grep -m1 -oE "$REFUSAL_RE.*" "$out" | cut -c1-80)...)"
+        return 0
+    fi
+    if [ $rc != 0 ]; then
         # Classify, so that unrelated failures are not conflated.
         local class="ACL"
+        if grep -qE "$REFUSAL_RE" "$out"; then
+            class="refused by sql_saga"
+        fi
         if grep -qE 'COPY failed for table "(era|system_time_era|unique_keys|foreign_keys|system_versioning|updatable_view)"' "$out"; then
             class="F15 catalog load order"
         fi
@@ -362,7 +434,17 @@ restore_variant() {
         return 1
     fi
     local d t pol faults reads
-    d=$(digest "$dst"); t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
+    # clean*: a database with ALTER DEFAULT PRIVILEGES (hardened_functions) already has them when
+    # pg_restore --clean recreates the extension, so its member functions get the owner-only ACL the
+    # operator asked for, while a fresh restore applies the default privileges only at the end. That
+    # difference is PostgreSQL's and intended; the comparison leaves extension member functions out.
+    # Every other function (the as-of functions in particular) and every relation is still compared.
+    if [[ $variant == clean* ]]; then
+        d=$(digest "$dst" without_extension_functions); src_digest=$src_digest_without_extension_functions
+    else
+        d=$(digest "$dst")
+    fi
+    t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
@@ -407,9 +489,9 @@ run_case() {
         return
     fi
     pg_dump -Fc -d "$src" -f "$dump" || { FAILED+=("$case (pg_dump)"); return; }
-    local src_digest src_trig src_pol
+    local src_digest src_digest_without_extension_functions src_trig src_pol
     src_reads=''
-    src_digest=$(digest "$src"); src_trig=$(event_triggers "$src"); src_pol=$(policies "$src"); src_reads=$(tenant_reads "$src")
+    src_digest=$(digest "$src"); src_digest_without_extension_functions=$(digest "$src" without_extension_functions); src_trig=$(event_triggers "$src"); src_pol=$(policies "$src"); src_reads=$(tenant_reads "$src")
     local src_faults src_iso
     src_iso=$(rls_isolation "$src")
     if [ -n "$src_iso" ] && [ "$src_iso" != "$RLS_EXPECTED" ]; then
@@ -422,7 +504,7 @@ run_case() {
         ok=0
     fi
     dropdb --if-exists "$src" >>"$LOG" 2>&1
-    local variants=(serial single_txn no_owner)
+    local variants=(serial single_txn no_owner clean clean_single_txn clean_same clean_psql clean_psql_without_opt_in)
     # parallel_known_failure: the catalog_only database restored with -j 4, 20 times. The ordering
     # race fails about 40% of runs on PG 18.3, so 20 attempts make an accidental pass unlikely.
     if [ "$case" = parallel_known_failure ]; then
