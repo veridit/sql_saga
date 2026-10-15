@@ -1,0 +1,155 @@
+\i sql/include/test_setup.sql
+--
+-- test_setup.sql
+--
+-- Common setup for regression tests that need to be self-contained.
+-- This script creates the extension, a user role, and grants permissions.
+--
+SET datestyle = 'ISO, YMD';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS sql_saga CASCADE;
+DO $$
+BEGIN
+    CREATE ROLE sql_saga_unprivileged_user;
+EXCEPTION WHEN duplicate_object THEN
+END
+$$;
+GRANT USAGE ON SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT SELECT ON ALL TABLES IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA sql_saga TO sql_saga_unprivileged_user;
+/*
+ * Allow the unprivileged user to create tables in the public schema.
+ * This is required for tests that create their own tables.
+ * PG 15+ restricts this by default.
+ */
+GRANT CREATE ON SCHEMA public TO PUBLIC;
+-- A role that may insert into the child table of a regular-to-temporal foreign key can insert, as with a
+-- native foreign key: it needs no SELECT on the referenced table, and no EXECUTE granted on sql_saga's helper,
+-- also in a hardened database that revokes EXECUTE from PUBLIC by default.
+SET client_min_messages = warning;
+\set SHOW_CONTEXT never
+CREATE ROLE hardened_writer;
+BEGIN;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+CREATE TABLE par (id int, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('par', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('par', ARRAY['id'], key_type => 'primary', unique_key_name => 'par_id_valid');
+ add_unique_key 
+----------------
+ par_id_valid
+(1 row)
+
+INSERT INTO par VALUES (1, '[2020-01-01,infinity)');
+CREATE TABLE chi (id int PRIMARY KEY, par_id int);
+SELECT sql_saga.add_regular_foreign_key('chi', ARRAY['par_id'], 'par_id_valid');
+ add_regular_foreign_key 
+-------------------------
+ chi_par_id_fkey
+(1 row)
+
+GRANT INSERT ON chi TO hardened_writer;
+SET ROLE hardened_writer;
+INSERT INTO chi VALUES (1, 1);
+SAVEPOINT missing_parent;
+INSERT INTO chi VALUES (2, 99); -- refused by the foreign key, not by a missing privilege
+ERROR:  new row for relation "chi" violates check constraint "chi_par_id_check"
+DETAIL:  Failing row contains (id, par_id) = (2, 99).
+ROLLBACK TO SAVEPOINT missing_parent;
+RESET ROLE;
+TABLE chi;
+ id | par_id 
+----+--------
+  1 |      1
+(1 row)
+
+-- A second foreign key to the same key shares the helper; it stays usable by the writer.
+CREATE TABLE chi2 (id int PRIMARY KEY, par_id int);
+SELECT sql_saga.add_regular_foreign_key('chi2', ARRAY['par_id'], 'par_id_valid');
+ add_regular_foreign_key 
+-------------------------
+ chi2_par_id_fkey
+(1 row)
+
+GRANT INSERT ON chi2 TO hardened_writer;
+SET ROLE hardened_writer;
+INSERT INTO chi2 VALUES (1, 1);
+RESET ROLE;
+SELECT count(*) AS helpers FROM pg_proc WHERE proname = 'par_id_exists';
+ helpers 
+---------
+       1
+(1 row)
+
+-- A function that merely has the helper's name and signature is not the helper: it is refused, not taken over.
+CREATE TABLE chi3 (id int PRIMARY KEY, par_id int);
+CREATE FUNCTION public.not_the_helper(integer) RETURNS boolean LANGUAGE sql STABLE STRICT AS $$ SELECT true $$;
+SAVEPOINT impostor;
+SELECT sql_saga.add_regular_foreign_key('chi3', ARRAY['par_id'], 'par_id_valid', fk_helper_function => 'public.not_the_helper');
+ERROR:  function not_the_helper(integer) exists but is not the foreign key helper sql_saga generates for par
+HINT:  Pass a different fk_helper_function, or drop the existing function.
+ROLLBACK TO SAVEPOINT impostor;
+SELECT p.prosecdef,
+       EXISTS (SELECT FROM aclexplode(p.proacl) AS a WHERE a.grantee = 0) AS public_can_execute
+FROM pg_proc AS p WHERE p.proname = 'not_the_helper';
+ prosecdef | public_can_execute 
+-----------+--------------------
+ f         | f
+(1 row)
+
+-- A key type whose equality operator lives outside pg_catalog compares with that operator, as a native
+-- foreign key does: citext matches case-insensitively.
+CREATE EXTENSION citext;
+CREATE TABLE cpar (code citext, valid_range daterange NOT NULL);
+SELECT sql_saga.add_era('cpar', 'valid_range', 'valid');
+ add_era 
+---------
+ t
+(1 row)
+
+SELECT sql_saga.add_unique_key('cpar', ARRAY['code'], key_type => 'primary', unique_key_name => 'cpar_code_valid');
+ add_unique_key  
+-----------------
+ cpar_code_valid
+(1 row)
+
+INSERT INTO cpar VALUES ('Abc', '[2020-01-01,infinity)');
+CREATE TABLE cchi (id int PRIMARY KEY, cpar_code citext);
+SELECT sql_saga.add_regular_foreign_key('cchi', ARRAY['cpar_code'], 'cpar_code_valid');
+ add_regular_foreign_key 
+-------------------------
+ cchi_cpar_code_fkey
+(1 row)
+
+INSERT INTO cchi VALUES (1, 'aBC');
+TABLE cchi;
+ id | cpar_code 
+----+-----------
+  1 | aBC
+(1 row)
+
+ROLLBACK;
+DROP ROLE hardened_writer;
+RESET client_min_messages;
+\i sql/include/test_teardown.sql
+--
+-- test_teardown.sql
+--
+-- Common teardown for regression tests. This script drops the unprivileged
+-- user role created by test_setup.sql.
+--
+-- It is important to reset the role first, in case a test fails and
+-- leaves the session role set to the user that is about to be dropped.
+RESET ROLE;
+-- Drop the extensions to ensure a clean state for the next test.
+-- Use CASCADE to remove any dependent objects created by sql_saga.
+DROP EXTENSION IF EXISTS sql_saga CASCADE;
+DROP EXTENSION IF EXISTS btree_gist CASCADE;
+-- Revoke any privileges held by the test user and drop any objects they own.
+-- This is necessary before the role can be dropped.
+DROP OWNED BY sql_saga_unprivileged_user;
+DROP ROLE IF EXISTS sql_saga_unprivileged_user;
