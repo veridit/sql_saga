@@ -239,6 +239,9 @@ Order of work: write the failing tests first (093, 012, the F11-F14 cases and th
 - Relation names in messages quoted once (79cdb0d)
 - `sql_saga_native` is an internal library, no control file, no cargo-pgrx (75a7bff)
 - Parallel restore documented as a PostgreSQL pg_dump limitation with a workaround (347027b)
+- Regular FK helper runs as the referenced table owner, PUBLIC-executable; no parent SELECT needed (eac0ca8)
+- Version 1.1 with `sql_saga--1.0--1.1.sql`, frozen v1.0 script in `versions/`, preflight, `doc/upgrade.md`,
+  `make test-upgrade` (ae56001); benchmark baselines refreshed (ce66fee)
 
 ## 2026-02-22: Executor Optimization & Pre-Merge Hardening
 - Native Rust executor introspection cache (zero SPI on cache hit)
