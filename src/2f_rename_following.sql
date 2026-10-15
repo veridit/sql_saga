@@ -567,26 +567,31 @@ BEGIN
      * false positives caused by MVCC visibility issues within the event trigger.
      */
     IF NOT is_alter_table THEN
-        FOR r IN
-            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger AS trigger_name
-            FROM sql_saga.foreign_keys AS fk
-            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-            WHERE fk.uk_update_trigger IS NOT NULL
-              AND NOT EXISTS (
-                SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
-            UNION ALL
-            SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger AS trigger_name
-            FROM sql_saga.foreign_keys AS fk
-            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
-            WHERE fk.uk_delete_trigger IS NOT NULL
-              AND NOT EXISTS (
-                SELECT FROM pg_catalog.pg_trigger AS t
-                WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
-        LOOP
-            RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
-                r.trigger_name, r.table_oid, r.foreign_key_name;
-        END LOOP;
+        -- Only on explicit ALTER TRIGGER: DROP TRIGGER is refused by drop_protection, and on any other
+        -- command (for instance the CREATE POLICY of a history-policy sync while pg_restore has loaded
+        -- the catalog rows but not yet created the post-data triggers) a missing trigger is not a rename.
+        IF v_is_alter_trigger THEN
+            FOR r IN
+                SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_update_trigger AS trigger_name
+                FROM sql_saga.foreign_keys AS fk
+                JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                WHERE fk.uk_update_trigger IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT FROM pg_catalog.pg_trigger AS t
+                    WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_update_trigger))
+                UNION ALL
+                SELECT fk.foreign_key_name, to_regclass(format('%I.%I', uk.table_schema, uk.table_name)) AS table_oid, fk.uk_delete_trigger AS trigger_name
+                FROM sql_saga.foreign_keys AS fk
+                JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+                WHERE fk.uk_delete_trigger IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT FROM pg_catalog.pg_trigger AS t
+                    WHERE (t.tgrelid, t.tgname) = (to_regclass(format('%I.%I', uk.table_schema, uk.table_name)), fk.uk_delete_trigger))
+            LOOP
+                RAISE EXCEPTION 'cannot drop or rename trigger "%" on table "%" because it is used in an era foreign key "%"',
+                    r.trigger_name, r.table_oid, r.foreign_key_name;
+            END LOOP;
+        END IF;
 
         -- Protect synchronize_temporal_columns_trigger from being renamed or dropped.
         -- This trigger is essential for maintaining consistency between range and boundary columns.
