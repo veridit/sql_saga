@@ -52,6 +52,12 @@ jobs:
       - name: Run regression tests (excluding benchmarks)
         run: make test fast PG_CONFIG=${{ env.PG_CONFIG }}
 
+      - name: Run pg_dump/pg_restore round trips
+        # Serial, single-transaction and --no-owner restores must succeed with identical ACLs,
+        # policies and tenant isolation. Parallel restore is reported as a known PostgreSQL
+        # limitation and does not fail the job (see doc/decision-log.md).
+        run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
+
       - name: Show regression diffs on failure
         if: failure()
         run: |

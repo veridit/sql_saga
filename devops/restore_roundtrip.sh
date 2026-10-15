@@ -93,7 +93,11 @@ WITH tok AS (
 ), pol AS (
     SELECT c.oid::regclass::text AS tbl, c.relrowsecurity AS rls, c.relforcerowsecurity AS force,
            CASE WHEN p.polname ~ '^sql_saga_[0-9a-f]{16}$'
-                THEN 'copy-of:' || coalesce(b.base_policy, '?') ELSE p.polname END AS name,
+                THEN 'copy-of:' || coalesce(b.base_policy, '?')
+                -- the fixed history policies also carry the installation token
+                WHEN p.polname ~ '^sql_saga_history_(reader|base_select)_'
+                THEN regexp_replace(p.polname, '_[^_]+$', '_<token>')
+                ELSE p.polname END AS name,
            p.polpermissive, p.polcmd,
            (SELECT string_agg(CASE WHEN r = 0 THEN 'PUBLIC' ELSE r::regrole::text END, ',' ORDER BY 1) FROM unnest(p.polroles) AS r) AS roles,
            pg_get_expr(p.polqual, p.polrelid) AS qual
@@ -405,7 +409,13 @@ run_case() {
         if [ $pfail -gt 0 ]; then
             KNOWN+=("$case: $pfail/20 parallel restores failed (PostgreSQL pg_dump bug, see doc/decision-log.md)")
         else
-            KNOWN+=("$case: no parallel restore hit the load-order bug: PostgreSQL may have fixed it; revisit doc/decision-log.md")
+            # The bug is a race (about 15% of runs on PG 18.3), so 0/20 happens by chance about 4% of the
+            # time. Check the archive instead: a fixed pg_dump records TABLE DATA -> TABLE DATA dependencies.
+            if pg_restore -l -v "$dump" 2>/dev/null | grep -A1 'TABLE DATA sql_saga system_versioning' | grep -q 'depends on:.* .* '; then
+                KNOWN+=("$case: archive records data load order: PostgreSQL appears to have fixed pg_dump; revisit doc/decision-log.md")
+            else
+                KNOWN+=("$case: 0/20 parallel restores failed by chance; the archive still lacks the load order (bug present)")
+            fi
         fi
         echo "    parallel -j 4: $pfail/20 failed on catalog load order (known limitation, not counted)"
         if [ $other -gt 0 ]; then FAILED+=("$case ($other/20 parallel restores failed for another reason)"); fi
