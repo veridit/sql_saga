@@ -278,6 +278,61 @@ ROLLBACK;
 
 TABLE family_state;
 
+\echo '=== C3: identifiers that need quoting (spaces, an embedded double quote) in pg_restore''s ALTER TABLE ... DROP CONSTRAINT'
+SET client_min_messages = warning;
+CREATE SCHEMA "my schema";
+CREATE TABLE "my schema"."My Table" (id int, valid_range daterange NOT NULL, x text);
+SELECT sql_saga.add_era('"my schema"."My Table"', 'valid_range', 'valid');
+SELECT sql_saga.add_unique_key('"my schema"."My Table"', ARRAY['id'], key_type => 'primary', unique_key_name => 'my_table_id_valid');
+SELECT sql_saga.add_for_portion_of_view('"my schema"."My Table"', 'valid');
+CREATE TABLE "my schema"."Ref ""T"" able" (id int PRIMARY KEY, p_id int);
+SELECT sql_saga.add_regular_foreign_key('"my schema"."Ref ""T"" able"', ARRAY['p_id'], 'my_table_id_valid');
+SELECT sql_saga.add_system_versioning('"my schema"."Ref ""T"" able"');
+RESET client_min_messages;
+CREATE TEMP VIEW quoted_family_state AS
+    SELECT (SELECT count(*) FROM sql_saga.era WHERE table_schema = 'my schema') AS eras,
+           (SELECT count(*) FROM sql_saga.system_versioning WHERE table_schema = 'my schema') AS versioned,
+           (SELECT count(*) FROM pg_catalog.pg_class WHERE relnamespace = '"my schema"'::regnamespace AND relkind IN ('r', 'v')) AS relations,
+           (SELECT count(*) FROM pg_catalog.pg_policy AS p JOIN pg_catalog.pg_class AS c ON c.oid = p.polrelid
+             WHERE c.relnamespace = '"my schema"'::regnamespace) AS policies;
+TABLE quoted_family_state;
+BEGIN;
+SET LOCAL check_function_bodies = off;
+SET LOCAL row_security = off;
+SET LOCAL application_name = 'pg_restore';
+DROP POLICY sql_saga_history_reader_test0001 ON "my schema"."Ref ""T"" able_history";
+DROP POLICY sql_saga_history_base_select_test0001 ON "my schema"."Ref ""T"" able_history";
+DROP TRIGGER for_portion_of_valid ON "my schema"."My Table__for_portion_of_valid";
+DROP TRIGGER "Ref ""T"" able_truncate" ON "my schema"."Ref ""T"" able";
+DROP TRIGGER "Ref ""T"" able_system_time_write_history" ON "my schema"."Ref ""T"" able";
+DROP TRIGGER "Ref ""T"" able_system_time_generated_always" ON "my schema"."Ref ""T"" able";
+DROP TRIGGER "Ref ""T"" able_p_id_fkey_uk_update" ON "my schema"."My Table";
+DROP TRIGGER "Ref ""T"" able_p_id_fkey_uk_delete" ON "my schema"."My Table";
+DROP INDEX "my schema"."Ref ""T"" able_p_id_idx";
+DROP INDEX "my schema"."My Table_valid_range_gist_idx";
+DROP INDEX "my schema"."My Table_id_valid_range_idx";
+DROP INDEX "my schema"."My Table_id_idx";
+ALTER TABLE ONLY "my schema"."Ref ""T"" able" DROP CONSTRAINT "Ref ""T"" able_pkey";
+ALTER TABLE ONLY "my schema"."My Table" DROP CONSTRAINT "My Table_pkey";
+DROP VIEW "my schema"."My Table__for_portion_of_valid";
+DROP TABLE "my schema"."My Table";
+DROP FUNCTION "my schema"."Ref ""T"" able__from_to"(timestamp with time zone, timestamp with time zone);
+DROP FUNCTION "my schema"."Ref ""T"" able__between_symmetric"(timestamp with time zone, timestamp with time zone);
+DROP FUNCTION "my schema"."Ref ""T"" able__between"(timestamp with time zone, timestamp with time zone);
+DROP FUNCTION "my schema"."Ref ""T"" able__as_of"(timestamp with time zone);
+DROP VIEW "my schema"."Ref ""T"" able_with_history";
+DROP VIEW "my schema"."Ref ""T"" able_history_gated";
+DROP TABLE "my schema"."Ref ""T"" able_history";
+DROP TABLE "my schema"."Ref ""T"" able";
+DROP FUNCTION "my schema"."My Table_id_exists"(integer);
+TABLE quoted_family_state;
+ROLLBACK;
+TABLE quoted_family_state;
+DROP VIEW quoted_family_state;
+SET client_min_messages = warning;
+DROP SCHEMA "my schema" CASCADE;
+RESET client_min_messages;
+
 DROP VIEW family_state;
 
 -- The extension teardown's cascade inventory is not part of what this test pins.
