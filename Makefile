@@ -2,12 +2,17 @@ MODULE_big = sql_saga
 EXTENSION = sql_saga
 EXTVERSION = $(shell grep default_version $(EXTENSION).control | sed -e "s/default_version[[:space:]]*=[[:space:]]*'\([^']*\)'/\1/")
 
-# The current install script is generated from src. Released install scripts and hand-written update
-# scripts are immutable release artifacts kept in versions/ (sql_saga--1.0.sql is the v1.0 tag's build).
-DATA = versions/$(EXTENSION)--1.0.sql versions/$(EXTENSION)--1.0--1.1.sql $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
+# The current install script and direct 1.0-to-current update script are generated. Released install
+# scripts and hand-written update scripts are immutable release artifacts kept in versions/. Never
+# modify an artifact after release.
+DIRECT_UPDATE = $(EXTENSION)--1.0--$(EXTVERSION).sql
+FROZEN_1_0_1_1_SHA256 = 37405fd81634b9cc7b088638334a9158c38252ce4d3ca69506d7fe1b2067c5f7
+DATA = versions/$(EXTENSION)--1.0.sql versions/$(EXTENSION)--1.0--1.1.sql \
+	versions/$(EXTENSION)--1.1.sql versions/$(EXTENSION)--1.1--1.2.sql \
+	$(DIRECT_UPDATE) $(EXTENSION)--$(EXTVERSION).sql sql_saga_upgrade_preflight.sql
 
-# Add the generated script to EXTRA_CLEAN so it's removed on `make clean`.
-EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql
+# Add generated scripts to EXTRA_CLEAN so they are removed by `make clean`.
+EXTRA_CLEAN = $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE)
 
 DOCS = README.md
 #README.html: README.md
@@ -49,12 +54,12 @@ include $(PGXS)
 
 # Redefine the `all` target to build both the C library (SHLIB) and our
 # generated SQL script. PGXS provides the rule to build SHLIB.
-all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql
+all: $(SHLIB) $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE)
 
 # Add the generated SQL file as a direct dependency of the `install` target.
 # This ensures it is always rebuilt if its source files have changed before
 # tests are run.
-install: $(EXTENSION)--$(EXTVERSION).sql
+install: $(EXTENSION)--$(EXTVERSION).sql $(DIRECT_UPDATE)
 
 # ---------------------------------------------------------------------------
 # Native (Rust/pgrx) planner library: an INTERNAL part of sql_saga.
@@ -114,6 +119,38 @@ clean-native:
 # This provides 26 positions per digit group instead of 10 with pure numeric prefixes.
 $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][a-z]_*.sql)
 	cat $^ > $@
+
+# PostgreSQL selects the shortest update path. Build the direct 1.0-to-current script from the frozen
+# 1.0--1.1 artifact, changing only its exact native-version guard, then append the headerless current
+# update body. The checks intentionally fail if the frozen guard changes or the transformation touches
+# any other line.
+$(DIRECT_UPDATE): versions/$(EXTENSION)--1.0--1.1.sql versions/$(EXTENSION)--1.1--$(EXTVERSION).sql
+	@set -eu; \
+	old="DO \$$native_guard\$$ BEGIN IF sql_saga.native_library_version() <> '1.1' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$$native_guard\$$;"; \
+	new="DO \$$native_guard\$$ BEGIN IF sql_saga.native_library_version() <> '$(EXTVERSION)' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version $(EXTVERSION)', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga $(EXTVERSION) native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$$native_guard\$$;"; \
+	tmp='$@.tmp'; retargeted='$@.retargeted'; restored='$@.restored'; \
+	trap 'rm -f "$$tmp" "$$retargeted" "$$restored"' EXIT HUP INT TERM; \
+	if command -v sha256sum >/dev/null 2>&1; then \
+		actual_hash=$$(sha256sum '$<' | awk '{print $$1}'); \
+	elif command -v shasum >/dev/null 2>&1; then \
+		actual_hash=$$(shasum -a 256 '$<' | awk '{print $$1}'); \
+	else \
+		echo 'cannot authenticate $<: neither sha256sum nor shasum is available' >&2; exit 1; \
+	fi; \
+	[ "$$actual_hash" = '$(FROZEN_1_0_1_1_SHA256)' ] || { echo "frozen artifact $< failed SHA-256 authentication: expected $(FROZEN_1_0_1_1_SHA256), got $$actual_hash" >&2; exit 1; }; \
+	expected_header='\echo Use "ALTER EXTENSION sql_saga UPDATE TO '\''$(EXTVERSION)'\''" to load this file. \quit'; \
+	IFS= read -r actual_header <'versions/$(EXTENSION)--1.1--$(EXTVERSION).sql'; \
+	[ "$$actual_header" = "$$expected_header" ] || { echo "unexpected header in versions/$(EXTENSION)--1.1--$(EXTVERSION).sql: expected $$expected_header" >&2; exit 1; }; \
+	count=$$(grep -Fxc "$$old" '$<' || true); \
+	[ "$$count" = 1 ] || { echo "expected exactly one released 1.1 native guard in $<, found $$count" >&2; exit 1; }; \
+	awk -v old="$$old" -v new="$$new" '{ if ($$0 == old) print new; else print }' '$<' >"$$retargeted"; \
+	new_count=$$(grep -Fxc "$$new" "$$retargeted" || true); \
+	[ "$$new_count" = 1 ] || { echo "failed to generate exactly one $(EXTVERSION) native guard" >&2; exit 1; }; \
+	awk -v old="$$old" -v new="$$new" '{ if ($$0 == new) print old; else print }' "$$retargeted" >"$$restored"; \
+	cmp -s '$<' "$$restored" || { echo "native-guard transformation changed another line" >&2; exit 1; }; \
+	cat "$$retargeted" >"$$tmp"; \
+	sed '1d' 'versions/$(EXTENSION)--1.1--$(EXTVERSION).sql' >>"$$tmp"; \
+	mv "$$tmp" '$@'
 
 # test is a convenient alias for installcheck.
 # To run all tests: `make test`

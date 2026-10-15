@@ -9,19 +9,32 @@ BEGIN
     SELECT e.extversion INTO installed_version
     FROM pg_catalog.pg_extension AS e
     WHERE e.extname = 'sql_saga';
-    IF installed_version IS DISTINCT FROM '1.0' THEN
-        RAISE EXCEPTION 'sql_saga: upgrade preflight requires the released sql_saga 1.0, found %', coalesce(installed_version, 'not installed')
+
+    IF installed_version = '1.0' THEN
+        IF pg_catalog.to_regclass('sql_saga.temporal_merge_cache') IS NULL
+           OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
+               WHERE p.pronamespace = 'sql_saga'::pg_catalog.regnamespace
+                 AND p.proname ~ '^temporal_merge_(cache|source_columns_hash|invalidate_cache)') <> 8 THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.0 is not the supported v1.0 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.0 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
+    ELSIF installed_version = '1.1' THEN
+        IF pg_catalog.to_regclass('sql_saga.installation') IS NULL
+           OR pg_catalog.to_regclass('sql_saga.temporal_merge_cache') IS NOT NULL
+           OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_event_trigger AS e
+               WHERE e.evtfoid = 'sql_saga.drop_protection()'::pg_catalog.regprocedure
+                 AND e.evtenabled <> 'D') <> 1 THEN
+            RAISE EXCEPTION 'sql_saga: installed version 1.1 is not the supported v1.1 release shape'
+                USING ERRCODE = 'object_not_in_prerequisite_state',
+                      HINT = 'Restore the released v1.1 artifact before upgrading, or contact the sql_saga maintainer.';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'sql_saga: upgrade preflight requires released sql_saga 1.0 or 1.1, found %', coalesce(installed_version, 'not installed')
             USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Run this preflight only in a database containing the released v1.0 extension.';
+                  HINT = 'Run this preflight only in a database containing the released v1.0 or v1.1 extension.';
     END IF;
-    IF pg_catalog.to_regclass('sql_saga.temporal_merge_cache') IS NULL
-       OR (SELECT pg_catalog.count(*) FROM pg_catalog.pg_proc AS p
-           WHERE p.pronamespace = 'sql_saga'::pg_catalog.regnamespace
-             AND p.proname ~ '^temporal_merge_(cache|source_columns_hash|invalidate_cache)') <> 8 THEN
-        RAISE EXCEPTION 'sql_saga: installed version 1.0 is not the supported v1.0 release shape'
-            USING ERRCODE = 'object_not_in_prerequisite_state',
-                  HINT = 'Restore the released v1.0 artifact before upgrading, or contact the sql_saga maintainer.';
-    END IF;
+
     SELECT pg_catalog.string_agg(pg_catalog.format('%I.%I policy %I', n.nspname, c.relname, p.polname), E'\n' ORDER BY n.nspname, c.relname, p.polname)
     INTO policy_list
     FROM sql_saga.system_versioning AS sv
