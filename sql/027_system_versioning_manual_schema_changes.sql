@@ -296,6 +296,87 @@ UPDATE ms SET payload = 'two++', mismatch = 2 WHERE id = 2;
 UPDATE ms SET payload = 'two+++' WHERE id = 2;
 SELECT id, payload, mismatch FROM ms_history WHERE id = 2 ORDER BY system_valid_range;
 
+\echo '--- 10b. User-defined types are schema-qualified identically for writes and rebuilds'
+CREATE DOMAIN public.visible_domain AS text;
+SET search_path = public;
+CREATE TABLE ms_domain (id int PRIMARY KEY, payload visible_domain);
+SELECT sql_saga.add_system_versioning('ms_domain');
+INSERT INTO ms_domain VALUES (1, 'one');
+SELECT sql_saga.rebuild_system_versioning_views('ms_domain', ARRAY['payload']);
+ALTER TABLE ms_domain_history ALTER COLUMN payload TYPE text;
+
+CREATE FUNCTION pg_temp.capture_domain_mismatch(operation text)
+RETURNS TABLE (message text, hint text)
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF operation = 'write' THEN
+        UPDATE ms_domain SET payload = 'two' WHERE id = 1;
+    ELSE
+        PERFORM sql_saga.rebuild_system_versioning_views('ms_domain');
+    END IF;
+EXCEPTION WHEN datatype_mismatch THEN
+    GET STACKED DIAGNOSTICS message = MESSAGE_TEXT, hint = PG_EXCEPTION_HINT;
+    RETURN NEXT;
+END;
+$$;
+
+CREATE TEMP TABLE domain_mismatch AS
+SELECT operation, message, hint
+FROM (VALUES ('write'), ('rebuild')) AS v (operation)
+CROSS JOIN LATERAL pg_temp.capture_domain_mismatch(operation);
+
+TABLE domain_mismatch;
+SELECT count(DISTINCT (message, hint)) = 1 AS byte_identical,
+       bool_and(message LIKE '%public.visible_domain%') AS error_schema_qualified,
+       bool_and(hint LIKE '%TYPE public.visible_domain;%') AS hint_schema_qualified
+FROM domain_mismatch;
+
+-- The DDL portion of the HINT works even when no user schema is on search_path.
+SET search_path = pg_catalog;
+DO $execute_hint$
+DECLARE
+    ddl text;
+BEGIN
+    SELECT split_part(substring(hint FROM 6), ';', 1) INTO ddl
+    FROM pg_temp.domain_mismatch
+    LIMIT 1;
+    EXECUTE ddl;
+END;
+$execute_hint$;
+SET search_path = public;
+SELECT sql_saga.rebuild_system_versioning_views('ms_domain');
+UPDATE ms_domain SET payload = 'two' WHERE id = 1;
+SELECT id, payload::text FROM ms_domain_history ORDER BY system_valid_range;
+
+-- A type in sql_saga's own schema is schema-qualified too, so its HINT also runs without sql_saga on the path.
+ALTER TABLE ms_domain ADD COLUMN behavior sql_saga.drop_behavior;
+ALTER TABLE ms_domain_history ADD COLUMN behavior text;
+CREATE TEMP TABLE saga_type_mismatch AS
+SELECT operation, message, hint
+FROM (VALUES ('write'), ('rebuild')) AS v (operation)
+CROSS JOIN LATERAL pg_temp.capture_domain_mismatch(operation);
+TABLE saga_type_mismatch;
+SELECT count(DISTINCT (message, hint)) = 1 AS byte_identical,
+       bool_and(hint LIKE '%TYPE sql_saga.drop_behavior;%') AS hint_schema_qualified
+FROM saga_type_mismatch;
+SET search_path = pg_catalog;
+DO $execute_hint$
+DECLARE
+    ddl text;
+BEGIN
+    -- text to an enum has no automatic cast, so the user adds USING to the suggested ALTER.
+    SELECT split_part(substring(hint FROM 6), ';', 1) || ' USING behavior::sql_saga.drop_behavior' INTO ddl
+    FROM pg_temp.saga_type_mismatch
+    LIMIT 1;
+    EXECUTE ddl;
+END;
+$execute_hint$;
+SET search_path = public;
+SELECT sql_saga.rebuild_system_versioning_views('ms_domain');
+UPDATE ms_domain SET behavior = 'CASCADE' WHERE id = 1;
+UPDATE ms_domain SET behavior = 'RESTRICT' WHERE id = 1; -- history keeps the replaced CASCADE version
+SELECT id, behavior::text FROM ms_domain_history WHERE behavior IS NOT NULL ORDER BY system_valid_range;
+
 \echo '--- 11. A typmod or collation difference is a type difference too'
 ALTER TABLE ms ADD COLUMN code varchar(20);
 ALTER TABLE ms_history ADD COLUMN code varchar(30);
@@ -473,8 +554,10 @@ SELECT sql_saga.drop_system_versioning('ms');
 SELECT sql_saga.drop_system_versioning('pa');
 SELECT sql_saga.drop_system_versioning('rt');
 SELECT sql_saga.drop_system_versioning('ms_s."Ledger"');
-DROP TABLE ms, ms_plain, pa, rt;
+SELECT sql_saga.drop_system_versioning('ms_domain');
+DROP TABLE ms, ms_plain, pa, rt, ms_domain;
 DROP SCHEMA ms_s CASCADE;
+DROP DOMAIN public.visible_domain;
 DROP OWNED BY ms_other, ms_reader, ms_a, ms_none, ms_owner;
 DROP ROLE ms_other, ms_reader, ms_a, ms_none, ms_owner;
 RESET client_min_messages;
