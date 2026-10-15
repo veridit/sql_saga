@@ -1,27 +1,23 @@
 #!/usr/bin/env bash
 #
-# upgrade_test.sh - prove that a database created with the released sql_saga 1.0 (git tag v1.0,
-# commit 9e39fcc, what statbus deploys) reaches the 1.1 design with one
-#     ALTER EXTENSION sql_saga UPDATE TO '1.1';
-# Design: tmp/design_upgrade_path.md sections 5, 9 and 10 (owner answers).
+# upgrade_test.sh - prove that databases created with each released sql_saga baseline reach the
+# candidate design with one ALTER EXTENSION command. The v1.0 path deliberately relies on
+# PostgreSQL's 1.0--1.1--1.2 update chain, while the v1.1 path exercises 1.1--1.2 directly.
+# Design: tmp/design_drop_protection_v12_r4.md section 6 and the retained 1.1 upgrade assertions.
 #
 # What it does
-#   1. Builds the frozen 1.0 install script from the tag in a scratch dir (git archive v1.0 + its own
-#      `make`), never from the working tree. Also builds the 1.0 C library there.
-#   2. Assembles a private extension directory: the tag-built sql_saga--1.0.sql plus the candidate
-#      1.1 files (control, sql_saga--1.1.sql, sql_saga--1.0--1.1.sql) taken from UPGRADE_CANDIDATE_DIR
+#   1. Builds each selected released baseline from its tag, including its install SQL and old binaries.
+#   2. Assembles a private extension directory containing that tag-built baseline plus candidate 1.2
+#      files (control, fresh install SQL, and both update hops) from UPGRADE_CANDIDATE_DIR
 #      (default: the installed extension dir, i.e. what `make install` deployed). Every scratch database
 #      gets `ALTER DATABASE .. SET extension_control_path = '<private dir>:$system'`, so it sees
-#      exactly these scripts. NOTHING is written into the global extension directory: the installed
-#      sql_saga--1.0.sql is (today) generated from HEAD and is NOT byte-identical to the v1.0 release,
-#      so installing the tag build there would change what other databases on this server get. The
-#      byte-identity of the shipped 1.0 script is asserted instead (check "artifact").
-#   3. Builds old-state fixtures in saga_up_old while that database loads the 1.0 C library
+#      exactly these scripts. NOTHING is written into the global extension directory. Released
+#      install scripts are built from their tags and compared byte-for-byte with frozen artifacts.
+#   3. Builds old-state fixtures in saga_up_old while that database loads the selected release binaries
 #      (per-database dynamic_library_path), then resets the path: the "restart with new binaries".
-#   4. Runs only ALTER EXTENSION sql_saga UPDATE TO '1.1', then asserts the new shape (section 5.5)
-#      and behaviour (section 5.6), fresh-1.1 versus upgraded equivalence (5.7), idempotence of a
-#      re-run update and of the reconciler, atomic rollback when preflight conditions are violated,
-#      preflight refusal of a non-v1.0 build, and dump/restore after the upgrade.
+#   4. Runs ALTER EXTENSION sql_saga UPDATE TO '1.2', then asserts shape and behaviour,
+#      fresh-1.2 versus upgraded equivalence, idempotence, atomic rollback, preflight acceptance and
+#      refusal, query-function preservation, and dump/restore after the upgrade.
 #
 # Exit status: 0 all assertions pass (GREEN), 1 assertions failed (RED), 2 harness/setup error.
 #
@@ -31,8 +27,9 @@
 #   UPGRADE_BASELINE_TAG       default v1.0
 #   UPGRADE_BASELINE_COMMIT    default 9e39fcc (the tag must point here)
 #   UPGRADE_CANDIDATE_DIR      default $(pg_config --sharedir)/extension
+#   UPGRADE_RELEASE_ARTIFACT_DIR default repository versions/; private override for probe candidates
 #   UPGRADE_PREFLIGHT          default $UPGRADE_CANDIDATE_DIR/sql_saga_upgrade_preflight.sql
-#   UPGRADE_OLD_BINARIES       default 1: build fixtures with the v1.0 C library; 0: installed library
+#   UPGRADE_OLD_BINARIES       default 1: build fixtures with the selected release binaries
 #   UPGRADE_KEEP               default 0; 1 keeps this run's databases, roles and work dir
 #   PG_CONFIG                  default pg_config
 # Creates and drops only databases and roles bearing this invocation's unique saga_up_* prefix.
@@ -40,19 +37,102 @@
 #
 set -u
 
-RUN_SUFFIX="${$}_${RANDOM}"
-PREFIX="saga_up_${RUN_SUFFIX}"
 REPO=$(cd "$(dirname "$0")/.." && pwd)
 PG_CONFIG=${PG_CONFIG:-pg_config}
-BASELINE_TAG=${UPGRADE_BASELINE_TAG:-v1.0}
-BASELINE_COMMIT=${UPGRADE_BASELINE_COMMIT:-9e39fcc}
 CANDIDATE_DIR=${UPGRADE_CANDIDATE_DIR:-$($PG_CONFIG --sharedir)/extension}
+RELEASE_ARTIFACT_DIR=${UPGRADE_RELEASE_ARTIFACT_DIR:-$REPO/versions}
+NEW_VERSION=1.2
+
+# The public entry point first verifies the complete candidate artifact set, then runs the same
+# assertion suite independently from each released baseline. Keeping each path in a child process
+# gives it a unique database/role prefix and cleanup trap without requiring bash newer than 3.2.
+if [ "${UPGRADE_PATH_RUNNER:-0}" != 1 ]; then
+    ARTIFACT_WORK=$(mktemp -d "${TMPDIR:-/tmp}/saga_up_artifact.XXXXXX") || exit 2
+    umask 022
+    chmod 755 "$ARTIFACT_WORK"
+    artifact_fails=0
+    cleanup_artifacts() { rm -rf "$ARTIFACT_WORK"; }
+    trap cleanup_artifacts EXIT
+
+    echo "== candidate 1.2 artifacts"
+    control_version=""
+    if [ -f "$CANDIDATE_DIR/sql_saga.control" ]; then
+        control_version=$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$CANDIDATE_DIR/sql_saga.control")
+    fi
+    if [ "$control_version" = "$NEW_VERSION" ]; then
+        echo "    ok    candidate control default_version $NEW_VERSION"
+    else
+        echo "    FAIL [expected RED] candidate control default_version (expected '$NEW_VERSION', got '${control_version:-missing}')"
+        artifact_fails=$((artifact_fails + 1))
+    fi
+
+    for spec in "v1.0|1.0|9e39fcc" "v1.1|1.1|9c72e66"; do
+        tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
+        tag_dir="$ARTIFACT_WORK/$version"
+        mkdir -p "$tag_dir"
+        tag_commit=$(git -C "$REPO" rev-parse --verify -q "$tag^{commit}") || {
+            echo "HARNESS ERROR: tag $tag not found" >&2
+            exit 2
+        }
+        case "$tag_commit" in
+            "$commit"*) echo "    ok    $tag is released commit $commit" ;;
+            *) echo "    FAIL [prerequisite] $tag is $tag_commit, not released commit $commit"; artifact_fails=$((artifact_fails + 1)) ;;
+        esac
+        git -C "$REPO" archive "$tag" | tar -x -C "$tag_dir" || exit 2
+        make -C "$tag_dir" PG_CONFIG="$PG_CONFIG" "sql_saga--$version.sql" >"$ARTIFACT_WORK/$version.build.log" 2>&1 || {
+            echo "HARNESS ERROR: building $tag install script (see $ARTIFACT_WORK/$version.build.log)" >&2
+            exit 2
+        }
+        frozen="$RELEASE_ARTIFACT_DIR/sql_saga--$version.sql"
+        if [ -f "$frozen" ] && cmp -s "$tag_dir/sql_saga--$version.sql" "$frozen"; then
+            echo "    ok    versions/sql_saga--$version.sql is byte-identical to $tag"
+        elif [ ! -f "$frozen" ]; then
+            echo "    FAIL [expected RED] versions/sql_saga--$version.sql is missing"
+            artifact_fails=$((artifact_fails + 1))
+        else
+            echo "    FAIL [prerequisite] versions/sql_saga--$version.sql differs from $tag"
+            artifact_fails=$((artifact_fails + 1))
+        fi
+    done
+
+    for artifact in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
+        if [ -f "$CANDIDATE_DIR/$artifact" ]; then
+            echo "    ok    candidate ships $artifact"
+        else
+            echo "    FAIL [expected RED] candidate ships $artifact (missing in $CANDIDATE_DIR)"
+            artifact_fails=$((artifact_fails + 1))
+        fi
+    done
+
+    if [ "$artifact_fails" -ne 0 ]; then
+        echo
+        echo "RED. Candidate 1.2 artifact gate has $artifact_fails failure(s); upgrade fixtures were not created."
+        exit 1
+    fi
+
+    overall=0
+    for spec in "v1.0|1.0|9e39fcc" "v1.1|1.1|9c72e66"; do
+        tag=${spec%%|*}; rest=${spec#*|}; version=${rest%%|*}; commit=${rest#*|}
+        echo
+        echo "################################################################################"
+        echo "# upgrade path $tag ($version) -> $NEW_VERSION"
+        echo "################################################################################"
+        UPGRADE_PATH_RUNNER=1 UPGRADE_BASELINE_TAG="$tag" UPGRADE_BASELINE_VERSION="$version" \
+            UPGRADE_BASELINE_COMMIT="$commit" "$0" || overall=1
+    done
+    exit "$overall"
+fi
+
+RUN_SUFFIX="${$}_${RANDOM}"
+PREFIX="saga_up_${RUN_SUFFIX}"
+BASELINE_TAG=${UPGRADE_BASELINE_TAG:-v1.0}
+BASELINE_VERSION=${UPGRADE_BASELINE_VERSION:-1.0}
+BASELINE_COMMIT=${UPGRADE_BASELINE_COMMIT:-9e39fcc}
 PREFLIGHT=${UPGRADE_PREFLIGHT:-$CANDIDATE_DIR/sql_saga_upgrade_preflight.sql}
 OLD_BINARIES=${UPGRADE_OLD_BINARIES:-1}
 KEEP=${UPGRADE_KEEP:-0}
-NEW_VERSION=1.1
 
-# The server process reads the extension scripts and the v1.0 library from the work tree; it may run as
+# The server process reads extension scripts and released libraries from the work tree; it may run as
 # another OS user (postgres on Linux packages), so everything under it must be readable and searchable by
 # others, whatever umask the caller has.
 umask 022
@@ -60,9 +140,9 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/saga_up.XXXXXX")
 chmod 755 "$WORK"
 LOG="$WORK/log"
 # extension_control_path entries name a directory that CONTAINS extension/ (like $system = sharedir).
-EXT_ROOT="$WORK/ext"                       # private extension dir: tag 1.0 + candidate 1.1
+EXT_ROOT="$WORK/ext"                       # private extension dir: selected tag + candidate 1.2
 EXT="$EXT_ROOT/extension"
-FOREIGN_ROOT="$WORK/ext_foreign"           # a non-release build that also claims 1.0 (HEAD's src)
+FOREIGN_ROOT="$WORK/ext_foreign"           # a non-release build claiming the selected baseline
 FOREIGN_EXT="$FOREIGN_ROOT/extension"
 FAILS=()
 PASSES=0
@@ -131,7 +211,8 @@ cleanup() {
         echo "UPGRADE_KEEP=1: kept work directory: $WORK"
         return $saved_status
     fi
-    for db in "${CREATED_DBS[@]}"; do
+    for db in "${CREATED_DBS[@]-}"; do
+        [ -n "$db" ] || continue
         if ! out=$(psql -X -At -d postgres -v ON_ERROR_STOP=1 -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$db' AND pid <> pg_backend_pid()" 2>&1); then
             CLEANUP_FAILURES+=("terminate sessions for database $db: $out")
         fi
@@ -139,7 +220,8 @@ cleanup() {
             CLEANUP_FAILURES+=("drop database $db: $out")
         fi
     done
-    for role in "${CREATED_ROLES[@]}"; do
+    for role in "${CREATED_ROLES[@]-}"; do
+        [ -n "$role" ] || continue
         if ! out=$(psql -X -At -d postgres -v ON_ERROR_STOP=1 -c "DROP OWNED BY \"$role\"; DROP ROLE \"$role\"" 2>&1); then
             CLEANUP_FAILURES+=("drop role $role: $out")
         fi
@@ -291,14 +373,16 @@ fixture_histpol() {
 \set VERBOSITY terse
 SET client_min_messages = warning;
 CREATE EXTENSION btree_gist;
-CREATE EXTENSION sql_saga VERSION '1.0';
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
 CREATE TABLE hp (id int PRIMARY KEY, x text);
 SELECT sql_saga.add_system_versioning('hp');
 INSERT INTO hp VALUES (1, 'v1');
 UPDATE hp SET x = 'v2';
 GRANT SELECT ON hp TO ${PREFIX}_r1;
 ALTER TABLE hp_history ENABLE ROW LEVEL SECURITY;
+SET session_replication_role = replica;
 CREATE POLICY user_history_policy ON hp_history FOR SELECT USING (true);
+RESET session_replication_role;
 SQL
 }
 
@@ -456,6 +540,57 @@ WITH token AS (
     UNION ALL SELECT 'catalog-system_time_era|'||to_jsonb(s)::text FROM sql_saga.system_time_era AS s
 )
 SELECT replace(line,(SELECT value FROM token),'<token>') FROM lines ORDER BY 1;
+SQL
+}
+
+# All four generated query functions of every family. This captures exact definitions, execution
+# properties and EXPLAIN plan text so a 1.2 update cannot silently regenerate the released 1.1 form.
+query_function_snapshot() {
+    sql "$1" <<'SQL'
+BEGIN;
+CREATE TEMP TABLE pg_temp.query_function_snapshot (line text) ON COMMIT DROP;
+DO $snapshot$
+DECLARE
+    r record;
+    fn_oid oid;
+    call_sql text;
+    plan_line text;
+    plan_text text;
+BEGIN
+    FOR r IN
+        SELECT format('%I.%I', sv.table_schema, sv.table_name) AS family, q.kind, q.identity,
+               split_part(q.identity, '(', 1) || q.args AS call_sql
+        FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL (VALUES
+            ('as_of', sv.func_as_of, '(now())'),
+            ('between', sv.func_between, '(now() - interval ''1 day'', now())'),
+            ('between_symmetric', sv.func_between_symmetric, '(now(), now() - interval ''1 day'')'),
+            ('from_to', sv.func_from_to, '(now() - interval ''1 day'', now())')
+        ) AS q(kind, identity, args)
+        ORDER BY 1, 2
+    LOOP
+        fn_oid := to_regprocedure(r.identity);
+        INSERT INTO pg_temp.query_function_snapshot (line)
+        SELECT format('function|%s|%s|definition=%s|volatility=%s|strict=%s|parallel=%s|security=%s|config=%s|owner=%s|acl=%s',
+                      r.family, r.kind, md5(pg_get_functiondef(p.oid)), p.provolatile, p.proisstrict,
+                      p.proparallel, p.prosecdef, coalesce(p.proconfig::text, ''), p.proowner::regrole,
+                      coalesce((SELECT string_agg(CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || ':' || a.privilege_type,
+                                                 ',' ORDER BY CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END, a.privilege_type)
+                                FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a), ''))
+        FROM pg_proc AS p WHERE p.oid = fn_oid;
+        plan_text := '';
+        call_sql := r.call_sql;
+        FOR plan_line IN EXECUTE format('EXPLAIN (COSTS OFF) SELECT * FROM %s', call_sql)
+        LOOP
+            plan_text := plan_text || CASE WHEN plan_text = '' THEN '' ELSE E'\n' END || plan_line;
+        END LOOP;
+        INSERT INTO pg_temp.query_function_snapshot (line)
+        VALUES (format('plan|%s|%s|%s', r.family, r.kind, md5(plan_text)));
+    END LOOP;
+END;
+$snapshot$;
+SELECT line FROM pg_temp.query_function_snapshot ORDER BY line;
+COMMIT;
 SQL
 }
 
@@ -1010,26 +1145,30 @@ run_preflight() {  # run_preflight <db>: prints output, returns psql status
 trap cleanup EXIT
 command -v psql >/dev/null || die "psql not found"
 [ "$(psql -X -At -d postgres -c 'SELECT rolsuper FROM pg_roles WHERE rolname = current_user' 2>>"$LOG")" = t ] || die "needs a superuser via the libpq environment"
-echo "upgrade test: $BASELINE_TAG -> $NEW_VERSION   server: $(psql -X -At -d postgres -c 'SHOW server_version')   work: $WORK"
+echo "upgrade test: $BASELINE_TAG ($BASELINE_VERSION) -> $NEW_VERSION   server: $(psql -X -At -d postgres -c 'SHOW server_version')   work: $WORK"
 
 # ---------------------------------------------------------------------------------------------
 section "artifact"
 # ---------------------------------------------------------------------------------------------
 TAG_COMMIT=$(git -C "$REPO" rev-parse --verify -q "$BASELINE_TAG^{commit}") || die "tag $BASELINE_TAG not found"
 case "$TAG_COMMIT" in "$BASELINE_COMMIT"*) ok "$BASELINE_TAG is commit $BASELINE_COMMIT" ;; *) fail "$BASELINE_TAG is $TAG_COMMIT, not the released $BASELINE_COMMIT" ;; esac
-mkdir -p "$WORK/v1.0" "$WORK/head" "$EXT" "$FOREIGN_EXT"
-git -C "$REPO" archive "$BASELINE_TAG" | tar -x -C "$WORK/v1.0" || die "git archive $BASELINE_TAG"
+BASELINE_BUILD="$WORK/baseline-$BASELINE_VERSION"
+mkdir -p "$BASELINE_BUILD" "$WORK/head" "$EXT" "$FOREIGN_EXT"
+git -C "$REPO" archive "$BASELINE_TAG" | tar -x -C "$BASELINE_BUILD" || die "git archive $BASELINE_TAG"
 if [ "$OLD_BINARIES" = 1 ]; then
-    make -C "$WORK/v1.0" PG_CONFIG="$PG_CONFIG" >"$WORK/v1.0.build.log" 2>&1 || die "building $BASELINE_TAG (see $WORK/v1.0.build.log)"
-    OLD_LIB="$WORK/v1.0"
-    ls "$OLD_LIB"/sql_saga.* >/dev/null 2>&1 || die "no 1.0 C library in $OLD_LIB"
+    make -C "$BASELINE_BUILD" PG_CONFIG="$PG_CONFIG" >"$WORK/baseline.build.log" 2>&1 || die "building $BASELINE_TAG (see $WORK/baseline.build.log)"
+    OLD_LIB="$BASELINE_BUILD"
+    ls "$OLD_LIB"/sql_saga.* >/dev/null 2>&1 || die "no $BASELINE_VERSION C library in $OLD_LIB"
+    if ls "$BASELINE_BUILD"/native/target/release/*sql_saga_native* >/dev/null 2>&1; then
+        OLD_LIB="$OLD_LIB:$BASELINE_BUILD/native/target/release"
+    fi
 else
-    make -C "$WORK/v1.0" PG_CONFIG="$PG_CONFIG" sql_saga--1.0.sql >"$WORK/v1.0.build.log" 2>&1 || die "building $BASELINE_TAG SQL"
+    make -C "$BASELINE_BUILD" PG_CONFIG="$PG_CONFIG" "sql_saga--$BASELINE_VERSION.sql" >"$WORK/baseline.build.log" 2>&1 || die "building $BASELINE_TAG SQL"
     OLD_LIB=""
 fi
-[ -s "$WORK/v1.0/sql_saga--1.0.sql" ] || die "$BASELINE_TAG produced no sql_saga--1.0.sql"
-cp "$WORK/v1.0/sql_saga--1.0.sql" "$EXT/" || die "copy 1.0 script"
-echo "    1.0 script from $BASELINE_TAG: md5 $(md5 -q "$EXT/sql_saga--1.0.sql" 2>/dev/null || md5sum "$EXT/sql_saga--1.0.sql" | cut -d' ' -f1)"
+[ -s "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql" ] || die "$BASELINE_TAG produced no sql_saga--$BASELINE_VERSION.sql"
+cp "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql" "$EXT/" || die "copy $BASELINE_VERSION script"
+echo "    $BASELINE_VERSION script from $BASELINE_TAG: md5 $(md5 -q "$EXT/sql_saga--$BASELINE_VERSION.sql" 2>/dev/null || md5sum "$EXT/sql_saga--$BASELINE_VERSION.sql" | cut -d' ' -f1)"
 
 CANDIDATE_OK=1
 if [ -f "$CANDIDATE_DIR/sql_saga.control" ]; then
@@ -1038,22 +1177,22 @@ if [ -f "$CANDIDATE_DIR/sql_saga.control" ]; then
     check "candidate control default_version" "$NEW_VERSION" "$DEFV"
 else
     fail "no sql_saga.control in $CANDIDATE_DIR"; CANDIDATE_OK=0
-    cp "$WORK/v1.0/sql_saga.control" "$EXT/"
+    cp "$BASELINE_BUILD/sql_saga.control" "$EXT/"
 fi
-for f in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--$NEW_VERSION.sql"; do
+for f in "sql_saga--$NEW_VERSION.sql" "sql_saga--1.0--1.1.sql" "sql_saga--1.1--$NEW_VERSION.sql"; do
     if [ -f "$CANDIDATE_DIR/$f" ]; then cp "$CANDIDATE_DIR/$f" "$EXT/"; ok "candidate ships $f"
     else fail "candidate ships $f (missing in $CANDIDATE_DIR)"; CANDIDATE_OK=0; fi
 done
-if [ -f "$CANDIDATE_DIR/sql_saga--1.0.sql" ]; then
-    if cmp -s "$CANDIDATE_DIR/sql_saga--1.0.sql" "$EXT/sql_saga--1.0.sql"; then
-        ok "shipped sql_saga--1.0.sql is byte-identical to $BASELINE_TAG"
+if [ -f "$CANDIDATE_DIR/sql_saga--$BASELINE_VERSION.sql" ]; then
+    if cmp -s "$CANDIDATE_DIR/sql_saga--$BASELINE_VERSION.sql" "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql"; then
+        ok "shipped sql_saga--$BASELINE_VERSION.sql is byte-identical to $BASELINE_TAG"
     else
-        fail "shipped sql_saga--1.0.sql differs from $BASELINE_TAG (released scripts are immutable; it must be the frozen file)"
+        fail "shipped sql_saga--$BASELINE_VERSION.sql differs from $BASELINE_TAG (released scripts are immutable)"
     fi
 else
-    fail "candidate does not ship the frozen sql_saga--1.0.sql (fresh 1.0 installs and this upgrade path need it)"
+    fail "candidate does not ship frozen sql_saga--$BASELINE_VERSION.sql"
 fi
-UPD="$EXT/sql_saga--1.0--$NEW_VERSION.sql"
+UPD="$EXT/sql_saga--1.1--$NEW_VERSION.sql"
 if [ -f "$UPD" ]; then
     body=$(sed -e 's/--.*$//' "$UPD")
     if printf '%s\n' "$body" | grep -qiE '^[[:space:]]*(BEGIN|COMMIT)[[:space:]]*;'; then fail "update script contains BEGIN/COMMIT"; else ok "update script has no BEGIN/COMMIT"; fi
@@ -1061,20 +1200,20 @@ if [ -f "$UPD" ]; then
     if printf '%s\n' "$body" | grep -qiE 'session_replication_role|DISABLE[[:space:]]+EVENT|ALTER[[:space:]]+EVENT[[:space:]]+TRIGGER[^;]*DISABLE'; then
         fail "update script disables event triggers or changes session_replication_role"
     else ok "update script keeps event triggers on"; fi
-    if printf '%s\n' "$body" | grep -qi '__internal_reconcile_system_versioning_family'; then ok "update script calls the canonical family reconciler"
-    else fail "update script does not call sql_saga.__internal_reconcile_system_versioning_family"; fi
 fi
 if [ -f "$PREFLIGHT" ]; then ok "preflight script present ($PREFLIGHT)"; else fail "preflight script missing ($PREFLIGHT)"; fi
 
-# A build that also claims 1.0 but is not the release: HEAD's committed sources (as in dev databases).
-git -C "$REPO" archive HEAD | tar -x -C "$WORK/head" || die "git archive HEAD"
-make -C "$WORK/head" PG_CONFIG="$PG_CONFIG" "sql_saga--$(sed -n "s/^default_version[[:space:]]*=[[:space:]]*'\([^']*\)'.*/\1/p" "$WORK/head/sql_saga.control").sql" >"$WORK/head.build.log" 2>&1 || true
-FOREIGN_SQL=$(ls "$WORK/head"/sql_saga--1.0.sql 2>/dev/null)
-if [ -n "$FOREIGN_SQL" ] && ! cmp -s "$FOREIGN_SQL" "$EXT/sql_saga--1.0.sql"; then
-    cp "$FOREIGN_SQL" "$FOREIGN_EXT/sql_saga--1.0.sql"; cp "$WORK/v1.0/sql_saga.control" "$FOREIGN_EXT/"
+# Construct a baseline-specific non-release artifact. It installs normally but deliberately lacks a
+# release-shape sentinel, so preflight must reject it. Setup failure is fatal rather than a skipped test.
+cp "$BASELINE_BUILD/sql_saga--$BASELINE_VERSION.sql" "$FOREIGN_EXT/sql_saga--$BASELINE_VERSION.sql" || die "copy foreign baseline SQL"
+cp "$BASELINE_BUILD/sql_saga.control" "$FOREIGN_EXT/" || die "copy foreign baseline control"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    printf '\nDROP TABLE sql_saga.temporal_merge_cache CASCADE;\n' >>"$FOREIGN_EXT/sql_saga--$BASELINE_VERSION.sql"
 else
-    FOREIGN_SQL=""
+    printf '\nDROP TABLE sql_saga.installation CASCADE;\n' >>"$FOREIGN_EXT/sql_saga--$BASELINE_VERSION.sql"
 fi
+FOREIGN_SQL="$FOREIGN_EXT/sql_saga--$BASELINE_VERSION.sql"
+[ -s "$FOREIGN_SQL" ] || die "building non-release $BASELINE_VERSION artifact"
 
 # ---------------------------------------------------------------------------------------------
 section "roles and fixtures"
@@ -1088,9 +1227,13 @@ new_role "${PREFIX}_blind"
 
 OLD=${PREFIX}_old
 new_db "$OLD" "$EXT_ROOT" "$OLD_LIB"
-{ fixture_core 1.0; fixture_old_only; } | sql "$OLD" >"$WORK/old.fixture.log"
-grep -q '^ERROR' "$WORK/old.fixture.log" && die "1.0 fixture failed: $(grep -m1 '^ERROR' "$WORK/old.fixture.log") (see $WORK/old.fixture.log)"
-check "fixture database runs extension version 1.0" "1.0" "$(q "$OLD" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    { fixture_core "$BASELINE_VERSION"; fixture_old_only; } | sql "$OLD" >"$WORK/old.fixture.log"
+else
+    fixture_core "$BASELINE_VERSION" | sql "$OLD" >"$WORK/old.fixture.log"
+fi
+grep -q '^ERROR' "$WORK/old.fixture.log" && die "$BASELINE_VERSION fixture failed: $(grep -m1 '^ERROR' "$WORK/old.fixture.log") (see $WORK/old.fixture.log)"
+check "fixture database runs extension version $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$OLD" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "fixture database installed the $BASELINE_TAG script (not the server's)" "$EXT_ROOT:\$system" "$(q "$OLD" "SHOW extension_control_path")"
 # The 1.0 C library maps history positionally: a history-only column makes it refuse the write.
 # The 1.1 library maps by name. This tells which library the fixture sessions loaded.
@@ -1099,10 +1242,10 @@ check "fixture database installed the $BASELINE_TAG script (not the server's)" "
 writer_probe() {  # writer_probe <libdir or empty>
     local p=${PREFIX}_libprobe r
     new_db "$p" "$EXT_ROOT" "$1"
-    r=$(sql "$p" <<'SQL' | grep -m1 -E 'ERROR|by-name'
+    r=$(sql "$p" <<SQL | grep -m1 -E 'ERROR|by-name'
 SET client_min_messages = warning;
 CREATE EXTENSION btree_gist;
-CREATE EXTENSION sql_saga VERSION '1.0';
+CREATE EXTENSION sql_saga VERSION '$BASELINE_VERSION';
 CREATE TABLE lib_probe (id int PRIMARY KEY, x text);
 SELECT sql_saga.add_system_versioning('lib_probe');
 INSERT INTO lib_probe VALUES (1, 'a');
@@ -1114,26 +1257,54 @@ SQL
     dropdb --if-exists "$p" >>"$LOG" 2>&1
     echo "$r"
 }
-if [ -n "$OLD_LIB" ]; then
-    check "fixture sessions run the $BASELINE_TAG C library (positional writer)" "ERROR:  could not convert row type" "$(writer_probe "$OLD_LIB")"
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    if [ -n "$OLD_LIB" ]; then
+        check "fixture sessions run the $BASELINE_TAG C library (positional writer)" "ERROR:  could not convert row type" "$(writer_probe "$OLD_LIB")"
+    fi
+    # Prove this is a genuine 1.0 install before anything is upgraded.
+    check "1.0 baseline: shared cache holds rows" "t" "$(q "$OLD" "SELECT count(*) > 0 FROM sql_saga.temporal_merge_cache")"
+    check "1.0 baseline: 8 cache routines and the cache event trigger exist" "8|1" \
+        "$(q "$OLD" "SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace = 'sql_saga'::regnamespace AND proname ~ '^temporal_merge_(cache|source_columns_hash|invalidate_cache)') || '|' || (SELECT count(*) FROM pg_event_trigger WHERE evtname = 'sql_saga_cache_invalidation')")"
+    check "1.0 baseline: no installation token, no gated views" "true|0" \
+        "$(q "$OLD" "SELECT (to_regclass('sql_saga.installation') IS NULL) || '|' || (SELECT count(*) FROM pg_class WHERE relname LIKE '%\_gated')")"
+    check "1.0 baseline: base grants mirrored onto with-history, FPO view and as-of function" "true|true|true" \
+        "$(q "$OLD" "SELECT (SELECT relacl::text LIKE '%${PREFIX}_r1=%' FROM pg_class WHERE oid = 'sv_with_history'::regclass)::text
+                     || '|' || (SELECT relacl::text LIKE '%${PREFIX}_r1=%' FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)
+                     || '|' || (SELECT proacl::text LIKE '%${PREFIX}_r1=%' FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)")"
+    check "1.0 baseline: owner-rights with-history leaks other tenants' history to r1" "1,1,2,2" "$(ids_as "$OLD" ${PREFIX}_r1 rdoc_with_history)"
+else
+    if [ -n "$OLD_LIB" ]; then
+        check "fixture sessions run the $BASELINE_TAG C library (by-name writer)" "by-name writer" "$(writer_probe "$OLD_LIB")"
+    fi
+    check "1.1 baseline: installation token and gated views exist" "false|4" \
+        "$(q "$OLD" "SELECT (to_regclass('sql_saga.installation') IS NULL) || '|' || (SELECT count(*) FROM pg_class WHERE relname LIKE '%\_gated')")"
+    check "1.1 baseline: shared cache is absent" "t" "$(q "$OLD" "SELECT to_regclass('sql_saga.temporal_merge_cache') IS NULL")"
 fi
-# Prove this is a genuine old install (section 5.2), before anything is upgraded.
-check "1.0 baseline: shared cache holds rows" "t" "$(q "$OLD" "SELECT count(*) > 0 FROM sql_saga.temporal_merge_cache")"
-check "1.0 baseline: 8 cache routines and the cache event trigger exist" "8|1" \
-    "$(q "$OLD" "SELECT (SELECT count(*) FROM pg_proc WHERE pronamespace = 'sql_saga'::regnamespace AND proname ~ '^temporal_merge_(cache|source_columns_hash|invalidate_cache)') || '|' || (SELECT count(*) FROM pg_event_trigger WHERE evtname = 'sql_saga_cache_invalidation')")"
-check "1.0 baseline: no installation token, no gated views" "true|0" \
-    "$(q "$OLD" "SELECT (to_regclass('sql_saga.installation') IS NULL) || '|' || (SELECT count(*) FROM pg_class WHERE relname LIKE '%\_gated')")"
-check "1.0 baseline: base grants mirrored onto with-history, FPO view and as-of function" "true|true|true" \
-    "$(q "$OLD" "SELECT (SELECT relacl::text LIKE '%${PREFIX}_r1=%' FROM pg_class WHERE oid = 'sv_with_history'::regclass)::text
-                 || '|' || (SELECT relacl::text LIKE '%${PREFIX}_r1=%' FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)
-                 || '|' || (SELECT proacl::text LIKE '%${PREFIX}_r1=%' FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)")"
-check "1.0 baseline: owner-rights with-history leaks other tenants' history to r1" "1,1,2,2" "$(ids_as "$OLD" ${PREFIX}_r1 rdoc_with_history)"
 # The "restart": every later session loads the new binaries.
 psql -X -q -d postgres -c "ALTER DATABASE $OLD RESET dynamic_library_path" >>"$LOG" 2>&1
 if [ -n "$OLD_LIB" ]; then
-    check "after the restart the installed (new) C library serves the 1.0 SQL" "by-name writer" "$(writer_probe "")"
+    check "after the restart the installed candidate C library serves the $BASELINE_VERSION SQL" "by-name writer" "$(writer_probe "")"
 fi
 OLD_DIGEST=$(acl_digest "$OLD")
+
+# Anchor generated query functions to the released 1.1 state. The direct v1.1 path captures the
+# pristine fixture. The v1.0 path uses a sibling clone upgraded only through immutable 1.0--1.1.
+if [ "$BASELINE_VERSION" = 1.1 ]; then
+    QUERY_ANCHOR="$OLD"
+else
+    QUERY_ANCHOR=${PREFIX}_query_anchor_11
+    createdb -T "$OLD" "$QUERY_ANCHOR" >>"$LOG" 2>&1 || die "createdb $QUERY_ANCHOR from $OLD"
+    CREATED_DBS+=("$QUERY_ANCHOR")
+    psql -X -q -d postgres -c "ALTER DATABASE $QUERY_ANCHOR SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $QUERY_ANCHOR"
+    out=$(q "$QUERY_ANCHOR" "ALTER EXTENSION sql_saga UPDATE TO '1.1'")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "creating released 1.1 query-function anchor: $out"
+fi
+query_function_snapshot "$QUERY_ANCHOR" >"$WORK/query_functions.before"
+if grep -q '^ERROR' "$WORK/query_functions.before"; then
+    die "capturing released 1.1 query functions: $(grep -m1 '^ERROR' "$WORK/query_functions.before")"
+fi
+EXPECTED_QUERY_LINES=$(q "$QUERY_ANCHOR" "SELECT count(*) * 8 FROM sql_saga.system_versioning")
+check "released 1.1 query snapshot covers four functions and plans for every family" "$EXPECTED_QUERY_LINES" "$(wc -l <"$WORK/query_functions.before" | tr -d ' ')"
 
 # Clone the genuine 1.0 fixture, then replace its generated helper with a body that matched the old
 # permissive validator. Exact validation must reject it before any update mutation.
@@ -1150,26 +1321,28 @@ HP=${PREFIX}_histpol
 new_db "$HP" "$EXT_ROOT"
 fixture_histpol | sql "$HP" >"$WORK/histpol.fixture.log"
 grep -q '^ERROR' "$WORK/histpol.fixture.log" && die "history-policy fixture failed: $(grep -m1 '^ERROR' "$WORK/histpol.fixture.log")"
-if [ -n "$FOREIGN_SQL" ]; then
-    FOREIGN=${PREFIX}_foreign
-    new_db "$FOREIGN" "$FOREIGN_ROOT"
-    printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '1.0';\n" | sql "$FOREIGN" >"$WORK/foreign.fixture.log"
-    grep -q '^ERROR' "$WORK/foreign.fixture.log" && die "foreign-build fixture failed: $(grep -m1 '^ERROR' "$WORK/foreign.fixture.log")"
-fi
+FOREIGN=${PREFIX}_foreign
+new_db "$FOREIGN" "$FOREIGN_ROOT"
+printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$FOREIGN" >"$WORK/foreign.fixture.log"
+grep -q '^ERROR' "$WORK/foreign.fixture.log" && die "foreign $BASELINE_VERSION fixture failed: $(grep -m1 '^ERROR' "$WORK/foreign.fixture.log")"
 if [ -f "$PREFLIGHT" ]; then
     before="$(ext_snapshot "$OLD" | md5)$(acl_digest "$OLD")"
-    if out=$(run_preflight "$OLD"); then ok "preflight passes on the v1.0 fixture database"; else fail "preflight refuses the v1.0 fixture database: $(printf '%s\n' "$out" | grep -m1 ERROR)"; fi
+    if out=$(run_preflight "$OLD"); then ok "preflight passes on the $BASELINE_VERSION fixture database"; else fail "preflight refuses the $BASELINE_VERSION fixture database: $(printf '%s\n' "$out" | grep -m1 ERROR)"; fi
     printf '%s\n' "$out" >"$WORK/preflight.old.out"
-    if printf '%s\n' "$out" | grep -q "${PREFIX}_none"; then ok "preflight reports the derived grants that normalization removes"
-    else fail "preflight does not report the direct derived grants to ${PREFIX}_none"; fi
+    if [ "$BASELINE_VERSION" = 1.0 ]; then
+        if printf '%s\n' "$out" | grep -q "${PREFIX}_none"; then ok "preflight reports the derived grants that normalization removes"
+        else fail "preflight does not report the direct derived grants to ${PREFIX}_none"; fi
+    elif printf '%s\n' "$out" | grep -q 'derived grant'; then
+        fail "preflight reports unexpected derived grants on the pristine v1.1 fixture"
+    else
+        ok "preflight accepts pristine v1.1 without derived-grant warnings"
+    fi
     check "preflight is read-only" "$before" "$(ext_snapshot "$OLD" | md5)$(acl_digest "$OLD")"
     if out=$(run_preflight "$HP"); then fail "preflight passes despite a user policy on hp_history"
     elif printf '%s\n' "$out" | grep -q user_history_policy; then ok "preflight stops on the user policy on hp_history and names it"
     else fail "preflight stops on hp, but does not name user_history_policy"; fi
-    if [ -n "$FOREIGN_SQL" ]; then
-        if out=$(run_preflight "$FOREIGN"); then fail "preflight accepts a 1.0 that is not the $BASELINE_TAG release (HEAD build)"
-        else ok "preflight refuses a 1.0 that is not the $BASELINE_TAG release"; fi
-    fi
+    if out=$(run_preflight "$FOREIGN"); then fail "preflight accepts a non-release $BASELINE_VERSION artifact"
+    else ok "preflight refuses a non-release $BASELINE_VERSION artifact"; fi
 else
     fail "preflight not run: script missing"
 fi
@@ -1184,7 +1357,7 @@ case "$out" in
     ERROR*) fail "update fails, but not because of the user policy: $out" ;;
     *) fail "update succeeded despite a user policy on hp_history" ;;
 esac
-check "failed update leaves extversion 1.0" "1.0" "$(q "$HP" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "failed update leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$HP" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "failed update leaves catalog and family untouched" "$hp_before" "$(ext_snapshot "$HP" | md5)$(dump_schema "$HP" | md5)"
 q "$HP" "DROP POLICY user_history_policy ON hp_history" >/dev/null
 out=$(q "$HP" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
@@ -1200,7 +1373,7 @@ case "$out" in
     ERROR*) fail "update rejects the tampered helper, but without the actionable exact-helper error: $out" ;;
     *) fail "update succeeded despite the tampered regular-FK helper body" ;;
 esac
-check "tampered-helper failure leaves extversion 1.0" "1.0" "$(q "$TAMPER" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+check "tampered-helper failure leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$TAMPER" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 check "tampered-helper failure is atomic" "$tamper_before" "$(ext_snapshot "$TAMPER" | md5)$(dump_schema "$TAMPER" | md5)"
 check "tampered helper body remains untouched after refusal" "t" "$(q "$TAMPER" "SELECT prosrc LIKE '%OR true%' FROM pg_proc WHERE oid='public.par_id_exists(integer)'::regprocedure")"
 
@@ -1217,7 +1390,7 @@ else
     ok "update ran"
     UPGRADED=1
 fi
-if [ "$UPDATE_ERROR" = "extension \"sql_saga\" has no update path from version \"1.0\" to version \"$NEW_VERSION\"" ]; then
+if [ "$UPDATE_ERROR" = "extension \"sql_saga\" has no update path from version \"$BASELINE_VERSION\" to version \"$NEW_VERSION\"" ]; then
     ok "RED gate: update path is the exact missing artifact"
 elif [ -n "$UPDATE_ERROR" ]; then
     fail "RED gate failed: update error is not the missing update path"
@@ -1226,23 +1399,35 @@ FAILURE_CLASS="not meaningful (dependent)"
 check "extversion after update" "$NEW_VERSION" "$(q "$OLD" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
 
 # ---------------------------------------------------------------------------------------------
-section "structure after upgrade (5.5)" "not meaningful (dependent)"
+section "1.2 structure after upgrade" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
 check "upgrade leaves no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$OLD")"
 check "history policy copies in sync after upgrade" "0" "$(policy_copy_faults "$OLD")"
-if [ "$(acl_digest "$OLD")" != "$OLD_DIGEST" ]; then ok "derived ACLs were normalized (ACL digest changed)"; else fail "ACL digest unchanged by the update: mirrored and direct derived grants survive"; fi
+if [ "$BASELINE_VERSION" = 1.0 ]; then
+    if [ "$(acl_digest "$OLD")" != "$OLD_DIGEST" ]; then ok "v1.0 derived ACLs were normalized (ACL digest changed)"
+    else fail "v1.0 ACL digest unchanged: mirrored and direct derived grants survive"; fi
+else
+    check "pristine v1.1 ACL digest is preserved by the 1.2 update" "$OLD_DIGEST" "$(acl_digest "$OLD")"
+fi
 check "direct derived grants to saga_up_none were removed" "f|f|f" \
     "$(q "$OLD" "SELECT EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'sv_with_history'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'sv_with_history'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT relacl FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass), acldefault('r', (SELECT relowner FROM pg_class WHERE oid = 'fp__for_portion_of_valid'::regclass)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'SELECT') || '|' || EXISTS (SELECT FROM aclexplode(coalesce((SELECT proacl FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure), acldefault('f', (SELECT proowner FROM pg_proc WHERE oid = 'sv__as_of(timestamptz)'::regprocedure)))) AS a WHERE a.grantee = '${PREFIX}_none'::regrole AND a.privilege_type = 'EXECUTE')" | sed 's/true/t/g; s/false/f/g')"
 
+query_function_snapshot "$OLD" >"$WORK/query_functions.after"
+if diff -u "$WORK/query_functions.before" "$WORK/query_functions.after" >"$WORK/query_functions.diff"; then
+    ok "all generated query function definitions, properties and plans match released 1.1"
+else
+    fail "generated query functions changed from released 1.1 ($(grep -c '^[-+][^-+]' "$WORK/query_functions.diff") differing lines)"
+fi
+
 # ---------------------------------------------------------------------------------------------
-section "behaviour after upgrade (5.6)" "not meaningful (dependent)"
+section "1.2 behaviour after upgrade" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 behaviour "$OLD"
 
 # ---------------------------------------------------------------------------------------------
-section "fresh $NEW_VERSION versus upgraded (5.7)" "not meaningful (dependent)"
+section "fresh $NEW_VERSION versus upgraded equivalence" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 FRESH=${PREFIX}_fresh
 new_db "$FRESH" "$EXT_ROOT"

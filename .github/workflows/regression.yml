@@ -28,7 +28,7 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v4
         with:
-          # The upgrade harness builds the released tag v1.0.
+          # The 1.2 upgrade matrix builds the released v1.0 and v1.1 tags.
           fetch-depth: 0
           fetch-tags: true
 
@@ -63,9 +63,9 @@ jobs:
         # limitation and does not fail the job (see doc/decision-log.md).
         run: make test-restore PG_CONFIG=${{ env.PG_CONFIG }}
 
-      - name: Run the 1.0 to 1.1 upgrade harness
-        # Builds tag v1.0 in a scratch directory, upgrades scratch databases and compares them with a
-        # fresh 1.1 install (devops/upgrade_test.sh).
+      - name: Run the v1.0 and v1.1 to 1.2 upgrade matrix
+        # Builds both release tags in scratch directories, upgrades each path to candidate 1.2 and
+        # compares upgraded databases with a fresh 1.2 install (devops/upgrade_test.sh).
         run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
       - name: Show regression diffs on failure
