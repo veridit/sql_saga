@@ -1,0 +1,32 @@
+\set ECHO none
+=== policy guard narrowness
+
+
+manual on cannot drop family B policy | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_b_history" because it is managed by sql_saga for table "dp_guard_order.guard_b"
+manual on cannot drop same-family A policy | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_a_history" because it is managed by sql_saga for table "dp_guard_order.guard_a"
+manual family identity cannot drop family B policy | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_b_history" because it is managed by sql_saga for table "dp_guard_order.guard_b"
+real policy-sync API remains sanctioned | ok
+=== deterministic same-class dropped ordinality
+t
+two period columns choose statement-first valid_until | P0001: cannot drop column "dp_guard_order.period_order.valid_until" because it is part of the period "valid"
+
+two excluded columns choose statement-first payload | P0001: cannot drop or rename column "payload" on table "dp_guard_order.guard_a" because it is excluded from system_time era
+t
+uk_a
+uk_b
+two unique constraints choose statement-first B | P0001: cannot drop constraint "uk_order_b" on table "dp_guard_order.uk_order" because it is used in era unique key "uk_b"
+two write-history triggers choose payload-first B | P0001: cannot drop trigger "guard_b_system_time_write_history" on table "dp_guard_order.guard_b" because it is used in SYSTEM_TIME period
+t
+fk_parent_key
+fk_a
+fk_b
+two FK update triggers choose payload-first B | P0001: cannot drop trigger "fk_b_uk_update" on table "dp_guard_order.fk_parent" because it is used in era foreign key "fk_b"
+t
+t
+t
+t
+two updatable views choose payload-first B | P0001: cannot drop view "dp_guard_order.view_b__current_valid", call "sql_saga.drop_current_view()" instead
+two updatable-view triggers choose payload-first B | P0001: cannot drop trigger "current_valid" on view "dp_guard_order.view_b__current_valid" because it is part of an updatable view for era "valid" on table "dp_guard_order.view_b"
+two query functions choose statement-first B | P0001: cannot drop function "dp_guard_order.guard_b__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"
+two history tables choose statement-first B | P0001: cannot drop table "dp_guard_order.guard_b_history" because it is used in SYSTEM VERSIONING for table "dp_guard_order.guard_b"
+two managed policies choose payload-first B | P0001: cannot drop or alter policy "sql_saga_history_reader_guardtoken" on "dp_guard_order.guard_b_history" because it is managed by sql_saga for table "dp_guard_order.guard_b"
