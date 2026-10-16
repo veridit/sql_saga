@@ -1,0 +1,46 @@
+\set ECHO none
+1|as_of rename|P0001|cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+2|as_of set schema|P0001|cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+3|between rename|P0001|cannot drop or rename function "function_guard.family_a__between(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+4|between set schema|P0001|cannot drop or rename function "function_guard.family_a__between(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+5|between_symmetric rename|P0001|cannot drop or rename function "function_guard.family_a__between_symmetric(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+6|between_symmetric set schema|P0001|cannot drop or rename function "function_guard.family_a__between_symmetric(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+7|from_to rename|P0001|cannot drop or rename function "function_guard.family_a__from_to(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+8|from_to set schema|P0001|cannot drop or rename function "function_guard.family_a__from_to(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
+9|unrelated SETOF view property|NO_ERROR|command succeeded|t|t
+10|managed return type property|NO_ERROR|command succeeded|t|t
+11|managed return type rename|NO_ERROR|command succeeded|t|t
+12|as_of owner|NO_ERROR|command succeeded|t|t
+13|as_of property|NO_ERROR|command succeeded|t|t
+14|between owner|NO_ERROR|command succeeded|t|t
+15|between property|NO_ERROR|command succeeded|t|t
+16|between_symmetric owner|NO_ERROR|command succeeded|t|t
+17|between_symmetric property|NO_ERROR|command succeeded|t|t
+18|from_to owner|NO_ERROR|command succeeded|t|t
+19|from_to property|NO_ERROR|command succeeded|t|t
+ERROR:  cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"
+20|absent snapshot property|NO_ERROR|command succeeded|t|t
+21|absent snapshot rename|NO_ERROR|command succeeded|t|t
+as_of|owner|t|t|t
+as_of|property|t|t|t
+as_of|rename|t|t|t
+as_of|set schema|t|t|t
+as_of|stale A unrelated B|t|t|t
+between|owner|t|t|t
+between|property|t|t|t
+between|rename|t|t|t
+between|set schema|t|t|t
+between|stale A unrelated B|t|t|t
+between_symmetric|owner|t|t|t
+between_symmetric|property|t|t|t
+between_symmetric|rename|t|t|t
+between_symmetric|set schema|t|t|t
+between_symmetric|stale A unrelated B|t|t|t
+from_to|owner|t|t|t
+from_to|property|t|t|t
+from_to|rename|t|t|t
+from_to|set schema|t|t|t
+from_to|stale A unrelated B|t|t|t
+multiple|unrelated property|t|t|t
+t|t|t|t|t|t|t|t
+t|t|t
