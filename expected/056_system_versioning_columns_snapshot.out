@@ -67,11 +67,11 @@ REPLICA IDENTITY USING INDEX keeps stale snapshot | stored={stale} | live={id,pa
 === managed base move and rename do not bless stale snapshot
 t
 SET SCHEMA stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
-SET SCHEMA preserves native refusal | 42P01: relation "snapshot_test.family_c" does not exist
+SET SCHEMA preserves native refusal | 55006: cannot rename or move system-versioned table "snapshot_test.family_c"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again
 SET SCHEMA refusal keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
 t
 RENAME TABLE stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
-RENAME TABLE preserves native refusal | 42P01: relation "snapshot_test.family_c" does not exist
+RENAME TABLE preserves native refusal | 55006: cannot rename or move system-versioned table "snapshot_test.family_c"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again
 RENAME TABLE refusal keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
 === ALTER COLUMN TYPE preserves existing native behavior
 ALTER COLUMN TYPE on managed base | 0A000: cannot alter type of a column used by a view or rule

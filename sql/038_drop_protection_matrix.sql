@@ -145,19 +145,25 @@ SELECT dp_matrix.system_family('complete_b');
 SELECT dp_matrix.case_result('multiple complete families', $$DROP TABLE dp_matrix.complete_a, dp_matrix.complete_b CASCADE$$, NULL, NULL);
 SELECT dp_matrix.system_family('priority_a');
 CREATE SCHEMA dp_priority_payload;
+SET LOCAL session_replication_role = replica;
 ALTER TABLE dp_matrix.priority_a_history SET SCHEMA dp_priority_payload;
+SET LOCAL session_replication_role = origin;
 SELECT dp_matrix.case_result('deterministic several-class priority', $$DROP SCHEMA dp_priority_payload CASCADE$$, 'P0001', 'cannot drop view "dp_matrix.priority_a_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.priority_a"');
 
 CREATE SCHEMA dp_schema_mix;
 SELECT dp_matrix.system_family('schema_complete', 'dp_schema_mix');
 SELECT dp_matrix.system_family('schema_split');
+SET LOCAL session_replication_role = replica;
 ALTER TABLE dp_matrix.schema_split_history SET SCHEMA dp_schema_mix;
+SET LOCAL session_replication_role = origin;
 SELECT dp_matrix.case_result('schema complete A plus member-only B', $$DROP SCHEMA dp_schema_mix CASCADE$$, 'P0001', 'cannot drop view "dp_matrix.schema_split_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.schema_split"');
 CREATE SCHEMA dp_schema_one;
 CREATE SCHEMA dp_schema_two;
 SELECT dp_matrix.system_family('schema_one_complete', 'dp_schema_one');
 SELECT dp_matrix.system_family('schema_two_split');
+SET LOCAL session_replication_role = replica;
 ALTER TABLE dp_matrix.schema_two_split_history SET SCHEMA dp_schema_two;
+SET LOCAL session_replication_role = origin;
 SELECT dp_matrix.case_result('multiple schemas independent sanction', $$DROP SCHEMA dp_schema_one, dp_schema_two CASCADE$$, 'P0001', 'cannot drop view "dp_matrix.schema_two_split_history_gated" because it is used in SYSTEM VERSIONING for table "dp_matrix.schema_two_split"');
 
 CREATE ROLE dp_matrix_owner;

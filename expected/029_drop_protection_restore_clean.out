@@ -161,7 +161,7 @@ TABLE family_state;
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
- event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_rename_following=O
+ event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
 
 \echo '=== A: accidental drops in a session with pg_restore''s settings, but not a pg_restore session: still refused'
@@ -254,7 +254,7 @@ TABLE family_state;
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
- event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_rename_following=O
+ event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
 
 -- C: the teardown succeeds. It is replayed inside a transaction and rolled back, so the families
@@ -325,8 +325,8 @@ DROP TABLE IF EXISTS public.b_history;
 DROP TABLE IF EXISTS public.b;
 RESET client_min_messages;
 TABLE family_state;
-                item                |                                       state                                       
-------------------------------------+-----------------------------------------------------------------------------------
+                item                |                                                                 state                                                                 
+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
  catalog sql_saga.era               | 0
  catalog sql_saga.unique_keys       | 0
  catalog sql_saga.foreign_keys      | 0
@@ -337,7 +337,7 @@ TABLE family_state;
  policies                           | 
  functions in public                | 
  template sync functions            | 
- event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_rename_following=O
+ event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
 
 ROLLBACK;
@@ -402,8 +402,8 @@ DROP VIEW public.b_history_gated;
 DROP TABLE public.b_history;
 DROP TABLE public.b;
 TABLE family_state;
-                item                |                                       state                                       
-------------------------------------+-----------------------------------------------------------------------------------
+                item                |                                                                 state                                                                 
+------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------
  catalog sql_saga.era               | 0
  catalog sql_saga.unique_keys       | 0
  catalog sql_saga.foreign_keys      | 0
@@ -414,7 +414,7 @@ TABLE family_state;
  policies                           | 
  functions in public                | 
  template sync functions            | 
- event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_rename_following=O
+ event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
 
 ROLLBACK;
@@ -431,7 +431,7 @@ TABLE family_state;
  policies                           | aa_hist.sql_saga_history_base_select_test0001, aa_hist.sql_saga_history_reader_test0001, b.b_tenant, b_history.sql_saga_5d18f5f440ffed66, b_history.sql_saga_history_base_select_test0001, b_history.sql_saga_history_reader_test0001
  functions in public                | b__as_of, b__between, b__between_symmetric, b__from_to, p_id_exists, zbase__as_of, zbase__between, zbase__between_symmetric, zbase__from_to
  template sync functions            | public_p_valid_template_sync
- event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_rename_following=O
+ event triggers enabled             | sql_saga_drop_protection=O, sql_saga_health_checks=O, sql_saga_refuse_managed_relation_identity_change=O, sql_saga_rename_following=O
 (11 rows)
 
 \echo '=== C3: identifiers that need quoting (spaces, an embedded double quote) in pg_restore''s ALTER TABLE ... DROP CONSTRAINT'

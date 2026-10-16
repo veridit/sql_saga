@@ -168,7 +168,9 @@ SELECT 'drop schema containing complete family' AS case_name,
 
 CREATE SCHEMA member_schema;
 SELECT dp_scope.family('split_family');
+SET LOCAL session_replication_role = replica;
 ALTER TABLE dp_scope.split_family_history SET SCHEMA member_schema;
+SET LOCAL session_replication_role = origin;
 SELECT 'drop schema containing member only' AS case_name,
        dp_scope.probe(
            $$DROP SCHEMA member_schema CASCADE$$,
