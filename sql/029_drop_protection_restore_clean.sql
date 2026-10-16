@@ -143,6 +143,52 @@ ALTER TRIGGER r_p_id_fkey_uk_delete ON p RENAME TO r_p_id_fkey_uk_delete_renamed
 ROLLBACK TO SAVEPOINT e;
 ROLLBACK;
 
+-- F: the teardown drops the managed history policies as soon as any non-policy object of the family
+-- goes, including an ordinary user trigger or constraint on the versioned base table (pg_restore drops
+-- those before the base table). A normal session dropping the same objects leaves the policies alone.
+CREATE TEMP VIEW b_history_policies AS
+    SELECT count(*) AS managed_history_policies
+    FROM pg_catalog.pg_policy AS p
+    WHERE p.polrelid = 'public.b_history'::regclass
+      AND sql_saga.__internal_is_managed_history_policy(p.polname);
+
+\echo '=== F1: normal session, an ordinary user trigger and an ordinary user constraint on a versioned base: policies kept'
+BEGIN;
+CREATE FUNCTION public.b_user_trigger() RETURNS trigger LANGUAGE plpgsql AS $b_user_trigger$ BEGIN RETURN NEW; END; $b_user_trigger$;
+CREATE TRIGGER b_user BEFORE INSERT ON public.b FOR EACH ROW EXECUTE FUNCTION public.b_user_trigger();
+ALTER TABLE public.b ADD CONSTRAINT b_user_check CHECK (id > 0);
+TABLE b_history_policies;
+DROP TRIGGER b_user ON public.b;
+TABLE b_history_policies;
+ALTER TABLE ONLY public.b DROP CONSTRAINT b_user_check;
+TABLE b_history_policies;
+ROLLBACK;
+
+\echo '=== F2: teardown, DROP TRIGGER of an ordinary user trigger on a versioned base: managed history policies dropped'
+BEGIN;
+CREATE FUNCTION public.b_user_trigger() RETURNS trigger LANGUAGE plpgsql AS $b_user_trigger$ BEGIN RETURN NEW; END; $b_user_trigger$;
+CREATE TRIGGER b_user BEFORE INSERT ON public.b FOR EACH ROW EXECUTE FUNCTION public.b_user_trigger();
+TABLE b_history_policies;
+SET LOCAL check_function_bodies = off;
+SET LOCAL row_security = off;
+SET LOCAL application_name = 'pg_restore';
+DROP TRIGGER b_user ON public.b;
+TABLE b_history_policies;
+ROLLBACK;
+
+\echo '=== F3: teardown, DROP CONSTRAINT of an ordinary user constraint on a versioned base: managed history policies dropped'
+BEGIN;
+ALTER TABLE public.b ADD CONSTRAINT b_user_check CHECK (id > 0);
+TABLE b_history_policies;
+SET LOCAL check_function_bodies = off;
+SET LOCAL row_security = off;
+SET LOCAL sql_saga.clean_restore = on;
+ALTER TABLE ONLY public.b DROP CONSTRAINT b_user_check;
+TABLE b_history_policies;
+ROLLBACK;
+
+DROP VIEW b_history_policies;
+
 TABLE family_state;
 
 -- C: the teardown succeeds. It is replayed inside a transaction and rolled back, so the families
