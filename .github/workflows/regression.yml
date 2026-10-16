@@ -68,6 +68,9 @@ jobs:
         # compares upgraded databases with a fresh 1.2 install (devops/upgrade_test.sh).
         run: make test-upgrade PG_CONFIG=${{ env.PG_CONFIG }}
 
+      - name: Run concurrent function-attribution isolation test
+        run: make test-function-attribution-concurrency PG_CONFIG=${{ env.PG_CONFIG }}
+
       - name: Show regression diffs on failure
         if: failure()
         run: |

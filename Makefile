@@ -268,6 +268,12 @@ test-restore:
 test-upgrade:
 	devops/upgrade_test.sh
 
+# Concurrent ALTER FUNCTION attribution must remain session-local across independent managed families.
+# Needs a running server reachable through the libpq environment, with sql_saga installed.
+.PHONY: test-function-attribution-concurrency
+test-function-attribution-concurrency:
+	devops/test_function_attribution_concurrency.sh
+
 # Renumber test files to make room for a new test at a specific slot.
 # Usage: make renumber-tests-from SLOT=066
 # This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
