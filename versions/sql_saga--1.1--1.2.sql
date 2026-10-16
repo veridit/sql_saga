@@ -1,4 +1,97 @@
 \echo Use "ALTER EXTENSION sql_saga UPDATE TO '1.2'" to load this file. \quit
+/*
+ * 1.2 adds a parameter to add_system_versioning, so this script replaces the 1.1 function. Its
+ * privileges cannot be carried over: GRANT and REVOKE in an extension script become extension initial
+ * privileges, which pg_dump omits. So this check runs first: it compares the 1.1 function's effective
+ * EXECUTE privileges (grantor ignored, grant options included) with what its replacement will get.
+ * That is read from a probe function, created with the current default privileges (global and schema
+ * ones alike) and dropped again immediately. The probe exists only briefly inside this update's
+ * transaction, as a member of the extension like everything the script creates, and never survives
+ * it. When the privileges differ the update is refused, and the refusal rolls the whole transaction
+ * back, probe included, leaving the database exactly as before. The hint gives the exact statements:
+ * reset the whole privilege set of the 1.1 function to the replacement's (a cascading REVOKE also
+ * removes grants made through a grant option, so every non-owner grantee is revoked and the complete
+ * target set granted again), update, then do the same on the new signature with the original set.
+ */
+DO $check_add_system_versioning_acl$
+DECLARE
+    old_proc CONSTANT text := 'sql_saga.add_system_versioning(regclass, name, name, name, name, name, name)';
+    new_proc CONSTANT text := 'sql_saga.add_system_versioning(regclass, name, name, name, name, name, name, boolean)';
+    probe CONSTANT text := 'sql_saga.__sql_saga_1_2_upgrade_acl_probe()';
+    probe_acl pg_catalog.aclitem[];
+    probe_owner pg_catalog.oid;
+    differs boolean;
+    old_grantees text;
+    new_grantees text;
+    old_grants text;
+    new_grants text;
+    cascade_word CONSTANT text := 'CAS' || 'CADE';
+BEGIN
+    IF pg_catalog.to_regprocedure(old_proc) IS NULL THEN
+        RETURN;
+    END IF;
+    IF pg_catalog.to_regprocedure(probe) IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: function % already exists; the 1.2 update needs that name for a temporary probe', probe
+            USING ERRCODE = 'duplicate_function',
+                  HINT = 'Drop or rename that function, then retry the update.';
+    END IF;
+    EXECUTE 'CREATE FUNCTION ' || probe || ' RETURNS void LANGUAGE sql AS ''SELECT''';
+    SELECT p.proacl, p.proowner INTO probe_acl, probe_owner
+    FROM pg_catalog.pg_proc AS p
+    WHERE p.oid = pg_catalog.to_regprocedure(probe);
+    EXECUTE 'DROP FUNCTION ' || probe;
+
+    WITH old_set AS (
+        SELECT a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.pg_proc AS p
+        CROSS JOIN LATERAL pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS a
+        WHERE p.oid = pg_catalog.to_regprocedure(old_proc)
+          AND a.privilege_type = 'EXECUTE'
+          AND a.grantee OPERATOR(pg_catalog.<>) p.proowner
+        GROUP BY a.grantee
+    ), new_set AS (
+        SELECT a.grantee, pg_catalog.bool_or(a.is_grantable) AS grantable
+        FROM pg_catalog.aclexplode(coalesce(probe_acl, pg_catalog.acldefault('f', probe_owner))) AS a
+        WHERE a.privilege_type = 'EXECUTE'
+          AND a.grantee OPERATOR(pg_catalog.<>) probe_owner
+        GROUP BY a.grantee
+    ), both_sets AS (
+        SELECT 'old' AS side, o.grantee, o.grantable FROM old_set AS o
+        UNION ALL
+        SELECT 'new', n.grantee, n.grantable FROM new_set AS n
+    ), named AS (
+        SELECT b.side, b.grantable, b.grantee = 0 AS is_public,
+               CASE WHEN b.grantee = 0 THEN 'PUBLIC' ELSE b.grantee::pg_catalog.regrole::text END AS who
+        FROM both_sets AS b
+    )
+    SELECT
+        EXISTS (SELECT FROM old_set AS o FULL JOIN new_set AS n ON n.grantee = o.grantee
+                WHERE o.grantable IS DISTINCT FROM n.grantable),
+        pg_catalog.string_agg(nm.who, ', ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'old'),
+        pg_catalog.string_agg(nm.who, ', ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'new'),
+        pg_catalog.string_agg(pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO %s%s;', new_proc, nm.who,
+                                                CASE WHEN nm.grantable THEN ' WITH GRANT OPTION' ELSE '' END),
+                              ' ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'old'),
+        pg_catalog.string_agg(pg_catalog.format('GRANT EXECUTE ON FUNCTION %s TO %s%s;', old_proc, nm.who,
+                                                CASE WHEN nm.grantable THEN ' WITH GRANT OPTION' ELSE '' END),
+                              ' ' ORDER BY NOT nm.is_public, nm.who COLLATE "C") FILTER (WHERE nm.side = 'new')
+    INTO differs, old_grantees, new_grantees, old_grants, new_grants
+    FROM named AS nm;
+
+    IF differs THEN
+        RAISE EXCEPTION 'sql_saga: the privileges on % differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over', old_proc
+            USING ERRCODE = 'object_not_in_prerequisite_state',
+                  HINT = pg_catalog.concat_ws(' ',
+                      'Reset them, update, and apply them to the new signature after the update. Run:',
+                      CASE WHEN old_grantees IS NOT NULL THEN pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM %s %s;', old_proc, old_grantees, cascade_word) END,
+                      new_grants,
+                      'ALTER EXTENSION sql_saga UPDATE TO ''1.2'';',
+                      CASE WHEN new_grantees IS NOT NULL THEN pg_catalog.format('REVOKE ALL ON FUNCTION %s FROM %s %s;', new_proc, new_grantees, cascade_word) END,
+                      old_grants);
+    END IF;
+END;
+$check_add_system_versioning_acl$;
+
 /* Validate every cataloged regular-FK helper before any update mutation. */
 DO $validate_fk_helpers$
 DECLARE
@@ -1539,6 +1632,28 @@ $__internal_refuse_managed_schema_rename$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_schema_rename(text) FROM PUBLIC;
 
+/*
+ * The supported way to move or rename a system-versioned table together with its history
+ * (README, "Moving a system-versioned table"), named by the identity-change refusals.
+ */
+CREATE FUNCTION sql_saga.__internal_system_versioning_move_advice(
+    base_schema name, base_name name, history_schema name, history_name name)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_system_versioning_move_advice$
+    SELECT pg_catalog.format(
+        'run sql_saga.drop_system_versioning(%1$L, cleanup => false) and sql_saga.drop_system_time_era(%1$L, cleanup => false), '
+        'move or rename table "%2$s" and history table "%3$s" together, '
+        'then run sql_saga.add_system_versioning(table_oid, history_table_name => name, history_table_must_exist => true)',
+        pg_catalog.format('%I.%I', base_schema, base_name),
+        pg_catalog.array_to_string(pg_catalog.parse_ident(pg_catalog.format('%I.%I', base_schema, base_name)), '.'),
+        pg_catalog.array_to_string(pg_catalog.parse_ident(pg_catalog.format('%I.%I', history_schema, history_name)), '.'));
+$__internal_system_versioning_move_advice$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_move_advice(name, name, name, name) FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change(relation_oid oid)
 RETURNS void
 LANGUAGE plpgsql
@@ -1551,6 +1666,8 @@ DECLARE
     relation_name name;
     relation_display_name text;
     base_display_name text;
+    history_schema name;
+    history_name name;
     managed record;
 BEGIN
     SELECT n.nspname, c.relname,
@@ -1616,7 +1733,11 @@ BEGIN
     END IF;
 
     IF managed.managed_class = 'system_versioning_base' THEN
-        RAISE EXCEPTION 'cannot rename or move system-versioned table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again', relation_display_name
+        SELECT sv.history_schema_name, sv.history_table_name INTO history_schema, history_name
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.table_schema, sv.table_name) = (managed.base_schema, managed.base_table);
+        RAISE EXCEPTION 'cannot rename or move system-versioned table "%"; to move it with its history, %', relation_display_name,
+            sql_saga.__internal_system_versioning_move_advice(managed.base_schema, managed.base_table, history_schema, history_name)
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'era' THEN
         RAISE EXCEPTION 'cannot rename or move table "%" because it has era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, managed.era_name
@@ -1630,7 +1751,8 @@ BEGIN
         pg_catalog.format('%I.%I', managed.base_schema, managed.base_table));
 
     IF managed.managed_class = 'history_table' THEN
-        RAISE EXCEPTION 'history table "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
+        RAISE EXCEPTION 'history table "%" is managed by sql_saga for table "%"; to move it with its table, %', relation_display_name, base_display_name,
+            sql_saga.__internal_system_versioning_move_advice(managed.base_schema, managed.base_table, relation_schema, relation_name)
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'system_versioning_view' THEN
         RAISE EXCEPTION 'view "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
@@ -2948,14 +3070,20 @@ BEGIN
 END;
 $__internal_reconcile_system_versioning_family$;
 
-CREATE OR REPLACE FUNCTION sql_saga.add_system_versioning(
+-- 1.2 adds a trailing history_table_must_exist parameter (DEFAULT false), so every 1.1 call form
+-- still resolves. A changed signature needs DROP and CREATE. The new function gets what a fresh 1.2
+-- install gets; customised privileges on the 1.1 function were refused at the top of this script.
+DROP FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name);
+
+CREATE FUNCTION sql_saga.add_system_versioning(
     table_oid regclass,
     history_table_name name DEFAULT NULL,
     view_name name DEFAULT NULL,
     function_as_of_name name DEFAULT NULL,
     function_between_name name DEFAULT NULL,
     function_between_symmetric_name name DEFAULT NULL,
-    function_from_to_name name DEFAULT NULL)
+    function_from_to_name name DEFAULT NULL,
+    history_table_must_exist boolean DEFAULT false)
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -2971,6 +3099,9 @@ DECLARE
     kind "char";
     era_row sql_saga.era;
     history_table_id oid;
+    history_row_count bigint;
+    other_schema name;
+    other_family record;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -2999,6 +3130,71 @@ BEGIN
         RAISE EXCEPTION 'table "%" must be persistent', sql_saga.__internal_display_name(table_oid);
     END IF;
 
+    /*
+     * Validate an existing history table before anything is created, so a refusal leaves no trace:
+     * missing (with history_table_must_exist), already another family's history, or carrying an era.
+     */
+    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
+
+    SELECT c.oid INTO history_table_id
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
+
+    IF history_table_id IS NULL THEN
+        IF history_table_must_exist THEN
+            SELECT n.nspname INTO other_schema
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE c.relname = history_table_name AND c.relkind IN ('r', 'p')
+              AND n.nspname <> table_schema
+              AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+            ORDER BY n.nspname
+            LIMIT 1;
+            IF other_schema IS NOT NULL THEN
+                RAISE EXCEPTION 'history table "%" does not exist, and history_table_must_exist is true',
+                    sql_saga.__internal_display_name(format('%I.%I', table_schema, history_table_name))
+                USING ERRCODE = 'undefined_table',
+                      HINT = format('Table "%s" has that name in another schema. Move it first: ALTER TABLE %I.%I SET SCHEMA %I;',
+                          sql_saga.__internal_display_name(format('%I.%I', other_schema, history_table_name)),
+                          other_schema, history_table_name, table_schema);
+            END IF;
+            RAISE EXCEPTION 'history table "%" does not exist, and history_table_must_exist is true',
+                sql_saga.__internal_display_name(format('%I.%I', table_schema, history_table_name))
+            USING ERRCODE = 'undefined_table';
+        END IF;
+    ELSE
+        SELECT sv.table_schema, sv.table_name INTO other_family
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.history_schema_name, sv.history_table_name) = (table_schema, history_table_name);
+        IF FOUND THEN
+            RAISE EXCEPTION 'table "%" is already the history table of system-versioned table "%"',
+                sql_saga.__internal_display_name(history_table_id::regclass),
+                sql_saga.__internal_display_name(format('%I.%I', other_family.table_schema, other_family.table_name))
+            USING ERRCODE = 'object_in_use';
+        END IF;
+        IF EXISTS (SELECT 1 FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = (table_schema, history_table_name)) THEN
+            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
+        END IF;
+        /*
+         * Compare with the base table as it will be once versioned: the system time era adds
+         * system_valid_range when the base lacks it. Checked here, before any change.
+         */
+        IF EXISTS (
+            WITH
+            L (attname, atttypid, atttypmod, attcollation) AS (
+                SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped
+                UNION ALL
+                SELECT 'system_valid_range'::name, 'pg_catalog.tstzrange'::pg_catalog.regtype::oid, -1, 0::oid
+                WHERE NOT EXISTS (SELECT FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time'))
+                  AND NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, 'system_valid_range') AND NOT a.attisdropped)),
+            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
+            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
+        THEN
+            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
+        END IF;
+    END IF;
+
     SELECT e.*
     INTO era_row
     FROM sql_saga.era AS e
@@ -3010,28 +3206,18 @@ BEGIN
         SELECT e.* INTO era_row FROM sql_saga.era e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
     END IF;
 
-    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
     view_name := coalesce(view_name, sql_saga.__internal_make_name(ARRAY[table_name], 'with_history'));
     function_as_of_name := coalesce(function_as_of_name, sql_saga.__internal_make_name(ARRAY[table_name], '_as_of'));
     function_between_name := coalesce(function_between_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between'));
     function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between_symmetric'));
     function_from_to_name := coalesce(function_from_to_name, sql_saga.__internal_make_name(ARRAY[table_name], '_from_to'));
 
-    SELECT c.oid INTO history_table_id FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
-
-    IF FOUND THEN
-        IF EXISTS (SELECT 1 FROM sql_saga.era p JOIN pg_class c ON p.table_name = c.relname JOIN pg_namespace n ON c.relnamespace = n.oid AND p.table_schema = n.nspname WHERE c.oid = history_table_id) THEN
-            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
-        END IF;
-        IF EXISTS (
-            WITH
-            L (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped),
-            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
-            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
-        THEN
-            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
-        END IF;
+    IF history_table_id IS NOT NULL THEN
         EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
+        EXECUTE format('SELECT count(*) FROM %s', history_table_id::regclass /* %s */) INTO history_row_count;
+        RAISE NOTICE 'sql_saga: Adopted existing table "%" (% rows) as the history table of system-versioned table "%"',
+            sql_saga.__internal_display_name(history_table_id::regclass), history_row_count,
+            sql_saga.__internal_display_name(table_oid);
     ELSE
         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
         history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
@@ -3068,8 +3254,8 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name) IS
-'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.';
+COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name, boolean) IS
+'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes. An existing table named history_table_name in the table''s schema is adopted as the history (reported by a NOTICE); history_table_must_exist => true requires it, as when moving a system-versioned table.';
 
 /*
  * The as-of functions of a versioned table are executable by PUBLIC (tmp/design_final.md section 5).

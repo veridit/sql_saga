@@ -838,6 +838,49 @@ ERROR:  sql_saga: column no_such_column does not exist in either ms or ms_histor
 ERROR:  sql_saga: cannot exclude system time column system_valid_range from SYSTEM VERSIONING views for table ms
 ```
 
+##### Moving a system-versioned table
+
+A system-versioned table and its history table cannot be renamed or moved directly. The catalog
+refers to them by name, so `ALTER TABLE ... RENAME TO` and `ALTER TABLE ... SET SCHEMA` are refused
+with SQLSTATE `55006`, and the message names the supported sequence:
+
+```text
+ERROR:  cannot rename or move system-versioned table "old_s.t"; to move it with its history, run sql_saga.drop_system_versioning('old_s.t', cleanup => false) and sql_saga.drop_system_time_era('old_s.t', cleanup => false), move or rename table "old_s.t" and history table "old_s.t_history" together, then run sql_saga.add_system_versioning(table_oid, history_table_name => name, history_table_must_exist => true)
+```
+
+To move `old_s.t` to schema `new_s` and keep every recorded version:
+
+```sql
+-- 1. Release the tables from sql_saga, keeping the history table, its rows and the system_valid_range column.
+SELECT sql_saga.drop_system_versioning('old_s.t', cleanup => false);
+SELECT sql_saga.drop_system_time_era('old_s.t', cleanup => false);
+-- 2. Move (or rename) both tables. The history table must end up in the same schema as the base table.
+ALTER TABLE old_s.t SET SCHEMA new_s;
+ALTER TABLE old_s.t_history SET SCHEMA new_s;
+-- 3. Version the table again, adopting the existing history.
+SELECT sql_saga.add_system_versioning('new_s.t', history_table_name => 't_history', history_table_must_exist => true);
+```
+
+```text
+NOTICE:  sql_saga: Adopted existing table "new_s.t_history" (2 rows) as the history table of system-versioned table "new_s.t"
+```
+
+The `<table>_with_history` view and the as-of functions are recreated in the new schema, and they
+return the versions recorded before the move. `history_table_name` is an unqualified name in the base
+table's schema. With `history_table_must_exist => true`, `add_system_versioning` refuses, without
+creating or changing anything, if that table does not exist (the hint names a same-named table left
+behind in another schema), if it does not have the base table's columns, if it is already the history
+table of another system-versioned table, or if it has an era. Without the option (the default), an
+existing table of that name is adopted the same way, and reported by the same NOTICE. Otherwise a new,
+empty history table is created.
+
+Run all three steps in one transaction to keep other sessions from writing to the table while it is
+not versioned: changes made in between are not recorded in the history.
+
+`history_table_must_exist` is new in 1.2. Updating a 1.1 installation whose `add_system_versioning`
+privileges were changed is refused with the exact statements to re-apply them; see
+[Changed privileges on `add_system_versioning`](./doc/upgrade.md#changed-privileges-on-add_system_versioning).
+
 ### Level 3: The Deep Dive - Complete API Reference
 
 For a complete, auto-generated reference of all functions and procedures, please see the [API Documentation](./doc/api.md).

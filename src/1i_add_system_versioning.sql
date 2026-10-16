@@ -378,7 +378,8 @@ CREATE FUNCTION sql_saga.add_system_versioning(
     function_as_of_name name DEFAULT NULL,
     function_between_name name DEFAULT NULL,
     function_between_symmetric_name name DEFAULT NULL,
-    function_from_to_name name DEFAULT NULL)
+    function_from_to_name name DEFAULT NULL,
+    history_table_must_exist boolean DEFAULT false)
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -394,6 +395,9 @@ DECLARE
     kind "char";
     era_row sql_saga.era;
     history_table_id oid;
+    history_row_count bigint;
+    other_schema name;
+    other_family record;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -422,6 +426,71 @@ BEGIN
         RAISE EXCEPTION 'table "%" must be persistent', sql_saga.__internal_display_name(table_oid);
     END IF;
 
+    /*
+     * Validate an existing history table before anything is created, so a refusal leaves no trace:
+     * missing (with history_table_must_exist), already another family's history, or carrying an era.
+     */
+    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
+
+    SELECT c.oid INTO history_table_id
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
+
+    IF history_table_id IS NULL THEN
+        IF history_table_must_exist THEN
+            SELECT n.nspname INTO other_schema
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+            WHERE c.relname = history_table_name AND c.relkind IN ('r', 'p')
+              AND n.nspname <> table_schema
+              AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+            ORDER BY n.nspname
+            LIMIT 1;
+            IF other_schema IS NOT NULL THEN
+                RAISE EXCEPTION 'history table "%" does not exist, and history_table_must_exist is true',
+                    sql_saga.__internal_display_name(format('%I.%I', table_schema, history_table_name))
+                USING ERRCODE = 'undefined_table',
+                      HINT = format('Table "%s" has that name in another schema. Move it first: ALTER TABLE %I.%I SET SCHEMA %I;',
+                          sql_saga.__internal_display_name(format('%I.%I', other_schema, history_table_name)),
+                          other_schema, history_table_name, table_schema);
+            END IF;
+            RAISE EXCEPTION 'history table "%" does not exist, and history_table_must_exist is true',
+                sql_saga.__internal_display_name(format('%I.%I', table_schema, history_table_name))
+            USING ERRCODE = 'undefined_table';
+        END IF;
+    ELSE
+        SELECT sv.table_schema, sv.table_name INTO other_family
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.history_schema_name, sv.history_table_name) = (table_schema, history_table_name);
+        IF FOUND THEN
+            RAISE EXCEPTION 'table "%" is already the history table of system-versioned table "%"',
+                sql_saga.__internal_display_name(history_table_id::regclass),
+                sql_saga.__internal_display_name(format('%I.%I', other_family.table_schema, other_family.table_name))
+            USING ERRCODE = 'object_in_use';
+        END IF;
+        IF EXISTS (SELECT 1 FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name) = (table_schema, history_table_name)) THEN
+            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
+        END IF;
+        /*
+         * Compare with the base table as it will be once versioned: the system time era adds
+         * system_valid_range when the base lacks it. Checked here, before any change.
+         */
+        IF EXISTS (
+            WITH
+            L (attname, atttypid, atttypmod, attcollation) AS (
+                SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped
+                UNION ALL
+                SELECT 'system_valid_range'::name, 'pg_catalog.tstzrange'::pg_catalog.regtype::oid, -1, 0::oid
+                WHERE NOT EXISTS (SELECT FROM sql_saga.era AS e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time'))
+                  AND NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, 'system_valid_range') AND NOT a.attisdropped)),
+            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
+            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
+        THEN
+            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
+        END IF;
+    END IF;
+
     SELECT e.*
     INTO era_row
     FROM sql_saga.era AS e
@@ -433,28 +502,18 @@ BEGIN
         SELECT e.* INTO era_row FROM sql_saga.era e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
     END IF;
 
-    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
     view_name := coalesce(view_name, sql_saga.__internal_make_name(ARRAY[table_name], 'with_history'));
     function_as_of_name := coalesce(function_as_of_name, sql_saga.__internal_make_name(ARRAY[table_name], '_as_of'));
     function_between_name := coalesce(function_between_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between'));
     function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between_symmetric'));
     function_from_to_name := coalesce(function_from_to_name, sql_saga.__internal_make_name(ARRAY[table_name], '_from_to'));
 
-    SELECT c.oid INTO history_table_id FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
-
-    IF FOUND THEN
-        IF EXISTS (SELECT 1 FROM sql_saga.era p JOIN pg_class c ON p.table_name = c.relname JOIN pg_namespace n ON c.relnamespace = n.oid AND p.table_schema = n.nspname WHERE c.oid = history_table_id) THEN
-            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
-        END IF;
-        IF EXISTS (
-            WITH
-            L (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped),
-            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
-            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
-        THEN
-            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
-        END IF;
+    IF history_table_id IS NOT NULL THEN
         EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
+        EXECUTE format('SELECT count(*) FROM %s', history_table_id::regclass /* %s */) INTO history_row_count;
+        RAISE NOTICE 'sql_saga: Adopted existing table "%" (% rows) as the history table of system-versioned table "%"',
+            sql_saga.__internal_display_name(history_table_id::regclass), history_row_count,
+            sql_saga.__internal_display_name(table_oid);
     ELSE
         EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
         history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
@@ -491,8 +550,8 @@ BEGIN
 END;
 $function$;
 
-COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name) IS
-'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.';
+COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name, boolean) IS
+'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes. An existing table named history_table_name in the table''s schema is adopted as the history (reported by a NOTICE); history_table_must_exist => true requires it, as when moving a system-versioned table.';
 
 /*
  * The as-of functions of a versioned table are executable by PUBLIC (tmp/design_final.md section 5).

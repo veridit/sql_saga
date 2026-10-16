@@ -537,7 +537,7 @@ SECURITY INVOKER
 
 ### add_system_versioning
 
-> Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.
+> Adds system versioning to a table, creating a history table and triggers to automatically track all data changes. An existing table named history_table_name in the table's schema is adopted as the history (reported by a NOTICE); history_table_must_exist => true requires it, as when moving a system-versioned table.
 
 ```sql
 FUNCTION add_system_versioning(
@@ -547,7 +547,8 @@ FUNCTION add_system_versioning(
     function_as_of_name name DEFAULT NULL::name,
     function_between_name name DEFAULT NULL::name,
     function_between_symmetric_name name DEFAULT NULL::name,
-    function_from_to_name name DEFAULT NULL::name
+    function_from_to_name name DEFAULT NULL::name,
+    history_table_must_exist boolean DEFAULT false
 ) RETURNS void
 SECURITY DEFINER
 ```

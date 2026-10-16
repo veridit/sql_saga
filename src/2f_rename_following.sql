@@ -123,6 +123,28 @@ $__internal_refuse_managed_schema_rename$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_schema_rename(text) FROM PUBLIC;
 
+/*
+ * The supported way to move or rename a system-versioned table together with its history
+ * (README, "Moving a system-versioned table"), named by the identity-change refusals.
+ */
+CREATE FUNCTION sql_saga.__internal_system_versioning_move_advice(
+    base_schema name, base_name name, history_schema name, history_name name)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path = pg_catalog
+AS $__internal_system_versioning_move_advice$
+    SELECT pg_catalog.format(
+        'run sql_saga.drop_system_versioning(%1$L, cleanup => false) and sql_saga.drop_system_time_era(%1$L, cleanup => false), '
+        'move or rename table "%2$s" and history table "%3$s" together, '
+        'then run sql_saga.add_system_versioning(table_oid, history_table_name => name, history_table_must_exist => true)',
+        pg_catalog.format('%I.%I', base_schema, base_name),
+        pg_catalog.array_to_string(pg_catalog.parse_ident(pg_catalog.format('%I.%I', base_schema, base_name)), '.'),
+        pg_catalog.array_to_string(pg_catalog.parse_ident(pg_catalog.format('%I.%I', history_schema, history_name)), '.'));
+$__internal_system_versioning_move_advice$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_move_advice(name, name, name, name) FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change(relation_oid oid)
 RETURNS void
 LANGUAGE plpgsql
@@ -135,6 +157,8 @@ DECLARE
     relation_name name;
     relation_display_name text;
     base_display_name text;
+    history_schema name;
+    history_name name;
     managed record;
 BEGIN
     SELECT n.nspname, c.relname,
@@ -200,7 +224,11 @@ BEGIN
     END IF;
 
     IF managed.managed_class = 'system_versioning_base' THEN
-        RAISE EXCEPTION 'cannot rename or move system-versioned table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again', relation_display_name
+        SELECT sv.history_schema_name, sv.history_table_name INTO history_schema, history_name
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.table_schema, sv.table_name) = (managed.base_schema, managed.base_table);
+        RAISE EXCEPTION 'cannot rename or move system-versioned table "%"; to move it with its history, %', relation_display_name,
+            sql_saga.__internal_system_versioning_move_advice(managed.base_schema, managed.base_table, history_schema, history_name)
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'era' THEN
         RAISE EXCEPTION 'cannot rename or move table "%" because it has era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, managed.era_name
@@ -214,7 +242,8 @@ BEGIN
         pg_catalog.format('%I.%I', managed.base_schema, managed.base_table));
 
     IF managed.managed_class = 'history_table' THEN
-        RAISE EXCEPTION 'history table "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
+        RAISE EXCEPTION 'history table "%" is managed by sql_saga for table "%"; to move it with its table, %', relation_display_name, base_display_name,
+            sql_saga.__internal_system_versioning_move_advice(managed.base_schema, managed.base_table, relation_schema, relation_name)
             USING ERRCODE = 'object_in_use';
     ELSIF managed.managed_class = 'system_versioning_view' THEN
         RAISE EXCEPTION 'view "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
