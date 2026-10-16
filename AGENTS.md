@@ -224,7 +224,9 @@ SELECT 'Transaction still active';
 
 The ranges are guidance, and several are full. A new test takes a free slot as close to its topic as
 possible rather than renumbering dozens of existing tests. Current overflow: `037-039` drop protection,
-`056` system-versioning column snapshot, `058` managed relation rename/move, `059` system-versioning function attribution.
+`056` system-versioning column snapshot, `058` managed relation rename/move, `059` system-versioning function attribution. All slots below `100` are taken; non-benchmark tests continue
+at `115`+ (`115` native packaging, `116` check_integrity). Benchmarks are selected by the word `benchmark` in
+the test name, not by number.
 
 **Self-Contained Test Template:**
 ```sql

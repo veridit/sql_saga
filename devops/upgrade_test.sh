@@ -1174,6 +1174,12 @@ EOF
     [ $n -eq 0 ] && ok "all section 5.5 invariants hold on $db"
 }
 
+assert_integrity() {
+    local db=$1 result
+    result=$(q "$db" "SELECT sql_saga.check_integrity() IS NULL")
+    check "check_integrity passes on $db" "t" "$result"
+}
+
 run_preflight() {  # run_preflight <db>: prints output, returns psql status
     psql -X -q -v ON_ERROR_STOP=1 -d "$1" -f "$PREFLIGHT" 2>&1
 }
@@ -1547,6 +1553,7 @@ section "1.2 structure after upgrade" "not meaningful (dependent)"
 # ---------------------------------------------------------------------------------------------
 [ $UPGRADED = 1 ] || echo "    (update did not run: these assertions describe the 1.0 shape that the update must change)"
 assert_structure "$OLD"
+assert_integrity "$OLD"
 check "upgrade leaves no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$OLD")"
 check "history policy copies in sync after upgrade" "0" "$(policy_copy_faults "$OLD")"
 if [ "$BASELINE_VERSION" = 1.0 ]; then
@@ -1585,6 +1592,7 @@ else
 fi
 if [ $FRESH_OK = 1 ]; then
     assert_structure "$FRESH"
+    assert_integrity "$FRESH"
     check "fresh install has no extension initial privileges on detached managed objects" "0" "$(nonmember_managed_initprivs "$FRESH")"
     behaviour "$FRESH"
 fi
@@ -1682,6 +1690,7 @@ for hop in 1 2; do
         check "hop $hop $variant: SYSTEM_TIME snapshots equal live columns" "0" "$(snapshot_faults "$dst")"
         check "hop $hop $variant: tenant isolation" "$ISOLATION_EXPECTED" "$(tenant_isolation "$dst")"
         check "hop $hop $variant: ACL digest equals the upgraded source" "$SRC_DIGEST" "$(acl_digest "$dst")"
+        assert_integrity "$dst"
     done
     prev=$serial_dst
 done
@@ -1694,6 +1703,7 @@ if pg_restore --exit-on-error -d "$CLN" "$WORK/rt1.dump" >"$WORK/clean.seed.log"
     check "--clean restore: history policy copies in sync" "0" "$(policy_copy_faults "$CLN")"
     check "--clean restore: SYSTEM_TIME snapshots equal live columns" "0" "$(snapshot_faults "$CLN")"
     check "--clean restore: tenant isolation" "$ISOLATION_EXPECTED" "$(tenant_isolation "$CLN")"
+    assert_integrity "$CLN"
 else
     fail "pg_restore --clean failed: $(cat "$WORK/clean.seed.log" "$WORK/clean.log" 2>/dev/null | grep -m1 -E 'ERROR|error:')"
 fi

@@ -541,6 +541,8 @@ restore_variant() {
     t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
     manual_state=$(manual_schema_state "$dst"); snapshots=$(snapshot_faults "$dst")
+    local integrity
+    integrity=$(psql -X -At -d "$dst" -c 'SELECT sql_saga.check_integrity() IS NULL' 2>&1)
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
         echo "    $variant: ACL digest differs (source $src_digest, restored $d)"
@@ -574,6 +576,10 @@ restore_variant() {
         echo "    $variant: manual schema state differs (source $src_manual_state, restored $manual_state)"
         return 1
     fi
+    if [ "$integrity" != "t" ]; then
+        echo "    $variant: check_integrity failed ($integrity)"
+        return 1
+    fi
     echo "    $variant: ok"
     return 0
 }
@@ -604,12 +610,18 @@ run_case() {
     fi
     src_faults=$(policy_copy_faults "$src")
     src_snapshots=$(snapshot_faults "$src")
+    local src_integrity
+    src_integrity=$(psql -X -At -d "$src" -c 'SELECT sql_saga.check_integrity() IS NULL' 2>&1)
     if [ "$src_snapshots" != "0" ]; then
         echo "    source: SYSTEM_TIME column snapshots invalid ($src_snapshots)"
         ok=0
     fi
     if [ "$src_faults" != "0" ]; then
         echo "    source: $src_faults history policy copies missing, duplicated or orphaned"
+        ok=0
+    fi
+    if [ "$src_integrity" != "t" ]; then
+        echo "    source: check_integrity failed ($src_integrity)"
         ok=0
     fi
     dropdb --if-exists "$src" >>"$LOG" 2>&1

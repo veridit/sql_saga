@@ -1,0 +1,205 @@
+\set ECHO none
+fresh multi-layout installation | ok
+PUBLIC cannot execute | 42501: permission denied for function check_integrity
+extension owner can execute | ok
+granted role can execute | ok
+
+damaged unique key keeps dependent-FK RESTRICT refusal | P0001: cannot drop unique key "period_parent_primary" because foreign key "period_child_parent_id_valid" on table "integrity_test.period_child" depends on it
+t
+
+damaged era keeps dependent-key RESTRICT refusal | P0001: era valid is part of a UNIQUE or PRIMARY KEY
+t
+SYSTEM_TIME trigger valid before damage | ok
+missing_trigger | unrelated DDL ok
+
+missing SYSTEM_TIME trigger | P0001: sql_saga: integrity violation for table "integrity_test.sv_trigger": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning
+t
+t
+SYSTEM_TIME trigger tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
+missing trigger rollback restores integrity | ok
+excluded column valid before damage | ok
+excluded_column | unrelated DDL ok
+
+missing excluded column | P0001: sql_saga: integrity violation for table "integrity_test.sv_excluded": excluded SYSTEM_TIME column "tenant" is missing; repair with set_system_time_era_excluded_columns or drop_system_versioning
+t
+t
+t
+excluded column tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
+SYSTEM_TIME snapshot valid before damage | ok
+stale_snapshot | unrelated DDL ok
+
+stale SYSTEM_TIME snapshot | P0001: sql_saga: integrity violation for table "integrity_test.sv_snapshot": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views
+t
+t
+
+snapshot rebuild restores integrity | ok
+temporal unique valid before damage | ok
+unique_object | unrelated DDL ok
+
+missing temporal unique object | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_test.period_parent": managed constraint or index is missing; repair with drop_unique_key and add_unique_key
+t
+t
+temporal unique tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=void; ok
+foreign-key helper valid before damage | ok
+fk_helper | unrelated DDL ok
+
+missing foreign-key helper trigger | P0001: sql_saga: integrity violation for foreign key on table "integrity_test.regular_child": referenced-side helper trigger is missing; repair with drop_foreign_key and add_regular_foreign_key
+t
+t
+t
+NOTICE:  sql_saga: Dropping automatically created index "regular_child_parent_id_idx" for foreign key "regular_child_parent_id_fkey"
+
+t
+NOTICE:  sql_saga: No compatible index found for foreign key on table integrity_test.regular_child. Creating new index: CREATE INDEX regular_child_parent_id_idx ON integrity_test.regular_child USING BTREE (parent_id)
+regular_child_parent_id_fkey
+foreign-key API repair restores integrity | ok
+updatable view valid before damage | ok
+updatable_view | unrelated DDL ok
+
+broken FOR PORTION OF view | P0001: sql_saga: integrity violation for updatable view "integrity_test.period_parent__for_portion_of_valid" of table "integrity_test.period_parent": identifier column or trigger is missing; repair with drop_for_portion_of_view and add_for_portion_of_view
+t
+t
+updatable-view tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
+updatable-view rollback restores integrity | ok
+history family valid before damage | ok
+history_member | unrelated DDL ok
+
+missing public history view | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_history": history view "integrity_test.sv_history_with_history" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+history-family rebuild restores integrity | ok
+managed policies valid before damage | ok
+policy_shape | unrelated DDL ok
+
+managed policy shape | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_policy": managed history policy set is inconsistent; repair with sync_history_policies
+t
+t
+
+policy sync restores integrity | ok
+generated as_of valid before damage | ok
+missing_as_of | unrelated DDL ok
+
+missing generated as_of role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+query-function rebuild restores integrity | ok
+generated between valid before damage | ok
+missing_between | unrelated DDL ok
+
+missing generated between role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "between" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+between rebuild restores integrity | ok
+generated between_symmetric valid before damage | ok
+missing_between_symmetric | unrelated DDL ok
+
+missing generated between_symmetric role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "between_symmetric" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+between_symmetric rebuild restores integrity | ok
+generated from_to valid before damage | ok
+missing_from_to | unrelated DDL ok
+
+missing generated from_to role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "from_to" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+from_to rebuild restores integrity | ok
+several generated roles valid before damage | ok
+several_missing_roles | unrelated DDL ok
+
+several missing roles deterministic first | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+several-role rebuild restores integrity | ok
+generated dependency valid before damage | ok
+broken_dependency | unrelated DDL ok
+
+broken generated-function return dependency | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views
+t
+t
+
+dependency rebuild restores integrity | ok
+generated as_of body valid before damage | ok
+wrong_prosrc | unrelated DDL ok
+
+noncanonical generated-function body | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+t
+t
+
+body rebuild restores integrity | ok
+generated between body valid before damage | ok
+wrong_between_prosrc | unrelated DDL ok
+
+noncanonical generated between body | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "between" definition is noncanonical; repair with rebuild_system_versioning_views
+t
+t
+
+between body rebuild restores integrity | ok
+generated between_symmetric body valid before damage | ok
+wrong_between_symmetric_prosrc | unrelated DDL ok
+
+noncanonical generated between_symmetric body | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "between_symmetric" definition is noncanonical; repair with rebuild_system_versioning_views
+t
+t
+
+between_symmetric body rebuild restores integrity | ok
+generated from_to body valid before damage | ok
+wrong_from_to_prosrc | unrelated DDL ok
+
+noncanonical generated from_to body | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "from_to" definition is noncanonical; repair with rebuild_system_versioning_views
+t
+t
+
+from_to body rebuild restores integrity | ok
+generated renamed role valid before damage | ok
+renamed_generated_role | unrelated DDL ok
+
+renamed generated as_of role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+renamed-role rebuild restores integrity | ok
+generated moved role valid before damage | ok
+moved_generated_role | unrelated DDL ok
+
+moved generated between role | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "between" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+moved-role rebuild restores integrity | ok
+cross-class one-family valid before damage | ok
+cross_class_one_family | unrelated DDL ok
+
+cross-class one-family first unique | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_test.period_parent": managed constraint or index is missing; repair with drop_unique_key and add_unique_key
+t
+t
+cross-class one-family repair first unique | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=void; ok
+cross-class one-family next updatable view | P0001: sql_saga: integrity violation for updatable view "integrity_test.period_parent__for_portion_of_valid" of table "integrity_test.period_parent": identifier column or trigger is missing; repair with drop_for_portion_of_view and add_for_portion_of_view
+cross-class one-family repair next view | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
+cross-class two-family valid before damage | ok
+cross_class_two_families | unrelated DDL ok
+
+cross-class two-family first SYSTEM_TIME | P0001: sql_saga: integrity violation for table "integrity_test.sv_trigger": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning
+t
+t
+cross-class two-family repair first SYSTEM_TIME | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
+cross-class two-family next generated function | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+
+cross-class two-family repairs restore integrity | ok
+same-class stable-order valid before damage | ok
+same_class_order | unrelated DDL ok
+
+same-class stable first a_order_family | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.a_order_family": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+t
+t
+
+same-class stable next z_order_family | P0001: sql_saga: integrity violation for system-versioned table "integrity_test.z_order_family": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+
+same-class stable-order API repairs restore integrity | ok
+t
