@@ -51,10 +51,13 @@ multi-defect same-class stable order | P0001: sql_saga: integrity violation for 
 NOTICE:  sql_saga: Left function "integrity_g4.sv__as_of(timestamp with time zone)" in place because it is not the sql_saga-generated function for table "integrity_g4.sv"
 t
 t
+t
 NOTICE:  sql_saga: Left view "integrity_g4.sv_with_history" in place because it is not the sql_saga-generated view for table "integrity_g4.sv"
 t
 t
+t
 NOTICE:  sql_saga: Left trigger "sv_system_time_generated_always" on table "integrity_g4.sv" in place because it is not the sql_saga-generated trigger
+t
 t
 t
 NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
