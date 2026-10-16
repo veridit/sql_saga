@@ -222,6 +222,10 @@ SELECT 'Transaction still active';
 - `060-099` - temporal_merge tests
 - `100+` - Benchmark tests
 
+The ranges are guidance, and several are full. A new test takes a free slot as close to its topic as
+possible rather than renumbering dozens of existing tests. Current overflow: `037-039` drop protection,
+`056` system-versioning column snapshot.
+
 **Self-Contained Test Template:**
 ```sql
 \i sql/include/test_setup.sql
