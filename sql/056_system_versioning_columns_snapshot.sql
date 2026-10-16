@@ -145,19 +145,21 @@ SELECT sql_saga.set_system_time_era_excluded_columns('family_a', ARRAY['tenant']
 SELECT sql_saga.set_system_time_era_excluded_columns('family_b', ARRAY['tenant']::name[]);
 
 \echo === rebuild gateway authorization and nondisclosure
+-- The refusal keeps the 1.1 wording and SQLSTATE (must be owner, 42501) and is identical whether or not the
+-- table is a registered family, so the gateway does not reveal family existence to an unrelated role.
 SELECT snapshot_test.role_case_result(
     'unrelated role before registration',
     'snapshot_unrelated_role',
     $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
     '42501',
-    'permission denied for table family_gateway');
+    'must be owner of table family_gateway');
 SELECT sql_saga.add_system_versioning('family_gateway');
 SELECT snapshot_test.role_case_result(
     'unrelated role after registration',
     'snapshot_unrelated_role',
     $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
     '42501',
-    'permission denied for table family_gateway');
+    'must be owner of table family_gateway');
 SELECT snapshot_test.role_case_result(
     'base owner rebuild',
     'snapshot_table_owner',

@@ -5,9 +5,9 @@
 
 
 === rebuild gateway authorization and nondisclosure
-unrelated role before registration | 42501: permission denied for table family_gateway
+unrelated role before registration | 42501: must be owner of table family_gateway
 
-unrelated role after registration | 42501: permission denied for table family_gateway
+unrelated role after registration | 42501: must be owner of table family_gateway
 base owner rebuild | ok
 owner member rebuild | ok
 === snapshot lifecycle and content
