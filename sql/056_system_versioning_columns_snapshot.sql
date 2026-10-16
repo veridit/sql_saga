@@ -7,6 +7,9 @@ SET client_min_messages = warning;
 
 BEGIN;
 CREATE SCHEMA snapshot_test;
+CREATE ROLE snapshot_table_owner;
+CREATE ROLE snapshot_unrelated_role;
+GRANT USAGE ON SCHEMA snapshot_test TO snapshot_table_owner, snapshot_unrelated_role;
 SET search_path = snapshot_test, public;
 
 CREATE FUNCTION snapshot_test.live_columns(base regclass)
@@ -93,8 +96,21 @@ $case_result$;
 
 CREATE TABLE family_a (id int PRIMARY KEY, tenant text, payload text);
 CREATE TABLE family_b (id int PRIMARY KEY, tenant text, payload text);
+CREATE TABLE family_c (id int PRIMARY KEY, payload text);
+CREATE INDEX family_c_payload_idx ON family_c (payload);
+CREATE UNIQUE INDEX family_c_replica_idx ON family_c (id);
+CREATE FUNCTION snapshot_test.family_c_user_trigger()
+RETURNS trigger LANGUAGE plpgsql AS $family_c_user_trigger$
+BEGIN
+    RETURN NEW;
+END;
+$family_c_user_trigger$;
+CREATE TRIGGER family_c_user_trigger
+BEFORE UPDATE ON family_c
+FOR EACH ROW EXECUTE FUNCTION snapshot_test.family_c_user_trigger();
 SELECT sql_saga.add_system_versioning('family_a');
 SELECT sql_saga.add_system_versioning('family_b');
+SELECT sql_saga.add_system_versioning('family_c');
 SELECT sql_saga.set_system_time_era_excluded_columns('family_a', ARRAY['tenant']::name[]);
 SELECT sql_saga.set_system_time_era_excluded_columns('family_b', ARRAY['tenant']::name[]);
 
@@ -139,6 +155,7 @@ SELECT snapshot_test.snapshot_result('ambiguous statement rolled back', 'family_
 SELECT snapshot_test.live_columns('family_b')::text = '{id,tenant,body,system_valid_range}' AS ambiguous_rollback_preserved_shape;
 
 \echo === relation-scoped attribution and no damage blessing
+SAVEPOINT relation_scope_damage;
 -- Damage A under the narrow test bypass, then issue one B statement that produces several command rows.
 SET session_replication_role = replica;
 ALTER TABLE family_a DROP COLUMN tenant CASCADE;
@@ -155,6 +172,199 @@ SELECT snapshot_test.snapshot_result('B refreshed after its own ALTER', 'family_
 SELECT snapshot_test.snapshot_result('unrelated B DDL did not bless A', 'family_a');
 -- Step 4 RED will assert that sql_saga.check_integrity() diagnoses this exact damaged family A.
 SELECT snapshot_test.live_columns('family_a')::text <> snapshot_test.stored_snapshot('family_a') AS integrity_precondition_detects_a;
+ROLLBACK TO SAVEPOINT relation_scope_damage;
+RELEASE SAVEPOINT relation_scope_damage;
+
+\echo === same-base non-shape ALTER TABLE does not bless stale snapshot
+SAVEPOINT non_shape_set_statistics;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS set_statistics_damage_installed;
+SELECT snapshot_test.snapshot_result('SET STATISTICS stale precondition', 'family_c');
+ALTER TABLE family_c ALTER COLUMN payload SET STATISTICS 100;
+SELECT snapshot_test.snapshot_result('SET STATISTICS keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_set_statistics;
+RELEASE SAVEPOINT non_shape_set_statistics;
+
+SAVEPOINT non_shape_set_storage;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS set_storage_damage_installed;
+SELECT snapshot_test.snapshot_result('SET STORAGE stale precondition', 'family_c');
+ALTER TABLE family_c ALTER COLUMN payload SET STORAGE EXTENDED;
+SELECT snapshot_test.snapshot_result('SET STORAGE keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_set_storage;
+RELEASE SAVEPOINT non_shape_set_storage;
+
+SAVEPOINT non_shape_set_default;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS set_default_damage_installed;
+SELECT snapshot_test.snapshot_result('SET DEFAULT stale precondition', 'family_c');
+ALTER TABLE family_c ALTER COLUMN payload SET DEFAULT 'default payload';
+SELECT snapshot_test.snapshot_result('SET DEFAULT keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_set_default;
+RELEASE SAVEPOINT non_shape_set_default;
+
+SAVEPOINT non_shape_add_check;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS add_check_damage_installed;
+SELECT snapshot_test.snapshot_result('ADD CHECK stale precondition', 'family_c');
+ALTER TABLE family_c ADD CONSTRAINT family_c_payload_check CHECK (payload IS NULL OR length(payload) >= 0) NOT VALID;
+SELECT snapshot_test.snapshot_result('ADD CHECK keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_add_check;
+RELEASE SAVEPOINT non_shape_add_check;
+
+SAVEPOINT non_shape_disable_trigger;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS disable_trigger_damage_installed;
+SELECT snapshot_test.snapshot_result('DISABLE TRIGGER stale precondition', 'family_c');
+ALTER TABLE family_c DISABLE TRIGGER family_c_user_trigger;
+SELECT snapshot_test.snapshot_result('DISABLE TRIGGER keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_disable_trigger;
+RELEASE SAVEPOINT non_shape_disable_trigger;
+
+SAVEPOINT non_shape_enable_trigger;
+ALTER TABLE family_c DISABLE TRIGGER family_c_user_trigger;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS enable_trigger_damage_installed;
+SELECT snapshot_test.snapshot_result('ENABLE TRIGGER stale precondition', 'family_c');
+ALTER TABLE family_c ENABLE TRIGGER family_c_user_trigger;
+SELECT snapshot_test.snapshot_result('ENABLE TRIGGER keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_enable_trigger;
+RELEASE SAVEPOINT non_shape_enable_trigger;
+
+SAVEPOINT non_shape_fillfactor;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS fillfactor_damage_installed;
+SELECT snapshot_test.snapshot_result('SET fillfactor stale precondition', 'family_c');
+ALTER TABLE family_c SET (fillfactor = 80);
+SELECT snapshot_test.snapshot_result('SET fillfactor keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_fillfactor;
+RELEASE SAVEPOINT non_shape_fillfactor;
+
+SAVEPOINT non_shape_owner;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS owner_damage_installed;
+SELECT snapshot_test.snapshot_result('OWNER TO stale precondition', 'family_c');
+ALTER TABLE family_c OWNER TO snapshot_table_owner;
+SELECT snapshot_test.snapshot_result('OWNER TO keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_owner;
+RELEASE SAVEPOINT non_shape_owner;
+
+SAVEPOINT non_shape_rename_constraint;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS rename_constraint_damage_installed;
+SELECT snapshot_test.snapshot_result('RENAME CONSTRAINT stale precondition', 'family_c');
+ALTER TABLE family_c RENAME CONSTRAINT family_c_pkey TO family_c_primary_key;
+SELECT snapshot_test.snapshot_result('RENAME CONSTRAINT keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_rename_constraint;
+RELEASE SAVEPOINT non_shape_rename_constraint;
+
+SAVEPOINT non_shape_cluster;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS cluster_damage_installed;
+SELECT snapshot_test.snapshot_result('CLUSTER ON stale precondition', 'family_c');
+ALTER TABLE family_c CLUSTER ON family_c_payload_idx;
+SELECT snapshot_test.snapshot_result('CLUSTER ON keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_cluster;
+RELEASE SAVEPOINT non_shape_cluster;
+
+SAVEPOINT non_shape_replica_full;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS replica_full_damage_installed;
+SELECT snapshot_test.snapshot_result('REPLICA IDENTITY FULL stale precondition', 'family_c');
+ALTER TABLE family_c REPLICA IDENTITY FULL;
+SELECT snapshot_test.snapshot_result('REPLICA IDENTITY FULL keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_replica_full;
+RELEASE SAVEPOINT non_shape_replica_full;
+
+SAVEPOINT non_shape_replica_index;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS replica_index_damage_installed;
+SELECT snapshot_test.snapshot_result('REPLICA IDENTITY USING INDEX stale precondition', 'family_c');
+ALTER TABLE family_c REPLICA IDENTITY USING INDEX family_c_replica_idx;
+SELECT snapshot_test.snapshot_result('REPLICA IDENTITY USING INDEX keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_replica_index;
+RELEASE SAVEPOINT non_shape_replica_index;
+
+\echo === managed base move and rename do not bless stale snapshot
+CREATE SCHEMA snapshot_moved;
+SAVEPOINT non_shape_set_schema;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS set_schema_damage_installed;
+SELECT snapshot_test.snapshot_result('SET SCHEMA stale precondition', 'family_c');
+SELECT snapshot_test.case_result(
+    'SET SCHEMA preserves native refusal',
+    $$ALTER TABLE snapshot_test.family_c SET SCHEMA snapshot_moved$$,
+    '42P01',
+    'relation "snapshot_test.family_c" does not exist');
+SELECT snapshot_test.snapshot_result('SET SCHEMA refusal keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_set_schema;
+RELEASE SAVEPOINT non_shape_set_schema;
+
+SAVEPOINT non_shape_rename_table;
+SELECT snapshot_test.replace_snapshot('family_c', ARRAY['stale']::name[]) AS rename_table_damage_installed;
+SELECT snapshot_test.snapshot_result('RENAME TABLE stale precondition', 'family_c');
+SELECT snapshot_test.case_result(
+    'RENAME TABLE preserves native refusal',
+    $$ALTER TABLE snapshot_test.family_c RENAME TO family_c_renamed$$,
+    '42P01',
+    'relation "snapshot_test.family_c" does not exist');
+SELECT snapshot_test.snapshot_result('RENAME TABLE refusal keeps stale snapshot', 'family_c');
+ROLLBACK TO SAVEPOINT non_shape_rename_table;
+RELEASE SAVEPOINT non_shape_rename_table;
+
+\echo === ALTER COLUMN TYPE preserves existing native behavior
+SAVEPOINT alter_column_type;
+SELECT snapshot_test.case_result(
+    'ALTER COLUMN TYPE on managed base',
+    $$ALTER TABLE snapshot_test.family_c ALTER COLUMN payload TYPE varchar(100)$$,
+    '0A000',
+    'cannot alter type of a column used by a view or rule');
+ROLLBACK TO SAVEPOINT alter_column_type;
+RELEASE SAVEPOINT alter_column_type;
+
+\echo === snapshot refresh helper is not externally executable
+SET ROLE snapshot_table_owner;
+SELECT snapshot_test.case_result(
+    'table owner cannot refresh snapshot',
+    $$SELECT sql_saga.__internal_refresh_system_time_columns_snapshot('snapshot_test.family_c'::regclass::oid)$$,
+    '42501',
+    'permission denied for function __internal_refresh_system_time_columns_snapshot');
+RESET ROLE;
+SET ROLE snapshot_unrelated_role;
+SELECT snapshot_test.case_result(
+    'unrelated role cannot refresh snapshot',
+    $$SELECT sql_saga.__internal_refresh_system_time_columns_snapshot('snapshot_test.family_c'::regclass::oid)$$,
+    '42501',
+    'permission denied for function __internal_refresh_system_time_columns_snapshot');
+RESET ROLE;
+
+\echo === SECURITY DEFINER PUBLIC-execute allowlist invariant
+SELECT count(*) = 0
+FROM pg_catalog.pg_proc AS p
+JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+WHERE n.nspname = 'sql_saga'
+  AND p.prosecdef
+  AND pg_catalog.has_function_privilege('public', p.oid, 'EXECUTE')
+  AND p.oid::regprocedure::text <> ALL (ARRAY[
+      'sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])',
+      'sql_saga.__internal_ddl_command_affects_managed_object()',
+      'sql_saga.__internal_reconcile_system_versioning_family(regclass,name[])',
+      'sql_saga.__internal_sync_history_policies(oid,name[])',
+      'sql_saga.add_current_view(regclass,name,name,text)',
+      'sql_saga.add_era(regclass,name,name,boolean,name,name,name,boolean,boolean,boolean,regtype,name,name[])',
+      'sql_saga.add_for_portion_of_view(regclass,name,name[])',
+      'sql_saga.add_foreign_key(regclass,name[],regclass,name[],name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,boolean)',
+      'sql_saga.add_regular_foreign_key(regclass,name[],name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,text,name,name,boolean)',
+      'sql_saga.add_synchronize_temporal_columns_trigger(regclass,name)',
+      'sql_saga.add_system_versioning(regclass,name,name,name,name,name,name)',
+      'sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,boolean)',
+      'sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[])',
+      'sql_saga.drop_current_view(regclass,name,sql_saga.drop_behavior)',
+      'sql_saga.drop_era(regclass,name,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_for_portion_of_view(regclass,name,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_foreign_key_by_name(regclass,name,boolean)',
+      'sql_saga.drop_foreign_key(regclass,name[],name,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_protection()',
+      'sql_saga.drop_synchronize_temporal_columns_trigger(regclass,name)',
+      'sql_saga.drop_system_time_era(regclass,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_system_versioning(regclass,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_unique_key_by_name(regclass,name,sql_saga.drop_behavior,boolean)',
+      'sql_saga.drop_unique_key(regclass,name[],name,sql_saga.drop_behavior,boolean)',
+      'sql_saga.generated_always_as_row_start_end()',
+      'sql_saga.health_checks()',
+      'sql_saga.rename_following()',
+      'sql_saga.set_era_ephemeral_columns(regclass,name,name[])',
+      'sql_saga.set_system_time_era_excluded_columns(regclass,name[])',
+      'sql_saga.truncate_system_versioning()',
+      'sql_saga.write_history()'
+  ]::text[]);
 
 ROLLBACK;
 \i sql/include/test_teardown.sql

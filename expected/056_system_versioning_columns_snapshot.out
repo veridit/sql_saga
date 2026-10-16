@@ -3,6 +3,7 @@
 
 
 
+
 === snapshot lifecycle and content
 family creation A | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
 family creation B | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
@@ -25,4 +26,57 @@ bypass damage remains visible in A | stored={id,tenant,payload,system_valid_rang
 stale A does not blame multi-row ALTER on B | ok
 B refreshed after its own ALTER | stored={id,tenant,body,system_valid_range,b_code} | live={id,tenant,body,system_valid_range,b_code} | equal=t
 unrelated B DDL did not bless A | stored={id,tenant,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=f
+t
+=== same-base non-shape ALTER TABLE does not bless stale snapshot
+t
+SET STATISTICS stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+SET STATISTICS keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+SET STORAGE stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+SET STORAGE keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+SET DEFAULT stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+SET DEFAULT keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+ADD CHECK stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+ADD CHECK keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+DISABLE TRIGGER stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+DISABLE TRIGGER keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+ENABLE TRIGGER stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+ENABLE TRIGGER keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+SET fillfactor stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+SET fillfactor keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+OWNER TO stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+OWNER TO keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+RENAME CONSTRAINT stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+RENAME CONSTRAINT keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+CLUSTER ON stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+CLUSTER ON keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+REPLICA IDENTITY FULL stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+REPLICA IDENTITY FULL keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+REPLICA IDENTITY USING INDEX stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+REPLICA IDENTITY USING INDEX keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+=== managed base move and rename do not bless stale snapshot
+t
+SET SCHEMA stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+SET SCHEMA preserves native refusal | 42P01: relation "snapshot_test.family_c" does not exist
+SET SCHEMA refusal keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+t
+RENAME TABLE stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+RENAME TABLE preserves native refusal | 42P01: relation "snapshot_test.family_c" does not exist
+RENAME TABLE refusal keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
+=== ALTER COLUMN TYPE preserves existing native behavior
+ALTER COLUMN TYPE on managed base | 0A000: cannot alter type of a column used by a view or rule
+=== snapshot refresh helper is not externally executable
+table owner cannot refresh snapshot | 42501: permission denied for function __internal_refresh_system_time_columns_snapshot
+unrelated role cannot refresh snapshot | 42501: permission denied for function __internal_refresh_system_time_columns_snapshot
+=== SECURITY DEFINER PUBLIC-execute allowlist invariant
 t
