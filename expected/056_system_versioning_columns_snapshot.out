@@ -1,0 +1,28 @@
+\set ECHO none
+
+
+
+
+=== snapshot lifecycle and content
+family creation A | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
+family creation B | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
+supported ADD | stored={id,tenant,payload,system_valid_range,note} | live={id,tenant,payload,system_valid_range,note} | equal=t
+supported DROP | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
+supported non-excluded RENAME | stored={id,tenant,body,system_valid_range} | live={id,tenant,body,system_valid_range} | equal=t
+t
+before canonical rebuild | stored={stale} | live={id,tenant,body,system_valid_range} | equal=f
+
+canonical rebuild refresh | stored={id,tenant,body,system_valid_range} | live={id,tenant,body,system_valid_range} | equal=t
+=== direct excluded-column protection
+excluded RENAME on same base | P0001: cannot drop or rename column "tenant" on table "snapshot_test.family_b" because it is excluded from system_time era
+excluded DROP refused at sql_drop | P0001: cannot drop or rename column "tenant" on table "snapshot_test.family_b" because it is excluded from system_time era
+=== ambiguous multi-action is atomic
+excluded name plus other shape changes | P0001: cannot determine whether excluded column "tenant" on table "snapshot_test.family_b" was renamed because ALTER TABLE changed multiple columns; split column-shape changes into separate ALTER TABLE statements
+ambiguous statement rolled back | stored={id,tenant,body,system_valid_range} | live={id,tenant,body,system_valid_range} | equal=t
+t
+=== relation-scoped attribution and no damage blessing
+bypass damage remains visible in A | stored={id,tenant,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=f
+stale A does not blame multi-row ALTER on B | ok
+B refreshed after its own ALTER | stored={id,tenant,body,system_valid_range,b_code} | live={id,tenant,body,system_valid_range,b_code} | equal=t
+unrelated B DDL did not bless A | stored={id,tenant,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=f
+t

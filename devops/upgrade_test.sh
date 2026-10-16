@@ -668,6 +668,16 @@ ROLLBACK;
 SQL
 }
 
+# Missing or stale SYSTEM_TIME base-column snapshots (0 = every family matches live attnum order).
+snapshot_faults() {
+    local db=$1
+    if [ "$(q "$db" "SELECT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = 'sql_saga.system_time_era'::regclass AND a.attname = 'table_columns_snapshot' AND a.attnum > 0 AND NOT a.attisdropped)")" != t ]; then
+        echo missing
+        return
+    fi
+    q "$db" "SELECT count(*) FROM sql_saga.system_time_era AS ste WHERE ste.table_columns_snapshot IS DISTINCT FROM (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid WHERE (ns.nspname, c.relname) = (ste.table_schema, ste.table_name) AND a.attnum > 0 AND NOT a.attisdropped)"
+}
+
 ids_as() {  # ids_as <db> <role> <relation>: sorted ids, or denied
     local r
     r=$(as_role "$1" "$2" "SELECT 'ids=' || coalesce(string_agg(id::text, ',' ORDER BY id), '') FROM $3")
@@ -749,6 +759,33 @@ BEGIN
     SELECT x.extversion INTO v FROM pg_extension AS x WHERE x.extname = 'sql_saga';
     IF v IS DISTINCT FROM '$NEW_VERSION' THEN
         INSERT INTO violation (msg) VALUES (format('extversion is %s, expected $NEW_VERSION', v));
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = 'sql_saga.system_time_era'::regclass
+          AND a.attname = 'table_columns_snapshot'
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    ) THEN
+        INSERT INTO violation (msg) VALUES ('system_time_era.table_columns_snapshot is missing');
+    ELSE
+        EXECUTE \$snapshot\$
+            SELECT count(*)
+            FROM sql_saga.system_time_era AS ste
+            WHERE ste.table_columns_snapshot IS DISTINCT FROM (
+                SELECT array_agg(a.attname ORDER BY a.attnum)
+                FROM pg_catalog.pg_class AS c
+                JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+                JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
+                WHERE (ns.nspname, c.relname) = (ste.table_schema, ste.table_name)
+                  AND a.attnum > 0
+                  AND NOT a.attisdropped
+            )
+        \$snapshot\$ INTO n;
+        IF n <> 0 THEN
+            INSERT INTO violation (msg) VALUES (format('%s system_time_era snapshots differ from live columns', n));
+        END IF;
     END IF;
 
     IF to_regclass('sql_saga.installation') IS NULL THEN
@@ -1642,6 +1679,7 @@ for hop in 1 2; do
         check "hop $hop $variant: version" "$NEW_VERSION" "$(q "$dst" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
         check "hop $hop $variant: native library version equals extversion" "t" "$(q "$dst" "SELECT sql_saga.native_library_version() = (SELECT extversion FROM pg_extension WHERE extname='sql_saga')")"
         check "hop $hop $variant: history policy copies in sync" "0" "$(policy_copy_faults "$dst")"
+        check "hop $hop $variant: SYSTEM_TIME snapshots equal live columns" "0" "$(snapshot_faults "$dst")"
         check "hop $hop $variant: tenant isolation" "$ISOLATION_EXPECTED" "$(tenant_isolation "$dst")"
         check "hop $hop $variant: ACL digest equals the upgraded source" "$SRC_DIGEST" "$(acl_digest "$dst")"
     done
@@ -1654,6 +1692,7 @@ if pg_restore --exit-on-error -d "$CLN" "$WORK/rt1.dump" >"$WORK/clean.seed.log"
    && pg_restore --clean --if-exists --exit-on-error -d "$CLN" "$WORK/rt1.dump" >"$WORK/clean.log" 2>&1; then
     ok "pg_restore --clean into a database holding the upgraded families"
     check "--clean restore: history policy copies in sync" "0" "$(policy_copy_faults "$CLN")"
+    check "--clean restore: SYSTEM_TIME snapshots equal live columns" "0" "$(snapshot_faults "$CLN")"
     check "--clean restore: tenant isolation" "$ISOLATION_EXPECTED" "$(tenant_isolation "$CLN")"
 else
     fail "pg_restore --clean failed: $(cat "$WORK/clean.seed.log" "$WORK/clean.log" 2>/dev/null | grep -m1 -E 'ERROR|error:')"

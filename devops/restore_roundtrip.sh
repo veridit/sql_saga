@@ -212,6 +212,30 @@ event_triggers() {
     psql -X -At -d "$1" -c "SELECT count(*) FILTER (WHERE evtenabled <> 'D') || '/' || count(*) FROM pg_event_trigger WHERE evtfoid::regproc::text LIKE 'sql_saga.%'"
 }
 
+# Every SYSTEM_TIME family must carry the portable before-shape used for relation-scoped attribution.
+# Return "missing" on pre-1.2 candidates so the RED harness reports the intended schema gap cleanly.
+snapshot_faults() {
+    local has_column
+    has_column=$(psql -X -At -d "$1" -c "SELECT EXISTS (SELECT FROM pg_catalog.pg_attribute WHERE attrelid = 'sql_saga.system_time_era'::regclass AND attname = 'table_columns_snapshot' AND attnum > 0 AND NOT attisdropped)")
+    if [ "$has_column" != t ]; then
+        echo missing
+        return
+    fi
+    psql -X -At -d "$1" <<'SQL'
+SELECT count(*)
+FROM sql_saga.system_time_era AS ste
+WHERE ste.table_columns_snapshot IS DISTINCT FROM (
+    SELECT array_agg(a.attname ORDER BY a.attnum)
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
+    WHERE (ns.nspname, c.relname) = (ste.table_schema, ste.table_name)
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+);
+SQL
+}
+
 # Schema and data fingerprint for the manual_schema_changes case. Other cases return an empty value.
 manual_schema_state() {
     psql -X -At -d "$1" <<'SQL'
@@ -503,7 +527,7 @@ restore_variant() {
         dropdb --if-exists "$dst" >>"$LOG" 2>&1
         return 1
     fi
-    local d t pol faults reads manual_state
+    local d t pol faults reads manual_state snapshots
     # clean*: a database with ALTER DEFAULT PRIVILEGES (hardened_functions) already has them when
     # pg_restore --clean recreates the extension, so its member functions get the owner-only ACL the
     # operator asked for, while a fresh restore applies the default privileges only at the end. That
@@ -516,7 +540,7 @@ restore_variant() {
     fi
     t=$(event_triggers "$dst"); pol=$(policies "$dst"); faults=$(policy_copy_faults "$dst")
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
-    manual_state=$(manual_schema_state "$dst")
+    manual_state=$(manual_schema_state "$dst"); snapshots=$(snapshot_faults "$dst")
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
         echo "    $variant: ACL digest differs (source $src_digest, restored $d)"
@@ -540,6 +564,10 @@ restore_variant() {
     fi
     if [ "$t" != "$src_trig" ]; then
         echo "    $variant: event triggers differ (source $src_trig, restored $t)"
+        return 1
+    fi
+    if [ "$snapshots" != "0" ]; then
+        echo "    $variant: SYSTEM_TIME column snapshots invalid ($snapshots)"
         return 1
     fi
     if [ "$manual_state" != "$src_manual_state" ]; then
@@ -568,13 +596,18 @@ run_case() {
     src_reads=''
     src_digest=$(digest "$src"); src_digest_without_extension_functions=$(digest "$src" without_extension_functions); src_trig=$(event_triggers "$src"); src_pol=$(policies "$src"); src_reads=$(tenant_reads "$src")
     src_manual_state=$(manual_schema_state "$src")
-    local src_faults src_iso
+    local src_faults src_iso src_snapshots
     src_iso=$(rls_isolation "$src")
     if [ -n "$src_iso" ] && [ "$src_iso" != "$RLS_EXPECTED" ]; then
         echo "    source: tenant isolation wrong (expected '$RLS_EXPECTED', got '$src_iso')"
         ok=0
     fi
     src_faults=$(policy_copy_faults "$src")
+    src_snapshots=$(snapshot_faults "$src")
+    if [ "$src_snapshots" != "0" ]; then
+        echo "    source: SYSTEM_TIME column snapshots invalid ($src_snapshots)"
+        ok=0
+    fi
     if [ "$src_faults" != "0" ]; then
         echo "    source: $src_faults history policy copies missing, duplicated or orphaned"
         ok=0
