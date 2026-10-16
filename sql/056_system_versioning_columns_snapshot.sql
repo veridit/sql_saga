@@ -516,7 +516,8 @@ WHERE n.nspname = 'sql_saga'
       'sql_saga.add_foreign_key(regclass,name[],regclass,name[],name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,boolean)',
       'sql_saga.add_regular_foreign_key(regclass,name[],name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,text,name,name,boolean)',
       'sql_saga.add_synchronize_temporal_columns_trigger(regclass,name)',
-      'sql_saga.add_system_versioning(regclass,name,name,name,name,name,name)',
+      -- 1.2: add_system_versioning gained a trailing history_table_must_exist boolean (DEFAULT false).
+      'sql_saga.add_system_versioning(regclass,name,name,name,name,name,name,boolean)',
       'sql_saga.add_temporal_foreign_key(regclass,name[],name,name,sql_saga.fk_match_types,sql_saga.fk_actions,sql_saga.fk_actions,name,name,name,boolean)',
       'sql_saga.add_unique_key(regclass,name[],name,sql_saga.unique_key_type,boolean,name,name,name,text,name[])',
       'sql_saga.drop_current_view(regclass,name,sql_saga.drop_behavior)',
