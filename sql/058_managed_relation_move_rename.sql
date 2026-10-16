@@ -185,6 +185,88 @@ SELECT * FROM move_guard.attempt('for-portion ALTER TABLE rename', 'ALTER TABLE 
 INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
 SELECT * FROM move_guard.attempt('for-portion ALTER TABLE move', 'ALTER TABLE move_guard.view_base__for_portion_of_valid SET SCHEMA move_destination', 'SELECT count(*) FROM move_guard.view_base__for_portion_of_valid');
 
+-- Schema identity changes move every contained object at once. Cover each catalogued relation layout.
+CREATE SCHEMA schema_sv;
+CREATE TABLE schema_sv.a_base (id integer PRIMARY KEY, payload text);
+SELECT sql_saga.add_system_versioning('schema_sv.a_base');
+INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
+SELECT * FROM move_guard.attempt(
+    'schema rename with sv base',
+    'ALTER SCHEMA schema_sv RENAME TO schema_sv_new',
+    'SELECT count(*) FROM schema_sv.a_base_with_history');
+
+CREATE SCHEMA schema_history;
+CREATE TABLE history_only (id integer PRIMARY KEY, payload text);
+SELECT sql_saga.add_system_versioning('history_only');
+SET session_replication_role = replica;
+ALTER TABLE move_guard.history_only_history SET SCHEMA schema_history;
+SET session_replication_role = origin;
+UPDATE sql_saga.system_versioning
+SET history_schema_name = 'schema_history'
+WHERE (table_schema, table_name) = ('move_guard', 'history_only');
+INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
+SELECT * FROM move_guard.attempt(
+    'schema rename with history only',
+    'ALTER SCHEMA schema_history RENAME TO schema_history_new',
+    'SELECT count(*) FROM move_guard.history_only_with_history');
+
+-- add_system_versioning accepts unqualified object names of type name and creates every derived
+-- view and query function in the base table schema, so a supported generated-view/function-only
+-- schema layout cannot be constructed through the public API.
+
+CREATE SCHEMA schema_era;
+CREATE TABLE schema_era.era_only (
+    id integer,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('schema_era.era_only', 'valid_range');
+INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
+SELECT * FROM move_guard.attempt(
+    'schema rename with era base',
+    'ALTER SCHEMA schema_era RENAME TO schema_era_new',
+    'SELECT count(*) FROM schema_era.era_only');
+
+CREATE SCHEMA schema_regular_fk;
+CREATE TABLE schema_regular_fk.regular_only (id integer, parent_id integer);
+SELECT sql_saga.add_regular_foreign_key(
+    'schema_regular_fk.regular_only', ARRAY['parent_id'], 'fk_parent_id_valid',
+    foreign_key_name => 'regular_only_fk');
+INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
+SELECT * FROM move_guard.attempt(
+    'schema rename with regular FK child',
+    'ALTER SCHEMA schema_regular_fk RENAME TO schema_regular_fk_new',
+    'SELECT count(*) FROM schema_regular_fk.regular_only');
+
+CREATE SCHEMA schema_updatable;
+CREATE TABLE current_only (
+    id integer,
+    valid_range daterange,
+    valid_from date,
+    valid_until date
+);
+SELECT sql_saga.add_era('current_only', 'valid_range');
+SELECT sql_saga.add_unique_key('current_only', ARRAY['id']);
+SELECT sql_saga.add_current_view('current_only', current_func_name => 'public.move_guard_now()');
+SET session_replication_role = replica;
+ALTER VIEW move_guard.current_only__current_valid SET SCHEMA schema_updatable;
+SET session_replication_role = origin;
+UPDATE sql_saga.updatable_view
+SET view_schema = 'schema_updatable'
+WHERE (table_schema, table_name, era_name, view_type) =
+      ('move_guard', 'current_only', 'valid', 'current');
+INSERT INTO results (test_case, sqlstate, message, catalog_unchanged, family_usable)
+SELECT * FROM move_guard.attempt(
+    'schema rename with updatable view',
+    'ALTER SCHEMA schema_updatable RENAME TO schema_updatable_new',
+    'SELECT count(*) FROM schema_updatable.current_only__current_valid');
+
+-- Other schema identity operations and unmanaged lookalikes remain legal.
+ALTER SCHEMA schema_sv OWNER TO CURRENT_USER;
+CREATE SCHEMA "quoted schema";
+ALTER SCHEMA "quoted schema" RENAME TO "quoted schema renamed";
+
 -- Functional smoke after every refusal has preserved the original family identities.
 INSERT INTO sv_base (id, payload) VALUES (1, 'before');
 UPDATE sv_base SET payload = 'after' WHERE id = 1;
@@ -199,6 +281,9 @@ INSERT INTO regular_child (id, parent_id) VALUES (1, 1);
 \pset tuples_only on
 SELECT seq, test_case, sqlstate, message, catalog_unchanged, family_usable FROM results ORDER BY seq;
 SELECT 'unmanaged_rename_and_move_worked', to_regclass('move_destination.unmanaged_renamed') IS NOT NULL;
+SELECT 'unmanaged_schema_rename_worked', to_regnamespace('"quoted schema renamed"') IS NOT NULL;
+SELECT 'managed_schema_owner_change_worked',
+       (SELECT n.nspowner = current_user::regrole FROM pg_catalog.pg_namespace AS n WHERE n.nspname = 'schema_sv');
 SELECT 'family_smoke',
     (SELECT count(*) FROM sv_base_history) = 1,
     (SELECT count(*) FROM sv_base_with_history) = 2,
