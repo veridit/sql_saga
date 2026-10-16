@@ -19,6 +19,16 @@ wrong-function SYSTEM_TIME trigger | P0001: sql_saga: integrity violation for ta
 wrong temporal unique constraint | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
 wrong temporal unique index | P0001: sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
 wrong temporal foreign-key constraint | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+native temporal FK references wrong table | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+native temporal FK references wrong columns | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+native temporal FK lacks PERIOD | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+native temporal FK has wrong deferrability and actions | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+NOTICE:  sql_saga: Dropping automatically created index "period_child_parent_id_valid_gist_idx" for foreign key "period_child_parent_id_valid"
+NOTICE:  sql_saga: Left constraint "period_child_parent_id_valid" on table "integrity_g4.period_child" in place because it is not the sql_saga-managed constraint
+t
+t
+period_child_parent_id_valid
+native temporal FK documented API repair | ok
 wrong updatable-view trigger | P0001: sql_saga: integrity violation for updatable view "integrity_g4.period_parent__for_portion_of_valid" of table "integrity_g4.period_parent": identifier column or trigger definition is noncanonical; repair with drop_for_portion_of_view and add_for_portion_of_view
 missing identifier with surviving trigger | P0001: sql_saga: integrity violation for updatable view "integrity_g4.period_parent__for_portion_of_valid" of table "integrity_g4.period_parent": identifier column or trigger definition is noncanonical; repair with drop_for_portion_of_view and add_for_portion_of_view
 wrong public history view shape | no disclosure
@@ -95,6 +105,11 @@ NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "int
 t
 t
 predicated exclusion differs only by operator | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
+
+t
+t
+predicated exclusion differs only by predicate | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
 NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
 
 t

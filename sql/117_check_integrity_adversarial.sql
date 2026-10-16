@@ -166,12 +166,18 @@ SELECT sql_saga.add_system_versioning('z_sv');
 
 CREATE TABLE period_parent (id integer, category text, valid_from date, valid_until date, valid_range daterange);
 CREATE TABLE period_child (id integer, parent_id integer, valid_from date, valid_until date, valid_range daterange);
+CREATE TABLE period_parent_wrong (id integer, alt_id integer, valid_range daterange,
+    UNIQUE (id, valid_range WITHOUT OVERLAPS),
+    UNIQUE (alt_id, valid_range WITHOUT OVERLAPS));
 CREATE TABLE era_wrong (id integer, valid_from date, valid_until date, valid_range daterange);
 SELECT sql_saga.add_era('era_wrong', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_era('period_parent', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'period_parent_primary');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['id']::name[], 'valid', key_type => 'predicated', predicate => 'category IS NOT NULL', unique_key_name => 'period_parent_predicated');
 SELECT sql_saga.add_unique_key('period_parent', ARRAY['category']::name[], 'valid', key_type => 'natural', unique_key_name => 'period_parent_natural', enforce_consistency_with_primary_key => false);
+ALTER TABLE period_parent ADD COLUMN alt_id integer;
+ALTER TABLE period_parent ADD CONSTRAINT period_parent_alt_temporal UNIQUE (alt_id, valid_range WITHOUT OVERLAPS);
+ALTER TABLE period_parent ADD CONSTRAINT period_parent_id_plain UNIQUE (id);
 SELECT sql_saga.add_for_portion_of_view('period_parent', 'valid');
 SELECT sql_saga.add_era('period_child', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
 SELECT sql_saga.add_unique_key('period_child', ARRAY['id']::name[], 'valid', key_type => 'primary', unique_key_name => 'period_child_primary');
@@ -413,6 +419,64 @@ RESET session_replication_role;
 SELECT integrity_g4.attempt('wrong temporal foreign-key constraint', 'sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key');
 ROLLBACK TO SAVEPOINT wrong_fk;
 RELEASE SAVEPOINT wrong_fk;
+
+SAVEPOINT wrong_fk_referenced_table;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT foreign_key_name INTO n FROM sql_saga.foreign_keys WHERE table_schema='integrity_g4' AND table_name='period_child';
+    EXECUTE format('ALTER TABLE integrity_g4.period_child DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_child ADD CONSTRAINT %I FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES integrity_g4.period_parent_wrong (id, PERIOD valid_range) MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION DEFERRABLE', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('native temporal FK references wrong table', 'sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key');
+ROLLBACK TO SAVEPOINT wrong_fk_referenced_table;
+RELEASE SAVEPOINT wrong_fk_referenced_table;
+
+SAVEPOINT wrong_fk_referenced_columns;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT foreign_key_name INTO n FROM sql_saga.foreign_keys WHERE table_schema='integrity_g4' AND table_name='period_child';
+    EXECUTE format('ALTER TABLE integrity_g4.period_child DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_child ADD CONSTRAINT %I FOREIGN KEY (parent_id, PERIOD valid_range) REFERENCES integrity_g4.period_parent (alt_id, PERIOD valid_range) MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION DEFERRABLE', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('native temporal FK references wrong columns', 'sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key');
+ROLLBACK TO SAVEPOINT wrong_fk_referenced_columns;
+RELEASE SAVEPOINT wrong_fk_referenced_columns;
+
+SAVEPOINT wrong_fk_without_period;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT foreign_key_name INTO n FROM sql_saga.foreign_keys WHERE table_schema='integrity_g4' AND table_name='period_child';
+    EXECUTE format('ALTER TABLE integrity_g4.period_child DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_child ADD CONSTRAINT %I FOREIGN KEY (parent_id) REFERENCES integrity_g4.period_parent (id) MATCH SIMPLE ON UPDATE NO ACTION ON DELETE NO ACTION DEFERRABLE', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('native temporal FK lacks PERIOD', 'sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key');
+ROLLBACK TO SAVEPOINT wrong_fk_without_period;
+RELEASE SAVEPOINT wrong_fk_without_period;
+
+SAVEPOINT wrong_fk_actions;
+SET session_replication_role = replica;
+UPDATE pg_constraint
+SET condeferrable=false, condeferred=false, confupdtype='r', confdeltype='c'
+WHERE conrelid='integrity_g4.period_child'::regclass
+  AND conname=(SELECT foreign_key_name FROM sql_saga.foreign_keys WHERE table_schema='integrity_g4' AND table_name='period_child');
+RESET session_replication_role;
+SELECT integrity_g4.attempt('native temporal FK has wrong deferrability and actions', 'sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key');
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_foreign_key_by_name('integrity_g4.period_child', (SELECT foreign_key_name FROM sql_saga.foreign_keys WHERE table_schema='integrity_g4' AND table_name='period_child'));
+SET LOCAL client_min_messages = warning;
+SELECT EXISTS (SELECT FROM pg_constraint AS c WHERE c.conrelid='integrity_g4.period_child'::regclass AND c.conname LIKE 'period_child_parent_id%') AS noncanonical_native_fk_survives_tolerant_drop;
+DO $repair$ DECLARE n name; BEGIN
+    SELECT c.conname INTO n FROM pg_constraint AS c
+    WHERE c.conrelid='integrity_g4.period_child'::regclass AND c.conname LIKE 'period_child_parent_id%';
+    IF n IS NOT NULL THEN EXECUTE format('ALTER TABLE integrity_g4.period_child DROP CONSTRAINT %I', n); END IF;
+END $repair$;
+SELECT sql_saga.add_foreign_key('integrity_g4.period_child', ARRAY['parent_id']::name[], 'integrity_g4.period_parent', ARRAY['id']::name[]);
+SELECT integrity_g4.valid('native temporal FK documented API repair');
+ROLLBACK TO SAVEPOINT wrong_fk_actions;
+RELEASE SAVEPOINT wrong_fk_actions;
 
 -- Updatable view identifier and exact trigger attachment/function are invariant.
 SAVEPOINT wrong_updatable_trigger;
@@ -795,6 +859,26 @@ SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_constraint AS c ON c.c
 SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated') AS operator_exclusion_family_metadata_removed;
 ROLLBACK TO SAVEPOINT preserve_exclusion_operator;
 RELEASE SAVEPOINT preserve_exclusion_operator;
+
+SAVEPOINT preserve_exclusion_predicate;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT exclude_constraint INTO n FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated';
+    EXECUTE format('ALTER TABLE integrity_g4.period_parent DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT %I EXCLUDE USING gist (id WITH =, valid_range WITH &&) WHERE (category IS NULL) DEFERRABLE INITIALLY IMMEDIATE', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('predicated exclusion differs only by predicate', 'sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
+INSERT INTO replacement_state
+SELECT 'predicate_constraint', c.conname, pg_get_constraintdef(c.oid, false) FROM pg_constraint AS c
+WHERE c.conrelid='integrity_g4.period_parent'::regclass AND c.conname LIKE 'period_parent_predicated%';
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_unique_key_by_name('integrity_g4.period_parent', 'period_parent_predicated');
+SET LOCAL client_min_messages = warning;
+SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_constraint AS c ON c.conrelid='integrity_g4.period_parent'::regclass AND c.conname=s.identity WHERE s.kind='predicate_constraint' AND pg_get_constraintdef(c.oid,false)=s.definition) AS predicate_only_exclusion_survives;
+SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated') AS predicate_exclusion_family_metadata_removed;
+ROLLBACK TO SAVEPOINT preserve_exclusion_predicate;
+RELEASE SAVEPOINT preserve_exclusion_predicate;
 
 SAVEPOINT preserve_index;
 SET session_replication_role = replica;
