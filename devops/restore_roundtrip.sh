@@ -20,6 +20,24 @@
 #   clean_psql_without_opt_in
 #                     the same without the opt-in: sql_saga's drop protection must refuse it
 #
+# The split variant (split_1 .. split_20, for the cases in SPLIT_CASES) runs the README's three-invocation
+# split restore EXACTLY as documented: the lines between "# BEGIN split-restore" and "# END split-restore"
+# in README.md are extracted at run time and executed with backup.dump and mydb bound to this run's dump
+# and destination database. The block runs as a script in a fresh `bash -eu` process, so the first
+# failing line stops it and fails the run whatever the caller's errexit context. SPLIT_RUNS (default 20,
+# a positive integer) consecutive runs per case; each one is a hard failure if it fails. Fewer than 20
+# is a smoke run, not acceptance.
+#
+# RESTORE_EXTENSION_CONTROL_PATH / RESTORE_DYNAMIC_LIBRARY_PATH (optional) are set on every database
+# this script creates, to run the cases against another build (for example the released v1.1).
+# BASELINE_V11=1 skips the two checks a 1.1 build cannot answer (check_integrity(), column snapshots);
+# SPLIT_ONLY=1 runs only the split variant: only the selected cases that are in SPLIT_CASES are built
+# and restored, no other variant and no parallel restore runs, and the other cases are reported as
+# SKIPPED (never as passed). A run in which nothing passed exits non-zero.
+#
+# devops/restore_roundtrip.sh --self-test checks the harness's own control flow with mocked commands
+# on PATH and no server (see self_test).
+#
 # Parallel restore (`pg_restore -j N`) is NOT supported (PostgreSQL pg_dump drops the load order
 # of extension configuration tables from the archive; see doc/decision-log.md). The
 # `parallel_known_failure` case still runs `-j 4` restores and reports their outcome, but does not
@@ -41,10 +59,47 @@ LOG="$WORK/log"
 FAILED=()
 PASSED=()
 KNOWN=()
+SKIPPED=()
+SPLIT_RESULTS=()
 
 ALL_CASES=(catalog_only fpo_serial fpo_many inherited_role sv_one_grant custom_history_name hardened_functions rls_history manual_schema_changes fk_views quoted_names parallel_known_failure)
 
 psql_q() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
+
+SPLIT_CASES=(catalog_only manual_schema_changes fk_views quoted_names rls_history)
+SPLIT_RUNS=${SPLIT_RUNS:-20}
+README_PATH="$(cd "$(dirname "$0")/.." && pwd)/README.md"
+
+# new_db <db>: createdb, plus the optional alternative build paths.
+new_db() {
+    createdb "$1" || return 1
+    if [ -n "${RESTORE_EXTENSION_CONTROL_PATH:-}" ]; then
+        psql -X -q -d postgres -c "ALTER DATABASE \"$1\" SET extension_control_path = '${RESTORE_EXTENSION_CONTROL_PATH}'" >>"$LOG" 2>&1 || return 1
+    fi
+    if [ -n "${RESTORE_DYNAMIC_LIBRARY_PATH:-}" ]; then
+        psql -X -q -d postgres -c "ALTER DATABASE \"$1\" SET dynamic_library_path = '${RESTORE_DYNAMIC_LIBRARY_PATH}'" >>"$LOG" 2>&1 || return 1
+    fi
+}
+
+# The README's split restore block, verbatim (between the markers, markers excluded).
+split_block() {
+    awk '/^# END split-restore/ { inside = 0 } inside { print } /^# BEGIN split-restore/ { inside = 1 }' "$README_PATH"
+}
+
+# run_split_block <splitdir> <dump> <dst>: the README block in a FRESH `bash -eu` process (so no
+# caller context, such as `cmd || rc=1` or `if ! x=$(...)`, can switch errexit off inside it), in
+# <splitdir> holding a copy of <dump> as backup.dump, with `-d mydb` bound to <dst>. Returns non-zero
+# if mkdir or cp fails (nothing is run then) or if any README line fails (later lines are not run).
+run_split_block() {
+    local splitdir=$1 dump=$2 dst=$3 block
+    if ! mkdir -p "$splitdir"; then echo "split: mkdir $splitdir failed"; return 1; fi
+    if ! cp "$dump" "$splitdir/backup.dump"; then echo "split: cp $dump failed"; return 1; fi
+    if ! block=$(split_block); then echo "split: cannot read $README_PATH"; return 1; fi
+    if ! printf '%s\n' "$block" | sed -e 's/ -d mydb / -d "$mydb" /g' >"$splitdir/split_restore.sh"; then
+        echo "split: cannot write $splitdir/split_restore.sh"; return 1
+    fi
+    ( cd "$splitdir" && mydb=$dst /bin/bash -eu ./split_restore.sh )
+}
 
 cleanup() {
     for db in $(psql -X -At -d postgres -c "SELECT datname FROM pg_database WHERE datname LIKE '${PREFIX}\_%'"); do
@@ -238,8 +293,13 @@ SQL
 
 # Schema and data fingerprint for the manual_schema_changes case. Other cases return an empty value.
 manual_schema_state() {
+    # A CASE does not stop 'manual_sv'::regclass from being resolved at plan time, so check first.
+    if [ "$(psql -X -At -d "$1" -c "SELECT to_regclass('public.manual_sv') IS NOT NULL")" != t ]; then
+        echo ''
+        return
+    fi
     psql -X -At -d "$1" <<'SQL'
-SELECT CASE WHEN to_regclass('public.manual_sv') IS NULL THEN '' ELSE md5(concat_ws(E'\n',
+SELECT md5(concat_ws(E'\n',
     (SELECT string_agg(format('%s|%s|%s', c.relname, a.attname,
                                     format_type(a.atttypid, a.atttypmod)), E'\n'
                        ORDER BY c.relname, a.attnum)
@@ -258,7 +318,7 @@ SELECT CASE WHEN to_regclass('public.manual_sv') IS NULL THEN '' ELSE md5(concat
                               (SELECT string_agg(CASE WHEN role_oid = 0 THEN 'PUBLIC' ELSE role_oid::regrole::text END, ',' ORDER BY 1)
                                  FROM unnest(p.polroles) AS role_oid)), E'\n' ORDER BY p.polcmd, p.polname)
        FROM pg_policy AS p WHERE p.polrelid = 'manual_sv'::regclass)
-)) END;
+));
 SQL
 }
 
@@ -473,7 +533,7 @@ restore_variant() {
         clean_same) opts+=(--clean) ;;
     esac
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
-    createdb "$dst" || return 1
+    new_db "$dst" || return 1
     local out="$WORK/${case}_${variant}.restore.log"
     local rc=0
     if [[ $variant == clean* ]]; then
@@ -495,6 +555,10 @@ restore_variant() {
         clean_psql_without_opt_in)
             ( set -o pipefail
               pg_restore --clean --if-exists -f - "$dump" | psql -X -q -v ON_ERROR_STOP=1 -d "$dst" ) >"$out" 2>&1 || rc=1 ;;
+        split_*)
+            # The README block, run line by line as written, in a scratch directory holding
+            # backup.dump; mydb is this run's destination. Stops at the first failing line.
+            run_split_block "$WORK/${case}_${variant}.split" "$dump" "$dst" >"$out" 2>&1 || rc=1 ;;
         *)
             pg_restore "${opts[@]}" -d "$dst" "$dump" >"$out" 2>&1 || rc=1 ;;
     esac
@@ -521,6 +585,13 @@ restore_variant() {
         fi
         if grep -qE 'COPY failed for table "(era|system_time_era|unique_keys|foreign_keys|system_versioning|updatable_view)"' "$out"; then
             class="F15 catalog load order"
+        elif grep -qE 'COPY failed for table .* violates check constraint' "$out"; then
+            class="user data load order (CHECK constraint)"
+        elif grep -q 'deadlock detected' "$out"; then
+            class="deadlock"
+            grep -qE '(health_checks|drop_protection|rename_following|sync_history_policies|__internal_history_policy_copies)' "$out" && class="deadlock in sql_saga event trigger"
+        elif grep -qE 'PL/pgSQL function (health_checks|drop_protection|rename_following)\(' "$out"; then
+            class="sql_saga event trigger"
         fi
         echo "    $variant: pg_restore FAILED [$class]: $(grep -m1 -E 'ERROR|error:' "$out" | sed -n '1p')"
         grep -m1 -A2 'ERROR' "$out" | sed 's/^/      /'
@@ -543,6 +614,8 @@ restore_variant() {
     manual_state=$(manual_schema_state "$dst"); snapshots=$(snapshot_faults "$dst")
     local integrity
     integrity=$(psql -X -At -d "$dst" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
+    # BASELINE_V11=1: a released 1.1 build has neither check_integrity() nor column snapshots.
+    if [ "${BASELINE_V11:-0}" = 1 ]; then integrity=t; snapshots=0; fi
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
         echo "    $variant: ACL digest differs (source $src_digest, restored $d)"
@@ -590,7 +663,7 @@ run_case() {
     local dump="$WORK/${case}.dump"
     local ok=1
     echo "case $case"
-    createdb "$src" || { FAILED+=("$case (createdb)"); return; }
+    new_db "$src" || { FAILED+=("$case (createdb)"); return; }
     if ! "build_$case" "$src" >"$WORK/${case}.build.log" 2>&1; then
         echo "    build FAILED: $(grep -m1 ERROR "$WORK/${case}.build.log")"
         FAILED+=("$case (build)")
@@ -612,6 +685,7 @@ run_case() {
     src_snapshots=$(snapshot_faults "$src")
     local src_integrity
     src_integrity=$(psql -X -At -d "$src" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
+    if [ "${BASELINE_V11:-0}" = 1 ]; then src_integrity=t; src_snapshots=0; fi
     if [ "$src_snapshots" != "0" ]; then
         echo "    source: SYSTEM_TIME column snapshots invalid ($src_snapshots)"
         ok=0
@@ -626,9 +700,12 @@ run_case() {
     fi
     dropdb --if-exists "$src" >>"$LOG" 2>&1
     local variants=(serial single_txn no_owner clean clean_single_txn clean_same clean_psql clean_psql_without_opt_in)
+    # SPLIT_ONLY=1: only the README split restore (for example against a baseline build). select_cases
+    # has already reduced the cases to SPLIT_CASES; never run the parallel branch.
+    [ "${SPLIT_ONLY:-0}" = 1 ] && variants=()
     # parallel_known_failure: the catalog_only database restored with -j 4, 20 times. The ordering
     # race fails about 40% of runs on PG 18.3, so 20 attempts make an accidental pass unlikely.
-    if [ "$case" = parallel_known_failure ]; then
+    if [ "$case" = parallel_known_failure ] && [ "${SPLIT_ONLY:-0}" != 1 ]; then
         variants=()
         for i in $(seq 1 20); do variants+=("parallel_$i"); done
         local pfail=0 other=0 vout
@@ -652,14 +729,234 @@ run_case() {
         if [ $other -gt 0 ]; then FAILED+=("$case ($other/20 parallel restores failed for another reason)"); fi
         return
     fi
-    for variant in "${variants[@]}"; do
+    for variant in ${variants[@]+"${variants[@]}"}; do
         restore_variant "$case" "$variant" "$dump" "$src_digest" "$src_trig" || ok=0
     done
+    if is_split_case "$case"; then
+        local sfail=0 svout
+        for i in $(seq 1 "$SPLIT_RUNS"); do
+            if ! svout=$(restore_variant "$case" "split_$i" "$dump" "$src_digest" "$src_trig" 2>&1); then
+                sfail=$((sfail+1)); echo "$svout"
+            fi
+        done
+        echo "    split (README three-invocation procedure): $((SPLIT_RUNS - sfail))/$SPLIT_RUNS ok"
+        SPLIT_RESULTS+=("$case: $((SPLIT_RUNS - sfail))/$SPLIT_RUNS")
+        [ $sfail = 0 ] || ok=0
+    fi
+    local ran=${#variants[@]}
+    is_split_case "$case" && ran=$((ran + SPLIT_RUNS))
+    # A case without a single restore is not a pass.
+    if [ "$ran" = 0 ]; then SKIPPED+=("$case (no restore variant ran)"); return; fi
     if [ $ok = 1 ]; then PASSED+=("$case"); else FAILED+=("$case"); fi
 }
 
+is_split_case() { [[ " ${SPLIT_CASES[*]} " == *" $1 "* ]]; }
+
+# select_cases [case ...]: CASES from the arguments (default ALL_CASES). With SPLIT_ONLY=1 only the
+# SPLIT_CASES among them remain; the others go to SKIPPED (reported, never counted as passed).
+select_cases() {
+    local c
+    CASES=()
+    [ $# -eq 0 ] && set -- "${ALL_CASES[@]}"
+    for c in "$@"; do
+        if [ "${SPLIT_ONLY:-0}" = 1 ] && ! is_split_case "$c"; then
+            SKIPPED+=("$c (SPLIT_ONLY=1: not in SPLIT_CASES)")
+        else
+            CASES+=("$c")
+        fi
+    done
+}
+
+# run_cases: run CASES and print the summary; the exit status is the run's verdict.
+run_cases() {
+    local c f r k s
+    for c in ${CASES[@]+"${CASES[@]}"}; do
+        run_case "$c"
+    done
+    echo
+    echo "passed: ${#PASSED[@]}  failed: ${#FAILED[@]}  skipped: ${#SKIPPED[@]}"
+    for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "  FAILED: $f"; done
+    for s in ${SKIPPED[@]+"${SKIPPED[@]}"}; do echo "  SKIPPED: $s"; done
+    for r in ${SPLIT_RESULTS[@]+"${SPLIT_RESULTS[@]}"}; do echo "  SPLIT: $r"; done
+    for k in ${KNOWN[@]+"${KNOWN[@]}"}; do echo "  KNOWN LIMITATION: $k"; done
+    [ ${#FAILED[@]} -eq 0 ] && [ ${#PASSED[@]} -gt 0 ]
+}
+
+# self_test: shell-only checks of the harness's own control flow; no server, nothing outside a scratch
+# directory. pg_restore, grep, createdb, dropdb, pg_dump and psql are mocks on PATH (grep delegates to
+# the real grep except for the README's two list-filtering lines).
+#   A. Each of the README's six lines, made to fail in turn, fails the split variant, and no later
+#      line runs; this is checked through restore_variant itself (the `cmd || rc=1` context inside
+#      `if ! out=$(...)` that switched errexit off in the old eval). Without a failure all six run,
+#      with -d bound to the run's destination. A failing mkdir or cp fails the variant before any line.
+#   B. SPLIT_ONLY=1 is split-only: the default selection builds and restores only SPLIT_CASES, runs no
+#      other variant and no parallel restore, and reports the other cases as skipped, not passed; an
+#      explicit parallel_known_failure runs nothing and is not a pass. Without SPLIT_ONLY the mocks do
+#      see the normal and parallel variants (so B's absence checks can fail).
+self_test() {
+    local st fails=0 k expect got rc out
+    st=$(mktemp -d "${TMPDIR:-/tmp}/saga_rt_selftest.XXXXXX") || return 1
+    mkdir -p "$st/bin"
+    REAL_GREP=$(command -v grep); export REAL_GREP
+    cat >"$st/bin/mock" <<'MOCK'
+#!/bin/bash
+# Identify which README line (if any) this invocation is, log it, fail if it is MOCK_FAIL.
+me=${0##*/} id='' dst=''
+args=" $* "
+prev=''
+for a in "$@"; do [ "$prev" = -d ] && dst=$a; prev=$a; done
+case "$me" in
+    pg_restore)
+        case "$args" in
+            *' -l backup.dump '*) id=line1 ;;
+            *' --section=pre-data '*) id=line4 ;;
+            *' -L saga.list '*) id=line5 ;;
+            *' -j 4 --section=data --section=post-data -L rest.list '*) id=line6 ;;
+            *) id=pg_restore_other ;;
+        esac ;;
+    grep)
+        case "$args" in
+            *' -v TABLE DATA sql_saga  '*) id=line3 ;;
+            *' TABLE DATA sql_saga  '*) id=line2 ;;
+            *) exec "$REAL_GREP" "$@" ;;
+        esac ;;
+    psql)
+        case "$args" in *check_integrity*) echo t ;; esac
+        exit 0 ;;
+    *) exit 0 ;;
+esac
+echo "$id${dst:+ dst=$dst}" >>"$MOCK_LOG"
+[ "$id" = "${MOCK_FAIL:-}" ] && { echo "MOCK $id FAILED" >&2; exit 7; }
+case "$id" in
+    line1) printf '%s\n' '1; 0 0 TABLE DATA sql_saga era postgres' '2; 0 0 TABLE DATA public t postgres' ;;
+    line2|line3) exec "$REAL_GREP" "$@" ;;
+esac
+exit 0
+MOCK
+    chmod +x "$st/bin/mock"
+    for k in pg_restore grep createdb dropdb pg_dump psql; do ln -s mock "$st/bin/$k"; done
+
+    st_check() { # st_check <description> <expected> <got>
+        if [ "$2" = "$3" ]; then echo "  ok: $1"; else echo "  FAIL: $1"; echo "    expected: $2"; echo "    got:      $3"; fails=$((fails+1)); fi
+    }
+
+    echo "self-test A: README split block failure propagation (README_PATH=$README_PATH)"
+    if [ "$(split_block | grep -c .)" != 6 ]; then echo "  FAIL: README block is not six lines"; return 1; fi
+    : >"$st/dump"
+    for k in 0 1 2 3 4 5 6; do
+        : >"$st/calls"
+        rc=0
+        # The harness's own calling context: if ! x=$(restore_variant ...) with `|| rc=1` inside.
+        if ! out=$( ( export PATH="$st/bin:$PATH" MOCK_LOG="$st/calls" MOCK_FAIL="line$k"
+                      WORK="$st/work$k" LOG="$st/log"; mkdir -p "$WORK"
+                      restore_variant selftest split_1 "$st/dump" x x ) 2>&1); then
+            rc=1
+        fi
+        got=$(sed 's/ dst=.*//' "$st/calls" | tr '\n' ' ')
+        if [ $k = 0 ]; then
+            expect="line1 line2 line3 line4 line5 line6 "
+            # Without a failure the mocks return nothing for the comparisons, so restore_variant fails
+            # afterwards (ACL digest); here only the six invocations and the binding matter.
+            st_check "no failure: all six lines run in order" "$expect" "$got"
+            st_check "no failure: -d bound to the run's destination on lines 4-6" "3" "$(grep -c " dst=${PREFIX}_selftest_dst\$" "$st/calls")"
+        else
+            expect=$(seq 1 "$k" | sed 's/^/line/' | tr '\n' ' ')
+            st_check "line $k fails: variant fails" "1" "$rc"
+            st_check "line $k fails: lines 1..$k ran, none after" "$expect" "$got"
+            st_check "line $k fails: reported as pg_restore FAILED" "1" "$(printf '%s\n' "$out" | grep -c 'split_1: pg_restore FAILED')"
+        fi
+    done
+    # mkdir fails: the split directory's parent is a file. cp fails: the dump does not exist.
+    : >"$st/calls"; : >"$st/notadir"
+    rc=0; ( export PATH="$st/bin:$PATH" MOCK_LOG="$st/calls"; run_split_block "$st/notadir/x" "$st/dump" d ) >"$st/mkdir.out" 2>&1 || rc=1
+    st_check "mkdir fails: variant fails" "1" "$rc"
+    st_check "mkdir fails: no README line ran" "" "$(cat "$st/calls")"
+    rc=0; ( export PATH="$st/bin:$PATH" MOCK_LOG="$st/calls"; run_split_block "$st/cpdir" "$st/missing.dump" d ) >"$st/cp.out" 2>&1 || rc=1
+    st_check "cp fails: variant fails" "1" "$rc"
+    st_check "cp fails: no README line ran" "" "$(cat "$st/calls")"
+
+    echo "self-test B: SPLIT_ONLY selection"
+    # sim <SPLIT_ONLY> [case ...]: select_cases + run_cases with every server touch mocked; restore_variant
+    # only records the variant. Prints the run's summary; $st/built and $st/variants record what ran.
+    sim() {
+        local so=$1; shift
+        : >"$st/built"; : >"$st/variants"
+        ( export PATH="$st/bin:$PATH" MOCK_LOG="$st/calls"
+          SPLIT_ONLY=$so; SPLIT_RUNS=3; WORK="$st/simwork"; LOG="$st/log"; mkdir -p "$WORK"
+          new_db() { echo "$1" >>"$st/built"; }
+          restore_variant() { echo "$1:$2" >>"$st/variants"; return 0; }
+          digest() { :; }; event_triggers() { :; }; policies() { :; }; tenant_reads() { :; }
+          manual_schema_state() { :; }; rls_isolation() { :; }
+          policy_copy_faults() { echo 0; }; snapshot_faults() { echo 0; }
+          select_cases "$@"
+          run_cases; echo "exit=$?" )
+    }
+    local split_built split_variants
+    split_built=$(for c in "${SPLIT_CASES[@]}"; do echo "${PREFIX}_${c}_src"; done | sort | tr '\n' ' ')
+    split_variants=$(for c in "${SPLIT_CASES[@]}"; do for i in 1 2 3; do echo "$c:split_$i"; done; done | sort | tr '\n' ' ')
+    out=$(sim 1 2>&1)
+    st_check "default selection: only SPLIT_CASES built" "$split_built" "$(sed 's/ .*//' "$st/built" | sort | tr '\n' ' ')"
+    st_check "default selection: only split variants of SPLIT_CASES ran" "$split_variants" "$(sort "$st/variants" | tr '\n' ' ')"
+    st_check "default selection: summary" "passed: ${#SPLIT_CASES[@]}  failed: 0  skipped: $(( ${#ALL_CASES[@]} - ${#SPLIT_CASES[@]} ))" "$(printf '%s\n' "$out" | grep '^passed:')"
+    st_check "default selection: parallel_known_failure skipped, not passed" "1" "$(printf '%s\n' "$out" | grep -c 'SKIPPED: parallel_known_failure (SPLIT_ONLY=1')"
+    st_check "default selection: no parallel restore" "0" "$(grep -c parallel "$st/variants")"
+    out=$(sim 1 parallel_known_failure 2>&1)
+    st_check "explicit parallel_known_failure: nothing built" "" "$(cat "$st/built")"
+    st_check "explicit parallel_known_failure: nothing restored" "" "$(cat "$st/variants")"
+    st_check "explicit parallel_known_failure: summary" "passed: 0  failed: 0  skipped: 1" "$(printf '%s\n' "$out" | grep '^passed:')"
+    st_check "explicit parallel_known_failure: not a successful run" "exit=1" "$(printf '%s\n' "$out" | grep '^exit=')"
+    out=$(sim 1 parallel_known_failure catalog_only 2>&1)
+    st_check "parallel_known_failure catalog_only: only catalog_only split runs" "catalog_only:split_1 catalog_only:split_2 catalog_only:split_3 " "$(sort "$st/variants" | tr '\n' ' ')"
+    # run_case guards on its own too (a caller bypassing select_cases).
+    out=$( ( export PATH="$st/bin:$PATH"; SPLIT_ONLY=1; SPLIT_RUNS=3; WORK="$st/simwork"; LOG="$st/log"
+             new_db() { :; }; restore_variant() { echo "$1:$2" >>"$st/variants"; }
+             digest() { :; }; event_triggers() { :; }; policies() { :; }; tenant_reads() { :; }
+             manual_schema_state() { :; }; rls_isolation() { :; }; policy_copy_faults() { echo 0; }; snapshot_faults() { echo 0; }
+             : >"$st/variants"; run_case parallel_known_failure >/dev/null
+             echo "passed=${#PASSED[@]} skipped=${SKIPPED[*]-} variants=$(cat "$st/variants")" ) 2>&1)
+    st_check "run_case parallel_known_failure under SPLIT_ONLY=1: no restore, skipped" "passed=0 skipped=parallel_known_failure (no restore variant ran) variants=" "$out"
+    # Control: without SPLIT_ONLY the same mocks see the normal and the parallel variants.
+    out=$(sim 0 catalog_only parallel_known_failure 2>&1)
+    st_check "control without SPLIT_ONLY: 20 parallel restores" "20" "$(grep -c '^parallel_known_failure:parallel_' "$st/variants")"
+    st_check "control without SPLIT_ONLY: serial variant runs" "1" "$(grep -c '^catalog_only:serial$' "$st/variants")"
+    # A failing split run fails the case.
+    : >"$st/variants"
+    out=$( ( export PATH="$st/bin:$PATH"; SPLIT_ONLY=1; SPLIT_RUNS=3; WORK="$st/simwork"; LOG="$st/log"
+             new_db() { :; }; restore_variant() { [ "$2" != split_2 ]; }
+             digest() { :; }; event_triggers() { :; }; policies() { :; }; tenant_reads() { :; }
+             manual_schema_state() { :; }; rls_isolation() { :; }; policy_copy_faults() { echo 0; }; snapshot_faults() { echo 0; }
+             select_cases catalog_only; run_cases; echo "exit=$?" ) 2>&1)
+    st_check "one failing split run: case fails, 2/3 reported" "  SPLIT: catalog_only: 2/3|exit=1" "$(printf '%s\n' "$out" | grep -E '^  SPLIT:|^exit=' | tr '\n' '|' | sed 's/|$//')"
+
+    rm -rf "$st"
+    echo "self-test: $fails failure(s)"
+    [ $fails = 0 ]
+}
+
+case "$SPLIT_RUNS" in
+    ''|*[!0-9]*|0*) echo "SPLIT_RUNS must be a positive integer (got '$SPLIT_RUNS'); acceptance needs 20" >&2; exit 2 ;;
+esac
+[ "$SPLIT_RUNS" = 20 ] || echo "NOTE: SPLIT_RUNS=$SPLIT_RUNS: a reduced smoke run, not Step 5 acceptance (20 runs per case)"
+
+if [ "${1:-}" = --self-test ]; then
+    self_test
+    exit $?
+fi
+
+select_cases "$@"
+if [ ${#CASES[@]} -eq 0 ]; then
+    echo "no case to run: ${SKIPPED[*]-}" >&2
+    exit 2
+fi
+
 trap cleanup EXIT
 cleanup
+SPLIT_BLOCK=$(split_block)
+if [ "$(printf '%s\n' "$SPLIT_BLOCK" | grep -c .)" != 6 ] || ! printf '%s\n' "$SPLIT_BLOCK" | grep -q -- '-j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump$'; then
+    echo "README.md split-restore block not found or not the documented six lines (see README_PATH=$README_PATH)" >&2
+    exit 2
+fi
+printf '%s\n' "$SPLIT_BLOCK" >"$WORK/split_block.sh"
 psql_q -d postgres <<SQL
 CREATE ROLE ${PREFIX}_r1;
 CREATE ROLE ${PREFIX}_regular;
@@ -668,15 +965,6 @@ CREATE ROLE ${PREFIX}_none;
 GRANT USAGE ON SCHEMA public TO PUBLIC;
 SQL
 
-CASES=("$@")
-[ ${#CASES[@]} -eq 0 ] && CASES=("${ALL_CASES[@]}")
-for c in "${CASES[@]}"; do
-    run_case "$c"
-done
-
-echo
-echo "passed: ${#PASSED[@]}  failed: ${#FAILED[@]}"
-for f in ${FAILED[@]+"${FAILED[@]}"}; do echo "  FAILED: $f"; done
-for k in ${KNOWN[@]+"${KNOWN[@]}"}; do echo "  KNOWN LIMITATION: $k"; done
+run_cases; rc=$?
 echo "logs: $WORK"
-[ ${#FAILED[@]} -eq 0 ]
+exit $rc

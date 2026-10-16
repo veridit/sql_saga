@@ -181,12 +181,14 @@ Workaround for large databases: restore the schema and `sql_saga`'s own catalog 
 everything else in parallel (0 failures in 20 runs, where plain `-j 4` failed 2 of 20):
 
 ```bash
+# BEGIN split-restore (devops/restore_roundtrip.sh runs exactly these lines)
 pg_restore -l backup.dump > all.list
 grep    'TABLE DATA sql_saga ' all.list > saga.list
 grep -v 'TABLE DATA sql_saga ' all.list > rest.list
 pg_restore --exit-on-error --section=pre-data -d mydb backup.dump
 pg_restore --exit-on-error -L saga.list -d mydb backup.dump
 pg_restore --exit-on-error -j 4 --section=data --section=post-data -L rest.list -d mydb backup.dump
+# END split-restore
 ```
 
 #### Restoring over an existing database (`--clean`)
