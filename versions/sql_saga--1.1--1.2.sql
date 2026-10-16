@@ -621,10 +621,10 @@ BEGIN
           AND EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (dobj.schema_name, dobj.object_name))
     LOOP
         -- This table was dropped. Cascade-delete its metadata and any dependent triggers on other tables.
-        -- This logic mirrors drop_era(..., 'CASCADE', true) for a dropped table.
+        -- This logic mirrors the metadata-first era drop for a dropped table.
 
         -- 1. For FKs that reference the dropped table, drop their triggers.
-        -- The metadata will be cleaned up via ON DELETE CASCADE from the unique key.
+        -- The metadata will be cleaned up through the unique key's cascading foreign key.
         DECLARE
             fk_row record;
             fk_table_oid regclass;
@@ -636,7 +636,7 @@ BEGIN
                 WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name)
             LOOP
                 fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
-                -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
+                -- The referencing table might have been dropped in the same cascading statement. If it still exists, drop its triggers/constraints.
                 -- Not during pg_restore --clean: it drops the CHECK (with the table) and the helper function itself.
                 IF fk_table_oid IS NOT NULL AND NOT v_teardown THEN
                     IF fk_row.type = 'regular_to_temporal' THEN
@@ -1818,3 +1818,4240 @@ COMMENT ON FUNCTION sql_saga.health_checks() IS
 CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start
     WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE')
     EXECUTE PROCEDURE sql_saga.__internal_record_alter_function_resolved();
+
+/* Step 4: integrity checker, canonical SYSTEM VERSIONING query-function generator, and tolerant metadata-first drops. */
+CREATE OR REPLACE FUNCTION sql_saga.drop_foreign_key_by_name(
+    table_oid regclass,
+    key_name name,
+    drop_index boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    foreign_key_row record;
+    unique_table_oid regclass;
+    fk_table_oid regclass;
+    fk_schema_name name;
+    fk_table_name name;
+    native_constraint_attributable boolean;
+BEGIN
+    IF table_oid IS NULL AND key_name IS NULL THEN
+        RAISE EXCEPTION 'no table or key name specified';
+    END IF;
+
+    IF table_oid IS NOT NULL THEN
+        SELECT n.nspname, c.relname
+        INTO fk_schema_name, fk_table_name
+        FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE c.oid = table_oid;
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    FOR foreign_key_row IN
+        SELECT fk.*,
+               fkc.oid AS fk_table_oid,
+               ukc.oid AS unique_table_oid,
+               coalesce(
+                   fk.type <> 'temporal_to_temporal'
+                   OR (
+                       c.oid IS NOT NULL
+                       AND c.contype = 'f'
+                       AND c.conrelid = fkc.oid
+                       AND c.confrelid = ukc.oid
+                       AND c.conkey = fk_cols.attnums
+                       AND c.confkey = uk_cols.attnums
+                       AND c.conperiod
+                       AND c.condeferrable
+                       AND NOT c.condeferred
+                       AND c.convalidated
+                       AND c.conenforced
+                       AND c.confmatchtype = CASE fk.match_type WHEN 'FULL' THEN 'f' WHEN 'PARTIAL' THEN 'p' ELSE 's' END
+                       AND c.confupdtype = CASE fk.update_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END
+                       AND c.confdeltype = CASE fk.delete_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END
+                   ),
+                   false) AS native_constraint_attributable
+        FROM sql_saga.foreign_keys AS fk
+        LEFT JOIN pg_catalog.pg_namespace AS fkn ON fkn.nspname = fk.table_schema
+        LEFT JOIN pg_catalog.pg_class AS fkc
+          ON fkc.relnamespace = fkn.oid AND fkc.relname = fk.table_name
+        LEFT JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        LEFT JOIN pg_catalog.pg_namespace AS ukn ON ukn.nspname = uk.table_schema
+        LEFT JOIN pg_catalog.pg_class AS ukc
+          ON ukc.relnamespace = ukn.oid AND ukc.relname = uk.table_name
+        LEFT JOIN sql_saga.era AS fk_era
+          ON (fk_era.table_schema, fk_era.table_name, fk_era.era_name)
+           = (fk.table_schema, fk.table_name, fk.fk_era_name)
+        LEFT JOIN sql_saga.era AS uk_era
+          ON (uk_era.table_schema, uk_era.table_name, uk_era.era_name)
+           = (uk.table_schema, uk.table_name, uk.era_name)
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(fk.column_names || fk_era.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = fkc.oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS fk_cols ON fk.type = 'temporal_to_temporal'
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(uk.column_names || uk_era.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = ukc.oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS uk_cols ON fk.type = 'temporal_to_temporal'
+        LEFT JOIN pg_catalog.pg_constraint AS c
+          ON fk.type = 'temporal_to_temporal'
+         AND c.conrelid = fkc.oid
+         AND c.conname = fk.foreign_key_name
+        WHERE (table_oid IS NULL OR (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name))
+          AND (fk.foreign_key_name = key_name OR key_name IS NULL)
+    LOOP
+        native_constraint_attributable := foreign_key_row.native_constraint_attributable;
+
+        -- Delete the metadata record first, so the drop_protection trigger doesn't fire on the main objects.
+        DELETE FROM sql_saga.foreign_keys AS fk
+        WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
+
+        /*
+         * Now that the metadata is gone, we can safely drop the database objects.
+         */
+
+        -- Drop the auto-created index if it exists and requested.
+        IF drop_index AND foreign_key_row.fk_index_name IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
+            EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
+        END IF;
+        fk_table_oid := foreign_key_row.fk_table_oid;
+
+        CASE foreign_key_row.type
+            WHEN 'temporal_to_temporal' THEN
+                -- For native temporal FKs, we drop the constraint directly.
+                IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.foreign_key_name) THEN
+                    IF native_constraint_attributable THEN
+                        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */);
+                    ELSE
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            foreign_key_row.foreign_key_name, sql_saga.__internal_display_name(fk_table_oid);
+                    END IF;
+                END IF;
+            WHEN 'regular_to_temporal' THEN
+                IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
+                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.fk_check_constraint /* %I */);
+                END IF;
+                -- If no other foreign keys use the helper function, drop it.
+                IF NOT EXISTS (
+                    SELECT 1 FROM sql_saga.foreign_keys
+                    WHERE fk_helper_function = foreign_key_row.fk_helper_function
+                ) THEN
+                    IF to_regprocedure(foreign_key_row.fk_helper_function) IS NOT NULL THEN
+                        EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function);
+                    END IF;
+                END IF;
+        END CASE;
+
+        unique_table_oid := foreign_key_row.unique_table_oid;
+
+        IF unique_table_oid IS NOT NULL AND pg_catalog.to_regclass(unique_table_oid::text) IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_update_trigger) THEN
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger /* %I */, unique_table_oid /* %s */);
+            END IF;
+            IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_delete_trigger) THEN
+                EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_delete_trigger /* %I */, unique_table_oid /* %s */);
+            END IF;
+        END IF;
+    END LOOP;
+
+    RETURN true;
+END;
+$function$;
+CREATE OR REPLACE FUNCTION sql_saga.drop_unique_key_by_name(
+    table_oid regclass,
+    key_name name,
+    drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT',
+    cleanup boolean DEFAULT true
+ )
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    foreign_key_row sql_saga.foreign_keys;
+    unique_key_row sql_saga.unique_keys;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    FOR unique_key_row IN
+        SELECT uk.*
+        FROM sql_saga.unique_keys AS uk
+        WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
+          AND (uk.unique_key_name = key_name OR key_name IS NULL)
+    LOOP
+        RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
+        /* Propagate the requested drop behavior to foreign keys, if desired */
+        FOR foreign_key_row IN
+            SELECT fk.*
+            FROM sql_saga.foreign_keys AS fk
+            WHERE fk.unique_key_name = unique_key_row.unique_key_name
+        LOOP
+            IF drop_behavior = 'RESTRICT' THEN
+                RAISE EXCEPTION 'cannot drop unique key "%" because foreign key "%" on table "%" depends on it',
+                    unique_key_row.unique_key_name, foreign_key_row.foreign_key_name,
+                    sql_saga.__internal_display_name(format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass);
+            END IF;
+
+            PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);
+        END LOOP;
+
+        DELETE FROM sql_saga.unique_keys AS uk
+        WHERE uk.unique_key_name = unique_key_row.unique_key_name;
+
+        /* If purging, drop the underlying constraints unless the table has been dropped */
+        IF cleanup AND EXISTS (
+            SELECT FROM pg_catalog.pg_class AS c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
+        THEN
+            IF unique_key_row.mutually_exclusive_columns IS NOT NULL THEN
+                DECLARE
+                    alter_parts text[];
+                    object_name name;
+                BEGIN
+                    -- Build a list of constraints to drop in a single ALTER TABLE command.
+                    alter_parts := ARRAY[]::text[];
+
+                    -- 1. Add the CHECK constraint to the drop list.
+                    IF unique_key_row.check_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.check_constraint);
+                    END IF;
+
+                    -- 2. No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT
+
+                    -- 3. Execute the ALTER TABLE command for all constraints.
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
+            ELSIF unique_key_row.key_type = 'predicated' THEN
+                IF unique_key_row.check_constraint IS NOT NULL THEN
+                    -- This is a unique index, drop it and the exclusion constraint
+                    EXECUTE format('DROP INDEX IF EXISTS %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I;',
+                        unique_key_row.table_schema, /* %I */
+                        unique_key_row.unique_constraint, /* %I */
+                        unique_key_row.table_schema, /* %I */
+                        unique_key_row.table_name, /* %I */
+                        unique_key_row.exclude_constraint /* %I */
+                    );
+                END IF;
+            ELSE -- 'primary' or 'natural'
+                DECLARE
+                    alter_parts text[] := '{}';
+                BEGIN
+                    -- This is a unique/primary key constraint, drop both constraints if they exist.
+                    IF unique_key_row.unique_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.unique_constraint);
+                    END IF;
+                    IF unique_key_row.exclude_constraint IS NOT NULL THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.exclude_constraint);
+                    END IF;
+
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
+            END IF;
+        END IF;
+    END LOOP;
+
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_unique_key_by_name(regclass, name, sql_saga.drop_behavior, boolean) IS
+'Drops a temporal unique key identified by its unique name.';
+CREATE OR REPLACE FUNCTION sql_saga.drop_for_portion_of_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    view_schema name;
+    view_name name;
+    trigger_name name;
+    target_schema_name name;
+    target_table_name name;
+BEGIN
+    /*
+     * If table_oid and era_name are specified, then just drop the views for that.
+     *
+     * If no period is specified, drop the views for all periods of the table.
+     *
+     * If no table is specified, drop the views everywhere.
+     *
+     * If no table is specified but a period is, that doesn't make any sense.
+     */
+    IF table_oid IS NULL AND era_name IS NOT NULL THEN
+        RAISE EXCEPTION 'cannot specify era name without table name';
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    IF table_oid IS NOT NULL THEN
+        SELECT n.nspname, c.relname
+        INTO target_schema_name, target_table_name
+        FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+        WHERE c.oid = table_oid;
+    END IF;
+
+    FOR view_schema, view_name, trigger_name IN
+        DELETE FROM sql_saga.updatable_view AS v
+        WHERE (table_oid IS NULL OR (v.table_schema, v.table_name) = (target_schema_name, target_table_name))
+          AND (era_name IS NULL OR v.era_name = era_name)
+          AND v.view_type = 'for_portion_of'
+        RETURNING v.view_schema, v.view_name, v.trigger_name
+    LOOP
+        IF to_regclass(format('%I.%I', view_schema, view_name)) IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass(format('%I.%I', view_schema, view_name)) AND t.tgname = trigger_name) THEN
+                EXECUTE format('DROP TRIGGER %I ON %I.%I', trigger_name, view_schema, view_name);
+            END IF;
+            EXECUTE format('DROP VIEW IF EXISTS %I.%I %s', view_schema, view_name, drop_behavior);
+        END IF;
+    END LOOP;
+
+    RETURN true;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_for_portion_of_view(regclass, name, sql_saga.drop_behavior, boolean) IS
+'Drops the "for_portion_of" view associated with a table and era.';
+CREATE OR REPLACE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT false)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    era_row sql_saga.era;
+    portion_view regclass;
+    is_dropped boolean;
+    table_schema name;
+    table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    IF era_name IS NULL THEN
+        RAISE EXCEPTION 'no era name specified';
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    /*
+     * Has the table been dropped already?  This could happen if the period is
+     * being dropped by the drop_protection event trigger or through a DROP
+     * cascading drop.
+     */
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+
+    SELECT p.*
+    INTO era_row
+    FROM sql_saga.era AS p
+    WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    IF NOT FOUND THEN
+        RAISE DEBUG 'era % not found for table %', era_name, table_oid;
+        RETURN false;
+    END IF;
+
+    /* If this is a system_time era, get rid of the triggers */
+    DECLARE
+        system_time_era_row sql_saga.system_time_era;
+    BEGIN
+        DELETE FROM sql_saga.system_time_era AS ste
+        WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)
+        RETURNING * INTO system_time_era_row;
+
+        IF FOUND AND NOT is_dropped THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.write_history_trigger) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); END IF;
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.truncate_trigger) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); END IF;
+        END IF;
+    END;
+
+    IF drop_behavior = 'RESTRICT' THEN
+        /* Check for UNIQUE or PRIMARY KEYs */
+        IF EXISTS (
+            SELECT FROM sql_saga.unique_keys AS uk
+            WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is part of a UNIQUE or PRIMARY KEY', era_name;
+        END IF;
+
+        /* Check for FOREIGN KEYs */
+        IF EXISTS (
+            SELECT FROM sql_saga.foreign_keys AS fk
+            WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
+        END IF;
+
+        /* Check for updatable views */
+        IF EXISTS (
+            SELECT FROM sql_saga.updatable_view AS v
+            WHERE (v.table_schema, v.table_name, v.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is used by an updatable view', era_name;
+        END IF;
+
+        /* Check for SYSTEM VERSIONING - must use drop_system_versioning() instead */
+        IF EXISTS (
+            SELECT FROM sql_saga.system_versioning AS sv
+            WHERE (sv.table_schema, sv.table_name, sv.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % has SYSTEM VERSIONING, use drop_system_versioning() instead', era_name;
+        END IF;
+
+        /* Drop synchronization trigger BEFORE removing from catalog */
+        IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+            CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+        END IF;
+
+        /* Remove from catalog */
+        DELETE FROM sql_saga.era AS p
+        WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+        /* Delete bounds check constraint (NOT isempty(range)). */
+        IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint); END IF;
+        END IF;
+
+        /* Delete boundary check constraint (from < until). */
+        IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint); END IF;
+        END IF;
+
+        /* Drop column default if it was set */
+        IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+        END IF;
+
+        /* Delete columns if purging */
+        IF NOT is_dropped AND cleanup THEN
+            DECLARE
+                drop_clauses text[] := '{}';
+            BEGIN
+                -- The range column is always present for an era.
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+                -- Drop from/until if they were part of the era.
+                IF era_row.valid_from_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+                END IF;
+
+                -- Drop to if it was part of the era.
+                IF era_row.valid_to_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+                END IF;
+
+                IF array_length(drop_clauses, 1) > 0 THEN
+                     EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                END IF;
+            END;
+        END IF;
+
+        RETURN true;
+    END IF;
+
+    /* We must be in cascading-drop mode now */
+
+    PERFORM sql_saga.drop_for_portion_of_view(table_oid, era_name, drop_behavior, cleanup);
+
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
+    FROM sql_saga.foreign_keys AS fk
+    WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name);
+
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, uk.unique_key_name, drop_behavior, cleanup)
+    FROM sql_saga.unique_keys AS uk
+    WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name);
+
+    /* Drop synchronization trigger BEFORE removing from catalog */
+    IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+        CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+    END IF;
+
+    /* Remove from catalog */
+    DELETE FROM sql_saga.era AS p
+    WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    /* Delete bounds check constraint (NOT isempty(range)). */
+    IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+    END IF;
+
+    /* Delete boundary check constraint (from < until). */
+    IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
+    END IF;
+
+    /* Drop column default if it was set */
+    IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+    END IF;
+
+    /* Delete columns if purging */
+    IF NOT is_dropped AND cleanup THEN
+        DECLARE
+            drop_clauses text[] := '{}';
+        BEGIN
+            -- The range column is always present for an era.
+            drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+            -- Drop from/until if they were part of the era.
+            IF era_row.valid_from_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+            END IF;
+
+            -- Drop to if it was part of the era.
+            IF era_row.valid_to_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+            END IF;
+
+            IF array_length(drop_clauses, 1) > 0 THEN
+                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+            END IF;
+        END;
+    END IF;
+
+    RETURN true;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_era(regclass, name, sql_saga.drop_behavior, boolean) IS
+'Deregisters a temporal table, removing all associated constraints, triggers, and metadata.';
+CREATE OR REPLACE FUNCTION sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT', cleanup boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    system_versioning_row sql_saga.system_versioning;
+    is_dropped boolean;
+    table_schema name;
+    table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    DELETE FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)
+    RETURNING * INTO system_versioning_row;
+
+    IF NOT FOUND THEN
+        RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_oid;
+        RETURN false;
+    END IF;
+
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+
+    IF NOT is_dropped THEN
+        IF to_regprocedure(system_versioning_row.func_as_of) IS NOT NULL THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); END IF;
+        IF to_regprocedure(system_versioning_row.func_between) IS NOT NULL THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); END IF;
+        IF to_regprocedure(system_versioning_row.func_between_symmetric) IS NOT NULL THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); END IF;
+        IF to_regprocedure(system_versioning_row.func_from_to) IS NOT NULL THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); END IF;
+        IF to_regclass(format('%I.%I', system_versioning_row.view_schema_name, system_versioning_row.view_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+        END IF;
+        IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name))) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
+                sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior);
+        END IF;
+    END IF;
+
+    IF NOT is_dropped AND cleanup THEN
+        PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
+        IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+        END IF;
+    END IF;
+
+    RETURN true;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_system_versioning(regclass, sql_saga.drop_behavior, boolean) IS
+'Removes system versioning from a table, dropping the history table and all associated objects.';
+/*
+ * The views and as-of functions of a system-versioned table (tmp/design_manual_schema_changes.md).
+ *
+ * One generator serves add_system_versioning and rebuild_system_versioning_views, so both create the
+ * same objects. Columns correspond by NAME: the views show the base table's columns in its order,
+ * then the history-only columns in the history's order (NULL for current rows). Every base column
+ * must be in the history with the same type, typmod and collation, except those left out with
+ * without_columns, which only shapes the views for one call and is stored nowhere.
+ *
+ * The objects keep the fixed access shape of tmp/design_final.md: owner = base owner, SELECT (views)
+ * or EXECUTE (functions) granted to PUBLIC and to nobody else, B_with_history security_invoker,
+ * B_history_gated owner-rights with its gate.
+ */
+
+-- A column type as written in DDL, with COLLATE when the collation is not the type's default.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_column_type_sql(type_oid oid, typmod integer, collation_oid oid)
+RETURNS text
+LANGUAGE sql
+STABLE
+-- Only pg_catalog is visible, so format_type schema-qualifies every other type (sql_saga's included)
+-- and the DDL in HINTs runs whatever the caller's search_path.
+SET search_path = pg_catalog
+AS $__internal_column_type_sql$
+    SELECT pg_catalog.format_type(type_oid, typmod)
+        || coalesce((SELECT ' COLLATE ' || pg_catalog.quote_ident(co.collname)
+                     FROM pg_catalog.pg_collation AS co
+                     WHERE co.oid = collation_oid
+                       AND collation_oid IS DISTINCT FROM (SELECT t.typcollation FROM pg_catalog.pg_type AS t WHERE t.oid = type_oid)), '');
+$__internal_column_type_sql$;
+
+/*
+ * Refuses a history table that cannot take every base column, with the same errors the history
+ * writer raises (src/sql_saga.c, CheckHistoryTupleCompatibility). Columns in without_columns are not
+ * checked: they are not in the views being generated (the writer still checks them).
+ */
+-- No fixed search_path, so relation names in the messages read as the caller would write them
+-- (ms, not public.ms), as in every sql_saga message. Every reference is schema-qualified.
+CREATE OR REPLACE FUNCTION sql_saga.__internal_check_history_columns(table_oid oid, history_table_oid oid, without_columns name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+STABLE
+AS $__internal_check_history_columns$
+DECLARE
+    c record;
+    rebuild_call text;
+BEGIN
+    FOR c IN
+        SELECT ba.attname,
+               sql_saga.__internal_column_type_sql(ba.atttypid, ba.atttypmod, ba.attcollation) AS base_type,
+               ha.attname IS NOT NULL AS in_history,
+               sql_saga.__internal_column_type_sql(ha.atttypid, ha.atttypmod, ha.attcollation) AS history_type
+        FROM pg_catalog.pg_attribute AS ba
+        LEFT JOIN pg_catalog.pg_attribute AS ha
+               ON ha.attrelid = history_table_oid AND ha.attname = ba.attname AND ha.attnum > 0 AND NOT ha.attisdropped
+        WHERE ba.attrelid = table_oid AND ba.attnum > 0 AND NOT ba.attisdropped
+          AND ba.attname <> ALL (without_columns)
+          AND (ha.attname IS NULL
+               OR (ha.atttypid, ha.atttypmod, ha.attcollation) IS DISTINCT FROM (ba.atttypid, ba.atttypmod, ba.attcollation))
+        ORDER BY ba.attnum
+        LIMIT 1
+    LOOP
+        rebuild_call := pg_catalog.format('SELECT sql_saga.rebuild_system_versioning_views(%L);', sql_saga.__internal_qualified_name(table_oid));
+        IF NOT c.in_history THEN
+            RAISE EXCEPTION 'sql_saga: column % of base table % is missing from history table %',
+                pg_catalog.quote_ident(c.attname), table_oid::pg_catalog.regclass, history_table_oid::pg_catalog.regclass
+                USING ERRCODE = 'undefined_column',
+                      HINT = pg_catalog.format('Run: ALTER TABLE %s ADD COLUMN %s %s; %s',
+                                    sql_saga.__internal_qualified_name(history_table_oid), pg_catalog.quote_ident(c.attname), c.base_type, rebuild_call);
+        END IF;
+        RAISE EXCEPTION 'sql_saga: column % has type % in base table % but type % in history table %',
+            pg_catalog.quote_ident(c.attname), c.base_type, table_oid::pg_catalog.regclass, c.history_type, history_table_oid::pg_catalog.regclass
+            USING ERRCODE = 'datatype_mismatch',
+                  HINT = pg_catalog.format('Run: ALTER TABLE %s ALTER COLUMN %s TYPE %s; %s',
+                                sql_saga.__internal_qualified_name(history_table_oid), pg_catalog.quote_ident(c.attname), c.base_type, rebuild_call);
+    END LOOP;
+END;
+$__internal_check_history_columns$;
+
+/*
+ * (Re)creates B_history_gated, B_with_history and the four as-of functions of a registered family
+ * from the current columns. Callers check arguments and authorization and hold the family's lock.
+ * Existing objects are dropped first (without cascading: a user object depending on them makes this
+ * fail with PostgreSQL's dependency error). The drops are allowed by drop_protection and the new
+ * definitions by health_checks only while sql_saga.rebuilding_system_versioning_views names this table.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid oid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_refresh_system_time_columns_snapshot$
+    UPDATE sql_saga.system_time_era AS ste
+    SET table_columns_snapshot = live.column_names
+    FROM (
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = table_oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    ) AS live
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = table_oid;
+$__internal_refresh_system_time_columns_snapshot$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_system_versioning_query_functions(table_oid oid)
+RETURNS TABLE(role text, identity text, argument_types text, body text)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_system_versioning_query_functions$
+    SELECT q.role,
+           q.identity,
+           q.argument_types,
+           pg_catalog.format(q.body_template, sv.view_schema_name, sv.view_table_name, e.range_column_name) AS body
+    FROM sql_saga.system_versioning AS sv
+    JOIN sql_saga.era AS e
+      ON (e.table_schema, e.table_name, e.era_name) = (sv.table_schema, sv.table_name, sv.era_name)
+    CROSS JOIN LATERAL (VALUES
+        (1, 'as_of', sv.func_as_of, 'timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I @> $1'),
+        (2, 'between', sv.func_between, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2, ''[]'')'),
+        (3, 'between_symmetric', sv.func_between_symmetric, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange(least($1, $2), greatest($1, $2), ''[]'')'),
+        (4, 'from_to', sv.func_from_to, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2)')
+    ) AS q(ordinality, role, identity, argument_types, body_template)
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid = table_oid
+    ORDER BY q.ordinality;
+$__internal_system_versioning_query_functions$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_rebuild_system_versioning_views$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    table_owner name;
+    range_column name;
+    gated_view_name name;
+    base_projection text;
+    history_projection text;
+    fn record;
+    previous_flag text;
+BEGIN
+    SELECT s.* INTO sv
+    FROM sql_saga.system_versioning AS s
+    WHERE to_regclass(format('%I.%I', s.table_schema, s.table_name))::oid = table_oid;
+    history_table_oid := to_regclass(format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+    table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+    range_column := (SELECT e.range_column_name FROM sql_saga.era AS e
+                     WHERE (e.table_schema, e.table_name, e.era_name) = (sv.table_schema, sv.table_name, sv.era_name));
+    gated_view_name := sql_saga.__internal_history_gated_name(sv.history_table_name);
+
+    PERFORM sql_saga.__internal_check_history_columns(table_oid, history_table_oid, without_columns);
+
+    -- The union of both tables' columns, by name: base columns in base order, then history-only ones.
+    WITH u AS (
+        SELECT coalesce(ba.attname, ha.attname) AS attname, ba.attnum AS base_attnum, ha.attnum AS history_attnum,
+               ha.atttypid, ha.atttypmod, ha.attcollation
+        FROM (SELECT a.* FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped) AS ba
+        FULL JOIN (SELECT a.* FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped) AS ha
+               ON ha.attname = ba.attname
+        WHERE coalesce(ba.attname, ha.attname) <> ALL (without_columns)
+    )
+    SELECT string_agg(CASE WHEN u.base_attnum IS NOT NULL THEN quote_ident(u.attname)
+                           ELSE format('NULL::%s AS %I', sql_saga.__internal_column_type_sql(u.atttypid, u.atttypmod, u.attcollation), u.attname)
+                      END, ', ' ORDER BY u.base_attnum NULLS LAST, u.history_attnum),
+           string_agg(quote_ident(u.attname), ', ' ORDER BY u.base_attnum NULLS LAST, u.history_attnum)
+    INTO base_projection, history_projection
+    FROM u;
+
+    previous_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::text, true);
+    BEGIN
+        FOR fn IN
+            SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
+            WHERE to_regprocedure(u.f) IS NOT NULL
+        LOOP
+            EXECUTE format('DROP FUNCTION %s', fn.f::regprocedure);
+        END LOOP;
+        -- add_system_versioning calls this before the views exist.
+        IF to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I', sv.view_schema_name, sv.view_table_name);
+        END IF;
+        IF to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I', sv.history_schema_name, gated_view_name);
+        END IF;
+
+        EXECUTE format('CREATE VIEW %I.%I AS %s', sv.history_schema_name, gated_view_name,
+            sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection));
+        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner);
+        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name);
+
+        EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
+        SELECT %3$s FROM %4$s
+        UNION ALL SELECT %5$s FROM %6$I.%7$I
+        UNION ALL SELECT %5$s FROM %8$s
+            WHERE pg_catalog.row_security_active(%9$L::regclass::oid)
+              AND sql_saga.__internal_history_policies_synchronized(%9$L::regclass::oid, %10$L::regclass::oid)$view$,
+            sv.view_schema_name, /* %1$I */
+            sv.view_table_name, /* %2$I */
+            base_projection, /* %3$s */
+            sql_saga.__internal_qualified_name(table_oid), /* %4$s */
+            history_projection, /* %5$s */
+            sv.history_schema_name, /* %6$I */
+            gated_view_name, /* %7$I */
+            sql_saga.__internal_qualified_name(history_table_oid), /* %8$s */
+            sql_saga.__internal_qualified_name(table_oid), /* %9$L */
+            sql_saga.__internal_qualified_name(history_table_oid) /* %10$L */
+        );
+        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner);
+        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name);
+
+        -- Each registered signature names a function; its body is fixed by its role.
+        FOR fn IN
+            SELECT q.identity AS f, q.body
+            FROM sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        LOOP
+            EXECUTE format('CREATE FUNCTION %s RETURNS SETOF %I.%I LANGUAGE sql STABLE AS %L',
+                fn.f, sv.view_schema_name, sv.view_table_name,
+                fn.body);
+            EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
+            -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
+        END LOOP;
+
+        -- The fixed ACL is PUBLIC plus the owner. New objects can receive more through
+        -- ALTER DEFAULT PRIVILEGES; take those away, so a rebuild always ends in the fixed state.
+        FOR fn IN
+            SELECT format('REVOKE ALL ON %s %s FROM %s',
+                          CASE WHEN o.is_function THEN 'FUNCTION' ELSE 'TABLE' END, o.ident,
+                          string_agg(DISTINCT quote_ident(x.grantee::regrole::text), ', ')) AS stmt
+            FROM (SELECT false AS is_function, c.oid::regclass::text AS ident, c.relacl AS acl, c.relowner AS owner
+                  FROM pg_catalog.pg_class AS c
+                  WHERE c.oid IN (to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)),
+                                  to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)))
+                  UNION ALL
+                  SELECT true, p.oid::regprocedure::text, p.proacl, p.proowner
+                  FROM pg_catalog.pg_proc AS p
+                  WHERE p.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
+                 ) AS o
+            CROSS JOIN LATERAL aclexplode(o.acl) AS x
+            WHERE x.grantee NOT IN (0, o.owner)
+            GROUP BY o.is_function, o.ident
+        LOOP
+            EXECUTE fn.stmt;
+        END LOOP;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_flag, ''), true);
+
+    RAISE DEBUG 'sql_saga: generated SYSTEM VERSIONING views and query functions for table %', table_oid::regclass;
+END;
+$__internal_rebuild_system_versioning_views$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_reconcile_system_versioning_family(
+    table_oid regclass,
+    without_columns name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_reconcile_system_versioning_family$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    table_owner name;
+    acl record;
+    previous_guard text;
+    needs_rebuild boolean;
+    expected_columns integer;
+    actual_columns integer;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: cannot reconcile a NULL table'
+            USING ERRCODE = 'null_value_not_allowed',
+                  HINT = 'Pass a registered base table to sql_saga.__internal_reconcile_system_versioning_family().';
+    END IF;
+    PERFORM sql_saga.__internal_serialize(table_oid);
+    SELECT s.* INTO sv FROM sql_saga.system_versioning AS s
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sql_saga: table % does not have SYSTEM VERSIONING', table_oid
+            USING ERRCODE = 'object_not_in_prerequisite_state';
+    END IF;
+    IF current_setting('sql_saga.rebuilding_system_versioning_views', true) OPERATOR(pg_catalog.=) table_oid::oid::text THEN
+        PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+        PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
+        RETURN;
+    END IF;
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+    IF history_table_oid IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: history table %.% registered for % does not exist',
+            pg_catalog.quote_ident(sv.history_schema_name), pg_catalog.quote_ident(sv.history_table_name), table_oid
+            USING ERRCODE = 'undefined_table', HINT = 'Restore the registered history table before retrying.';
+    END IF;
+    -- Preserve history-only columns outside canonical views. The public rebuild API calls the
+    -- generator directly when an operator explicitly wants those columns included.
+    SELECT coalesce(without_columns, '{}'::name[]) || coalesce(pg_catalog.array_agg(a.attname ORDER BY a.attnum), '{}'::name[])
+    INTO without_columns
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped
+      AND NOT EXISTS (
+          SELECT FROM pg_catalog.pg_attribute AS b
+          WHERE b.attrelid = table_oid AND b.attnum > 0 AND NOT b.attisdropped
+            AND b.attname OPERATOR(pg_catalog.=) a.attname)
+      AND a.attname <> ALL (coalesce(without_columns, '{}'::name[]));
+    previous_guard := current_setting('sql_saga.managing_history_policies', true);
+    PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
+    BEGIN
+      EXECUTE pg_catalog.format('LOCK TABLE %s, %s IN ACCESS EXCLUSIVE MODE', table_oid, history_table_oid::regclass);
+      table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+      IF (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) <> table_owner THEN
+          EXECUTE pg_catalog.format('ALTER TABLE %s OWNER TO %I', history_table_oid::regclass, table_owner);
+      END IF;
+      IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = history_table_oid) THEN
+          EXECUTE pg_catalog.format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_oid::regclass);
+      END IF;
+      FOR acl IN
+        SELECT pg_catalog.format('REVOKE ALL ON TABLE %s FROM %s', history_table_oid::regclass,
+                                 pg_catalog.string_agg(DISTINCT pg_catalog.quote_ident(x.grantee::regrole::text), ', ')) AS stmt
+        FROM pg_catalog.pg_class AS c CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
+        WHERE c.oid = history_table_oid AND x.grantee NOT IN (0, c.relowner) GROUP BY c.oid
+      LOOP
+          EXECUTE acl.stmt;
+      END LOOP;
+      IF NOT EXISTS (
+          SELECT FROM pg_catalog.pg_class AS c
+          CROSS JOIN LATERAL pg_catalog.aclexplode(c.relacl) AS x
+          WHERE c.oid = history_table_oid AND x.grantee = 0 AND x.privilege_type = 'SELECT') THEN
+          EXECUTE pg_catalog.format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_oid::regclass);
+      END IF;
+
+      SELECT count(*) INTO expected_columns
+      FROM (
+          SELECT a.attname FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped
+            AND a.attname <> ALL (coalesce(without_columns, '{}'))
+          UNION
+          SELECT a.attname FROM pg_catalog.pg_attribute AS a
+          WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped
+            AND a.attname <> ALL (coalesce(without_columns, '{}'))
+      ) AS expected;
+      SELECT count(*) INTO actual_columns
+      FROM pg_catalog.pg_attribute AS a
+      WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+        AND a.attnum > 0 AND NOT a.attisdropped;
+      needs_rebuild := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name,
+                           sql_saga.__internal_history_gated_name(sv.history_table_name))) IS NULL
+          OR pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NULL
+          OR expected_columns IS DISTINCT FROM actual_columns
+          OR NOT EXISTS (
+              SELECT FROM pg_catalog.pg_class AS c
+              WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+                AND 'security_invoker=on' = ANY (coalesce(c.reloptions, '{}')))
+          OR EXISTS (
+              SELECT FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS f(fn)
+              WHERE pg_catalog.to_regprocedure(f.fn) IS NULL);
+      IF needs_rebuild THEN
+          PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, coalesce(without_columns, '{}'));
+          PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
+      END IF;
+      PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    EXCEPTION WHEN OTHERS THEN
+      PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
+      RAISE;
+    END;
+    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, ''), true);
+END;
+$__internal_reconcile_system_versioning_family$;
+
+CREATE OR REPLACE FUNCTION sql_saga.add_system_versioning(
+    table_oid regclass,
+    history_table_name name DEFAULT NULL,
+    view_name name DEFAULT NULL,
+    function_as_of_name name DEFAULT NULL,
+    function_between_name name DEFAULT NULL,
+    function_between_symmetric_name name DEFAULT NULL,
+    function_from_to_name name DEFAULT NULL)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    table_owner regrole;
+    persistence "char";
+    kind "char";
+    era_row sql_saga.era;
+    history_table_id oid;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname, c.relowner, c.relpersistence, c.relkind
+    INTO table_schema, table_name, table_owner, persistence, kind
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    IF EXISTS (SELECT 1 FROM sql_saga.system_versioning sv WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)) THEN
+        RAISE EXCEPTION 'table already has SYSTEM VERSIONING';
+    END IF;
+
+    IF kind <> 'r' THEN
+        IF kind = 'p' THEN
+            RAISE EXCEPTION 'partitioned tables are not supported yet';
+        END IF;
+        RAISE EXCEPTION 'relation % is not a table', table_oid;
+    END IF;
+
+    IF persistence <> 'p' THEN
+        RAISE EXCEPTION 'table "%" must be persistent', sql_saga.__internal_display_name(table_oid);
+    END IF;
+
+    SELECT e.*
+    INTO era_row
+    FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
+
+    IF NOT FOUND THEN
+        PERFORM sql_saga.__internal_add_system_time_era(table_oid);
+        -- Re-fetch era row
+        SELECT e.* INTO era_row FROM sql_saga.era e WHERE (e.table_schema, e.table_name, e.era_name) = (table_schema, table_name, 'system_time');
+    END IF;
+
+    history_table_name := coalesce(history_table_name, sql_saga.__internal_make_name(ARRAY[table_name], 'history'));
+    view_name := coalesce(view_name, sql_saga.__internal_make_name(ARRAY[table_name], 'with_history'));
+    function_as_of_name := coalesce(function_as_of_name, sql_saga.__internal_make_name(ARRAY[table_name], '_as_of'));
+    function_between_name := coalesce(function_between_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between'));
+    function_between_symmetric_name := coalesce(function_between_symmetric_name, sql_saga.__internal_make_name(ARRAY[table_name], '_between_symmetric'));
+    function_from_to_name := coalesce(function_from_to_name, sql_saga.__internal_make_name(ARRAY[table_name], '_from_to'));
+
+    SELECT c.oid INTO history_table_id FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace WHERE (n.nspname, c.relname) = (table_schema, history_table_name);
+
+    IF FOUND THEN
+        IF EXISTS (SELECT 1 FROM sql_saga.era p JOIN pg_class c ON p.table_name = c.relname JOIN pg_namespace n ON c.relnamespace = n.oid AND p.table_schema = n.nspname WHERE c.oid = history_table_id) THEN
+            RAISE EXCEPTION 'history tables for SYSTEM VERSIONING cannot have eras';
+        END IF;
+        IF EXISTS (
+            WITH
+            L (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND NOT a.attisdropped),
+            R (attname, atttypid, atttypmod, attcollation) AS (SELECT a.attname, a.atttypid, a.atttypmod, a.attcollation FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_id AND NOT a.attisdropped)
+            SELECT FROM L NATURAL FULL JOIN R WHERE L.attname IS NULL OR R.attname IS NULL)
+        THEN
+            RAISE EXCEPTION 'base table "%" and history table "%" are not compatible', sql_saga.__internal_display_name(table_oid), sql_saga.__internal_display_name(history_table_id::regclass);
+        END IF;
+        EXECUTE format('ALTER TABLE %s OWNER TO %I', history_table_id::regclass /* %s */, table_owner /* %I */);
+    ELSE
+        EXECUTE format('CREATE TABLE %1$I.%2$I (LIKE %1$I.%3$I)', table_schema /* %1$I */, history_table_name /* %2$I */, table_name /* %3$I */);
+        history_table_id := format('%I.%I', table_schema /* %I */, history_table_name /* %I */)::regclass;
+        EXECUTE format('ALTER TABLE %1$I.%2$I OWNER TO %3$I', table_schema /* %1$I */, history_table_name /* %2$I */, table_owner /* %3$I */);
+        RAISE DEBUG 'history table "%" created for "%", be sure to index it properly', history_table_id::regclass, table_oid;
+    END IF;
+
+    /*
+     * Access-time authority (tmp/design_final.md): the history objects are granted to PUBLIC and
+     * hold no copy of the base table's ACL. Callers are checked against the base when they read:
+     *   - B_history_gated (owner-rights) raises 42501 unless the caller may SELECT B, and serves
+     *     callers that B's row-level security does not apply to;
+     *   - B_history is read as the caller when B's RLS applies, filtered by the copies of B's
+     *     policies (sql_saga.__internal_sync_history_policies), after checking they are in sync.
+     */
+    EXECUTE format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', history_table_id::regclass);
+    EXECUTE format('GRANT SELECT ON TABLE %s TO PUBLIC', history_table_id::regclass);
+
+    -- Registered first: the generator reads the family's names from the catalog.
+    INSERT INTO sql_saga.system_versioning (table_schema, table_name, era_name, history_schema_name, history_table_name, view_schema_name, view_table_name, func_as_of, func_between, func_between_symmetric, func_from_to)
+    VALUES (
+        table_schema, table_name, 'system_time',
+        table_schema, history_table_name,
+        table_schema, view_name,
+        format('%I.%I(timestamp with time zone)', table_schema /* %I */, function_as_of_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_between_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_between_symmetric_name /* %I */),
+        format('%I.%I(timestamp with time zone,timestamp with time zone)', table_schema /* %I */, function_from_to_name /* %I */)
+    );
+
+    -- B_history_gated, B_with_history and the as-of functions: the same generator as
+    -- rebuild_system_versioning_views, so a rebuild of an unchanged family reproduces them exactly.
+    PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, '{}');
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.add_system_versioning(regclass, name, name, name, name, name, name) IS
+'Adds system versioning to a table, creating a history table and triggers to automatically track all data changes.';
+
+/*
+ * The as-of functions of a versioned table are executable by PUBLIC (tmp/design_final.md section 5).
+ * add_system_versioning grants it explicitly, because hardened databases revoke EXECUTE from PUBLIC by
+ * default. pg_dump writes no GRANT for a function ACL equal to the default, so a pg_restore --clean into
+ * a database where those default privileges already apply recreates the functions owner-only. The
+ * catalog row is loaded after the functions exist, so granting when it is inserted keeps the rule after
+ * any restore. Runs as the inserting role: add_system_versioning (the extension owner) or pg_restore.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.__internal_grant_query_functions()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_grant_query_functions$
+DECLARE
+    query_function regprocedure;
+BEGIN
+    FOR query_function IN
+        SELECT to_regprocedure(u.signature)
+        FROM unnest(ARRAY[NEW.func_as_of, NEW.func_between, NEW.func_between_symmetric, NEW.func_from_to]) AS u (signature)
+        WHERE to_regprocedure(u.signature) IS NOT NULL
+    LOOP
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', query_function /* %s */);
+    END LOOP;
+    EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', NEW.history_schema_name, NEW.history_table_name);
+    RETURN NULL;
+END;
+$__internal_grant_query_functions$;
+
+/*
+ * Manual schema changes (tmp/design_manual_schema_changes.md): after the owner changed the base and
+ * history tables by hand, this recreates the views and as-of functions from the current columns.
+ *
+ * SECURITY INVOKER, like sync_history_policies: the caller must be a member of the base table's
+ * owner role (a SECURITY DEFINER function sees its own owner as current_user and could not tell),
+ * and the replacement runs with the caller's rights over the objects that role owns.
+ * No fixed search_path, so relation names in messages read as the caller would write them; every
+ * reference in the body is schema-qualified. The generator itself runs with a fixed search_path.
+ */
+CREATE OR REPLACE FUNCTION sql_saga.rebuild_system_versioning_views(
+    table_oid regclass,
+    without_columns name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+AS $rebuild_system_versioning_views$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    range_column name;
+    excluded name;
+    previous_rebuild_flag text;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT s.* INTO sv
+    FROM sql_saga.system_versioning AS s
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'table % does not have SYSTEM VERSIONING', table_oid;
+    END IF;
+
+    IF NOT pg_catalog.pg_has_role((SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid OPERATOR(pg_catalog.=) table_oid), 'USAGE') THEN
+        RAISE EXCEPTION 'must be owner of table %', table_oid USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::pg_catalog.oid;
+    range_column := (SELECT e.range_column_name FROM sql_saga.era AS e
+                     WHERE (e.table_schema, e.table_name, e.era_name) OPERATOR(pg_catalog.=) (sv.table_schema, sv.table_name, sv.era_name));
+
+    without_columns := coalesce(without_columns, '{}');
+    IF pg_catalog.array_position(without_columns, NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: without_columns must not contain NULL';
+    END IF;
+    FOR excluded IN
+        SELECT u.c FROM pg_catalog.unnest(without_columns) WITH ORDINALITY AS u (c, n)
+        GROUP BY u.c HAVING pg_catalog.count(*) OPERATOR(pg_catalog.>) 1 ORDER BY pg_catalog.min(u.n)
+    LOOP
+        RAISE EXCEPTION 'sql_saga: column % is listed more than once in without_columns', pg_catalog.quote_ident(excluded);
+    END LOOP;
+    FOR excluded IN
+        SELECT u.c FROM pg_catalog.unnest(without_columns) WITH ORDINALITY AS u (c, n)
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid IN (table_oid, history_table_oid) AND a.attname OPERATOR(pg_catalog.=) u.c
+                            AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped)
+        ORDER BY u.n
+    LOOP
+        RAISE EXCEPTION 'sql_saga: column % does not exist in either % or %',
+            pg_catalog.quote_ident(excluded), table_oid, history_table_oid::pg_catalog.regclass;
+    END LOOP;
+    IF range_column OPERATOR(pg_catalog.=) ANY (without_columns) THEN
+        RAISE EXCEPTION 'sql_saga: cannot exclude system time column % from SYSTEM VERSIONING views for table %',
+            pg_catalog.quote_ident(range_column), table_oid;
+    END IF;
+
+    -- Checked here, in the caller's search_path, so the error names relations as the writer's does.
+    PERFORM sql_saga.__internal_check_history_columns(table_oid, history_table_oid, without_columns);
+
+    PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, without_columns);
+
+    -- Use the existing authorized reconciler as the private refresh gateway.
+    previous_rebuild_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::oid::text, true);
+    BEGIN
+        PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, without_columns);
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+
+    RAISE NOTICE 'sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table %', table_oid;
+END;
+$rebuild_system_versioning_views$;
+
+COMMENT ON FUNCTION sql_saga.rebuild_system_versioning_views(regclass, name[]) IS
+'Rebuilds the views and as-of query functions of a system-versioned table from the current base and history columns. Columns are matched by name; history may have additional columns. without_columns temporarily omits named columns so dependent columns can be changed manually.';
+CREATE OR REPLACE FUNCTION sql_saga.__internal_generate_pk_consistency_constraints(
+    p_unique_key_name name,
+    p_natural_key_columns name[],
+    p_mutually_exclusive_columns name[],
+    p_primary_key_column name
+)
+RETURNS jsonb -- { "cmds": text[], "names": name[] }
+LANGUAGE plpgsql AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    v_constraint_cmds text[] := '{}';
+    v_constraint_names name[] := '{}';
+    v_constraint_name name;
+    v_constraint_sql text;
+    v_withs text[];
+BEGIN
+    IF p_mutually_exclusive_columns IS NULL THEN
+        v_constraint_name := p_unique_key_name || '_pk_consistency_excl';
+        SELECT array_agg(format('%I WITH =', col)) INTO v_withs FROM unnest(p_natural_key_columns) AS col;
+        v_withs := v_withs || format('%I WITH <>', p_primary_key_column);
+        v_constraint_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s)', v_constraint_name, array_to_string(v_withs, ', '));
+        v_constraint_cmds := array_append(v_constraint_cmds, v_constraint_sql);
+        v_constraint_names := array_append(v_constraint_names, v_constraint_name);
+    ELSE
+        DECLARE
+            non_xor_cols name[];
+            xor_col name;
+            where_clause_partial text;
+        BEGIN
+            non_xor_cols := ARRAY(SELECT c FROM unnest(p_natural_key_columns) AS c WHERE c <> ALL(p_mutually_exclusive_columns));
+            FOREACH xor_col IN ARRAY p_mutually_exclusive_columns LOOP
+                v_constraint_name := sql_saga.__internal_make_name(ARRAY[p_unique_key_name, xor_col, 'pk_consistency_excl']);
+                SELECT array_agg(format('%I WITH =', col)) INTO v_withs FROM unnest(non_xor_cols || xor_col) AS col;
+                v_withs := v_withs || format('%I WITH <>', p_primary_key_column);
+                where_clause_partial := format('WHERE (%I IS NOT NULL AND (%s))', xor_col, (SELECT string_agg(format('%I IS NULL', other_col), ' AND ') FROM unnest(p_mutually_exclusive_columns) AS other_col WHERE other_col <> xor_col));
+                v_constraint_sql := format('ADD CONSTRAINT %I EXCLUDE USING gist (%s) %s', v_constraint_name, array_to_string(v_withs, ', '), where_clause_partial);
+                v_constraint_cmds := array_append(v_constraint_cmds, v_constraint_sql);
+                v_constraint_names := array_append(v_constraint_names, v_constraint_name);
+            END LOOP;
+        END;
+    END IF;
+
+    RETURN jsonb_build_object('cmds', v_constraint_cmds, 'names', v_constraint_names);
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.add_unique_key(
+        table_oid regclass,
+        column_names name[],
+        era_name name DEFAULT 'valid',
+        key_type sql_saga.unique_key_type DEFAULT 'natural',
+        enforce_consistency_with_primary_key boolean DEFAULT NULL,
+        unique_key_name name DEFAULT NULL,
+        unique_constraint name DEFAULT NULL,
+        exclude_constraint name DEFAULT NULL,
+        predicate text DEFAULT NULL,
+        mutually_exclusive_columns name[] DEFAULT NULL)
+ RETURNS name
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    era_row sql_saga.era;
+    column_attnums smallint[];
+    era_attnums smallint[];
+    idx integer;
+    constraint_record record;
+    pass integer;
+    sql text;
+    alter_cmds text[];
+    v_unique_constraint_found boolean := false;
+    v_exclude_constraint_found boolean := false;
+    v_check_constraint name;
+    unique_sql text;
+    exclude_sql text;
+    where_clause text;
+
+    v_pk_consistency_constraint_names name[];
+    v_enforce_consistency_original boolean := enforce_consistency_with_primary_key;
+    v_stable_cols_to_store name[];
+BEGIN
+    RAISE DEBUG 'add_unique_key entry: table_oid=%, column_names=%, era_name=%, key_type=%', table_oid, column_names, era_name, key_type;
+    -- If the parameter is NULL (the default), set it to true for natural keys and false otherwise.
+    IF enforce_consistency_with_primary_key IS NULL THEN
+        enforce_consistency_with_primary_key := (key_type = 'natural');
+    END IF;
+
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT p.*
+    INTO era_row
+    FROM sql_saga.era AS p
+    WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'era "%" does not exist', era_name;
+    END IF;
+
+    -- For metadata storage, we use the exact column list provided by the user,
+    -- as this is what symmetric drop functions will expect. The native unique
+    -- constraint will include the temporal column, but our metadata only tracks
+    -- the stable part of the key. An explicit check below ensures the user does
+    -- not include the range column here.
+    v_stable_cols_to_store := add_unique_key.column_names;
+
+    -- This is no longer used by native temporal keys, but is still needed for XOR key logic on predicated keys.
+    IF era_row.valid_from_column_name IS NOT NULL THEN
+        era_attnums := ARRAY[
+            (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_from_column_name)),
+            (SELECT a.attnum FROM pg_catalog.pg_attribute AS a WHERE (a.attrelid, a.attname) = (table_oid, era_row.valid_until_column_name))
+        ];
+    END IF;
+
+    /* Get attnums from column names */
+    SELECT array_agg(a.attnum ORDER BY n.ordinality)
+    INTO column_attnums
+    FROM unnest(column_names) WITH ORDINALITY AS n (name, ordinality)
+    LEFT JOIN pg_catalog.pg_attribute AS a ON (a.attrelid, a.attname) = (table_oid, n.name);
+
+    /* System columns are not allowed */
+    IF 0 > ANY (column_attnums) THEN
+        RAISE EXCEPTION 'index creation on system columns is not supported';
+    END IF;
+
+    /* Report if any columns weren't found */
+    idx := array_position(column_attnums, NULL);
+    IF idx IS NOT NULL THEN
+        RAISE EXCEPTION 'column "%" does not exist', column_names[idx];
+    END IF;
+
+    /* Make sure the range column isn't also in the normal columns */
+    IF era_row.range_column_name = ANY (column_names) THEN
+        RAISE EXCEPTION 'range column "%" cannot also be part of the key columns', era_row.range_column_name;
+    END IF;
+
+    /*
+     * Columns belonging to a SYSTEM_TIME period are not allowed in a UNIQUE
+     * key. SQL:2016 11.7 SR 5)b)
+     */
+    IF EXISTS (
+        SELECT FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name, e.era_name) = (era_row.table_schema, era_row.table_name, 'system_time')
+          AND ARRAY[e.valid_from_column_name, e.valid_until_column_name] && column_names)
+    THEN
+        RAISE EXCEPTION 'columns in era for SYSTEM_TIME are not allowed in UNIQUE keys';
+    END IF;
+
+    -- Validate parameter combinations
+    IF key_type = 'predicated' AND predicate IS NULL THEN
+        RAISE EXCEPTION 'a predicate must be provided when key_type is ''predicated''';
+    END IF;
+
+    IF key_type IN ('primary', 'natural') AND predicate IS NOT NULL THEN
+        RAISE EXCEPTION 'a predicate can only be provided when key_type is ''predicated''';
+    END IF;
+
+    IF mutually_exclusive_columns IS NOT NULL THEN
+        IF NOT column_names @> mutually_exclusive_columns THEN
+            RAISE EXCEPTION 'all mutually_exclusive_columns must be present in column_names';
+        END IF;
+        IF key_type <> 'natural' THEN
+            RAISE EXCEPTION 'mutually_exclusive_columns can only be used with key_type = ''natural''';
+        END IF;
+    END IF;
+
+    -- This check is now only relevant if the user explicitly provides the parameter.
+    IF enforce_consistency_with_primary_key AND key_type <> 'natural' THEN
+        RAISE EXCEPTION 'enforce_consistency_with_primary_key can only be used with key_type = ''natural''';
+    END IF;
+
+    where_clause := CASE WHEN predicate IS NOT NULL THEN format(' WHERE (%s)', predicate /* %s */) ELSE '' END;
+
+    IF key_type IN ('primary', 'natural') THEN
+        -- When creating a primary key, validate that the table schema is compatible with SCD Type 2 history.
+        IF key_type = 'primary' THEN
+            DECLARE
+                identity_column_name name;
+            BEGIN
+                -- Check for a GENERATED ALWAYS identity column first, as it's a more specific error.
+                SELECT a.attname
+                INTO identity_column_name
+                FROM pg_catalog.pg_attribute a
+                WHERE a.attrelid = table_oid
+                AND a.attidentity = 'a'; -- 'a' = always, 'd' = by default
+
+                IF identity_column_name IS NOT NULL THEN
+                    RAISE EXCEPTION 'table "%" has a GENERATED ALWAYS AS IDENTITY column ("%"); this is incompatible with SCD Type 2 history as it prevents inserting new historical versions of an entity', sql_saga.__internal_display_name(table_oid), identity_column_name;
+                END IF;
+
+                -- Check for a simple primary key that does not include the temporal columns.
+                DECLARE
+                    pk_columns name[];
+                BEGIN
+                    SELECT
+                        array_agg(a.attname ORDER BY u.ord)
+                    INTO
+                        pk_columns
+                    FROM
+                        pg_catalog.pg_constraint c
+                        JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE
+                        JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum
+                    WHERE
+                        c.conrelid = table_oid AND c.contype = 'p';
+
+                    IF pk_columns IS NOT NULL AND NOT (pk_columns @> ARRAY[era_row.range_column_name]) THEN
+                        RAISE EXCEPTION 'table "%" has a simple PRIMARY KEY that does not include the temporal range column ("%"); this is incompatible with SCD Type 2 history', sql_saga.__internal_display_name(table_oid), era_row.range_column_name;
+                    END IF;
+                END;
+            END;
+        END IF;
+        /* If we were given a unique constraint to use, look it up and make sure it matches */
+        -- For primary and natural keys, we now use a native temporal constraint.
+        -- These constraints must be NOT DEFERRABLE (the default) to be referenceable by
+        -- native temporal foreign keys. The with_temporary_temporal_gaps execution strategy
+        -- (DELETE->UPDATE->INSERT) avoids creating overlaps that would violate this constraint.
+        SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+            CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY' ELSE 'UNIQUE' END, /* %s */
+            string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality), /* %s */
+            era_row.range_column_name /* %I */
+        )
+        INTO unique_sql
+        FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
+
+        IF unique_constraint IS NULL AND key_type = 'primary' THEN
+            -- If this is a primary key and no name was given, check if one already exists.
+            SELECT c.conname INTO unique_constraint
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.contype) = (table_oid, 'p');
+        END IF;
+
+        IF unique_constraint IS NOT NULL THEN
+            SELECT c.oid, c.contype, c.condeferrable, c.condeferred, c.conkey
+            INTO constraint_record
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (table_oid, unique_constraint);
+
+            IF FOUND THEN
+                v_unique_constraint_found := true;
+
+                IF key_type = 'primary' AND constraint_record.contype <> 'p' THEN
+                    RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY', unique_constraint;
+                ELSIF key_type = 'natural' AND constraint_record.contype NOT IN ('p', 'u') THEN
+                    RAISE EXCEPTION 'constraint "%" is not a PRIMARY KEY or UNIQUE KEY', unique_constraint;
+                END IF;
+
+                -- PostgreSQL 18 requirement: WITHOUT OVERLAPS constraints must be NOT DEFERRABLE
+                -- to be referenceable by native temporal FKs (FOREIGN KEY ... PERIOD).
+                -- Users migrating from trigger-based FKs may have DEFERRABLE PKs which must be changed.
+                -- The with_temporary_temporal_gaps strategy (DELETE→UPDATE→INSERT) creates temporary
+                -- gaps (tolerated by DEFERRABLE FKs) rather than overlaps (which would violate this constraint).
+                DECLARE
+                    unique_sql_nulls_not_distinct text;
+                    actual_def text;
+                BEGIN
+                    -- Generate the NULLS NOT DISTINCT variant for comparison
+                    SELECT format('%s (%s, %I WITHOUT OVERLAPS)',
+                        CASE WHEN key_type = 'primary' THEN 'PRIMARY KEY NULLS NOT DISTINCT' ELSE 'UNIQUE NULLS NOT DISTINCT' END,
+                        string_agg(quote_ident(u.column_name), ', ' ORDER BY u.ordinality),
+                        era_row.range_column_name
+                    )
+                    INTO unique_sql_nulls_not_distinct
+                    FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
+
+                    actual_def := pg_catalog.pg_get_constraintdef(constraint_record.oid);
+
+                    -- Check if constraint matches either traditional or NULLS NOT DISTINCT format
+                    IF actual_def <> unique_sql AND actual_def <> unique_sql_nulls_not_distinct THEN
+                        RAISE EXCEPTION E'constraint "%" does not match expected format.\nExpected (traditional): "%"\nExpected (NULLS NOT DISTINCT): "%"\nFound: "%"\n\nPostgreSQL 18 Temporal FK Requirement:\nUnique constraints with WITHOUT OVERLAPS must be NOT DEFERRABLE to be referenceable by native temporal foreign keys. The DELETE→UPDATE→INSERT execution strategy avoids overlaps while tolerating temporary gaps through DEFERRABLE FK checks.\n\nSee AGENTS.md section "PostgreSQL 18 Temporal Constraints and Foreign Keys" for details.',
+                            unique_constraint,
+                            unique_sql,
+                            unique_sql_nulls_not_distinct,
+                            actual_def;
+                    END IF;
+                END;
+
+                /* Looks good, let's use it. */
+            END IF;
+        END IF;
+    ELSIF key_type = 'predicated' THEN
+        -- For predicated keys, we don't create a UNIQUE constraint/index.
+        -- Uniqueness is enforced by the EXCLUDE constraint.
+        -- We can clear unique_sql as it's not applicable.
+        unique_sql := NULL;
+    END IF;
+
+    -- Native temporal constraints (WITHOUT OVERLAPS) replace exclusion constraints
+    -- for primary and natural keys. Predicated keys still require an exclusion constraint.
+    IF key_type = 'predicated' THEN
+        DECLARE
+            withs text[];
+        BEGIN
+            SELECT array_agg(format('%I WITH =', column_name /* %I */) ORDER BY n.ordinality)
+            INTO withs
+            FROM unnest(column_names) WITH ORDINALITY AS n (column_name, ordinality);
+
+            withs := withs || format('%I WITH &&',
+                era_row.range_column_name /* %I */
+            );
+
+            exclude_sql := format('EXCLUDE USING gist (%s)%s DEFERRABLE', array_to_string(withs, ', ') /* %s */, where_clause /* %s */);
+        END;
+
+        IF exclude_constraint IS NOT NULL THEN
+            SELECT c.oid, c.contype, c.condeferrable, c.condeferred, pg_catalog.pg_get_constraintdef(c.oid) AS definition
+            INTO constraint_record
+            FROM pg_catalog.pg_constraint AS c
+            WHERE (c.conrelid, c.conname) = (table_oid, exclude_constraint);
+
+            IF FOUND THEN
+                v_exclude_constraint_found := true;
+
+                IF constraint_record.contype <> 'x' THEN
+                    RAISE EXCEPTION 'constraint "%" is not an EXCLUDE constraint', exclude_constraint;
+                END IF;
+
+                IF NOT constraint_record.condeferrable THEN
+                    RAISE EXCEPTION 'constraint "%" must be DEFERRABLE', exclude_constraint;
+                END IF;
+
+                IF constraint_record.condeferred THEN
+                    RAISE EXCEPTION 'constraint "%" must be INITIALLY IMMEDIATE', exclude_constraint;
+                END IF;
+
+                IF constraint_record.definition <> exclude_sql THEN
+                    RAISE EXCEPTION 'constraint "%" does not match. Expected definition: "%", but found definition: "%".',
+                        exclude_constraint,
+                        exclude_sql,
+                        constraint_record.definition;
+                END IF;
+
+                /* Looks good, let's use it. */
+            END IF;
+        END IF;
+    END IF;
+
+    /*
+     * Generate a name for the unique constraint.  We don't have to worry about
+     * concurrency here because all period ddl commands lock the periods table.
+     */
+    IF unique_key_name IS NULL THEN
+        unique_key_name := sql_saga.__internal_make_name(
+            ARRAY[(SELECT c.relname FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid)]
+                || column_names
+                || ARRAY[era_name]);
+    END IF;
+    pass := 0;
+    WHILE EXISTS (
+       SELECT FROM sql_saga.unique_keys AS uk
+       WHERE uk.unique_key_name = unique_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END)
+    LOOP
+       pass := pass + 1;
+    END LOOP;
+    unique_key_name := unique_key_name || CASE WHEN pass > 0 THEN '_' || pass::text ELSE '' END;
+
+    /* Time to make the underlying constraints */
+    IF key_type = 'primary' THEN
+        SELECT array_agg(format('ALTER COLUMN %I SET NOT NULL', u.column_name))
+        INTO alter_cmds
+        FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
+    ELSE
+        alter_cmds := '{}';
+    END IF;
+
+    IF key_type IN ('primary', 'natural') THEN
+        -- For XOR keys, we don't create a single overarching UNIQUE constraint.
+        -- Uniqueness is handled by the partial indexes.
+        IF mutually_exclusive_columns IS NULL THEN
+            IF NOT v_unique_constraint_found THEN
+                IF unique_constraint IS NULL THEN
+                    -- If this is a primary key, Postgres will name it automatically.
+                    -- For natural keys, we'll generate a name for consistency.
+                    IF key_type = 'natural' THEN
+                        unique_constraint := unique_key_name || '_uniq';
+                        alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+                    ELSE
+                        alter_cmds := alter_cmds || ('ADD ' || unique_sql);
+                    END IF;
+                ELSE
+                     alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+                END IF;
+            END IF;
+        END IF;
+    ELSIF key_type = 'predicated' THEN
+        -- For predicated keys, uniqueness is handled by the EXCLUDE constraint, not a UNIQUE index.
+        -- No action needed here for unique_sql.
+    END IF;
+
+    -- For XOR keys, we create partial exclusion constraints instead of one broad one.
+    IF mutually_exclusive_columns IS NULL THEN
+        -- Add the exclusion constraint only for predicated keys.
+        IF key_type = 'predicated' AND NOT v_exclude_constraint_found THEN
+            IF exclude_constraint IS NULL THEN
+                exclude_constraint := unique_key_name || '_excl';
+            END IF;
+            alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(exclude_constraint) || ' ' || exclude_sql);
+        END IF;
+    ELSE -- mutually_exclusive_columns IS NOT NULL (XOR keys)
+        BEGIN
+            -- XOR keys now use a single UNIQUE constraint with NULLS NOT DISTINCT
+            -- This replaces the complex CHECK + partial indexes + partial EXCLUDE constraints
+
+            -- For XOR keys, we use the unified unique constraint approach
+            IF unique_constraint IS NULL THEN
+                unique_constraint := unique_key_name;
+            END IF;
+
+            -- Generate UNIQUE constraint with NULLS NOT DISTINCT to handle XOR columns
+            unique_sql := format('UNIQUE NULLS NOT DISTINCT (%s, %I WITHOUT OVERLAPS)',
+                (SELECT string_agg(format('%I', column_name), ', ') FROM unnest(column_names) AS column_name),
+                era_row.range_column_name
+            );
+
+            alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
+
+            -- Clear XOR-specific metadata (no longer using partial constraints)
+            v_check_constraint := NULL;
+            exclude_constraint := NULL;
+        END;
+    END IF;
+
+    -- For native temporal keys, there is no separate exclusion constraint.
+    IF key_type IN ('primary', 'natural') THEN
+        exclude_constraint := NULL;
+    END IF;
+
+    -- When adding a natural key, determine the state of PK consistency enforcement.
+    IF key_type = 'natural' THEN
+        IF enforce_consistency_with_primary_key THEN
+            DECLARE
+                pk_column_names name[];
+                stable_pk_columns name[];
+                pk_is_compatible boolean := true;
+            BEGIN
+                -- A PK exists, so we can enforce immediately.
+                SELECT uk.column_names INTO pk_column_names FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'primary'::sql_saga.unique_key_type;
+                IF NOT FOUND THEN
+                    SELECT array_agg(a.attname ORDER BY u.ord) INTO pk_column_names FROM pg_catalog.pg_constraint c JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS u(attnum, ord) ON TRUE JOIN pg_catalog.pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = u.attnum WHERE c.conrelid = table_oid AND c.contype = 'p';
+                END IF;
+
+                IF pk_column_names IS NOT NULL THEN
+                    -- Subtract temporal columns to find the stable part of the PK.
+                    SELECT array_agg(c) INTO stable_pk_columns
+                    FROM unnest(pk_column_names) as c
+                    WHERE c <> era_row.range_column_name;
+
+                    IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
+                        IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
+                            RAISE EXCEPTION 'cannot enforce primary key consistency on table "%" because its PRIMARY KEY (%) does not contain a stable (non-temporal) column', sql_saga.__internal_display_name(table_oid), array_to_string(pk_column_names, ', ');
+                        ELSE -- Silently opt-out if using default (NULL) or explicit false
+                            pk_is_compatible := false;
+                        END IF;
+                    END IF;
+
+                    IF pk_is_compatible AND array_length(stable_pk_columns, 1) > 1 THEN
+                        IF v_enforce_consistency_original = true THEN -- Error only if explicitly requested
+                            RAISE EXCEPTION 'cannot enforce primary key consistency for natural key (%) on table "%" because its stable PRIMARY KEY component (%) is composite', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
+                        ELSE -- Silently opt-out if using default (NULL) or explicit false
+                            pk_is_compatible := false;
+                        END IF;
+                    END IF;
+
+                    IF pk_is_compatible THEN
+                        -- If we get here, we have a single stable PK column.
+                        DECLARE
+                            pk_column_name name := stable_pk_columns[1];
+                            consistency_result jsonb;
+                        BEGIN
+                            -- Skip consistency constraint when natural key IS the PK column (single column case)
+                            IF array_length(column_names, 1) = 1 AND column_names[1] = pk_column_name THEN
+                                -- Natural key is identical to PK column, no consistency check needed
+                                v_pk_consistency_constraint_names := '{}';
+                            ELSE
+                                consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
+                                    p_unique_key_name => unique_key_name,
+                                    p_natural_key_columns => column_names,
+                                    p_mutually_exclusive_columns => mutually_exclusive_columns,
+                                    p_primary_key_column => pk_column_name
+                                );
+                                alter_cmds := alter_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
+                                v_pk_consistency_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
+                            END IF;
+                        END;
+                    ELSE
+                        -- Incompatible PK, silently opt-out.
+                        v_pk_consistency_constraint_names := NULL;
+                    END IF;
+                ELSE
+                    -- No PK exists yet. Set state to "pending" (empty array).
+                    v_pk_consistency_constraint_names := '{}';
+                END IF;
+            END;
+        ELSE
+            -- User opted out. Set state to "opt-out" (NULL).
+            v_pk_consistency_constraint_names := NULL;
+        END IF;
+    END IF;
+
+    IF alter_cmds <> '{}' THEN
+
+        SELECT format('ALTER TABLE %I.%I %s', n.nspname /* %I */, c.relname /* %I */, array_to_string(alter_cmds, ', ') /* %s */)
+        INTO sql
+        FROM pg_catalog.pg_class AS c
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE c.oid = table_oid;
+
+        EXECUTE sql;
+        RAISE NOTICE 'sql_saga: Added constraints to table %: %', table_oid, array_to_string(alter_cmds, '; ');
+    END IF;
+
+    /* If we don't already have a unique_constraint, it must be the one with the highest oid */
+    IF unique_constraint IS NULL AND key_type IN ('primary', 'natural') THEN
+        SELECT c.conname
+        INTO unique_constraint
+        FROM pg_catalog.pg_constraint AS c
+        WHERE c.conrelid = table_oid AND c.contype = (CASE WHEN key_type = 'primary' THEN 'p' ELSE 'u' END)
+        ORDER BY oid DESC
+        LIMIT 1;
+    END IF;
+
+    RAISE DEBUG 'add_unique_key: about to insert with v_stable_cols_to_store=%', v_stable_cols_to_store;
+
+    RAISE DEBUG 'add_unique_key: Inserting into sql_saga.unique_keys: name=%, table=%.%, key_type=%, cols=%, era=%, u_constraint=%, ex_constraint=%, check_constraint=%, predicate=%, mut_ex_cols=%, pk_consistency_constraints=%',
+        unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, v_pk_consistency_constraint_names;
+    INSERT INTO sql_saga.unique_keys (unique_key_name, table_schema, table_name, key_type, column_names, era_name, unique_constraint, exclude_constraint, check_constraint, predicate, mutually_exclusive_columns, pk_consistency_constraint_names)
+    VALUES (unique_key_name, table_schema, table_name, key_type, v_stable_cols_to_store, era_name, unique_constraint, exclude_constraint, v_check_constraint, predicate, mutually_exclusive_columns, v_pk_consistency_constraint_names);
+
+    -- Create compound index for efficient exact match queries (needed by temporal_merge)
+    -- This index helps UPDATE/DELETE operations that need to find rows by both
+    -- identity columns AND exact range match
+    IF era_name IS NOT NULL AND array_length(v_stable_cols_to_store, 1) > 0 THEN
+        DECLARE
+            compound_index_name name;
+            compound_index_sql text;
+            compound_columns text;
+        BEGIN
+            -- Build list of columns for the compound index
+            compound_columns := (
+                SELECT string_agg(quote_ident(c), ', ')
+                FROM unnest(v_stable_cols_to_store) AS c
+            );
+
+            -- Add the range column at the end
+            compound_columns := compound_columns || ', ' || quote_ident(era_row.range_column_name);
+
+            compound_index_name := sql_saga.__internal_make_name(
+                ARRAY[table_name] || v_stable_cols_to_store || ARRAY[era_row.range_column_name, 'idx']
+            );
+
+            -- Check if index already exists
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                WHERE i.indrelid = table_oid
+                AND c.relname = compound_index_name
+            ) THEN
+                compound_index_sql := format(
+                    'CREATE INDEX %I ON %I.%I (%s)',
+                    compound_index_name,
+                    table_schema,
+                    table_name,
+                    compound_columns
+                );
+
+                RAISE DEBUG 'add_unique_key: Creating compound index for temporal_merge performance: %', compound_index_sql;
+                EXECUTE compound_index_sql;
+                RAISE DEBUG 'sql_saga: created compound index % on % for temporal_merge performance', compound_index_name, table_oid::regclass;
+            END IF;
+        END;
+    END IF;
+
+    -- When adding a primary key, scan for any natural keys in a "pending" state.
+    IF key_type = 'primary' THEN
+        DECLARE
+            nk_row sql_saga.unique_keys;
+            pk_column_name name;
+            consistency_cmds text[];
+        BEGIN
+            DECLARE
+                stable_pk_columns name[];
+            BEGIN
+                -- Subtract temporal columns from the new PK to find its stable part.
+                SELECT array_agg(c) INTO stable_pk_columns
+                FROM unnest(column_names) as c
+                WHERE c <> era_row.range_column_name;
+
+                IF stable_pk_columns IS NULL OR array_length(stable_pk_columns, 1) = 0 THEN
+                    IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
+                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because it has no stable (non-temporal) part, which is required by existing natural keys pending consistency enforcement', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                ELSIF array_length(stable_pk_columns, 1) > 1 THEN
+                    IF EXISTS (SELECT 1 FROM sql_saga.unique_keys uk WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name) AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}') THEN
+                        RAISE EXCEPTION 'cannot add primary key (%) to table "%" because its stable part (%) is composite, which is not supported for consistency enforcement required by existing natural keys', array_to_string(column_names, ', '), sql_saga.__internal_display_name(table_oid), array_to_string(stable_pk_columns, ', ');
+                    END IF;
+                ELSE
+                    -- This is a compatible, single-column stable PK. Apply to pending NKs.
+                    pk_column_name := stable_pk_columns[1];
+                    FOR nk_row IN
+                        SELECT * FROM sql_saga.unique_keys uk
+                        WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
+                        AND uk.key_type = 'natural' AND uk.pk_consistency_constraint_names = '{}' -- Find pending keys
+                    LOOP
+                        DECLARE
+                            consistency_result jsonb;
+                            newly_created_constraint_names name[];
+                        BEGIN
+                             consistency_result := sql_saga.__internal_generate_pk_consistency_constraints(
+                                p_unique_key_name => nk_row.unique_key_name,
+                                p_natural_key_columns => nk_row.column_names,
+                                p_mutually_exclusive_columns => nk_row.mutually_exclusive_columns,
+                                p_primary_key_column => pk_column_name
+                            );
+                            consistency_cmds := consistency_cmds || (SELECT array_agg(value) FROM jsonb_array_elements_text(consistency_result->'cmds'));
+                            newly_created_constraint_names := (SELECT array_agg(value::name) FROM jsonb_array_elements_text(consistency_result->'names'));
+                            UPDATE sql_saga.unique_keys SET pk_consistency_constraint_names = newly_created_constraint_names WHERE unique_key_name = nk_row.unique_key_name;
+                        END;
+                    END LOOP;
+
+                    IF consistency_cmds IS NOT NULL AND array_length(consistency_cmds, 1) > 0 THEN
+                        RAISE NOTICE 'sql_saga: Applied retroactive primary key consistency constraints to table %.%: %', table_schema, table_name, array_to_string(consistency_cmds, '; ');
+                        EXECUTE format('ALTER TABLE %I.%I %s', table_schema, table_name, array_to_string(consistency_cmds, ', '));
+                    END IF;
+                END IF;
+            END;
+        END;
+    END IF;
+
+    -- Create a standard B-Tree index on the unique key columns to support
+    -- fast lookups for foreign key checks (both temporal and regular).
+    -- This is only created if a suitable index doesn't already exist.
+    DECLARE
+        index_name name;
+        index_sql text;
+        existing_index_oid oid;
+    BEGIN
+        -- Find an existing B-Tree index on exactly these columns in this order
+        SELECT i.indexrelid INTO existing_index_oid
+        FROM pg_catalog.pg_index i
+        JOIN pg_catalog.pg_class c ON c.oid = i.indexrelid
+        JOIN pg_catalog.pg_am am ON am.oid = c.relam
+        WHERE i.indrelid = table_oid
+          AND i.indisvalid
+          AND i.indnkeyatts = array_length(column_names, 1)
+          AND i.indkey::text = array_to_string(column_attnums, ' ')
+          AND am.amname = 'btree'
+        LIMIT 1;
+
+        IF existing_index_oid IS NULL THEN
+            index_name := sql_saga.__internal_make_name(
+                ARRAY[table_name] || column_names || ARRAY['idx']
+            );
+            index_sql := format('CREATE INDEX %I ON %I.%I USING btree (%s)',
+                index_name, /* %I */
+                table_schema, /* %I */
+                table_name, /* %I */
+                (SELECT string_agg(quote_ident(c), ', ') FROM unnest(column_names) AS u(c)) /* %s */
+            );
+            EXECUTE index_sql;
+        END IF;
+    END;
+
+    RETURN unique_key_name;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.add_unique_key(regclass, name[], name, sql_saga.unique_key_type, boolean, name, name, name, text, name[]) IS
+'Adds a temporal unique key to a table, ensuring uniqueness across time for a given set of columns within an era. Supports primary, natural, and predicated keys. Can also enforce consistency between a natural key and the primary key.';
+CREATE OR REPLACE FUNCTION sql_saga.health_checks()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ -- Set a safe search path for this SECURITY DEFINER function
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    cmd text;
+    r record;
+    managed_policy record;
+    gated_columns text;
+    expected_gate text;
+    alter_function_resolved text;
+BEGIN
+    IF tg_tag IN ('ALTER FUNCTION', 'ALTER ROUTINE') THEN
+        alter_function_resolved := current_setting('sql_saga.alter_function_resolved', true);
+        /* Consume the statement snapshot before doing any comparison or raising. */
+        PERFORM set_config('sql_saga.alter_function_resolved', '', true);
+
+        IF alter_function_resolved IS NULL OR alter_function_resolved = '' THEN
+            RETURN;
+        END IF;
+
+        FOR r IN
+            SELECT to_regclass(format('%I.%I', x.table_schema, x.table_name)) AS table_oid,
+                   x.identity
+            FROM jsonb_to_recordset(alter_function_resolved::jsonb) AS x(
+                table_schema name,
+                table_name name,
+                role text,
+                identity text)
+            WHERE to_regprocedure(x.identity) IS NULL
+            ORDER BY x.table_schema, x.table_name, x.role
+        LOOP
+            RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
+                sql_saga.__internal_display_function_name(r.identity), sql_saga.__internal_display_name(r.table_oid);
+        END LOOP;
+    END IF;
+
+    -- Exit early if the DDL command does not affect a managed object.
+    IF NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
+        RETURN;
+    END IF;
+
+    /* Make sure that all of our tables are still persistent */
+    FOR r IN
+        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_class AS c ON c.relname = e.table_name
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = e.table_schema
+        WHERE c.relpersistence <> 'p'
+    LOOP
+        RAISE EXCEPTION 'table "%" must remain persistent because it has an era',
+            sql_saga.__internal_display_name(r.table_oid);
+    END LOOP;
+
+    /* And the history tables, too */
+    FOR r IN
+        SELECT to_regclass(format('%I.%I', e.table_schema /* %I */, e.table_name /* %I */)) AS table_oid
+        FROM sql_saga.era AS e
+        JOIN pg_catalog.pg_class AS c ON c.relname = e.audit_table_name
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace AND n.nspname = e.audit_schema_name
+        WHERE e.audit_table_name IS NOT NULL AND c.relpersistence <> 'p'
+    LOOP
+        RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
+            sql_saga.__internal_display_name(r.table_oid);
+    END LOOP;
+
+    /* Fix up history and for-portion objects ownership */
+    FOR cmd IN
+        /* Fix ownership of history tables */
+        SELECT format('ALTER TABLE %I.%I OWNER TO %I',
+            sv.history_schema_name /* %I */, sv.history_table_name /* %I */, t.relowner::regrole /* %I */)
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_class AS t ON t.relname = sv.table_name
+        JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
+        JOIN pg_class AS ht ON ht.relname = sv.history_table_name
+        JOIN pg_namespace AS htn ON htn.oid = ht.relnamespace AND htn.nspname = sv.history_schema_name
+        WHERE t.relowner <> ht.relowner
+
+        UNION ALL
+
+        /* Fix ownership of system versioning views */
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I',
+            sv.view_schema_name /* %I */, sv.view_table_name /* %I */, t.relowner::regrole /* %I */)
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_class AS t ON t.relname = sv.table_name
+        JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
+        JOIN pg_class AS vt ON vt.relname = sv.view_table_name
+        JOIN pg_namespace AS vtn ON vtn.oid = vt.relnamespace AND vtn.nspname = sv.view_schema_name
+        WHERE t.relowner <> vt.relowner
+
+        UNION ALL
+
+        /* Fix ownership of the gated history views */
+        SELECT format('ALTER VIEW %s OWNER TO %I', f.gated_oid::regclass, t.relowner::regrole)
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_class AS t ON t.relname = sv.table_name
+        JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(t.oid) AS f
+        JOIN pg_class AS gv ON gv.oid = f.gated_oid
+        WHERE f.base_oid = t.oid AND t.relowner <> gv.relowner
+
+        UNION ALL
+
+        /* Fix ownership of for-portion-of views */
+        SELECT format('ALTER VIEW %I.%I OWNER TO %I', v.view_schema /* %I */, v.view_name /* %I */, t.relowner::regrole /* %I */)
+        FROM sql_saga.updatable_view v
+        JOIN pg_class t ON t.relname = v.table_name
+        JOIN pg_namespace tn ON tn.oid = t.relnamespace AND tn.nspname = v.table_schema
+        JOIN pg_class vt ON vt.relname = v.view_name
+        JOIN pg_namespace vn ON vn.oid = vt.relnamespace AND vn.nspname = v.view_schema
+        WHERE t.relowner <> vt.relowner
+
+        UNION ALL
+
+        /* Fix ownership of system versioning functions */
+        SELECT format('ALTER FUNCTION %s OWNER TO %I', p.oid::regprocedure, t.relowner::regrole)
+        FROM sql_saga.system_versioning AS sv
+        JOIN pg_class AS t ON t.relname = sv.table_name
+        JOIN pg_namespace AS tn ON tn.oid = t.relnamespace AND tn.nspname = sv.table_schema
+        JOIN pg_proc AS p ON p.oid IN (to_regprocedure(sv.func_as_of), to_regprocedure(sv.func_between),
+                                       to_regprocedure(sv.func_between_symmetric), to_regprocedure(sv.func_from_to))
+        WHERE t.relowner <> p.proowner
+    LOOP
+        EXECUTE cmd;
+    END LOOP;
+
+    /*
+     * Row-level security of history tables (tmp/design_final.md sections 3, 8-10, 15).
+     * Policy DDL on a versioned base table (or its history), and ENABLE/DISABLE/FORCE/NO FORCE on
+     * either, re-synchronizes that family's history policies. Direct changes to the policies
+     * sql_saga manages, and to the history's RLS settings, are refused.
+     */
+    FOR r IN
+        SELECT DISTINCT f.base_oid, f.history_oid, ev.command_tag, ev.objid, ev.classid
+        FROM pg_event_trigger_ddl_commands() AS ev
+        LEFT JOIN pg_catalog.pg_policy AS pol
+               ON ev.classid = 'pg_catalog.pg_policy'::regclass AND pol.oid = ev.objid
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(
+            CASE WHEN ev.classid = 'pg_catalog.pg_policy'::regclass THEN pol.polrelid ELSE ev.objid END) AS f
+        WHERE ev.command_tag IN ('CREATE POLICY', 'ALTER POLICY', 'ALTER TABLE')
+    LOOP
+        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+            -- Refuse direct DDL on managed history policies.
+            -- CREATE POLICY of a managed name is what pg_restore does when it replays a dump: the sync
+            -- below then keeps it (current installation) or drops it (another installation's token).
+            IF r.classid = 'pg_catalog.pg_policy'::regclass THEN
+                SELECT p.polname, p.polrelid INTO managed_policy
+                FROM pg_catalog.pg_policy AS p WHERE p.oid = r.objid;
+                IF managed_policy.polrelid = r.history_oid THEN
+                    IF NOT sql_saga.__internal_is_managed_history_policy(managed_policy.polname) THEN
+                        -- A policy of one's own on the history table (decision 7): it would be OR-ed
+                        -- with the copies and could show more history than the base table allows.
+                        -- ALTER POLICY ... RENAME TO a non-managed name lands here too.
+                        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', sql_saga.__internal_display_name(r.history_oid::regclass)
+                            USING HINT = format('Create the policy on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
+                                                sql_saga.__internal_display_name(r.base_oid::regclass));
+                    ELSIF r.command_tag = 'ALTER POLICY' THEN
+                        RAISE EXCEPTION 'cannot drop or alter policy "%" on "%" because it is managed by sql_saga for table "%"',
+                            managed_policy.polname, sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
+                    END IF;
+                END IF;
+            END IF;
+            -- Refuse direct changes to the history's RLS settings.
+            IF r.command_tag = 'ALTER TABLE' AND r.objid = r.history_oid
+               AND NOT EXISTS (SELECT FROM pg_catalog.pg_class AS h, pg_catalog.pg_class AS b
+                               WHERE h.oid = r.history_oid AND b.oid = r.base_oid
+                                 AND h.relrowsecurity AND h.relforcerowsecurity = b.relforcerowsecurity) THEN
+                RAISE EXCEPTION 'history table "%" must keep row level security enabled, and forced exactly when its base table is, because it is used in SYSTEM VERSIONING for table "%"',
+                    sql_saga.__internal_display_name(r.history_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
+            END IF;
+        END IF;
+        -- Not during the teardown by pg_restore --clean (its ALTER TABLE .. DROP CONSTRAINT on the base
+        -- would recreate the history policies drop_protection has just dropped for the teardown).
+        IF current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
+           AND NOT sql_saga.__internal_is_clean_teardown()
+           AND (r.objid <> r.history_oid OR r.classid = 'pg_catalog.pg_policy'::regclass) THEN
+            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid);
+        END IF;
+    END LOOP;
+
+    /* The fixed shape of views sql_saga manages. */
+    FOR r IN
+        SELECT ev.objid AS view_oid, v.base_oid, v.kind
+        FROM pg_event_trigger_ddl_commands() AS ev
+        JOIN (
+            SELECT format('%I.%I', sv.view_schema_name, sv.view_table_name)::regclass::oid AS view_oid,
+                   format('%I.%I', sv.table_schema, sv.table_name)::regclass::oid AS base_oid,
+                   'SYSTEM VERSIONING'::text AS kind
+            FROM sql_saga.system_versioning AS sv
+            WHERE to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL
+            UNION ALL
+            SELECT format('%I.%I', uv.view_schema, uv.view_name)::regclass::oid,
+                   format('%I.%I', uv.table_schema, uv.table_name)::regclass::oid,
+                   CASE uv.view_type WHEN 'for_portion_of' THEN 'FOR PORTION OF' ELSE 'a current view' END
+            FROM sql_saga.updatable_view AS uv
+            WHERE to_regclass(format('%I.%I', uv.view_schema, uv.view_name)) IS NOT NULL
+        ) AS v ON v.view_oid = ev.objid
+        WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
+    LOOP
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c
+                       WHERE c.oid = r.view_oid AND 'security_invoker=on' = ANY (c.reloptions)) THEN
+            RAISE EXCEPTION 'view "%" must keep security_invoker because it is used in % for table "%"',
+                sql_saga.__internal_display_name(r.view_oid::regclass), r.kind, sql_saga.__internal_display_name(r.base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT ev.objid AS view_oid, f.base_oid, f.history_oid
+        FROM pg_event_trigger_ddl_commands() AS ev
+        JOIN sql_saga.system_versioning AS sv
+          ON to_regclass(format('%I.%I', sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))::oid = ev.objid
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(format('%I.%I', sv.table_schema, sv.table_name)::regclass) AS f
+        WHERE ev.command_tag IN ('ALTER VIEW', 'CREATE VIEW', 'ALTER TABLE')
+    LOOP
+        -- The gate must be exactly the generated definition (owner-rights, same body), not just
+        -- contain its parts: e.g. "WHERE true OR (gate)" keeps every function reference but opens
+        -- the view. The canonical body is rendered from the view's own column list, so the check
+        -- holds whatever columns the history has, and both are deparsed the same way.
+        gated_columns := (SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum)
+                          FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid = r.view_oid AND a.attnum > 0 AND NOT a.attisdropped);
+        EXECUTE 'CREATE TEMPORARY VIEW sql_saga_expected_gate AS '
+            || sql_saga.__internal_history_gated_view_sql(r.base_oid, r.history_oid, gated_columns);
+        expected_gate := pg_catalog.pg_get_viewdef('pg_temp.sql_saga_expected_gate'::regclass);
+        DROP VIEW pg_temp.sql_saga_expected_gate;
+        IF EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = r.view_oid AND c.reloptions IS NOT NULL)
+           OR pg_catalog.pg_get_viewdef(r.view_oid) IS DISTINCT FROM expected_gate THEN
+            RAISE EXCEPTION 'view "%" must keep its access gate because it is used in SYSTEM VERSIONING for table "%"',
+                sql_saga.__internal_display_name(r.view_oid::regclass), sql_saga.__internal_display_name(r.base_oid::regclass);
+        END IF;
+    END LOOP;
+
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_unique_key_object_is_attributable(unique_key_name name, object_kind text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    uk sql_saga.unique_keys;
+    table_oid oid;
+    range_column name;
+    expected_attnums smallint[];
+    object_oid oid;
+    attributable boolean;
+BEGIN
+    SELECT x.* INTO uk FROM sql_saga.unique_keys AS x
+    WHERE x.unique_key_name = $1;
+    IF NOT FOUND THEN RETURN false; END IF;
+
+    table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+    IF table_oid IS NULL THEN RETURN false; END IF;
+    SELECT e.range_column_name INTO range_column FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+    SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) INTO expected_attnums
+    FROM pg_catalog.unnest(uk.column_names || range_column) WITH ORDINALITY AS u(column_name, n)
+    JOIN pg_catalog.pg_attribute AS a ON a.attrelid = table_oid AND a.attname = u.column_name
+        AND a.attnum > 0 AND NOT a.attisdropped;
+    IF pg_catalog.cardinality(expected_attnums) IS DISTINCT FROM pg_catalog.cardinality(uk.column_names) + 1 THEN
+        RETURN false;
+    END IF;
+
+    IF object_kind = 'unique' THEN
+        IF uk.unique_constraint IS NULL THEN RETURN true; END IF;
+        IF uk.key_type = 'predicated' THEN
+            object_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.unique_constraint));
+            RETURN EXISTS (
+                SELECT 1 FROM pg_catalog.pg_index AS i
+                JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+                JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+                WHERE i.indexrelid = object_oid AND i.indrelid = table_oid
+                  AND i.indisunique AND i.indisvalid AND i.indisready
+                  AND i.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+                  AND i.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ')
+                  AND i.indexprs IS NULL AND am.amname = 'btree'
+                  AND pg_catalog.pg_get_expr(i.indpred, i.indrelid) IS NOT DISTINCT FROM uk.predicate);
+        END IF;
+        SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+            JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+            JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+            WHERE c.conrelid = table_oid AND c.conname = uk.unique_constraint
+              AND c.contype = CASE uk.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+              AND c.conkey = expected_attnums AND c.conperiod
+              AND NOT c.condeferrable AND NOT c.condeferred
+              AND i.indrelid = table_oid AND i.indisunique AND i.indisvalid AND i.indisready
+              AND i.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+              AND i.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ') AND i.indexprs IS NULL
+              AND i.indpred IS NULL AND am.amname = 'gist')
+        INTO attributable;
+        RETURN attributable;
+    ELSIF object_kind = 'exclude' THEN
+        IF uk.exclude_constraint IS NULL THEN RETURN true; END IF;
+        SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+            JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+            JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+            WHERE c.conrelid = table_oid AND c.conname = uk.exclude_constraint
+              AND c.contype = 'x' AND c.conkey = expected_attnums
+              AND c.condeferrable AND NOT c.condeferred
+              AND i.indrelid = table_oid AND i.indisvalid AND i.indisready
+              AND i.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+              AND i.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ') AND i.indexprs IS NULL
+              AND am.amname = 'gist'
+              AND pg_catalog.cardinality(c.conexclop) = pg_catalog.cardinality(expected_attnums)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.unnest(c.conexclop) WITH ORDINALITY AS x(oproid, n)
+                  JOIN pg_catalog.pg_operator AS o ON o.oid = x.oproid
+                  WHERE (x.n <= pg_catalog.cardinality(uk.column_names) AND o.oprname <> '=')
+                     OR (x.n = pg_catalog.cardinality(expected_attnums) AND o.oprname <> '&&')))
+        INTO attributable;
+        RETURN attributable;
+    ELSIF object_kind = 'check' THEN
+        /* Deprecated catalog rows have no canonical 1.2 CHECK object. */
+        RETURN uk.check_constraint IS NULL;
+    END IF;
+    RETURN false;
+END;
+$function$;
+
+CREATE FUNCTION sql_saga.__internal_system_versioning_member_attribution(table_oid oid)
+RETURNS TABLE(
+    as_of_attributable boolean,
+    between_attributable boolean,
+    between_symmetric_attributable boolean,
+    from_to_attributable boolean,
+    public_view_attributable boolean,
+    gated_view_attributable boolean)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_system_versioning_member_attribution$
+    WITH family AS (
+        SELECT base.relowner,
+               public_view.oid AS public_view_oid,
+               gated_view.oid AS gated_view_oid,
+               public_view.reltype AS public_view_type
+        FROM pg_catalog.pg_class AS base
+        JOIN sql_saga.system_versioning AS sv
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)) = base.oid
+        LEFT JOIN pg_catalog.pg_class AS public_view
+          ON public_view.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+        LEFT JOIN pg_catalog.pg_class AS gated_view
+          ON gated_view.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name,
+               sql_saga.__internal_history_gated_name(sv.history_table_name)))
+        WHERE base.oid = table_oid
+    ), functions AS (
+        SELECT q.role,
+               p.oid IS NOT NULL
+               AND p.prokind = 'f'
+               AND p.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
+               AND p.prorettype = f.public_view_type AND p.proretset AND p.provolatile = 's'
+               AND NOT p.proisstrict AND NOT p.prosecdef AND NOT p.proleakproof
+               AND p.proparallel = 'u' AND p.prosupport = 0 AND p.procost = 100 AND p.prorows = 1000
+               AND p.proconfig IS NULL AND p.proowner = f.relowner AND p.prosrc = q.body
+               AND p.prosqlbody IS NULL AND p.proargnames IS NULL AND p.proallargtypes IS NULL
+               AND p.proargmodes IS NULL
+               AND p.proargtypes = CASE q.role WHEN 'as_of' THEN '1184'::pg_catalog.oidvector ELSE '1184 1184'::pg_catalog.oidvector END
+               AND NOT EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS x
+                   WHERE x.grantee NOT IN (0, p.proowner) OR (x.grantee = 0 AND x.privilege_type <> 'EXECUTE'))
+               AND EXISTS (
+                   SELECT 1 FROM pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS x
+                   WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE')
+               AND 1 = (SELECT pg_catalog.count(*) FROM pg_catalog.pg_depend AS d
+                        WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid
+                          AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass AND d.deptype = 'n')
+               AND EXISTS (SELECT 1 FROM pg_catalog.pg_depend AS d
+                           WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass AND d.objid = p.oid
+                             AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                             AND d.refobjid = f.public_view_type AND d.deptype = 'n') AS attributable
+        FROM family AS f
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        LEFT JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(q.identity)
+    )
+    SELECT coalesce(bool_and(attributable) FILTER (WHERE role = 'as_of'), false),
+           coalesce(bool_and(attributable) FILTER (WHERE role = 'between'), false),
+           coalesce(bool_and(attributable) FILTER (WHERE role = 'between_symmetric'), false),
+           coalesce(bool_and(attributable) FILTER (WHERE role = 'from_to'), false),
+           sql_saga.__internal_system_versioning_view_is_attributable(table_oid, f.public_view_oid, 'public'),
+           sql_saga.__internal_system_versioning_view_is_attributable(table_oid, f.gated_view_oid, 'gated')
+    FROM family AS f
+    LEFT JOIN functions ON true
+    GROUP BY f.public_view_oid, f.gated_view_oid;
+$__internal_system_versioning_member_attribution$;
+
+CREATE FUNCTION sql_saga.__internal_unique_key_inventory(filter_unique_key_name name DEFAULT NULL)
+RETURNS TABLE(
+    unique_key_name name,
+    table_oid oid,
+    unique_attributable boolean,
+    exclude_attributable boolean,
+    check_attributable boolean,
+    object_missing boolean)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_inventory$
+    WITH keys AS (
+        SELECT uk.*, e.range_column_name,
+               pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))::oid AS table_oid
+        FROM sql_saga.unique_keys AS uk
+        LEFT JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+        WHERE filter_unique_key_name IS NULL OR uk.unique_key_name = filter_unique_key_name
+    ), expected AS (
+        SELECT k.*,
+               x.expected_attnums,
+               pg_catalog.cardinality(x.expected_attnums) = pg_catalog.cardinality(k.column_names) + 1 AS columns_valid
+        FROM keys AS k
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS expected_attnums
+            FROM pg_catalog.unnest(k.column_names || k.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = k.table_oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS x ON true
+    )
+    SELECT k.unique_key_name, k.table_oid,
+        CASE
+            WHEN k.table_oid IS NULL OR NOT k.columns_valid THEN false
+            WHEN uk.unique_constraint IS NULL THEN true
+            WHEN uk.key_type = 'predicated' THEN EXISTS (
+                SELECT 1 FROM pg_catalog.pg_index AS i
+                JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+                JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+                WHERE i.indexrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.unique_constraint))
+                  AND i.indrelid = k.table_oid AND i.indisunique AND i.indisvalid AND i.indisready
+                  AND i.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                  AND i.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                  AND i.indexprs IS NULL AND am.amname = 'btree'
+                  AND pg_catalog.regexp_replace(
+                          pg_catalog.regexp_replace(
+                              pg_catalog.pg_get_expr(i.indpred, i.indrelid),
+                              '::(text|character varying)', '', 'g'),
+                          '\(([[:alnum:]_".]+)\)', '\1', 'g')
+                      IS NOT DISTINCT FROM
+                      CASE WHEN uk.predicate IS NULL THEN NULL ELSE '(' || uk.predicate || ')' END)
+            ELSE EXISTS (
+                SELECT 1 FROM pg_catalog.pg_constraint AS c
+                JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+                JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+                JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+                WHERE c.conrelid = k.table_oid AND c.conname = uk.unique_constraint
+                  AND c.contype = CASE uk.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+                  AND c.conkey = k.expected_attnums AND c.conperiod
+                  AND NOT c.condeferrable AND NOT c.condeferred
+                  AND i.indrelid = k.table_oid AND i.indisunique AND i.indisvalid AND i.indisready
+                  AND i.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                  AND i.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                  AND i.indexprs IS NULL AND i.indpred IS NULL AND am.amname = 'gist')
+        END AS unique_attributable,
+        CASE
+            WHEN k.table_oid IS NULL OR NOT k.columns_valid THEN false
+            WHEN uk.exclude_constraint IS NULL THEN true
+            ELSE EXISTS (
+                SELECT 1 FROM pg_catalog.pg_constraint AS c
+                JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+                JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+                JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+                WHERE c.conrelid = k.table_oid AND c.conname = uk.exclude_constraint
+                  AND c.contype = 'x' AND c.conkey = k.expected_attnums
+                  AND c.condeferrable AND NOT c.condeferred
+                  AND i.indrelid = k.table_oid AND i.indisvalid AND i.indisready
+                  AND i.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                  AND i.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                  AND i.indexprs IS NULL AND am.amname = 'gist'
+                  AND pg_catalog.regexp_replace(
+                          pg_catalog.regexp_replace(
+                              pg_catalog.pg_get_expr(i.indpred, i.indrelid),
+                              '::(text|character varying)', '', 'g'),
+                          '\(([[:alnum:]_".]+)\)', '\1', 'g')
+                      IS NOT DISTINCT FROM
+                      CASE WHEN uk.predicate IS NULL THEN NULL ELSE '(' || uk.predicate || ')' END
+                  AND pg_catalog.cardinality(c.conexclop) = pg_catalog.cardinality(k.expected_attnums)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM pg_catalog.unnest(c.conexclop) WITH ORDINALITY AS x(oproid, n)
+                      JOIN pg_catalog.pg_operator AS o ON o.oid = x.oproid
+                      WHERE (x.n <= pg_catalog.cardinality(uk.column_names) AND o.oprname <> '=')
+                         OR (x.n = pg_catalog.cardinality(k.expected_attnums) AND o.oprname <> '&&')))
+        END AS exclude_attributable,
+        uk.check_constraint IS NULL AS check_attributable,
+        k.table_oid IS NULL
+        OR (uk.unique_constraint IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            WHERE c.conrelid = k.table_oid AND c.conname = uk.unique_constraint)
+            AND pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.unique_constraint)) IS NULL)
+        OR (uk.exclude_constraint IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            WHERE c.conrelid = k.table_oid AND c.conname = uk.exclude_constraint)) AS object_missing
+    FROM expected AS k
+    CROSS JOIN LATERAL (SELECT k.*) AS uk;
+$__internal_unique_key_inventory$;
+
+CREATE FUNCTION sql_saga.__internal_unique_key_attribution(unique_key_name name)
+RETURNS TABLE(unique_attributable boolean, exclude_attributable boolean, check_attributable boolean)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_attribution$
+    SELECT i.unique_attributable, i.exclude_attributable, i.check_attributable
+    FROM sql_saga.__internal_unique_key_inventory($1) AS i
+    WHERE i.unique_key_name = $1;
+$__internal_unique_key_attribution$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_system_versioning_member_attribution(table_oid oid)
+RETURNS TABLE(
+    as_of_attributable boolean,
+    between_attributable boolean,
+    between_symmetric_attributable boolean,
+    from_to_attributable boolean,
+    public_view_attributable boolean,
+    gated_view_attributable boolean)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_system_versioning_member_attribution$
+    WITH family AS (
+        SELECT base.relowner,
+               history.oid AS history_oid,
+               public_view.oid AS public_view_oid,
+               gated_view.oid AS gated_view_oid,
+               public_view.reltype AS public_view_type
+        FROM pg_catalog.pg_class AS base
+        JOIN pg_catalog.pg_namespace AS bn ON bn.oid = base.relnamespace
+        JOIN sql_saga.system_versioning AS sv
+          ON (sv.table_schema, sv.table_name) = (bn.nspname, base.relname)
+        LEFT JOIN pg_catalog.pg_namespace AS hn ON hn.nspname = sv.history_schema_name
+        LEFT JOIN pg_catalog.pg_class AS history
+          ON history.relnamespace = hn.oid AND history.relname = sv.history_table_name
+        LEFT JOIN pg_catalog.pg_namespace AS vn ON vn.nspname = sv.view_schema_name
+        LEFT JOIN pg_catalog.pg_class AS public_view
+          ON public_view.relnamespace = vn.oid AND public_view.relname = sv.view_table_name
+        LEFT JOIN pg_catalog.pg_class AS gated_view
+          ON gated_view.relnamespace = hn.oid
+         AND gated_view.relname = sql_saga.__internal_history_gated_name(sv.history_table_name)
+        WHERE base.oid = table_oid
+    ), function_objects AS (
+        SELECT q.role, q.body, p.*
+        FROM family AS f
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        LEFT JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(q.identity)
+    ), function_acl AS (
+        SELECT fo.oid,
+               pg_catalog.bool_and(x.grantee IN (0, fo.proowner)
+                   AND (x.grantee <> 0 OR x.privilege_type = 'EXECUTE')) AS valid,
+               pg_catalog.bool_or(x.grantee = 0 AND x.privilege_type = 'EXECUTE') AS public_execute
+        FROM function_objects AS fo
+        LEFT JOIN LATERAL pg_catalog.aclexplode(
+            coalesce(fo.proacl, pg_catalog.acldefault('f', fo.proowner))) AS x ON true
+        WHERE fo.oid IS NOT NULL
+        GROUP BY fo.oid
+    ), function_dependencies AS (
+        SELECT d.objid,
+               pg_catalog.count(*) AS dependency_count,
+               pg_catalog.bool_or(d.refobjid = f.public_view_type) AS depends_on_public_view
+        FROM family AS f
+        JOIN pg_catalog.pg_depend AS d
+          ON d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+         AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+         AND d.deptype = 'n'
+        JOIN function_objects AS fo ON fo.oid = d.objid
+        GROUP BY d.objid
+    ), functions AS (
+        SELECT fo.role,
+               fo.oid IS NOT NULL
+               AND fo.prokind = 'f'
+               AND fo.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
+               AND fo.prorettype = f.public_view_type AND fo.proretset AND fo.provolatile = 's'
+               AND NOT fo.proisstrict AND NOT fo.prosecdef AND NOT fo.proleakproof
+               AND fo.proparallel = 'u' AND fo.prosupport = 0 AND fo.procost = 100 AND fo.prorows = 1000
+               AND fo.proconfig IS NULL AND fo.proowner = f.relowner AND fo.prosrc = fo.body
+               AND fo.prosqlbody IS NULL AND fo.proargnames IS NULL AND fo.proallargtypes IS NULL
+               AND fo.proargmodes IS NULL
+               AND fo.proargtypes = CASE fo.role WHEN 'as_of' THEN '1184'::pg_catalog.oidvector ELSE '1184 1184'::pg_catalog.oidvector END
+               AND acl.valid AND acl.public_execute
+               AND dep.dependency_count = 1 AND dep.depends_on_public_view AS attributable
+        FROM family AS f
+        CROSS JOIN function_objects AS fo
+        LEFT JOIN function_acl AS acl ON acl.oid = fo.oid
+        LEFT JOIN function_dependencies AS dep ON dep.objid = fo.oid
+    ), view_objects AS (
+        SELECT 'public'::text AS role, v.*, f.relowner AS base_owner,
+               f.history_oid, f.gated_view_oid
+        FROM family AS f JOIN pg_catalog.pg_class AS v ON v.oid = f.public_view_oid
+        UNION ALL
+        SELECT 'gated', v.*, f.relowner, f.history_oid, f.gated_view_oid
+        FROM family AS f JOIN pg_catalog.pg_class AS v ON v.oid = f.gated_view_oid
+    ), view_acl AS (
+        SELECT vo.oid,
+               pg_catalog.bool_and(x.grantee IN (0, vo.relowner)
+                   AND (x.grantee <> 0 OR x.privilege_type = 'SELECT')) AS valid,
+               pg_catalog.bool_or(x.grantee = 0 AND x.privilege_type = 'SELECT') AS public_select
+        FROM view_objects AS vo
+        LEFT JOIN LATERAL pg_catalog.aclexplode(
+            coalesce(vo.relacl, pg_catalog.acldefault('r', vo.relowner))) AS x ON true
+        GROUP BY vo.oid
+    ), view_dependencies AS (
+        SELECT vo.oid,
+               pg_catalog.bool_or(d.refobjid = table_oid) AS depends_on_base,
+               pg_catalog.bool_or(d.refobjid = vo.history_oid) AS depends_on_history,
+               pg_catalog.bool_or(d.refobjid = vo.gated_view_oid) AS depends_on_gated,
+               pg_catalog.bool_or(d.refobjid = 'sql_saga.__internal_deny_history(oid)'::pg_catalog.regprocedure) AS depends_on_deny
+        FROM view_objects AS vo
+        LEFT JOIN pg_catalog.pg_rewrite AS rw ON rw.ev_class = vo.oid
+        LEFT JOIN pg_catalog.pg_depend AS d
+          ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+        GROUP BY vo.oid
+    ), views AS (
+        SELECT vo.role,
+               vo.relkind = 'v' AND vo.relpersistence = 'p' AND vo.relowner = vo.base_owner
+               AND acl.valid AND acl.public_select
+               AND CASE vo.role
+                   WHEN 'public' THEN vo.reloptions = ARRAY['security_invoker=on']::text[]
+                       AND dep.depends_on_base AND dep.depends_on_history AND dep.depends_on_gated
+                   WHEN 'gated' THEN vo.reloptions IS NULL AND dep.depends_on_deny
+                   ELSE false
+               END AS attributable
+        FROM view_objects AS vo
+        LEFT JOIN view_acl AS acl ON acl.oid = vo.oid
+        LEFT JOIN view_dependencies AS dep ON dep.oid = vo.oid
+    )
+    SELECT coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'as_of'), false),
+           coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'between'), false),
+           coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'between_symmetric'), false),
+           coalesce(pg_catalog.bool_and(attributable) FILTER (WHERE role = 'from_to'), false),
+           coalesce((SELECT v.attributable FROM views AS v WHERE v.role = 'public'), false),
+           coalesce((SELECT v.attributable FROM views AS v WHERE v.role = 'gated'), false)
+    FROM functions;
+$__internal_system_versioning_member_attribution$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_unique_key_object_is_attributable(
+    unique_key_name name,
+    object_kind text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_object_is_attributable$
+#variable_conflict use_variable
+DECLARE
+    uk sql_saga.unique_keys;
+    table_oid oid;
+    range_column name;
+    expected_attnums smallint[];
+    object_oid oid;
+    attributable boolean;
+BEGIN
+    SELECT x.* INTO uk FROM sql_saga.unique_keys AS x
+    WHERE x.unique_key_name = $1;
+    IF NOT FOUND THEN RETURN false; END IF;
+
+    IF object_kind = 'exclude' AND uk.exclude_constraint IS NULL THEN RETURN true; END IF;
+    IF object_kind = 'check' THEN RETURN uk.check_constraint IS NULL; END IF;
+
+    IF object_kind = 'unique' AND uk.key_type <> 'predicated' THEN
+        table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+        IF table_oid IS NULL THEN RETURN false; END IF;
+        SELECT e.range_column_name INTO range_column
+        FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+        IF range_column IS NULL THEN RETURN false; END IF;
+        SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n)
+        INTO expected_attnums
+        FROM pg_catalog.unnest(uk.column_names || range_column) WITH ORDINALITY AS u(column_name, n)
+        JOIN pg_catalog.pg_attribute AS a
+          ON a.attrelid = table_oid AND a.attname = u.column_name
+         AND a.attnum > 0 AND NOT a.attisdropped;
+        IF pg_catalog.cardinality(expected_attnums) IS DISTINCT FROM pg_catalog.cardinality(uk.column_names) + 1 THEN
+            RETURN false;
+        END IF;
+        RETURN EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+            JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+            JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+            WHERE c.conrelid = table_oid AND c.conname = uk.unique_constraint
+              AND c.contype = CASE uk.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+              AND c.conkey = expected_attnums AND c.conperiod
+              AND NOT c.condeferrable AND NOT c.condeferred
+              AND i.indrelid = table_oid AND i.indisunique AND i.indisvalid AND i.indisready
+              AND i.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+              AND i.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ')
+              AND i.indexprs IS NULL AND i.indpred IS NULL AND am.amname = 'gist');
+    END IF;
+
+    SELECT CASE object_kind
+        WHEN 'unique' THEN a.unique_attributable
+        WHEN 'exclude' THEN a.exclude_attributable
+        WHEN 'check' THEN a.check_attributable
+        ELSE false
+    END
+    INTO attributable
+    FROM sql_saga.__internal_unique_key_attribution(unique_key_name) AS a;
+    RETURN attributable;
+END;
+$__internal_unique_key_object_is_attributable$;
+
+CREATE FUNCTION sql_saga.__internal_temporal_foreign_key_is_attributable(foreign_key_name name)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_temporal_foreign_key_is_attributable$
+    WITH family AS (
+        SELECT fk.*,
+               pg_catalog.to_regclass(pg_catalog.format('%I.%I', fk.table_schema, fk.table_name))::oid AS fk_table_oid,
+               pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name))::oid AS uk_table_oid,
+               fk_era.range_column_name AS fk_range_column_name,
+               uk_era.range_column_name AS uk_range_column_name,
+               uk.column_names AS uk_column_names
+        FROM sql_saga.foreign_keys AS fk
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        LEFT JOIN sql_saga.era AS fk_era
+          ON (fk_era.table_schema, fk_era.table_name, fk_era.era_name)
+           = (fk.table_schema, fk.table_name, fk.fk_era_name)
+        LEFT JOIN sql_saga.era AS uk_era
+          ON (uk_era.table_schema, uk_era.table_name, uk_era.era_name)
+           = (uk.table_schema, uk.table_name, uk.era_name)
+        WHERE fk.foreign_key_name = $1 AND fk.type = 'temporal_to_temporal'
+    ), expected AS (
+        SELECT f.*,
+               fk_cols.attnums AS fk_attnums,
+               uk_cols.attnums AS uk_attnums
+        FROM family AS f
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(f.column_names || f.fk_range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = f.fk_table_oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS fk_cols ON true
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(f.uk_column_names || f.uk_range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = f.uk_table_oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS uk_cols ON true
+    )
+    SELECT coalesce(bool_and(
+        c.oid IS NOT NULL
+        AND c.contype = 'f'
+        AND c.conrelid = e.fk_table_oid
+        AND c.confrelid = e.uk_table_oid
+        AND c.conkey = e.fk_attnums
+        AND c.confkey = e.uk_attnums
+        AND c.conperiod
+        AND c.condeferrable
+        AND NOT c.condeferred
+        AND c.convalidated
+        AND c.conenforced
+        AND c.confmatchtype = CASE e.match_type WHEN 'FULL' THEN 'f' WHEN 'PARTIAL' THEN 'p' ELSE 's' END
+        AND c.confupdtype = CASE e.update_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END
+        AND c.confdeltype = CASE e.delete_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END), false)
+    FROM expected AS e
+    LEFT JOIN pg_catalog.pg_constraint AS c
+      ON c.conrelid = e.fk_table_oid AND c.conname = e.foreign_key_name;
+$__internal_temporal_foreign_key_is_attributable$;
+
+CREATE OR REPLACE FUNCTION sql_saga.check_integrity()
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $check_integrity$
+DECLARE
+    r record;
+    base_oid oid;
+    history_oid oid;
+    view_oid oid;
+    expected_columns name[];
+    function_oid oid;
+    expected_return_type oid;
+    missing_column name;
+BEGIN
+    /* SYSTEM_TIME invariants have the highest managed-object priority. */
+    FOR r IN
+        SELECT ste.*, e.range_column_name
+        FROM sql_saga.system_time_era AS ste
+        JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+        ORDER BY ste.table_schema COLLATE "C", ste.table_name COLLATE "C"
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        IF base_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%.%": catalogued base table is missing', r.table_schema, r.table_name;
+        END IF;
+
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.generated_always_trigger)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.write_history_trigger)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.truncate_trigger) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+
+        SELECT x.attname INTO missing_column
+        FROM pg_catalog.unnest(r.excluded_column_names) AS x(attname)
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = base_oid AND a.attname = x.attname AND a.attnum > 0 AND NOT a.attisdropped)
+        ORDER BY x.attname COLLATE "C" LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": excluded SYSTEM_TIME column "%" is missing; repair with set_system_time_era_excluded_columns or drop_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass), missing_column;
+        END IF;
+
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) INTO expected_columns
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = base_oid AND a.attnum > 0 AND NOT a.attisdropped;
+        IF expected_columns IS DISTINCT FROM r.table_columns_snapshot THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT uk.* FROM sql_saga.unique_keys AS uk
+        ORDER BY uk.table_schema COLLATE "C", uk.table_name COLLATE "C", uk.unique_key_name COLLATE "C"
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        IF base_oid IS NULL
+           OR (r.unique_constraint IS NOT NULL AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = base_oid AND c.conname = r.unique_constraint)
+               AND pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.unique_constraint)) IS NULL)
+           OR (r.exclude_constraint IS NOT NULL AND NOT EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = base_oid AND c.conname = r.exclude_constraint)) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": managed constraint or index is missing; repair with drop_unique_key and add_unique_key',
+                r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT fk.*, uk.table_schema AS uk_schema, uk.table_name AS uk_table
+        FROM sql_saga.foreign_keys AS fk
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        ORDER BY fk.table_schema COLLATE "C", fk.table_name COLLATE "C", fk.foreign_key_name COLLATE "C"
+    LOOP
+        IF r.type = 'regular_to_temporal' THEN
+            base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.uk_schema, r.uk_table));
+            IF base_oid IS NULL
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_update_trigger)
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger) THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": referenced-side helper trigger is missing; repair with drop_foreign_key and add_regular_foreign_key',
+                    r.table_schema, r.table_name;
+            END IF;
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT v.* FROM sql_saga.updatable_view AS v
+        ORDER BY v.table_schema COLLATE "C", v.table_name COLLATE "C", v.view_type, v.view_schema COLLATE "C", v.view_name COLLATE "C"
+    LOOP
+        view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema, r.view_name));
+        IF view_oid IS NULL
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = view_oid AND t.tgname = r.trigger_name) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for updatable view "%.%" of table "%.%": identifier column or trigger is missing; repair with drop_%_view and add_%_view',
+                r.view_schema, r.view_name, r.table_schema, r.table_name,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END;
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT sv.* FROM sql_saga.system_versioning AS sv
+        ORDER BY sv.table_schema COLLATE "C", sv.table_name COLLATE "C"
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        history_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.history_schema_name, r.history_table_name));
+        view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema_name, r.view_table_name));
+        IF view_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history view "%.%" is missing; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass), r.view_schema_name, r.view_table_name;
+        END IF;
+        BEGIN
+            IF history_oid IS NULL OR NOT sql_saga.__internal_history_policies_synchronized(base_oid, history_oid) THEN
+                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'policy mismatch';
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": managed history policy set is inconsistent; repair with sync_history_policies',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END;
+    END LOOP;
+
+    FOR r IN
+        SELECT sv.table_schema, sv.table_name, sv.view_schema_name, sv.view_table_name, q.*
+        FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(
+            pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid) AS q
+        ORDER BY sv.table_schema COLLATE "C", sv.table_name COLLATE "C",
+                 CASE q.role WHEN 'as_of' THEN 1 WHEN 'between' THEN 2 WHEN 'between_symmetric' THEN 3 ELSE 4 END
+    LOOP
+        function_oid := pg_catalog.to_regprocedure(r.identity);
+        IF function_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" is missing; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+        SELECT c.reltype INTO expected_return_type FROM pg_catalog.pg_class AS c
+        WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema_name, r.view_table_name));
+        IF (SELECT p.prorettype FROM pg_catalog.pg_proc AS p WHERE p.oid = function_oid) IS DISTINCT FROM expected_return_type THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+        IF EXISTS (
+            SELECT FROM pg_catalog.pg_proc AS p
+            WHERE p.oid = function_oid
+              AND (p.prokind <> 'f' OR p.prolang <> (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
+                   OR p.provolatile <> 's' OR p.proisstrict OR p.prosecdef OR p.proleakproof
+                   OR p.proparallel <> 'u' OR p.prosrc IS DISTINCT FROM r.body OR p.prosqlbody IS NOT NULL)) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" definition is noncanonical; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+    END LOOP;
+END;
+$check_integrity$;
+
+REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_unique_key_attribution(unique_key_name name)
+RETURNS TABLE(unique_attributable boolean, exclude_attributable boolean, check_attributable boolean)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_attribution$
+    WITH key AS (
+        SELECT uk.*, e.range_column_name, t.oid AS table_oid, tn.oid AS table_namespace_oid
+        FROM sql_saga.unique_keys AS uk
+        LEFT JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+        LEFT JOIN pg_catalog.pg_namespace AS tn ON tn.nspname = uk.table_schema
+        LEFT JOIN pg_catalog.pg_class AS t ON t.relnamespace = tn.oid AND t.relname = uk.table_name
+        WHERE uk.unique_key_name = $1
+    ), expected AS (
+        SELECT k.*, x.expected_attnums,
+               pg_catalog.cardinality(x.expected_attnums) = pg_catalog.cardinality(k.column_names) + 1 AS columns_valid
+        FROM key AS k
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS expected_attnums
+            FROM pg_catalog.unnest(k.column_names || k.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = k.table_oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS x ON true
+    )
+    SELECT CASE
+               WHEN k.table_oid IS NULL OR NOT k.columns_valid THEN false
+               WHEN k.unique_constraint IS NULL THEN true
+               WHEN k.key_type = 'predicated' THEN
+                   ui.indexrelid IS NOT NULL AND ui.indrelid = k.table_oid
+                   AND ui.indisunique AND ui.indisvalid AND ui.indisready
+                   AND ui.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                   AND ui.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                   AND ui.indexprs IS NULL AND uam.amname = 'btree'
+                   AND pg_catalog.regexp_replace(
+                           pg_catalog.regexp_replace(pg_catalog.pg_get_expr(ui.indpred, ui.indrelid),
+                               '::(text|character varying)', '', 'g'),
+                           '\(([[:alnum:]_".]+)\)', '\1', 'g')
+                       IS NOT DISTINCT FROM '(' || k.predicate || ')'
+               ELSE uc.oid IS NOT NULL
+                   AND uc.contype = CASE k.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+                   AND uc.conkey = k.expected_attnums AND uc.conperiod
+                   AND NOT uc.condeferrable AND NOT uc.condeferred
+                   AND ui.indrelid = k.table_oid AND ui.indisunique AND ui.indisvalid AND ui.indisready
+                   AND ui.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                   AND ui.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                   AND ui.indexprs IS NULL AND ui.indpred IS NULL AND uam.amname = 'gist'
+           END,
+           CASE
+               WHEN k.exclude_constraint IS NULL THEN true
+               WHEN k.table_oid IS NULL OR NOT k.columns_valid THEN false
+               ELSE ec.oid IS NOT NULL AND ec.contype = 'x' AND ec.conkey = k.expected_attnums
+                   AND ec.condeferrable AND NOT ec.condeferred
+                   AND ei.indrelid = k.table_oid AND ei.indisvalid AND ei.indisready
+                   AND ei.indnkeyatts = pg_catalog.cardinality(k.expected_attnums)
+                   AND ei.indkey::text = pg_catalog.array_to_string(k.expected_attnums, ' ')
+                   AND ei.indexprs IS NULL AND eam.amname = 'gist'
+                   AND pg_catalog.regexp_replace(
+                           pg_catalog.regexp_replace(pg_catalog.pg_get_expr(ei.indpred, ei.indrelid),
+                               '::(text|character varying)', '', 'g'),
+                           '\(([[:alnum:]_".]+)\)', '\1', 'g')
+                       IS NOT DISTINCT FROM CASE WHEN k.predicate IS NULL THEN NULL ELSE '(' || k.predicate || ')' END
+                   AND pg_catalog.cardinality(ec.conexclop) = pg_catalog.cardinality(k.expected_attnums)
+                   AND NOT EXISTS (
+                       SELECT 1
+                       FROM pg_catalog.unnest(ec.conexclop) WITH ORDINALITY AS x(oproid, n)
+                       JOIN pg_catalog.pg_operator AS o ON o.oid = x.oproid
+                       WHERE (x.n <= pg_catalog.cardinality(k.column_names) AND o.oprname <> '=')
+                          OR (x.n = pg_catalog.cardinality(k.expected_attnums) AND o.oprname <> '&&'))
+           END,
+           k.check_constraint IS NULL
+    FROM expected AS k
+    LEFT JOIN pg_catalog.pg_constraint AS uc
+      ON k.key_type <> 'predicated' AND uc.conrelid = k.table_oid AND uc.conname = k.unique_constraint
+    LEFT JOIN pg_catalog.pg_class AS uic
+      ON uic.relnamespace = k.table_namespace_oid AND uic.relname = k.unique_constraint
+    LEFT JOIN pg_catalog.pg_index AS ui
+      ON ui.indexrelid = CASE WHEN k.key_type = 'predicated' THEN uic.oid ELSE uc.conindid END
+    LEFT JOIN pg_catalog.pg_class AS uidx ON uidx.oid = ui.indexrelid
+    LEFT JOIN pg_catalog.pg_am AS uam ON uam.oid = uidx.relam
+    LEFT JOIN pg_catalog.pg_constraint AS ec
+      ON k.exclude_constraint IS NOT NULL AND ec.conrelid = k.table_oid AND ec.conname = k.exclude_constraint
+    LEFT JOIN pg_catalog.pg_index AS ei ON ei.indexrelid = ec.conindid
+    LEFT JOIN pg_catalog.pg_class AS eidx ON eidx.oid = ei.indexrelid
+    LEFT JOIN pg_catalog.pg_am AS eam ON eam.oid = eidx.relam;
+$__internal_unique_key_attribution$;
+
+COMMENT ON FUNCTION sql_saga.check_integrity() IS
+'Validates all catalogued sql_saga families without modifying them, and raises on the first deterministic integrity violation.';
+
+COMMENT ON FUNCTION sql_saga.health_checks() IS
+'An event trigger function that runs after DDL commands to check for inconsistencies in sql_saga''s metadata catalogs.';
+CREATE OR REPLACE FUNCTION sql_saga.drop_current_view(table_oid regclass, era_name name DEFAULT 'valid', drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT')
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    view_schema name;
+    view_name name;
+    trigger_name name;
+    target_schema_name name;
+    target_table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'table_oid must be specified';
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname
+    INTO target_schema_name, target_table_name
+    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    FOR view_schema, view_name, trigger_name IN
+        DELETE FROM sql_saga.updatable_view AS v
+        WHERE (v.table_schema, v.table_name) = (target_schema_name, target_table_name)
+          AND v.era_name = era_name
+          AND v.view_type = 'current'
+        RETURNING v.view_schema, v.view_name, v.trigger_name
+    LOOP
+        IF to_regclass(format('%I.%I', view_schema, view_name)) IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass(format('%I.%I', view_schema, view_name)) AND t.tgname = trigger_name) THEN
+                EXECUTE format('DROP TRIGGER %I ON %I.%I', trigger_name, view_schema, view_name);
+            END IF;
+            EXECUTE format('DROP VIEW IF EXISTS %I.%I %s', view_schema, view_name, drop_behavior);
+        END IF;
+    END LOOP;
+
+    RETURN true;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_current_view(regclass, name, sql_saga.drop_behavior) IS
+'Drops the "current" view associated with a table and era.';
+CREATE OR REPLACE FUNCTION sql_saga.__internal_system_versioning_function_is_attributable(table_oid oid, function_identity text, function_role text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+    SELECT EXISTS (
+        SELECT 1
+        FROM sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(q.identity)
+        JOIN pg_catalog.pg_class AS base ON base.oid = table_oid
+        JOIN sql_saga.system_versioning AS sv
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)) = table_oid
+        JOIN pg_catalog.pg_class AS result_view
+          ON result_view.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.view_schema_name, sv.view_table_name))
+        WHERE q.identity = function_identity
+          AND q.role = function_role
+          AND p.prokind = 'f'
+          AND p.prolang = (SELECT l.oid FROM pg_catalog.pg_language AS l WHERE l.lanname = 'sql')
+          AND p.prorettype = result_view.reltype
+          AND p.proretset
+          AND p.provolatile = 's'
+          AND NOT p.proisstrict
+          AND NOT p.prosecdef
+          AND NOT p.proleakproof
+          AND p.proparallel = 'u'
+          AND p.prosupport = 0
+          AND p.procost = 100
+          AND p.prorows = 1000
+          AND p.proconfig IS NULL
+          AND p.proowner = base.relowner
+          AND p.prosrc = q.body
+          AND p.prosqlbody IS NULL
+          AND p.proargnames IS NULL
+          AND p.proallargtypes IS NULL
+          AND p.proargmodes IS NULL
+          AND p.proargtypes = CASE q.role
+                WHEN 'as_of' THEN '1184'::pg_catalog.oidvector
+                ELSE '1184 1184'::pg_catalog.oidvector
+              END
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS x
+              WHERE x.grantee NOT IN (0, p.proowner)
+                 OR (x.grantee = 0 AND x.privilege_type <> 'EXECUTE'))
+          AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.aclexplode(coalesce(p.proacl, pg_catalog.acldefault('f', p.proowner))) AS x
+              WHERE x.grantee = 0 AND x.privilege_type = 'EXECUTE')
+          AND 1 = (
+              SELECT pg_catalog.count(*)
+              FROM pg_catalog.pg_depend AS d
+              WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+                AND d.objid = p.oid
+                AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                AND d.deptype = 'n')
+          AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_depend AS d
+              WHERE d.classid = 'pg_catalog.pg_proc'::pg_catalog.regclass
+                AND d.objid = p.oid
+                AND d.refclassid = 'pg_catalog.pg_type'::pg_catalog.regclass
+                AND d.refobjid = result_view.reltype
+                AND d.deptype = 'n')
+          AND EXISTS (
+              SELECT 1 FROM pg_catalog.pg_type AS t
+              WHERE t.oid = p.prorettype AND t.typrelid = result_view.oid)
+    );
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_trigger_is_attributable(relation_oid oid, trigger_name name, function_identity regprocedure, expected_tgtype integer, expected_argument text DEFAULT NULL::text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+    SELECT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_trigger AS t
+        WHERE t.tgrelid = relation_oid
+          AND t.tgname = trigger_name
+          AND NOT t.tgisinternal
+          AND t.tgfoid = function_identity
+          AND t.tgtype = expected_tgtype
+          AND CASE WHEN expected_argument IS NULL
+                   THEN t.tgnargs = 0
+                   ELSE t.tgnargs = 1 AND pg_catalog.encode(t.tgargs, 'escape') = expected_argument || E'\\000'
+              END
+    );
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_system_versioning_view_is_attributable(table_oid oid, view_oid oid, view_role text)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+    SELECT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS base
+        JOIN sql_saga.system_versioning AS sv
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name)) = base.oid
+        JOIN pg_catalog.pg_class AS v ON v.oid = view_oid
+        WHERE base.oid = table_oid
+          AND v.relkind = 'v'
+          AND v.relpersistence = 'p'
+          AND v.relowner = base.relowner
+          AND NOT EXISTS (
+              SELECT 1 FROM pg_catalog.aclexplode(coalesce(v.relacl, pg_catalog.acldefault('r', v.relowner))) AS x
+              WHERE x.grantee NOT IN (0, v.relowner) OR (x.grantee = 0 AND x.privilege_type <> 'SELECT'))
+          AND EXISTS (
+              SELECT 1 FROM pg_catalog.aclexplode(coalesce(v.relacl, pg_catalog.acldefault('r', v.relowner))) AS x
+              WHERE x.grantee = 0 AND x.privilege_type = 'SELECT')
+          AND CASE view_role
+              WHEN 'public' THEN
+                  v.reloptions = ARRAY['security_invoker=on']::text[]
+                  AND EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                      JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                      WHERE rw.ev_class = v.oid AND d.refobjid = table_oid)
+                  AND EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                      JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                      WHERE rw.ev_class = v.oid
+                        AND d.refobjid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name)))
+                  AND EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                      JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                      WHERE rw.ev_class = v.oid
+                        AND d.refobjid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name,
+                            sql_saga.__internal_history_gated_name(sv.history_table_name))))
+              WHEN 'gated' THEN
+                  v.reloptions IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_rewrite AS rw
+                      JOIN pg_catalog.pg_depend AS d ON d.classid = 'pg_catalog.pg_rewrite'::pg_catalog.regclass AND d.objid = rw.oid
+                      WHERE rw.ev_class = v.oid
+                        AND d.refobjid = 'sql_saga.__internal_deny_history(oid)'::pg_catalog.regprocedure)
+              ELSE false
+              END
+    );
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[] DEFAULT '{}'::name[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    table_owner name;
+    range_column name;
+    gated_view_name name;
+    base_projection text;
+    history_projection text;
+    fn record;
+    previous_flag text;
+BEGIN
+    SELECT s.* INTO sv
+    FROM sql_saga.system_versioning AS s
+    WHERE to_regclass(format('%I.%I', s.table_schema, s.table_name))::oid = table_oid;
+    history_table_oid := to_regclass(format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+    table_owner := (SELECT c.relowner::regrole::name FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+    range_column := (SELECT e.range_column_name FROM sql_saga.era AS e
+                     WHERE (e.table_schema, e.table_name, e.era_name) = (sv.table_schema, sv.table_name, sv.era_name));
+    gated_view_name := sql_saga.__internal_history_gated_name(sv.history_table_name);
+
+    PERFORM sql_saga.__internal_check_history_columns(table_oid, history_table_oid, without_columns);
+
+    -- The union of both tables' columns, by name: base columns in base order, then history-only ones.
+    WITH u AS (
+        SELECT coalesce(ba.attname, ha.attname) AS attname, ba.attnum AS base_attnum, ha.attnum AS history_attnum,
+               ha.atttypid, ha.atttypmod, ha.attcollation
+        FROM (SELECT a.* FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = table_oid AND a.attnum > 0 AND NOT a.attisdropped) AS ba
+        FULL JOIN (SELECT a.* FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = history_table_oid AND a.attnum > 0 AND NOT a.attisdropped) AS ha
+               ON ha.attname = ba.attname
+        WHERE coalesce(ba.attname, ha.attname) <> ALL (without_columns)
+    )
+    SELECT string_agg(CASE WHEN u.base_attnum IS NOT NULL THEN quote_ident(u.attname)
+                           ELSE format('NULL::%s AS %I', sql_saga.__internal_column_type_sql(u.atttypid, u.atttypmod, u.attcollation), u.attname)
+                      END, ', ' ORDER BY u.base_attnum NULLS LAST, u.history_attnum),
+           string_agg(quote_ident(u.attname), ', ' ORDER BY u.base_attnum NULLS LAST, u.history_attnum)
+    INTO base_projection, history_projection
+    FROM u;
+
+    previous_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::text, true);
+    BEGIN
+        FOR fn IN
+            SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
+            WHERE to_regprocedure(u.f) IS NOT NULL
+        LOOP
+            EXECUTE format('DROP ROUTINE %s', fn.f::regprocedure);
+        END LOOP;
+        -- add_system_versioning calls this before the views exist.
+        IF to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I', sv.view_schema_name, sv.view_table_name);
+        END IF;
+        IF to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)) IS NOT NULL THEN
+            EXECUTE format('DROP VIEW %I.%I', sv.history_schema_name, gated_view_name);
+        END IF;
+
+        EXECUTE format('CREATE VIEW %I.%I AS %s', sv.history_schema_name, gated_view_name,
+            sql_saga.__internal_history_gated_view_sql(table_oid, history_table_oid, history_projection));
+        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.history_schema_name, gated_view_name, table_owner);
+        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.history_schema_name, gated_view_name);
+
+        EXECUTE format($view$CREATE VIEW %1$I.%2$I WITH (security_invoker = on) AS
+        SELECT %3$s FROM %4$s
+        UNION ALL SELECT %5$s FROM %6$I.%7$I
+        UNION ALL SELECT %5$s FROM %8$s
+            WHERE pg_catalog.row_security_active(%9$L::regclass::oid)
+              AND sql_saga.__internal_history_policies_synchronized(%9$L::regclass::oid, %10$L::regclass::oid)$view$,
+            sv.view_schema_name, /* %1$I */
+            sv.view_table_name, /* %2$I */
+            base_projection, /* %3$s */
+            sql_saga.__internal_qualified_name(table_oid), /* %4$s */
+            history_projection, /* %5$s */
+            sv.history_schema_name, /* %6$I */
+            gated_view_name, /* %7$I */
+            sql_saga.__internal_qualified_name(history_table_oid), /* %8$s */
+            sql_saga.__internal_qualified_name(table_oid), /* %9$L */
+            sql_saga.__internal_qualified_name(history_table_oid) /* %10$L */
+        );
+        EXECUTE format('ALTER VIEW %I.%I OWNER TO %I', sv.view_schema_name, sv.view_table_name, table_owner);
+        EXECUTE format('GRANT SELECT ON TABLE %I.%I TO PUBLIC', sv.view_schema_name, sv.view_table_name);
+
+        -- Each registered signature names a function; its body is fixed by its role.
+        FOR fn IN
+            SELECT q.identity AS f, q.body
+            FROM sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
+        LOOP
+            EXECUTE format('CREATE FUNCTION %s RETURNS SETOF %I.%I LANGUAGE sql STABLE AS %L',
+                fn.f, sv.view_schema_name, sv.view_table_name,
+                fn.body);
+            EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
+            -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
+            EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
+        END LOOP;
+
+        -- The fixed ACL is PUBLIC plus the owner. New objects can receive more through
+        -- ALTER DEFAULT PRIVILEGES; take those away, so a rebuild always ends in the fixed state.
+        FOR fn IN
+            SELECT format('REVOKE ALL ON %s %s FROM %s',
+                          CASE WHEN o.is_function THEN 'FUNCTION' ELSE 'TABLE' END, o.ident,
+                          string_agg(DISTINCT quote_ident(x.grantee::regrole::text), ', ')) AS stmt
+            FROM (SELECT false AS is_function, c.oid::regclass::text AS ident, c.relacl AS acl, c.relowner AS owner
+                  FROM pg_catalog.pg_class AS c
+                  WHERE c.oid IN (to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)),
+                                  to_regclass(format('%I.%I', sv.history_schema_name, gated_view_name)))
+                  UNION ALL
+                  SELECT true, p.oid::regprocedure::text, p.proacl, p.proowner
+                  FROM pg_catalog.pg_proc AS p
+                  WHERE p.oid = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]::regprocedure[])
+                 ) AS o
+            CROSS JOIN LATERAL aclexplode(o.acl) AS x
+            WHERE x.grantee NOT IN (0, o.owner)
+            GROUP BY o.is_function, o.ident
+        LOOP
+            EXECUTE fn.stmt;
+        END LOOP;
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_flag, ''), true);
+
+    RAISE DEBUG 'sql_saga: generated SYSTEM VERSIONING views and query functions for table %', table_oid::regclass;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.check_integrity()
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'sql_saga', 'pg_catalog'
+AS $function$
+DECLARE
+    r record;
+    base_oid oid;
+    history_oid oid;
+    view_oid oid;
+    expected_columns name[];
+    function_oid oid;
+    expected_return_type oid;
+    missing_column name;
+BEGIN
+    /* Base relation and era invariants are the first dependency layer. */
+    FOR r IN
+        SELECT e.*,
+               pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))::oid AS inventory_table_oid,
+               CASE
+                   WHEN pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name)) IS NULL THEN 1
+                   WHEN EXISTS (SELECT 1 FROM pg_catalog.pg_class AS c
+                               WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                                 AND (c.relkind <> 'r' OR c.relpersistence <> 'p')) THEN 2
+                   WHEN (e.sync_temporal_trg_function_name IS NOT NULL
+                         AND e.sync_temporal_trg_function_name <> sql_saga.__internal_make_name(
+                             ARRAY[e.table_schema, e.table_name, e.era_name], 'template_sync'))
+                     OR EXISTS (SELECT 1 FROM sql_saga.system_time_era AS ste
+                                WHERE (ste.table_schema, ste.table_name) = (e.table_schema, e.table_name)
+                                  AND NOT EXISTS (SELECT 1 FROM sql_saga.era AS x
+                                                  WHERE (x.table_schema, x.table_name, x.era_name) =
+                                                        (ste.table_schema, ste.table_name, ste.era_name)))
+                     OR EXISTS (SELECT 1 FROM sql_saga.unique_keys AS uk
+                                WHERE (uk.table_schema, uk.table_name) = (e.table_schema, e.table_name)
+                                  AND NOT EXISTS (SELECT 1 FROM sql_saga.era AS x
+                                                  WHERE (x.table_schema, x.table_name, x.era_name) =
+                                                        (uk.table_schema, uk.table_name, uk.era_name))) THEN 3
+                   WHEN NOT EXISTS (
+                       SELECT 1 FROM pg_catalog.pg_attribute AS a
+                       JOIN pg_catalog.pg_range AS pr ON pr.rngtypid = e.range_type
+                       WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                         AND a.attname = e.range_column_name AND a.attnum > 0 AND NOT a.attisdropped
+                         AND a.atttypid = e.range_type AND pr.rngmultitypid = e.multirange_type
+                         AND pr.rngsubtype = e.range_subtype
+                         AND (SELECT t.typcategory FROM pg_catalog.pg_type AS t WHERE t.oid = e.range_subtype) = e.range_subtype_category) THEN 4
+                   WHEN (e.valid_from_column_name IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_attribute AS a
+                            WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                              AND a.attname = e.valid_from_column_name AND a.atttypid = e.range_subtype
+                              AND a.attnum > 0 AND NOT a.attisdropped))
+                     OR (e.valid_until_column_name IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_attribute AS a
+                            WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                              AND a.attname = e.valid_until_column_name AND a.atttypid = e.range_subtype
+                              AND a.attnum > 0 AND NOT a.attisdropped))
+                     OR (e.bounds_check_constraint IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                              AND c.conname = e.bounds_check_constraint AND c.contype = 'c'
+                              AND pg_catalog.pg_get_constraintdef(c.oid, false) LIKE '%NOT isempty(%'))
+                     OR (e.boundary_check_constraint IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_constraint AS c
+                            WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                              AND c.conname = e.boundary_check_constraint AND c.contype = 'c'
+                              AND pg_catalog.pg_get_constraintdef(c.oid, false) LIKE '% < %'))
+                     OR (e.sync_temporal_trg_name IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM pg_catalog.pg_trigger AS t
+                            WHERE t.tgrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', e.table_schema, e.table_name))
+                              AND t.tgname = e.sync_temporal_trg_name AND NOT t.tgisinternal AND t.tgtype = 23
+                              AND t.tgfoid = pg_catalog.to_regprocedure(
+                                  pg_catalog.format('sql_saga.%I()', e.sync_temporal_trg_function_name)))) THEN 5
+               END AS violation
+        FROM sql_saga.era AS e
+        ORDER BY e.table_schema COLLATE "C", e.table_name COLLATE "C", e.era_name COLLATE "C"
+    LOOP
+        base_oid := r.inventory_table_oid;
+        IF r.violation = 1 THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%.%": catalogued base table is missing',
+                r.table_schema, r.table_name;
+        END IF;
+        IF r.violation = 2 THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF r.violation = 3 THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": catalogue relationships are incoherent; repair with drop_era and add_era',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF r.violation = 4 THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": column or range type metadata is noncanonical; repair with drop_era and add_era',
+                r.era_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF r.violation = 5 THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for era "%" on table "%": named check or synchronization object is noncanonical; repair with drop_era and add_era',
+                r.era_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    /* SYSTEM_TIME invariants have the highest managed-object priority. */
+    FOR r IN
+        SELECT ste.*, e.range_column_name
+        FROM sql_saga.system_time_era AS ste
+        JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+        ORDER BY ste.table_schema COLLATE "C", ste.table_name COLLATE "C"
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        IF base_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%.%": catalogued base table is missing', r.table_schema, r.table_name;
+        END IF;
+
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.generated_always_trigger)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.write_history_trigger)
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.truncate_trigger) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME trigger is missing; repair with drop_system_versioning and add_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+
+        IF NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_constraint AS c
+                WHERE c.conrelid = base_oid AND c.conname = r.infinity_check_constraint
+                  AND c.contype = 'c'
+                  AND pg_catalog.pg_get_constraintdef(c.oid, false) LIKE '%upper(%''infinity''%')
+           OR NOT sql_saga.__internal_trigger_is_attributable(
+                base_oid, r.generated_always_trigger,
+                'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, r.range_column_name)
+           OR NOT sql_saga.__internal_trigger_is_attributable(
+                base_oid, r.write_history_trigger,
+                'sql_saga.write_history()'::regprocedure, 25, r.range_column_name)
+           OR NOT sql_saga.__internal_trigger_is_attributable(
+                base_oid, r.truncate_trigger,
+                'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME trigger definition is noncanonical; repair with drop_system_versioning and add_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+
+        SELECT x.attname INTO missing_column
+        FROM pg_catalog.unnest(r.excluded_column_names) AS x(attname)
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = base_oid AND a.attname = x.attname AND a.attnum > 0 AND NOT a.attisdropped)
+        ORDER BY x.attname COLLATE "C" LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": excluded SYSTEM_TIME column "%" is missing; repair with set_system_time_era_excluded_columns or drop_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass), missing_column;
+        END IF;
+
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) INTO expected_columns
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = base_oid AND a.attnum > 0 AND NOT a.attisdropped;
+        IF expected_columns IS DISTINCT FROM r.table_columns_snapshot THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT uk.*, i.table_oid, i.object_missing,
+               i.unique_attributable, i.exclude_attributable, i.check_attributable
+        FROM sql_saga.unique_keys AS uk
+        JOIN sql_saga.__internal_unique_key_inventory() AS i USING (unique_key_name)
+        ORDER BY uk.table_schema COLLATE "C", uk.table_name COLLATE "C", uk.unique_key_name COLLATE "C"
+    LOOP
+        base_oid := r.table_oid;
+        IF r.object_missing THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": managed constraint or index is missing; repair with drop_unique_key and add_unique_key',
+                r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+
+        IF NOT r.unique_attributable OR NOT r.exclude_attributable OR NOT r.check_attributable THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for unique key "%" on table "%": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key',
+                r.unique_key_name, sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT fk.*, uk.table_schema AS uk_schema, uk.table_name AS uk_table
+        FROM sql_saga.foreign_keys AS fk
+        JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        ORDER BY fk.table_schema COLLATE "C", fk.table_name COLLATE "C", fk.foreign_key_name COLLATE "C"
+    LOOP
+        IF r.type = 'temporal_to_temporal' THEN
+            base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+            IF base_oid IS NULL
+               OR NOT sql_saga.__internal_temporal_foreign_key_is_attributable(r.foreign_key_name) THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key',
+                    r.table_schema, r.table_name;
+            END IF;
+        ELSE
+            base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.uk_schema, r.uk_table));
+            IF base_oid IS NULL
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_update_trigger)
+               OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger) THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": referenced-side helper trigger is missing; repair with drop_foreign_key and add_regular_foreign_key',
+                    r.table_schema, r.table_name;
+            END IF;
+            IF NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_trigger AS t
+                    WHERE t.tgrelid = base_oid AND t.tgname = r.uk_update_trigger
+                      AND t.tgfoid = 'sql_saga.uk_update_check_c()'::regprocedure)
+               OR NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_trigger AS t
+                    WHERE t.tgrelid = base_oid AND t.tgname = r.uk_delete_trigger
+                      AND t.tgfoid = 'sql_saga.uk_delete_check_c()'::regprocedure)
+               OR NOT EXISTS (
+                    SELECT 1 FROM pg_catalog.pg_constraint AS c
+                    WHERE c.conrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name))
+                      AND c.conname = r.fk_check_constraint AND c.contype = 'c') THEN
+                RAISE EXCEPTION 'sql_saga: integrity violation for foreign key on table "%.%": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key',
+                    r.table_schema, r.table_name;
+            END IF;
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT v.* FROM sql_saga.updatable_view AS v
+        ORDER BY v.table_schema COLLATE "C", v.table_name COLLATE "C", v.view_type, v.view_schema COLLATE "C", v.view_name COLLATE "C"
+    LOOP
+        view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema, r.view_name));
+        IF view_oid IS NULL
+           OR NOT EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = view_oid AND t.tgname = r.trigger_name) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for updatable view "%.%" of table "%.%": identifier column or trigger is missing; repair with drop_%_view and add_%_view',
+                r.view_schema, r.view_name, r.table_schema, r.table_name,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END;
+        END IF;
+        IF EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_attribute AS a
+                WHERE a.attrelid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name))
+                  AND a.attnum > 0 AND NOT a.attisdropped
+                  AND NOT EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_attribute AS va
+                      WHERE va.attrelid = view_oid AND va.attname = a.attname
+                        AND va.atttypid = a.atttypid AND va.attnum > 0 AND NOT va.attisdropped))
+           OR NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_trigger AS t
+                WHERE t.tgrelid = view_oid AND t.tgname = r.trigger_name
+                  AND NOT t.tgisinternal AND t.tgtype = 93
+                  AND t.tgfoid = CASE r.view_type
+                      WHEN 'for_portion_of' THEN 'sql_saga.for_portion_of_trigger()'::regprocedure
+                      ELSE 'sql_saga.current_view_trigger()'::regprocedure END) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for updatable view "%.%" of table "%.%": identifier column or trigger definition is noncanonical; repair with drop_%_view and add_%_view',
+                r.view_schema, r.view_name, r.table_schema, r.table_name,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END,
+                CASE r.view_type WHEN 'for_portion_of' THEN 'for_portion_of' ELSE 'current' END;
+        END IF;
+    END LOOP;
+
+    FOR r IN
+        SELECT sv.*, a.public_view_attributable, a.gated_view_attributable
+        FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_member_attribution(
+            pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid) AS a
+        ORDER BY sv.table_schema COLLATE "C", sv.table_name COLLATE "C"
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        history_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.history_schema_name, r.history_table_name));
+        view_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema_name, r.view_table_name));
+        IF view_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history view "%.%" is missing; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass), r.view_schema_name, r.view_table_name;
+        END IF;
+        IF history_oid IS NULL OR NOT EXISTS (
+                SELECT 1 FROM pg_catalog.pg_class AS h
+                WHERE h.oid = history_oid AND h.relkind = 'r' AND h.relpersistence = 'p') THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF EXISTS (
+                SELECT 1 FROM pg_catalog.pg_class AS b JOIN pg_catalog.pg_class AS h ON h.oid = history_oid
+                WHERE b.oid = base_oid AND (NOT h.relrowsecurity OR h.relforcerowsecurity <> b.relforcerowsecurity)) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with sync_history_policies or rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF EXISTS (
+                SELECT 1 FROM pg_catalog.pg_class AS b JOIN pg_catalog.pg_class AS h ON h.oid = history_oid
+                WHERE b.oid = base_oid AND h.relowner <> b.relowner) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with drop_system_versioning and add_system_versioning',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        IF EXISTS (
+                SELECT 1 FROM pg_catalog.pg_class AS h
+                WHERE h.oid = history_oid AND (
+                    EXISTS (SELECT 1 FROM pg_catalog.aclexplode(coalesce(h.relacl, pg_catalog.acldefault('r', h.relowner))) AS x
+                            WHERE x.grantee NOT IN (0, h.relowner) OR (x.grantee = 0 AND x.privilege_type <> 'SELECT'))
+                    OR NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(coalesce(h.relacl, pg_catalog.acldefault('r', h.relowner))) AS x
+                                   WHERE x.grantee = 0 AND x.privilege_type = 'SELECT')))
+           OR NOT r.public_view_attributable
+           OR NOT r.gated_view_attributable THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": history family definition is noncanonical; repair with rebuild_system_versioning_views',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END IF;
+        BEGIN
+            IF history_oid IS NULL OR NOT sql_saga.__internal_history_policies_synchronized(base_oid, history_oid) THEN
+                RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'policy mismatch';
+            END IF;
+        EXCEPTION WHEN OTHERS THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%": managed history policy set is inconsistent; repair with sync_history_policies',
+                sql_saga.__internal_display_name(base_oid::regclass);
+        END;
+    END LOOP;
+
+    FOR r IN
+        SELECT sv.table_schema, sv.table_name, sv.view_schema_name, sv.view_table_name, q.*,
+               CASE q.role
+                   WHEN 'as_of' THEN a.as_of_attributable
+                   WHEN 'between' THEN a.between_attributable
+                   WHEN 'between_symmetric' THEN a.between_symmetric_attributable
+                   ELSE a.from_to_attributable
+               END AS definition_attributable
+        FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_member_attribution(
+            pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid) AS a
+        CROSS JOIN LATERAL sql_saga.__internal_system_versioning_query_functions(
+            pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid) AS q
+        ORDER BY sv.table_schema COLLATE "C", sv.table_name COLLATE "C",
+                 CASE q.role WHEN 'as_of' THEN 1 WHEN 'between' THEN 2 WHEN 'between_symmetric' THEN 3 ELSE 4 END
+    LOOP
+        base_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.table_schema, r.table_name));
+        function_oid := pg_catalog.to_regprocedure(r.identity);
+        IF function_oid IS NULL THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" is missing; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+        SELECT c.reltype INTO expected_return_type FROM pg_catalog.pg_class AS c
+        WHERE c.oid = pg_catalog.to_regclass(pg_catalog.format('%I.%I', r.view_schema_name, r.view_table_name));
+        IF (SELECT p.prorettype FROM pg_catalog.pg_proc AS p WHERE p.oid = function_oid) IS DISTINCT FROM expected_return_type
+           OR 1 <> (
+                SELECT pg_catalog.count(*)
+                FROM pg_catalog.pg_depend AS d
+                WHERE d.classid = 'pg_catalog.pg_proc'::regclass
+                  AND d.objid = function_oid
+                  AND d.refclassid = 'pg_catalog.pg_type'::regclass
+                  AND d.deptype = 'n')
+           OR NOT EXISTS (
+                SELECT 1
+                FROM pg_catalog.pg_depend AS d
+                JOIN pg_catalog.pg_type AS t ON t.oid = d.refobjid
+                WHERE d.classid = 'pg_catalog.pg_proc'::regclass
+                  AND d.objid = function_oid
+                  AND d.refclassid = 'pg_catalog.pg_type'::regclass
+                  AND d.refobjid = expected_return_type
+                  AND d.deptype = 'n'
+                  AND t.typrelid = pg_catalog.to_regclass(
+                      pg_catalog.format('%I.%I', r.view_schema_name, r.view_table_name))) THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+        IF NOT r.definition_attributable THEN
+            RAISE EXCEPTION 'sql_saga: integrity violation for system-versioned table "%.%": generated query function role "%" definition is noncanonical; repair with rebuild_system_versioning_views',
+                r.table_schema, r.table_name, r.role;
+        END IF;
+    END LOOP;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.drop_era(table_oid regclass, era_name name DEFAULT 'valid'::name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior, cleanup boolean DEFAULT false)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'sql_saga', 'pg_catalog', 'public'
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    era_row sql_saga.era;
+    portion_view regclass;
+    is_dropped boolean;
+    table_schema name;
+    table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_class c JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    IF era_name IS NULL THEN
+        RAISE EXCEPTION 'no era name specified';
+    END IF;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    /*
+     * Has the table been dropped already?  This could happen if the period is
+     * being dropped by the drop_protection event trigger or through a DROP
+     * cascading drop.
+     */
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+
+    SELECT p.*
+    INTO era_row
+    FROM sql_saga.era AS p
+    WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    IF NOT FOUND THEN
+        RAISE DEBUG 'era % not found for table %', era_name, table_oid;
+        RETURN false;
+    END IF;
+
+    /* If this is a system_time era, get rid of the triggers */
+    DECLARE
+        system_time_era_row sql_saga.system_time_era;
+    BEGIN
+        DELETE FROM sql_saga.system_time_era AS ste
+        WHERE (ste.table_schema, ste.table_name, ste.era_name) = (table_schema, table_name, era_name)
+        RETURNING * INTO system_time_era_row;
+
+        IF FOUND AND NOT is_dropped THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); END IF;
+        END IF;
+    END;
+
+    IF drop_behavior = 'RESTRICT' THEN
+        /* Check for UNIQUE or PRIMARY KEYs */
+        IF EXISTS (
+            SELECT FROM sql_saga.unique_keys AS uk
+            WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is part of a UNIQUE or PRIMARY KEY', era_name;
+        END IF;
+
+        /* Check for FOREIGN KEYs */
+        IF EXISTS (
+            SELECT FROM sql_saga.foreign_keys AS fk
+            WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is part of a FOREIGN KEY', era_name;
+        END IF;
+
+        /* Check for updatable views */
+        IF EXISTS (
+            SELECT FROM sql_saga.updatable_view AS v
+            WHERE (v.table_schema, v.table_name, v.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % is used by an updatable view', era_name;
+        END IF;
+
+        /* Check for SYSTEM VERSIONING - must use drop_system_versioning() instead */
+        IF EXISTS (
+            SELECT FROM sql_saga.system_versioning AS sv
+            WHERE (sv.table_schema, sv.table_name, sv.era_name) = (table_schema, table_name, era_name))
+        THEN
+            RAISE EXCEPTION 'era % has SYSTEM VERSIONING, use drop_system_versioning() instead', era_name;
+        END IF;
+
+        /* Drop synchronization trigger BEFORE removing from catalog */
+        IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+            CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+        END IF;
+
+        /* Remove from catalog */
+        DELETE FROM sql_saga.era AS p
+        WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+        /* Delete bounds check constraint (NOT isempty(range)). */
+        IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint); END IF;
+        END IF;
+
+        /* Delete boundary check constraint (from < until). */
+        IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint); END IF;
+        END IF;
+
+        /* Drop column default if it was set */
+        IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+            EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+        END IF;
+
+        /* Delete columns if purging */
+        IF NOT is_dropped AND cleanup THEN
+            DECLARE
+                drop_clauses text[] := '{}';
+            BEGIN
+                -- The range column is always present for an era.
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+                -- Drop from/until if they were part of the era.
+                IF era_row.valid_from_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+                END IF;
+
+                -- Drop to if it was part of the era.
+                IF era_row.valid_to_column_name IS NOT NULL THEN
+                    drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+                END IF;
+
+                IF array_length(drop_clauses, 1) > 0 THEN
+                     EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+                END IF;
+            END;
+        END IF;
+
+        RETURN true;
+    END IF;
+
+    /* We must be in cascading-drop mode now */
+
+    PERFORM sql_saga.drop_for_portion_of_view(table_oid, era_name, drop_behavior, cleanup);
+
+    PERFORM sql_saga.drop_foreign_key_by_name(table_oid, fk.foreign_key_name)
+    FROM sql_saga.foreign_keys AS fk
+    WHERE (fk.table_schema, fk.table_name, fk.fk_era_name) = (table_schema, table_name, era_name);
+
+    PERFORM sql_saga.drop_unique_key_by_name(table_oid, uk.unique_key_name, drop_behavior, cleanup)
+    FROM sql_saga.unique_keys AS uk
+    WHERE (uk.table_schema, uk.table_name, uk.era_name) = (table_schema, table_name, era_name);
+
+    /* Drop synchronization trigger BEFORE removing from catalog */
+    IF NOT is_dropped AND (era_row.valid_from_column_name IS NOT NULL OR era_row.valid_to_column_name IS NOT NULL) THEN
+        CALL sql_saga.drop_synchronize_temporal_columns_trigger(table_oid, era_name);
+    END IF;
+
+    /* Remove from catalog */
+    DELETE FROM sql_saga.era AS p
+    WHERE (p.table_schema, p.table_name, p.era_name) = (table_schema, table_name, era_name);
+
+    /* Delete bounds check constraint (NOT isempty(range)). */
+    IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+    END IF;
+
+    /* Delete boundary check constraint (from < until). */
+    IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
+    END IF;
+
+    /* Drop column default if it was set */
+    IF NOT is_dropped AND NOT era_row.trigger_applies_defaults AND era_row.valid_until_column_name IS NOT NULL THEN
+        EXECUTE format('ALTER TABLE %s ALTER COLUMN %I DROP DEFAULT', table_oid, era_row.valid_until_column_name);
+    END IF;
+
+    /* Delete columns if purging */
+    IF NOT is_dropped AND cleanup THEN
+        DECLARE
+            drop_clauses text[] := '{}';
+        BEGIN
+            -- The range column is always present for an era.
+            drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.range_column_name);
+
+            -- Drop from/until if they were part of the era.
+            IF era_row.valid_from_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_from_column_name);
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_until_column_name);
+            END IF;
+
+            -- Drop to if it was part of the era.
+            IF era_row.valid_to_column_name IS NOT NULL THEN
+                drop_clauses := drop_clauses || format('DROP COLUMN %I', era_row.valid_to_column_name);
+            END IF;
+
+            IF array_length(drop_clauses, 1) > 0 THEN
+                 EXECUTE format('ALTER TABLE %s %s', table_oid, array_to_string(drop_clauses, ', '));
+            END IF;
+        END;
+    END IF;
+
+    RETURN true;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior, cleanup boolean DEFAULT true)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'sql_saga', 'pg_catalog', 'public'
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    system_versioning_row sql_saga.system_versioning;
+    is_dropped boolean;
+    table_schema name;
+    table_name name;
+    base_oid oid;
+    public_view_oid oid;
+    gated_view_oid oid;
+    as_of_attributable boolean;
+    between_attributable boolean;
+    between_symmetric_attributable boolean;
+    from_to_attributable boolean;
+    public_view_attributable boolean;
+    gated_view_attributable boolean;
+    function_depends_on_public_view boolean;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.oid = table_oid;
+
+    SELECT sv.* INTO system_versioning_row
+    FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+        RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_oid;
+        RETURN false;
+    END IF;
+
+    base_oid := table_oid::oid;
+    public_view_oid := to_regclass(format('%I.%I', system_versioning_row.view_schema_name, system_versioning_row.view_table_name));
+    gated_view_oid := to_regclass(format('%I.%I', system_versioning_row.history_schema_name,
+        sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name)));
+    SELECT a.as_of_attributable, a.between_attributable,
+           a.between_symmetric_attributable, a.from_to_attributable,
+           a.public_view_attributable, a.gated_view_attributable
+    INTO as_of_attributable, between_attributable,
+         between_symmetric_attributable, from_to_attributable,
+         public_view_attributable, gated_view_attributable
+    FROM sql_saga.__internal_system_versioning_member_attribution(base_oid) AS a;
+
+    DELETE FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name);
+
+    is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
+
+    IF NOT is_dropped THEN
+        SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_proc AS p
+            JOIN pg_catalog.pg_type AS t ON t.oid = p.prorettype
+            WHERE p.oid = to_regprocedure(system_versioning_row.func_as_of)
+              AND t.typrelid = public_view_oid)
+        INTO function_depends_on_public_view;
+        IF NOT as_of_attributable AND to_regprocedure(system_versioning_row.func_as_of) IS NOT NULL
+           AND NOT function_depends_on_public_view THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_as_of, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT between_attributable AND to_regprocedure(system_versioning_row.func_between) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_between, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT between_symmetric_attributable AND to_regprocedure(system_versioning_row.func_between_symmetric) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_between_symmetric, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT from_to_attributable AND to_regprocedure(system_versioning_row.func_from_to) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_from_to, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT public_view_attributable AND public_view_oid IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left view "%" in place because it is not the sql_saga-generated view for table "%"',
+                public_view_oid::regclass, sql_saga.__internal_display_name(table_oid);
+        END IF;
+        IF as_of_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); END IF;
+        IF between_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); END IF;
+        IF between_symmetric_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); END IF;
+        IF from_to_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); END IF;
+        IF public_view_attributable THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+        END IF;
+        IF gated_view_attributable THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
+                sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior);
+        END IF;
+    END IF;
+
+    IF NOT is_dropped AND cleanup THEN
+        PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
+        IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+        END IF;
+    END IF;
+
+    RETURN true;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior DEFAULT 'RESTRICT'::sql_saga.drop_behavior, cleanup boolean DEFAULT true)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'sql_saga', 'pg_catalog', 'public'
+AS $function$
+#variable_conflict use_variable
+DECLARE
+    table_schema name;
+    table_name name;
+    foreign_key_row sql_saga.foreign_keys;
+    unique_key_row sql_saga.unique_keys;
+    unique_object_attributable boolean;
+    exclude_object_attributable boolean;
+    check_object_attributable boolean;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT n.nspname, c.relname
+    INTO table_schema, table_name
+    FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+    WHERE c.oid = table_oid;
+
+    /* Always serialize operations on our catalogs */
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    FOR unique_key_row IN
+        SELECT uk.*
+        FROM sql_saga.unique_keys AS uk
+        WHERE (uk.table_schema, uk.table_name) = (table_schema, table_name)
+          AND (uk.unique_key_name = key_name OR key_name IS NULL)
+    LOOP
+        RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
+
+        SELECT a.unique_attributable, a.exclude_attributable, a.check_attributable
+        INTO unique_object_attributable, exclude_object_attributable, check_object_attributable
+        FROM sql_saga.__internal_unique_key_attribution(unique_key_row.unique_key_name) AS a;
+        /* Propagate the requested drop behavior to foreign keys, if desired */
+        FOR foreign_key_row IN
+            SELECT fk.*
+            FROM sql_saga.foreign_keys AS fk
+            WHERE fk.unique_key_name = unique_key_row.unique_key_name
+        LOOP
+            IF drop_behavior = 'RESTRICT' THEN
+                RAISE EXCEPTION 'cannot drop unique key "%" because foreign key "%" on table "%" depends on it',
+                    unique_key_row.unique_key_name, foreign_key_row.foreign_key_name,
+                    sql_saga.__internal_display_name(format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass);
+            END IF;
+
+            PERFORM sql_saga.drop_foreign_key_by_name(NULL, foreign_key_row.foreign_key_name);
+        END LOOP;
+
+        DELETE FROM sql_saga.unique_keys AS uk
+        WHERE uk.unique_key_name = unique_key_row.unique_key_name;
+
+        /* If purging, drop the underlying constraints unless the table has been dropped */
+        IF cleanup AND EXISTS (
+            SELECT FROM pg_catalog.pg_class AS c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
+        THEN
+            IF unique_key_row.check_constraint IS NOT NULL AND check_object_attributable THEN
+                EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',
+                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.check_constraint);
+            ELSIF unique_key_row.check_constraint IS NOT NULL
+                  AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
+                             WHERE c.conrelid = table_oid AND c.conname = unique_key_row.check_constraint) THEN
+                RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                    unique_key_row.check_constraint, sql_saga.__internal_display_name(table_oid);
+            END IF;
+            IF unique_key_row.mutually_exclusive_columns IS NOT NULL THEN
+                DECLARE
+                    alter_parts text[];
+                    object_name name;
+                BEGIN
+                    -- Build a list of constraints to drop in a single ALTER TABLE command.
+                    alter_parts := ARRAY[]::text[];
+
+                    -- No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT.
+
+                    -- 3. Execute the ALTER TABLE command for all constraints.
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
+            ELSIF unique_key_row.key_type = 'predicated' THEN
+                BEGIN
+                    IF unique_object_attributable THEN
+                        IF unique_key_row.unique_constraint IS NOT NULL THEN
+                            EXECUTE format('DROP INDEX %I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint);
+                        END IF;
+                    ELSIF to_regclass(format('%I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint)) IS NOT NULL THEN
+                        RAISE NOTICE 'sql_saga: Left index "%" on table "%" in place because it is not the sql_saga-managed index',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                    IF exclude_object_attributable AND unique_key_row.exclude_constraint IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', unique_key_row.table_schema,
+                            unique_key_row.table_name, unique_key_row.exclude_constraint);
+                    ELSIF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = unique_key_row.exclude_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.exclude_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                END;
+            ELSE -- 'primary' or 'natural'
+                DECLARE
+                    alter_parts text[] := '{}';
+                BEGIN
+                    -- This is a unique/primary key constraint, drop both constraints if they exist.
+                    IF unique_key_row.unique_constraint IS NOT NULL AND unique_object_attributable THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.unique_constraint);
+                    ELSIF unique_key_row.unique_constraint IS NOT NULL
+                          AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
+                                     WHERE c.conrelid = table_oid AND c.conname = unique_key_row.unique_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
+                    ELSIF unique_key_row.unique_constraint IS NOT NULL
+                          AND to_regclass(format('%I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint)) IS NOT NULL THEN
+                        RAISE NOTICE 'sql_saga: Left index "%" on table "%" in place because it is not the sql_saga-managed index',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                    IF unique_key_row.exclude_constraint IS NOT NULL AND exclude_object_attributable THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.exclude_constraint);
+                    ELSIF unique_key_row.exclude_constraint IS NOT NULL
+                          AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = unique_key_row.exclude_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.exclude_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+
+                    IF cardinality(alter_parts) > 0 THEN
+                        EXECUTE format('ALTER TABLE %I.%I %s',
+                            unique_key_row.table_schema,
+                            unique_key_row.table_name,
+                            array_to_string(alter_parts, ', ')
+                        );
+                    END IF;
+                END;
+            END IF;
+        END IF;
+    END LOOP;
+
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.rebuild_system_versioning_views(table_oid regclass, without_columns name[] DEFAULT '{}'::name[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'pg_catalog', 'public'
+AS $function$
+DECLARE
+    sv sql_saga.system_versioning;
+    history_table_oid oid;
+    range_column name;
+    excluded name;
+    previous_rebuild_flag text;
+    caller_role name;
+    authorization_table_name name;
+BEGIN
+    IF table_oid IS NULL THEN
+        RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT c.relname INTO authorization_table_name FROM pg_catalog.pg_class AS c
+    WHERE c.oid OPERATOR(pg_catalog.=) table_oid;
+    caller_role := CASE WHEN current_setting('role') = 'none' THEN session_user ELSE current_setting('role') END;
+    IF NOT pg_catalog.pg_has_role(caller_role, (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid OPERATOR(pg_catalog.=) table_oid), 'USAGE') THEN
+        RAISE EXCEPTION 'must be owner of table %', authorization_table_name USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    PERFORM sql_saga.__internal_serialize(table_oid);
+
+    SELECT s.* INTO sv
+    FROM sql_saga.system_versioning AS s
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'table % does not have SYSTEM VERSIONING', table_oid;
+    END IF;
+
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::pg_catalog.oid;
+    range_column := (SELECT e.range_column_name FROM sql_saga.era AS e
+                     WHERE (e.table_schema, e.table_name, e.era_name) OPERATOR(pg_catalog.=) (sv.table_schema, sv.table_name, sv.era_name));
+
+    without_columns := coalesce(without_columns, '{}');
+    IF pg_catalog.array_position(without_columns, NULL) IS NOT NULL THEN
+        RAISE EXCEPTION 'sql_saga: without_columns must not contain NULL';
+    END IF;
+    FOR excluded IN
+        SELECT u.c FROM pg_catalog.unnest(without_columns) WITH ORDINALITY AS u (c, n)
+        GROUP BY u.c HAVING pg_catalog.count(*) OPERATOR(pg_catalog.>) 1 ORDER BY pg_catalog.min(u.n)
+    LOOP
+        RAISE EXCEPTION 'sql_saga: column % is listed more than once in without_columns', pg_catalog.quote_ident(excluded);
+    END LOOP;
+    FOR excluded IN
+        SELECT u.c FROM pg_catalog.unnest(without_columns) WITH ORDINALITY AS u (c, n)
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a
+                          WHERE a.attrelid IN (table_oid, history_table_oid) AND a.attname OPERATOR(pg_catalog.=) u.c
+                            AND a.attnum OPERATOR(pg_catalog.>) 0 AND NOT a.attisdropped)
+        ORDER BY u.n
+    LOOP
+        RAISE EXCEPTION 'sql_saga: column % does not exist in either % or %',
+            pg_catalog.quote_ident(excluded), table_oid, history_table_oid::pg_catalog.regclass;
+    END LOOP;
+    IF range_column OPERATOR(pg_catalog.=) ANY (without_columns) THEN
+        RAISE EXCEPTION 'sql_saga: cannot exclude system time column % from SYSTEM VERSIONING views for table %',
+            pg_catalog.quote_ident(range_column), table_oid;
+    END IF;
+
+    -- Checked here, in the caller's search_path, so the error names relations as the writer's does.
+    PERFORM sql_saga.__internal_check_history_columns(table_oid, history_table_oid, without_columns);
+
+    PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, without_columns);
+
+    -- Use the existing authorized reconciler as the private refresh gateway.
+    previous_rebuild_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::oid::text, true);
+    BEGIN
+        PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, without_columns);
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+
+    RAISE NOTICE 'sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table %', table_oid;
+END;
+$function$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_unique_key_object_is_attributable(
+    unique_key_name name,
+    object_kind text)
+RETURNS boolean
+LANGUAGE plpgsql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_unique_key_object_is_attributable$
+#variable_conflict use_variable
+DECLARE
+    uk sql_saga.unique_keys;
+    table_oid oid;
+    range_column name;
+    expected_attnums smallint[];
+    object_oid oid;
+    attributable boolean;
+BEGIN
+    SELECT x.* INTO uk FROM sql_saga.unique_keys AS x
+    WHERE x.unique_key_name = $1;
+    IF NOT FOUND THEN RETURN false; END IF;
+
+    IF object_kind = 'exclude' AND uk.exclude_constraint IS NULL THEN RETURN true; END IF;
+    IF object_kind = 'check' THEN RETURN uk.check_constraint IS NULL; END IF;
+
+    IF object_kind = 'unique' AND uk.key_type <> 'predicated' THEN
+        table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+        IF table_oid IS NULL THEN RETURN false; END IF;
+        SELECT e.range_column_name INTO range_column
+        FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+        IF range_column IS NULL THEN RETURN false; END IF;
+        SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n)
+        INTO expected_attnums
+        FROM pg_catalog.unnest(uk.column_names || range_column) WITH ORDINALITY AS u(column_name, n)
+        JOIN pg_catalog.pg_attribute AS a
+          ON a.attrelid = table_oid AND a.attname = u.column_name
+         AND a.attnum > 0 AND NOT a.attisdropped;
+        IF pg_catalog.cardinality(expected_attnums) IS DISTINCT FROM pg_catalog.cardinality(uk.column_names) + 1 THEN
+            RETURN false;
+        END IF;
+        RETURN EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_constraint AS c
+            JOIN pg_catalog.pg_index AS i ON i.indexrelid = c.conindid
+            JOIN pg_catalog.pg_class AS ic ON ic.oid = i.indexrelid
+            JOIN pg_catalog.pg_am AS am ON am.oid = ic.relam
+            WHERE c.conrelid = table_oid AND c.conname = uk.unique_constraint
+              AND c.contype = CASE uk.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+              AND c.conkey = expected_attnums AND c.conperiod
+              AND NOT c.condeferrable AND NOT c.condeferred
+              AND i.indrelid = table_oid AND i.indisunique AND i.indisvalid AND i.indisready
+              AND i.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+              AND i.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ')
+              AND i.indexprs IS NULL AND i.indpred IS NULL AND am.amname = 'gist');
+    END IF;
+
+    SELECT CASE object_kind
+        WHEN 'unique' THEN a.unique_attributable
+        WHEN 'exclude' THEN a.exclude_attributable
+        WHEN 'check' THEN a.check_attributable
+        ELSE false
+    END
+    INTO attributable
+    FROM sql_saga.__internal_unique_key_attribution(unique_key_name) AS a;
+    RETURN attributable;
+END;
+$__internal_unique_key_object_is_attributable$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_query_functions(oid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_function_is_attributable(oid, text, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_member_attribution(oid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_trigger_is_attributable(oid, name, regprocedure, integer, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_system_versioning_view_is_attributable(oid, oid, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_inventory(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_attribution(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_temporal_foreign_key_is_attributable(name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_object_is_attributable(name, text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.__internal_display_name(name, name) FROM PUBLIC;
+REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;

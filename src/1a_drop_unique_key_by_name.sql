@@ -16,6 +16,9 @@ DECLARE
     table_name name;
     foreign_key_row sql_saga.foreign_keys;
     unique_key_row sql_saga.unique_keys;
+    unique_object_attributable boolean;
+    exclude_object_attributable boolean;
+    check_object_attributable boolean;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -36,6 +39,10 @@ BEGIN
           AND (uk.unique_key_name = key_name OR key_name IS NULL)
     LOOP
         RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
+
+        SELECT a.unique_attributable, a.exclude_attributable, a.check_attributable
+        INTO unique_object_attributable, exclude_object_attributable, check_object_attributable
+        FROM sql_saga.__internal_unique_key_attribution(unique_key_row.unique_key_name) AS a;
         /* Propagate the requested drop behavior to foreign keys, if desired */
         FOR foreign_key_row IN
             SELECT fk.*
@@ -60,6 +67,15 @@ BEGIN
             JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE (n.nspname, c.relname) = (unique_key_row.table_schema, unique_key_row.table_name))
         THEN
+            IF unique_key_row.check_constraint IS NOT NULL AND check_object_attributable THEN
+                EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I',
+                    unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.check_constraint);
+            ELSIF unique_key_row.check_constraint IS NOT NULL
+                  AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
+                             WHERE c.conrelid = table_oid AND c.conname = unique_key_row.check_constraint) THEN
+                RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                    unique_key_row.check_constraint, sql_saga.__internal_display_name(table_oid);
+            END IF;
             IF unique_key_row.mutually_exclusive_columns IS NOT NULL THEN
                 DECLARE
                     alter_parts text[];
@@ -68,12 +84,7 @@ BEGIN
                     -- Build a list of constraints to drop in a single ALTER TABLE command.
                     alter_parts := ARRAY[]::text[];
 
-                    -- 1. Add the CHECK constraint to the drop list.
-                    IF unique_key_row.check_constraint IS NOT NULL THEN
-                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.check_constraint);
-                    END IF;
-
-                    -- 2. No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT
+                    -- No partial constraints or indexes to drop for XOR keys using NULLS NOT DISTINCT.
 
                     -- 3. Execute the ALTER TABLE command for all constraints.
                     IF cardinality(alter_parts) > 0 THEN
@@ -85,26 +96,46 @@ BEGIN
                     END IF;
                 END;
             ELSIF unique_key_row.key_type = 'predicated' THEN
-                IF unique_key_row.check_constraint IS NOT NULL THEN
-                    -- This is a unique index, drop it and the exclusion constraint
-                    EXECUTE format('DROP INDEX %I.%I; ALTER TABLE %I.%I DROP CONSTRAINT %I;',
-                        unique_key_row.table_schema, /* %I */
-                        unique_key_row.unique_constraint, /* %I */
-                        unique_key_row.table_schema, /* %I */
-                        unique_key_row.table_name, /* %I */
-                        unique_key_row.exclude_constraint /* %I */
-                    );
-                END IF;
+                BEGIN
+                    IF unique_object_attributable THEN
+                        IF unique_key_row.unique_constraint IS NOT NULL THEN
+                            EXECUTE format('DROP INDEX %I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint);
+                        END IF;
+                    ELSIF to_regclass(format('%I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint)) IS NOT NULL THEN
+                        RAISE NOTICE 'sql_saga: Left index "%" on table "%" in place because it is not the sql_saga-managed index',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                    IF exclude_object_attributable AND unique_key_row.exclude_constraint IS NOT NULL THEN
+                        EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT %I', unique_key_row.table_schema,
+                            unique_key_row.table_name, unique_key_row.exclude_constraint);
+                    ELSIF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = unique_key_row.exclude_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.exclude_constraint, sql_saga.__internal_display_name(table_oid);
+                    END IF;
+                END;
             ELSE -- 'primary' or 'natural'
                 DECLARE
                     alter_parts text[] := '{}';
                 BEGIN
                     -- This is a unique/primary key constraint, drop both constraints if they exist.
-                    IF unique_key_row.unique_constraint IS NOT NULL THEN
-                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.unique_constraint);
+                    IF unique_key_row.unique_constraint IS NOT NULL AND unique_object_attributable THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.unique_constraint);
+                    ELSIF unique_key_row.unique_constraint IS NOT NULL
+                          AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c
+                                     WHERE c.conrelid = table_oid AND c.conname = unique_key_row.unique_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
+                    ELSIF unique_key_row.unique_constraint IS NOT NULL
+                          AND to_regclass(format('%I.%I', unique_key_row.table_schema, unique_key_row.unique_constraint)) IS NOT NULL THEN
+                        RAISE NOTICE 'sql_saga: Left index "%" on table "%" in place because it is not the sql_saga-managed index',
+                            unique_key_row.unique_constraint, sql_saga.__internal_display_name(table_oid);
                     END IF;
-                    IF unique_key_row.exclude_constraint IS NOT NULL THEN
-                        alter_parts := alter_parts || format('DROP CONSTRAINT %I', unique_key_row.exclude_constraint);
+                    IF unique_key_row.exclude_constraint IS NOT NULL AND exclude_object_attributable THEN
+                        alter_parts := alter_parts || format('DROP CONSTRAINT IF EXISTS %I', unique_key_row.exclude_constraint);
+                    ELSIF unique_key_row.exclude_constraint IS NOT NULL
+                          AND EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = unique_key_row.exclude_constraint) THEN
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            unique_key_row.exclude_constraint, sql_saga.__internal_display_name(table_oid);
                     END IF;
 
                     IF cardinality(alter_parts) > 0 THEN

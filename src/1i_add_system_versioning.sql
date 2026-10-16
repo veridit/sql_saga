@@ -79,7 +79,7 @@ $__internal_check_history_columns$;
 /*
  * (Re)creates B_history_gated, B_with_history and the four as-of functions of a registered family
  * from the current columns. Callers check arguments and authorization and hold the family's lock.
- * Existing objects are dropped first (never CASCADE: a user object depending on them makes this
+ * Existing objects are dropped first (without cascading: a user object depending on them makes this
  * fail with PostgreSQL's dependency error). The drops are allowed by drop_protection and the new
  * definitions by health_checks only while sql_saga.rebuilding_system_versioning_views names this table.
  */
@@ -102,6 +102,29 @@ AS $__internal_refresh_system_time_columns_snapshot$
 $__internal_refresh_system_time_columns_snapshot$;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_system_versioning_query_functions(table_oid oid)
+RETURNS TABLE(role text, identity text, argument_types text, body text)
+LANGUAGE sql
+STABLE
+SET search_path = sql_saga, pg_catalog
+AS $__internal_system_versioning_query_functions$
+    SELECT q.role,
+           q.identity,
+           q.argument_types,
+           pg_catalog.format(q.body_template, sv.view_schema_name, sv.view_table_name, e.range_column_name) AS body
+    FROM sql_saga.system_versioning AS sv
+    JOIN sql_saga.era AS e
+      ON (e.table_schema, e.table_name, e.era_name) = (sv.table_schema, sv.table_name, sv.era_name)
+    CROSS JOIN LATERAL (VALUES
+        (1, 'as_of', sv.func_as_of, 'timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I @> $1'),
+        (2, 'between', sv.func_between, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2, ''[]'')'),
+        (3, 'between_symmetric', sv.func_between_symmetric, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange(least($1, $2), greatest($1, $2), ''[]'')'),
+        (4, 'from_to', sv.func_from_to, 'timestamp with time zone, timestamp with time zone', 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2)')
+    ) AS q(ordinality, role, identity, argument_types, body_template)
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.table_schema, sv.table_name))::oid = table_oid
+    ORDER BY q.ordinality;
+$__internal_system_versioning_query_functions$;
 
 CREATE FUNCTION sql_saga.__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[] DEFAULT '{}')
 RETURNS void
@@ -153,7 +176,7 @@ BEGIN
             SELECT u.f FROM unnest(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (f)
             WHERE to_regprocedure(u.f) IS NOT NULL
         LOOP
-            EXECUTE format('DROP FUNCTION %s', fn.f::regprocedure);
+            EXECUTE format('DROP ROUTINE %s', fn.f::regprocedure);
         END LOOP;
         -- add_system_versioning calls this before the views exist.
         IF to_regclass(format('%I.%I', sv.view_schema_name, sv.view_table_name)) IS NOT NULL THEN
@@ -190,17 +213,12 @@ BEGIN
 
         -- Each registered signature names a function; its body is fixed by its role.
         FOR fn IN
-            SELECT u.f, u.body
-            FROM (VALUES
-                (sv.func_as_of, 'SELECT * FROM %1$I.%2$I WHERE %3$I @> $1'),
-                (sv.func_between, 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2, ''[]'')'),
-                (sv.func_between_symmetric, 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange(least($1, $2), greatest($1, $2), ''[]'')'),
-                (sv.func_from_to, 'SELECT * FROM %1$I.%2$I WHERE %3$I && tstzrange($1, $2)')
-            ) AS u (f, body)
+            SELECT q.identity AS f, q.body
+            FROM sql_saga.__internal_system_versioning_query_functions(table_oid) AS q
         LOOP
             EXECUTE format('CREATE FUNCTION %s RETURNS SETOF %I.%I LANGUAGE sql STABLE AS %L',
                 fn.f, sv.view_schema_name, sv.view_table_name,
-                format(fn.body, sv.view_schema_name, sv.view_table_name, range_column));
+                fn.body);
             EXECUTE format('ALTER FUNCTION %s OWNER TO %I', fn.f::regprocedure, table_owner);
             -- PUBLIC EXECUTE is explicit, because hardened databases revoke the default.
             EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO PUBLIC', fn.f::regprocedure);
@@ -512,17 +530,19 @@ FOR EACH ROW EXECUTE FUNCTION sql_saga.__internal_grant_query_functions();
  * Manual schema changes (tmp/design_manual_schema_changes.md): after the owner changed the base and
  * history tables by hand, this recreates the views and as-of functions from the current columns.
  *
- * SECURITY INVOKER, like sync_history_policies: the caller must be a member of the base table's
- * owner role (a SECURITY DEFINER function sees its own owner as current_user and could not tell),
- * and the replacement runs with the caller's rights over the objects that role owns.
- * No fixed search_path, so relation names in messages read as the caller would write them; every
- * reference in the body is schema-qualified. The generator itself runs with a fixed search_path.
+ * SECURITY DEFINER lets this checked public gateway use the private canonical generator. The
+ * effective caller is recovered from role/session_user and must be a member of the base owner.
+ * The fixed path deliberately includes public so regclass names retain the v1.1 caller-visible
+ * qualification used by existing messages. Every relation and function reference in this body is
+ * schema-qualified, so public is used only for regclass display.
  */
 CREATE FUNCTION sql_saga.rebuild_system_versioning_views(
     table_oid regclass,
     without_columns name[] DEFAULT '{}')
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
 AS $rebuild_system_versioning_views$
 DECLARE
     sv sql_saga.system_versioning;
@@ -530,9 +550,18 @@ DECLARE
     range_column name;
     excluded name;
     previous_rebuild_flag text;
+    caller_role name;
+    authorization_table_name name;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
+    END IF;
+
+    SELECT c.relname INTO authorization_table_name FROM pg_catalog.pg_class AS c
+    WHERE c.oid OPERATOR(pg_catalog.=) table_oid;
+    caller_role := CASE WHEN current_setting('role') = 'none' THEN session_user ELSE current_setting('role') END;
+    IF NOT pg_catalog.pg_has_role(caller_role, (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid OPERATOR(pg_catalog.=) table_oid), 'USAGE') THEN
+        RAISE EXCEPTION 'must be owner of table %', authorization_table_name USING ERRCODE = 'insufficient_privilege';
     END IF;
 
     PERFORM sql_saga.__internal_serialize(table_oid);
@@ -542,10 +571,6 @@ BEGIN
     WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', s.table_schema, s.table_name)) OPERATOR(pg_catalog.=) table_oid;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'table % does not have SYSTEM VERSIONING', table_oid;
-    END IF;
-
-    IF NOT pg_catalog.pg_has_role((SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid OPERATOR(pg_catalog.=) table_oid), 'USAGE') THEN
-        RAISE EXCEPTION 'must be owner of table %', table_oid USING ERRCODE = 'insufficient_privilege';
     END IF;
 
     history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::pg_catalog.oid;

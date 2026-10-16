@@ -10,11 +10,12 @@ AS
 $function$
 #variable_conflict use_variable
 DECLARE
-    foreign_key_row sql_saga.foreign_keys;
+    foreign_key_row record;
     unique_table_oid regclass;
     fk_table_oid regclass;
     fk_schema_name name;
     fk_table_name name;
+    native_constraint_attributable boolean;
 BEGIN
     IF table_oid IS NULL AND key_name IS NULL THEN
         RAISE EXCEPTION 'no table or key name specified';
@@ -31,11 +32,65 @@ BEGIN
     PERFORM sql_saga.__internal_serialize(table_oid);
 
     FOR foreign_key_row IN
-        SELECT fk.*
+        SELECT fk.*,
+               fkc.oid AS fk_table_oid,
+               ukc.oid AS unique_table_oid,
+               coalesce(
+                   fk.type <> 'temporal_to_temporal'
+                   OR (
+                       c.oid IS NOT NULL
+                       AND c.contype = 'f'
+                       AND c.conrelid = fkc.oid
+                       AND c.confrelid = ukc.oid
+                       AND c.conkey = fk_cols.attnums
+                       AND c.confkey = uk_cols.attnums
+                       AND c.conperiod
+                       AND c.condeferrable
+                       AND NOT c.condeferred
+                       AND c.convalidated
+                       AND c.conenforced
+                       AND c.confmatchtype = CASE fk.match_type WHEN 'FULL' THEN 'f' WHEN 'PARTIAL' THEN 'p' ELSE 's' END
+                       AND c.confupdtype = CASE fk.update_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END
+                       AND c.confdeltype = CASE fk.delete_action::text WHEN 'RESTRICT' THEN 'r' WHEN 'CAS' || 'CADE' THEN 'c' WHEN 'SET NULL' THEN 'n' WHEN 'SET DEFAULT' THEN 'd' ELSE 'a' END
+                   ),
+                   false) AS native_constraint_attributable
         FROM sql_saga.foreign_keys AS fk
+        LEFT JOIN pg_catalog.pg_namespace AS fkn ON fkn.nspname = fk.table_schema
+        LEFT JOIN pg_catalog.pg_class AS fkc
+          ON fkc.relnamespace = fkn.oid AND fkc.relname = fk.table_name
+        LEFT JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+        LEFT JOIN pg_catalog.pg_namespace AS ukn ON ukn.nspname = uk.table_schema
+        LEFT JOIN pg_catalog.pg_class AS ukc
+          ON ukc.relnamespace = ukn.oid AND ukc.relname = uk.table_name
+        LEFT JOIN sql_saga.era AS fk_era
+          ON (fk_era.table_schema, fk_era.table_name, fk_era.era_name)
+           = (fk.table_schema, fk.table_name, fk.fk_era_name)
+        LEFT JOIN sql_saga.era AS uk_era
+          ON (uk_era.table_schema, uk_era.table_name, uk_era.era_name)
+           = (uk.table_schema, uk.table_name, uk.era_name)
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(fk.column_names || fk_era.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = fkc.oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS fk_cols ON fk.type = 'temporal_to_temporal'
+        LEFT JOIN LATERAL (
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n) AS attnums
+            FROM pg_catalog.unnest(uk.column_names || uk_era.range_column_name) WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = ukc.oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped
+        ) AS uk_cols ON fk.type = 'temporal_to_temporal'
+        LEFT JOIN pg_catalog.pg_constraint AS c
+          ON fk.type = 'temporal_to_temporal'
+         AND c.conrelid = fkc.oid
+         AND c.conname = fk.foreign_key_name
         WHERE (table_oid IS NULL OR (fk.table_schema, fk.table_name) = (fk_schema_name, fk_table_name))
           AND (fk.foreign_key_name = key_name OR key_name IS NULL)
     LOOP
+        native_constraint_attributable := foreign_key_row.native_constraint_attributable;
+
         -- Delete the metadata record first, so the drop_protection trigger doesn't fire on the main objects.
         DELETE FROM sql_saga.foreign_keys AS fk
         WHERE fk.foreign_key_name = foreign_key_row.foreign_key_name;
@@ -49,13 +104,18 @@ BEGIN
             RAISE NOTICE 'sql_saga: Dropping automatically created index "%" for foreign key "%"', foreign_key_row.fk_index_name, foreign_key_row.foreign_key_name;
             EXECUTE format('DROP INDEX IF EXISTS %I.%I', foreign_key_row.table_schema, foreign_key_row.fk_index_name);
         END IF;
-        fk_table_oid := format('%I.%I', foreign_key_row.table_schema, foreign_key_row.table_name)::regclass;
+        fk_table_oid := foreign_key_row.fk_table_oid;
 
         CASE foreign_key_row.type
             WHEN 'temporal_to_temporal' THEN
                 -- For native temporal FKs, we drop the constraint directly.
                 IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.foreign_key_name) THEN
-                    EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */);
+                    IF native_constraint_attributable THEN
+                        EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, foreign_key_row.foreign_key_name /* %I */);
+                    ELSE
+                        RAISE NOTICE 'sql_saga: Left constraint "%" on table "%" in place because it is not the sql_saga-managed constraint',
+                            foreign_key_row.foreign_key_name, sql_saga.__internal_display_name(fk_table_oid);
+                    END IF;
                 END IF;
             WHEN 'regular_to_temporal' THEN
                 IF EXISTS (SELECT FROM pg_constraint WHERE conrelid = fk_table_oid AND conname = foreign_key_row.fk_check_constraint) THEN
@@ -66,16 +126,15 @@ BEGIN
                     SELECT 1 FROM sql_saga.foreign_keys
                     WHERE fk_helper_function = foreign_key_row.fk_helper_function
                 ) THEN
-                    EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function /* %s */);
+                    IF to_regprocedure(foreign_key_row.fk_helper_function) IS NOT NULL THEN
+                        EXECUTE format('DROP FUNCTION %s', foreign_key_row.fk_helper_function);
+                    END IF;
                 END IF;
         END CASE;
 
-        SELECT to_regclass(format('%I.%I', uk.table_schema /* %I */, uk.table_name /* %I */))
-        INTO unique_table_oid
-        FROM sql_saga.unique_keys AS uk
-        WHERE uk.unique_key_name = foreign_key_row.unique_key_name;
+        unique_table_oid := foreign_key_row.unique_table_oid;
 
-        IF FOUND AND pg_catalog.to_regclass(unique_table_oid::text) IS NOT NULL THEN
+        IF unique_table_oid IS NOT NULL AND pg_catalog.to_regclass(unique_table_oid::text) IS NOT NULL THEN
             IF EXISTS (SELECT FROM pg_trigger WHERE tgrelid = unique_table_oid AND tgname = foreign_key_row.uk_update_trigger) THEN
                 EXECUTE format('DROP TRIGGER %I ON %s', foreign_key_row.uk_update_trigger /* %I */, unique_table_oid /* %s */);
             END IF;
@@ -88,4 +147,3 @@ BEGIN
     RETURN true;
 END;
 $function$;
-

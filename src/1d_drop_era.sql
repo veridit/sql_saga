@@ -32,7 +32,7 @@ BEGIN
     /*
      * Has the table been dropped already?  This could happen if the period is
      * being dropped by the drop_protection event trigger or through a DROP
-     * CASCADE.
+     * cascading drop.
      */
     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
 
@@ -55,10 +55,10 @@ BEGIN
         RETURNING * INTO system_time_era_row;
 
         IF FOUND AND NOT is_dropped THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, system_time_era_row.infinity_check_constraint /* %I */);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger /* %I */, table_oid /* %s */);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger /* %I */, table_oid /* %s */);
-            EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger /* %I */, table_oid /* %s */);
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = system_time_era_row.infinity_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, system_time_era_row.infinity_check_constraint); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.generated_always_trigger, 'sql_saga.generated_always_as_row_start_end()'::regprocedure, 23, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.generated_always_trigger, table_oid); ELSIF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = table_oid AND t.tgname = system_time_era_row.generated_always_trigger) THEN RAISE NOTICE 'sql_saga: Left trigger "%" on table "%" in place because it is not the sql_saga-generated trigger', system_time_era_row.generated_always_trigger, sql_saga.__internal_display_name(table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.write_history_trigger, 'sql_saga.write_history()'::regprocedure, 25, era_row.range_column_name) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.write_history_trigger, table_oid); END IF;
+            IF sql_saga.__internal_trigger_is_attributable(table_oid, system_time_era_row.truncate_trigger, 'sql_saga.truncate_system_versioning()'::regprocedure, 32, NULL) THEN EXECUTE format('DROP TRIGGER %I ON %s', system_time_era_row.truncate_trigger, table_oid); END IF;
         END IF;
     END;
 
@@ -106,12 +106,12 @@ BEGIN
 
         /* Delete bounds check constraint (NOT isempty(range)). */
         IF NOT is_dropped AND era_row.bounds_check_constraint IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.bounds_check_constraint /* %I */);
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.bounds_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.bounds_check_constraint); END IF;
         END IF;
 
         /* Delete boundary check constraint (from < until). */
         IF NOT is_dropped AND era_row.boundary_check_constraint IS NOT NULL THEN
-            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid /* %s */, era_row.boundary_check_constraint /* %I */);
+            IF EXISTS (SELECT FROM pg_catalog.pg_constraint AS c WHERE c.conrelid = table_oid AND c.conname = era_row.boundary_check_constraint) THEN EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', table_oid, era_row.boundary_check_constraint); END IF;
         END IF;
 
         /* Drop column default if it was set */
@@ -147,7 +147,7 @@ BEGIN
         RETURN true;
     END IF;
 
-    /* We must be in CASCADE mode now */
+    /* We must be in cascading-drop mode now */
 
     PERFORM sql_saga.drop_for_portion_of_view(table_oid, era_name, drop_behavior, cleanup);
 

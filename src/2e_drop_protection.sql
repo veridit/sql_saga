@@ -456,10 +456,10 @@ BEGIN
           AND EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (dobj.schema_name, dobj.object_name))
     LOOP
         -- This table was dropped. Cascade-delete its metadata and any dependent triggers on other tables.
-        -- This logic mirrors drop_era(..., 'CASCADE', true) for a dropped table.
+        -- This logic mirrors the metadata-first era drop for a dropped table.
 
         -- 1. For FKs that reference the dropped table, drop their triggers.
-        -- The metadata will be cleaned up via ON DELETE CASCADE from the unique key.
+        -- The metadata will be cleaned up through the unique key's cascading foreign key.
         DECLARE
             fk_row record;
             fk_table_oid regclass;
@@ -471,7 +471,7 @@ BEGIN
                 WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name)
             LOOP
                 fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
-                -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
+                -- The referencing table might have been dropped in the same cascading statement. If it still exists, drop its triggers/constraints.
                 -- Not during pg_restore --clean: it drops the CHECK (with the table) and the helper function itself.
                 IF fk_table_oid IS NOT NULL AND NOT v_teardown THEN
                     IF fk_row.type = 'regular_to_temporal' THEN

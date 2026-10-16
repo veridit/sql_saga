@@ -27,6 +27,7 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_proc.h"
 #include "catalog/namespace.h"
 #include "commands/event_trigger.h"
 #include "commands/trigger.h"
@@ -39,7 +40,9 @@
 #include "utils/datum.h"
 #include "utils/elog.h"
 #include "utils/memutils.h"
+#include "utils/syscache.h"
 #include "mb/pg_wchar.h"
+#include "miscadmin.h"
 
 #if (PG_VERSION_NUM < 120000)
 #define table_open(r, l)	heap_open(r, l)
@@ -801,6 +804,10 @@ record_alter_function_resolved(PG_FUNCTION_ARGS)
 	char nulls[] = {'n'};
 	char *function_identity = NULL;
 	int ret;
+	HeapTuple proc_tuple;
+	Oid function_owner;
+	Oid saved_userid;
+	int saved_sec_context;
 
 	if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
 		elog(ERROR, "record_alter_function_resolved: not called by event trigger manager");
@@ -847,9 +854,26 @@ record_alter_function_resolved(PG_FUNCTION_ARGS)
 	if (SPI_connect() != SPI_OK_CONNECT)
 		elog(ERROR, "SPI_connect failed");
 
-	ret = SPI_execute_with_args(
-		"SELECT sql_saga.__internal_set_alter_function_resolved($1)",
-		1, argtypes, values, nulls, false, 0);
+	proc_tuple = SearchSysCache1(PROCOID, ObjectIdGetDatum(fcinfo->flinfo->fn_oid));
+	if (!HeapTupleIsValid(proc_tuple))
+		elog(ERROR, "cache lookup failed for function %u", fcinfo->flinfo->fn_oid);
+	function_owner = ((Form_pg_proc) GETSTRUCT(proc_tuple))->proowner;
+	ReleaseSysCache(proc_tuple);
+
+	GetUserIdAndSecContext(&saved_userid, &saved_sec_context);
+	SetUserIdAndSecContext(function_owner,
+						 saved_sec_context | SECURITY_LOCAL_USERID_CHANGE);
+	PG_TRY();
+	{
+		ret = SPI_execute_with_args(
+				"SELECT sql_saga.__internal_set_alter_function_resolved($1)",
+				1, argtypes, values, nulls, false, 0);
+	}
+	PG_FINALLY();
+	{
+		SetUserIdAndSecContext(saved_userid, saved_sec_context);
+	}
+	PG_END_TRY();
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
 

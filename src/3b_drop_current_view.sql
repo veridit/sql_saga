@@ -32,8 +32,12 @@ BEGIN
           AND v.view_type = 'current'
         RETURNING v.view_schema, v.view_name, v.trigger_name
     LOOP
-        EXECUTE format('DROP TRIGGER %I on %I.%I', trigger_name /* %I */, view_schema /* %I */, view_name /* %I */);
-        EXECUTE format('DROP VIEW %I.%I %s', view_schema /* %I */, view_name /* %I */, drop_behavior /* %s */);
+        IF to_regclass(format('%I.%I', view_schema, view_name)) IS NOT NULL THEN
+            IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = to_regclass(format('%I.%I', view_schema, view_name)) AND t.tgname = trigger_name) THEN
+                EXECUTE format('DROP TRIGGER %I ON %I.%I', trigger_name, view_schema, view_name);
+            END IF;
+            EXECUTE format('DROP VIEW IF EXISTS %I.%I %s', view_schema, view_name, drop_behavior);
+        END IF;
     END LOOP;
 
     RETURN true;
@@ -42,4 +46,3 @@ $function$;
 
 COMMENT ON FUNCTION sql_saga.drop_current_view(regclass, name, sql_saga.drop_behavior) IS
 'Drops the "current" view associated with a table and era.';
-

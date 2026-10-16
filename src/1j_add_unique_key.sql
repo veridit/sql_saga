@@ -276,9 +276,9 @@ BEGIN
                     )
                     INTO unique_sql_nulls_not_distinct
                     FROM unnest(column_names) WITH ORDINALITY AS u (column_name, ordinality);
-                    
+
                     actual_def := pg_catalog.pg_get_constraintdef(constraint_record.oid);
-                    
+
                     -- Check if constraint matches either traditional or NULLS NOT DISTINCT format
                     IF actual_def <> unique_sql AND actual_def <> unique_sql_nulls_not_distinct THEN
                         RAISE EXCEPTION E'constraint "%" does not match expected format.\nExpected (traditional): "%"\nExpected (NULLS NOT DISTINCT): "%"\nFound: "%"\n\nPostgreSQL 18 Temporal FK Requirement:\nUnique constraints with WITHOUT OVERLAPS must be NOT DEFERRABLE to be referenceable by native temporal foreign keys. The DELETE→UPDATE→INSERT execution strategy avoids overlaps while tolerating temporary gaps through DEFERRABLE FK checks.\n\nSee AGENTS.md section "PostgreSQL 18 Temporal Constraints and Foreign Keys" for details.',
@@ -414,7 +414,7 @@ BEGIN
         BEGIN
             -- XOR keys now use a single UNIQUE constraint with NULLS NOT DISTINCT
             -- This replaces the complex CHECK + partial indexes + partial EXCLUDE constraints
-            
+
             -- For XOR keys, we use the unified unique constraint approach
             IF unique_constraint IS NULL THEN
                 unique_constraint := unique_key_name;
@@ -425,9 +425,9 @@ BEGIN
                 (SELECT string_agg(format('%I', column_name), ', ') FROM unnest(column_names) AS column_name),
                 era_row.range_column_name
             );
-            
+
             alter_cmds := alter_cmds || ('ADD CONSTRAINT ' || quote_ident(unique_constraint) || ' ' || unique_sql);
-            
+
             -- Clear XOR-specific metadata (no longer using partial constraints)
             v_check_constraint := NULL;
             exclude_constraint := NULL;
@@ -524,7 +524,7 @@ BEGIN
     END IF;
 
     /* If we don't already have a unique_constraint, it must be the one with the highest oid */
-    IF unique_constraint IS NULL THEN
+    IF unique_constraint IS NULL AND key_type IN ('primary', 'natural') THEN
         SELECT c.conname
         INTO unique_constraint
         FROM pg_catalog.pg_constraint AS c
@@ -551,17 +551,17 @@ BEGIN
         BEGIN
             -- Build list of columns for the compound index
             compound_columns := (
-                SELECT string_agg(quote_ident(c), ', ') 
+                SELECT string_agg(quote_ident(c), ', ')
                 FROM unnest(v_stable_cols_to_store) AS c
             );
-            
+
             -- Add the range column at the end
             compound_columns := compound_columns || ', ' || quote_ident(era_row.range_column_name);
-            
+
             compound_index_name := sql_saga.__internal_make_name(
                 ARRAY[table_name] || v_stable_cols_to_store || ARRAY[era_row.range_column_name, 'idx']
             );
-            
+
             -- Check if index already exists
             IF NOT EXISTS (
                 SELECT 1 FROM pg_index i
@@ -576,7 +576,7 @@ BEGIN
                     table_name,
                     compound_columns
                 );
-                
+
                 RAISE DEBUG 'add_unique_key: Creating compound index for temporal_merge performance: %', compound_index_sql;
                 EXECUTE compound_index_sql;
                 RAISE DEBUG 'sql_saga: created compound index % on % for temporal_merge performance', compound_index_name, table_oid::regclass;

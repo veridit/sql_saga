@@ -587,7 +587,7 @@ FUNCTION rebuild_system_versioning_views(
     table_oid regclass,
     without_columns name[] DEFAULT '{}'::name[]
 ) RETURNS void
-SECURITY INVOKER
+SECURITY DEFINER
 ```
 
 ### set_system_time_era_excluded_columns
@@ -632,6 +632,15 @@ AGGREGATE first(anyelement)
 ```
 
 ## Health Checks
+
+### check_integrity
+
+> Validates all catalogued sql_saga families without modifying them, and raises on the first deterministic integrity violation.
+
+```sql
+FUNCTION check_integrity() RETURNS void
+SECURITY DEFINER
+```
 
 ### health_checks
 

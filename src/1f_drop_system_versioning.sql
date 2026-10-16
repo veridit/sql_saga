@@ -10,6 +10,16 @@ DECLARE
     is_dropped boolean;
     table_schema name;
     table_name name;
+    base_oid oid;
+    public_view_oid oid;
+    gated_view_oid oid;
+    as_of_attributable boolean;
+    between_attributable boolean;
+    between_symmetric_attributable boolean;
+    from_to_attributable boolean;
+    public_view_attributable boolean;
+    gated_view_attributable boolean;
+    function_depends_on_public_view boolean;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -22,30 +32,75 @@ BEGIN
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON c.relnamespace = n.oid
     WHERE c.oid = table_oid;
 
-    DELETE FROM sql_saga.system_versioning AS sv
+    SELECT sv.* INTO system_versioning_row
+    FROM sql_saga.system_versioning AS sv
     WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name)
-    RETURNING * INTO system_versioning_row;
+    FOR UPDATE;
 
     IF NOT FOUND THEN
         RAISE DEBUG 'table % does not have SYSTEM VERSIONING', table_oid;
         RETURN false;
     END IF;
 
+    base_oid := table_oid::oid;
+    public_view_oid := to_regclass(format('%I.%I', system_versioning_row.view_schema_name, system_versioning_row.view_table_name));
+    gated_view_oid := to_regclass(format('%I.%I', system_versioning_row.history_schema_name,
+        sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name)));
+    SELECT a.as_of_attributable, a.between_attributable,
+           a.between_symmetric_attributable, a.from_to_attributable,
+           a.public_view_attributable, a.gated_view_attributable
+    INTO as_of_attributable, between_attributable,
+         between_symmetric_attributable, from_to_attributable,
+         public_view_attributable, gated_view_attributable
+    FROM sql_saga.__internal_system_versioning_member_attribution(base_oid) AS a;
+
+    DELETE FROM sql_saga.system_versioning AS sv
+    WHERE (sv.table_schema, sv.table_name) = (table_schema, table_name);
+
     is_dropped := NOT EXISTS (SELECT FROM pg_catalog.pg_class AS c WHERE c.oid = table_oid);
 
     IF NOT is_dropped THEN
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of::regprocedure /* %s */, drop_behavior /* %s */);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between::regprocedure /* %s */, drop_behavior /* %s */);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric::regprocedure /* %s */, drop_behavior /* %s */);
-        EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to::regprocedure /* %s */, drop_behavior /* %s */);
-        EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name /* %I */, system_versioning_row.view_table_name /* %I */, drop_behavior /* %s */);
-        EXECUTE format('DROP VIEW IF EXISTS %I.%I %s', system_versioning_row.history_schema_name /* %I */,
-            sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name) /* %I */, drop_behavior /* %s */);
+        SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_proc AS p
+            JOIN pg_catalog.pg_type AS t ON t.oid = p.prorettype
+            WHERE p.oid = to_regprocedure(system_versioning_row.func_as_of)
+              AND t.typrelid = public_view_oid)
+        INTO function_depends_on_public_view;
+        IF NOT as_of_attributable AND to_regprocedure(system_versioning_row.func_as_of) IS NOT NULL
+           AND NOT function_depends_on_public_view THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_as_of, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT between_attributable AND to_regprocedure(system_versioning_row.func_between) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_between, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT between_symmetric_attributable AND to_regprocedure(system_versioning_row.func_between_symmetric) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_between_symmetric, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT from_to_attributable AND to_regprocedure(system_versioning_row.func_from_to) IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left function "%" in place because it is not the sql_saga-generated function for table "%"',
+                system_versioning_row.func_from_to, sql_saga.__internal_display_name(table_oid);
+        ELSIF NOT public_view_attributable AND public_view_oid IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Left view "%" in place because it is not the sql_saga-generated view for table "%"',
+                public_view_oid::regclass, sql_saga.__internal_display_name(table_oid);
+        END IF;
+        IF as_of_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_as_of, drop_behavior); END IF;
+        IF between_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between, drop_behavior); END IF;
+        IF between_symmetric_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_between_symmetric, drop_behavior); END IF;
+        IF from_to_attributable THEN EXECUTE format('DROP FUNCTION %s %s', system_versioning_row.func_from_to, drop_behavior); END IF;
+        IF public_view_attributable THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.view_schema_name, system_versioning_row.view_table_name, drop_behavior);
+        END IF;
+        IF gated_view_attributable THEN
+            EXECUTE format('DROP VIEW %I.%I %s', system_versioning_row.history_schema_name,
+                sql_saga.__internal_history_gated_name(system_versioning_row.history_table_name), drop_behavior);
+        END IF;
     END IF;
 
     IF NOT is_dropped AND cleanup THEN
         PERFORM sql_saga.drop_system_time_era(table_oid, drop_behavior, cleanup);
-        EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name /* %I */, system_versioning_row.history_table_name /* %I */, drop_behavior /* %s */);
+        IF to_regclass(format('%I.%I', system_versioning_row.history_schema_name, system_versioning_row.history_table_name)) IS NOT NULL THEN
+            EXECUTE format('DROP TABLE %I.%I %s', system_versioning_row.history_schema_name, system_versioning_row.history_table_name, drop_behavior);
+        END IF;
     END IF;
 
     RETURN true;
