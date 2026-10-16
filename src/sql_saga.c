@@ -27,6 +27,8 @@
 
 #include "access/htup_details.h"
 #include "catalog/pg_type.h"
+#include "catalog/namespace.h"
+#include "commands/event_trigger.h"
 #include "commands/trigger.h"
 #include "executor/spi.h"
 #include "utils/builtins.h"
@@ -695,6 +697,95 @@ PG_FUNCTION_INFO_V1(uk_update_check_c);
 PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
 PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
+PG_FUNCTION_INFO_V1(refuse_managed_relation_identity_change);
+
+Datum
+refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
+{
+	EventTriggerData *trigdata;
+	RangeVar   *relation = NULL;
+	char	   *schema_name = NULL;
+	bool		missing_ok = false;
+	Oid		relation_oid;
+	Oid		argtypes[] = {OIDOID};
+	Oid		schema_argtypes[] = {TEXTOID};
+	Datum		values[1];
+	Datum		schema_values[1];
+	char		nulls[] = {' '};
+	int		ret;
+
+	if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+		elog(ERROR, "refuse_managed_relation_identity_change: not called by event trigger manager");
+
+	trigdata = (EventTriggerData *) fcinfo->context;
+	if (IsA(trigdata->parsetree, RenameStmt))
+	{
+		RenameStmt *stmt = castNode(RenameStmt, trigdata->parsetree);
+
+		if (stmt->renameType == OBJECT_SCHEMA)
+		{
+			if (stmt->subname == NULL)
+				PG_RETURN_NULL();
+			schema_name = stmt->subname;
+		}
+		else if (stmt->renameType != OBJECT_TABLE && stmt->renameType != OBJECT_VIEW)
+			PG_RETURN_NULL();
+		else
+		{
+			relation = stmt->relation;
+			missing_ok = stmt->missing_ok;
+		}
+	}
+	else if (IsA(trigdata->parsetree, AlterObjectSchemaStmt))
+	{
+		AlterObjectSchemaStmt *stmt = castNode(AlterObjectSchemaStmt, trigdata->parsetree);
+
+		if (stmt->objectType != OBJECT_TABLE && stmt->objectType != OBJECT_VIEW)
+			PG_RETURN_NULL();
+		relation = stmt->relation;
+		missing_ok = stmt->missing_ok;
+	}
+	else
+		PG_RETURN_NULL();
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	if (schema_name != NULL)
+	{
+		schema_values[0] = CStringGetTextDatum(schema_name);
+		ret = SPI_execute_with_args(
+			"SELECT sql_saga.__internal_refuse_managed_schema_rename($1)",
+			1, schema_argtypes, schema_values, nulls, false, 0);
+	}
+	else
+	{
+		if (relation == NULL)
+		{
+			SPI_finish();
+			PG_RETURN_NULL();
+		}
+
+		relation_oid = RangeVarGetRelid(relation, NoLock, missing_ok);
+		if (!OidIsValid(relation_oid))
+		{
+			SPI_finish();
+			PG_RETURN_NULL();
+		}
+
+		values[0] = ObjectIdGetDatum(relation_oid);
+		ret = SPI_execute_with_args(
+			"SELECT sql_saga.__internal_refuse_managed_relation_identity_change($1)",
+			1, argtypes, values, nulls, false, 0);
+	}
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	PG_RETURN_NULL();
+}
 
 Datum
 alter_table_changes_column_shape(PG_FUNCTION_ARGS)
@@ -1951,4 +2042,3 @@ write_history(PG_FUNCTION_ARGS)
 
 void _PG_init(void) {
 }
-

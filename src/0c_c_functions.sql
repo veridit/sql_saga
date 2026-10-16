@@ -13,6 +13,13 @@ LANGUAGE c STRICT;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_alter_table_changes_column_shape(pg_ddl_command) FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change()
+RETURNS event_trigger
+AS 'sql_saga', 'refuse_managed_relation_identity_change'
+LANGUAGE c;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION sql_saga.fk_insert_check_c()
 RETURNS trigger
 AS 'sql_saga', 'fk_insert_check_c'

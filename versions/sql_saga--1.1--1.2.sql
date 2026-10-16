@@ -1268,3 +1268,247 @@ $new_tail$);
     EXECUTE changed;
 END;
 $upgrade_rename_following$;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change()
+RETURNS event_trigger
+AS 'sql_saga', 'refuse_managed_relation_identity_change'
+LANGUAGE c;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change() FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_refuse_managed_schema_rename(schema_name text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $__internal_refuse_managed_schema_rename$
+#variable_conflict use_variable
+DECLARE
+    managed record;
+    object_display_name text;
+    base_display_name text;
+BEGIN
+    SELECT candidate.managed_class, candidate.object_schema, candidate.object_name,
+           candidate.base_schema, candidate.base_table, candidate.era_name, candidate.detail
+    INTO managed
+    FROM (
+        SELECT 1 AS priority, 'system_versioning_base' AS managed_class,
+               sv.table_schema AS object_schema, sv.table_name AS object_name,
+               sv.table_schema AS base_schema, sv.table_name AS base_table,
+               sv.era_name, NULL::text AS detail
+        FROM sql_saga.system_versioning AS sv
+        WHERE sv.table_schema = schema_name
+
+        UNION ALL
+
+        SELECT 2, 'era', e.table_schema, e.table_name,
+               e.table_schema, e.table_name, e.era_name, NULL::text
+        FROM sql_saga.era AS e
+        WHERE e.table_schema = schema_name
+
+        UNION ALL
+
+        SELECT 3, 'foreign_key', fk.table_schema, fk.table_name,
+               fk.table_schema, fk.table_name, fk.fk_era_name, fk.foreign_key_name::text
+        FROM sql_saga.foreign_keys AS fk
+        WHERE fk.table_schema = schema_name
+
+        UNION ALL
+
+        SELECT 4, 'history_table', sv.history_schema_name, sv.history_table_name,
+               sv.table_schema, sv.table_name, sv.era_name, NULL::text
+        FROM sql_saga.system_versioning AS sv
+        WHERE sv.history_schema_name = schema_name
+
+        UNION ALL
+
+        SELECT 5, 'system_versioning_view', sv.view_schema_name, sv.view_table_name,
+               sv.table_schema, sv.table_name, sv.era_name, NULL::text
+        FROM sql_saga.system_versioning AS sv
+        WHERE sv.view_schema_name = schema_name
+
+        UNION ALL
+
+        SELECT 5, 'system_versioning_view', sv.history_schema_name,
+               sql_saga.__internal_history_gated_name(sv.history_table_name),
+               sv.table_schema, sv.table_name, sv.era_name, NULL::text
+        FROM sql_saga.system_versioning AS sv
+        WHERE sv.history_schema_name = schema_name
+
+        UNION ALL
+
+        SELECT 6, 'system_versioning_function', n.nspname, p.proname,
+               sv.table_schema, sv.table_name, sv.era_name, NULL::text
+        FROM sql_saga.system_versioning AS sv
+        CROSS JOIN LATERAL unnest(ARRAY[
+            sv.func_as_of,
+            sv.func_between,
+            sv.func_between_symmetric,
+            sv.func_from_to
+        ]) AS f (signature)
+        JOIN pg_catalog.pg_proc AS p ON p.oid = pg_catalog.to_regprocedure(f.signature)
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = p.pronamespace
+        WHERE n.nspname = schema_name
+
+        UNION ALL
+
+        SELECT CASE uv.view_type WHEN 'current' THEN 7 ELSE 8 END,
+               uv.view_type::text, uv.view_schema, uv.view_name,
+               uv.table_schema, uv.table_name, uv.era_name, NULL::text
+        FROM sql_saga.updatable_view AS uv
+        WHERE uv.view_schema = schema_name
+    ) AS candidate
+    ORDER BY candidate.object_schema::text COLLATE "C",
+             candidate.object_name::text COLLATE "C", candidate.priority,
+             candidate.era_name::text COLLATE "C", candidate.detail COLLATE "C"
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    object_display_name := sql_saga.__internal_display_name(
+        pg_catalog.format('%I.%I', managed.object_schema, managed.object_name));
+    base_display_name := sql_saga.__internal_display_name(
+        pg_catalog.format('%I.%I', managed.base_schema, managed.base_table));
+
+    IF managed.managed_class = 'system_versioning_base' THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed system-versioned table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name, object_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'era' THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed table "%" with era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name, object_display_name, managed.era_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'foreign_key' THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed table "%" with foreign key "%"; drop it first with sql_saga.drop_foreign_key_by_name(table_oid regclass, key_name name, drop_index boolean)', schema_name, object_display_name, managed.detail
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'history_table' THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed history table "%" for table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name, object_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class IN ('system_versioning_view', 'system_versioning_function') THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed % "%" for table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', schema_name,
+            CASE managed.managed_class WHEN 'system_versioning_view' THEN 'view' ELSE 'query function' END,
+            object_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'current' THEN
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed view "%" for table "%"; drop it with sql_saga.drop_current_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior) before renaming the schema', schema_name, object_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSE
+        RAISE EXCEPTION 'cannot rename schema "%" because it contains managed view "%" for table "%"; drop it with sql_saga.drop_for_portion_of_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean) before renaming the schema', schema_name, object_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    END IF;
+END;
+$__internal_refuse_managed_schema_rename$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_schema_rename(text) FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change(relation_oid oid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $__internal_refuse_managed_relation_identity_change$
+#variable_conflict use_variable
+DECLARE
+    relation_schema name;
+    relation_name name;
+    relation_display_name text;
+    base_display_name text;
+    managed record;
+BEGIN
+    SELECT n.nspname, c.relname,
+           sql_saga.__internal_display_name(pg_catalog.format('%I.%I', n.nspname, c.relname))
+    INTO relation_schema, relation_name, relation_display_name
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = relation_oid;
+
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT candidate.managed_class, candidate.base_schema, candidate.base_table,
+           candidate.era_name, candidate.detail
+    INTO managed
+    FROM (
+        SELECT 1 AS priority, 'system_versioning_base' AS managed_class,
+               sv.table_schema AS base_schema, sv.table_name AS base_table,
+               sv.era_name, NULL::name AS detail
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.table_schema, sv.table_name) = (relation_schema, relation_name)
+
+        UNION ALL
+
+        SELECT 2, 'era', e.table_schema, e.table_name, e.era_name, NULL::name
+        FROM sql_saga.era AS e
+        WHERE (e.table_schema, e.table_name) = (relation_schema, relation_name)
+
+        UNION ALL
+
+        SELECT 3, 'foreign_key', fk.table_schema, fk.table_name, fk.fk_era_name,
+               fk.foreign_key_name
+        FROM sql_saga.foreign_keys AS fk
+        WHERE (fk.table_schema, fk.table_name) = (relation_schema, relation_name)
+
+        UNION ALL
+
+        SELECT 4, 'history_table', sv.table_schema, sv.table_name, sv.era_name, NULL::name
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.history_schema_name, sv.history_table_name) = (relation_schema, relation_name)
+
+        UNION ALL
+
+        SELECT 5, 'system_versioning_view', sv.table_schema, sv.table_name, sv.era_name, NULL::name
+        FROM sql_saga.system_versioning AS sv
+        WHERE (sv.view_schema_name, sv.view_table_name) = (relation_schema, relation_name)
+           OR (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)) =
+              (relation_schema, relation_name)
+
+        UNION ALL
+
+        SELECT CASE uv.view_type WHEN 'current' THEN 6 ELSE 7 END,
+               uv.view_type::text, uv.table_schema, uv.table_name, uv.era_name, NULL::name
+        FROM sql_saga.updatable_view AS uv
+        WHERE (uv.view_schema, uv.view_name) = (relation_schema, relation_name)
+    ) AS candidate
+    ORDER BY candidate.priority, candidate.era_name, candidate.detail
+    LIMIT 1;
+
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    IF managed.managed_class = 'system_versioning_base' THEN
+        RAISE EXCEPTION 'cannot rename or move system-versioned table "%"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again', relation_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'era' THEN
+        RAISE EXCEPTION 'cannot rename or move table "%" because it has era "%"; drop dependent keys and foreign keys, then drop the era first with sql_saga.drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, managed.era_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'foreign_key' THEN
+        RAISE EXCEPTION 'cannot rename or move table "%" because it has foreign key "%"; drop it first with sql_saga.drop_foreign_key_by_name(table_oid regclass, key_name name, drop_index boolean)', relation_display_name, managed.detail
+            USING ERRCODE = 'object_in_use';
+    END IF;
+
+    base_display_name := sql_saga.__internal_display_name(
+        pg_catalog.format('%I.%I', managed.base_schema, managed.base_table));
+
+    IF managed.managed_class = 'history_table' THEN
+        RAISE EXCEPTION 'history table "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'system_versioning_view' THEN
+        RAISE EXCEPTION 'view "%" is managed by sql_saga for table "%"; it cannot be renamed or moved; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)', relation_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSIF managed.managed_class = 'current' THEN
+        RAISE EXCEPTION 'view "%" is managed by sql_saga for table "%"; drop it with sql_saga.drop_current_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior) before renaming or moving it', relation_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    ELSE
+        RAISE EXCEPTION 'view "%" is managed by sql_saga for table "%"; drop it with sql_saga.drop_for_portion_of_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean) before renaming or moving it', relation_display_name, base_display_name
+            USING ERRCODE = 'object_in_use';
+    END IF;
+END;
+$__internal_refuse_managed_relation_identity_change$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change(oid) FROM PUBLIC;
+
+CREATE EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ON ddl_command_start
+    WHEN TAG IN ('ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA')
+    EXECUTE PROCEDURE sql_saga.__internal_refuse_managed_relation_identity_change();
