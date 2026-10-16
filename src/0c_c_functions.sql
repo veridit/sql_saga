@@ -6,6 +6,13 @@ RETURNS internal
 AS 'sql_saga', 'covers_without_gaps_transfn'
 LANGUAGE c;
 
+CREATE OR REPLACE FUNCTION sql_saga.__internal_alter_table_changes_column_shape(command pg_ddl_command)
+RETURNS boolean
+AS 'sql_saga', 'alter_table_changes_column_shape'
+LANGUAGE c STRICT;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_alter_table_changes_column_shape(pg_ddl_command) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION sql_saga.fk_insert_check_c()
 RETURNS trigger
 AS 'sql_saga', 'fk_insert_check_c'

@@ -13,11 +13,69 @@ DECLARE
     v_is_alter_trigger boolean := false;
     is_alter_table boolean := false;
     cmd record;
+    v_command_changes_shape boolean;
+    v_shape_changed_table_oids oid[] := ARRAY[]::oid[];
+    v_table_oid oid;
+    v_current_columns name[];
+    v_removed_columns name[];
+    v_added_columns name[];
+    v_missing_excluded name;
 BEGIN
     FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
         IF cmd.command_tag = 'ALTER TABLE' THEN
             is_alter_table := true;
-            EXIT;
+            IF cmd.classid = 'pg_catalog.pg_class'::regclass THEN
+                v_command_changes_shape := cmd.objsubid > 0
+                    OR sql_saga.__internal_alter_table_changes_column_shape(cmd.command);
+
+                IF v_command_changes_shape THEN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM sql_saga.system_time_era AS ste
+                        JOIN pg_catalog.pg_class AS c
+                          ON c.oid = cmd.objid
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE (ste.table_schema, ste.table_name) = (n.nspname, c.relname))
+                       AND NOT cmd.objid = ANY (v_shape_changed_table_oids) THEN
+                        v_shape_changed_table_oids := pg_catalog.array_append(v_shape_changed_table_oids, cmd.objid);
+                    END IF;
+
+                    -- PostgreSQL propagates column-shape changes through table inheritance. Avoid all
+                    -- pg_inherits work for the overwhelmingly common no-children case.
+                    IF (SELECT c.relhassubclass FROM pg_catalog.pg_class AS c WHERE c.oid = cmd.objid) THEN
+                        FOR v_table_oid IN
+                            WITH RECURSIVE descendants(table_oid) AS (
+                                SELECT i.inhrelid
+                                FROM pg_catalog.pg_inherits AS i
+                                WHERE i.inhparent = cmd.objid
+                                UNION
+                                SELECT i.inhrelid
+                                FROM descendants AS d
+                                JOIN pg_catalog.pg_inherits AS i ON i.inhparent = d.table_oid
+                            )
+                            SELECT c.oid
+                            FROM descendants AS d
+                            JOIN pg_catalog.pg_class AS c ON c.oid = d.table_oid
+                            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                            JOIN sql_saga.system_time_era AS ste
+                              ON (ste.table_schema, ste.table_name) = (n.nspname, c.relname)
+                            JOIN LATERAL (
+                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+                                FROM pg_catalog.pg_attribute AS a
+                                WHERE a.attrelid = c.oid
+                                  AND a.attnum > 0
+                                  AND NOT a.attisdropped
+                            ) AS live ON true
+                            WHERE ste.table_columns_snapshot IS DISTINCT FROM live.column_names
+                        LOOP
+                            IF NOT v_table_oid = ANY (v_shape_changed_table_oids) THEN
+                                v_shape_changed_table_oids := pg_catalog.array_append(
+                                    v_shape_changed_table_oids, v_table_oid);
+                            END IF;
+                        END LOOP;
+                    END IF;
+                END IF;
+            END IF;
         END IF;
     END LOOP;
 
@@ -31,7 +89,9 @@ BEGIN
     -- Exit early if the DDL command does not affect a managed object.
     -- We bypass this for ALTER TRIGGER because the object identity contains
     -- the *new* trigger name, which won't be in our metadata yet.
-    IF NOT v_is_alter_trigger AND NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
+    IF NOT v_is_alter_trigger
+       AND cardinality(v_shape_changed_table_oids) = 0
+       AND NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
         RETURN;
     END IF;
     /*
@@ -254,19 +314,49 @@ BEGIN
     END LOOP;
 
     /*
-     * We can't reliably find out what a column was renamed to, so just error
-     * out in this case. Note: This is also checked in drop_protection.sql.
+     * Attribute base-column changes only to registered base relations present in this ALTER TABLE
+     * invocation. The persisted snapshot supplies the pre-command names without storing OIDs.
      */
-    FOR r IN
-        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, u.column_name
-        FROM sql_saga.system_time_era AS ste
-        CROSS JOIN LATERAL unnest(ste.excluded_column_names) AS u (column_name)
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_attribute AS a
-            WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
+    FOREACH v_table_oid IN ARRAY v_shape_changed_table_oids
     LOOP
-        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
-            r.column_name, sql_saga.__internal_display_name(r.table_oid);
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum)
+        INTO v_current_columns
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = v_table_oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped;
+
+        SELECT pg_catalog.array_agg(s.column_name ORDER BY s.ordinality)
+        INTO v_removed_columns
+        FROM sql_saga.system_time_era AS ste
+        CROSS JOIN LATERAL pg_catalog.unnest(ste.table_columns_snapshot) WITH ORDINALITY AS s(column_name, ordinality)
+        WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+          AND NOT s.column_name = ANY (v_current_columns);
+
+        SELECT pg_catalog.array_agg(c.column_name ORDER BY c.ordinality)
+        INTO v_added_columns
+        FROM pg_catalog.unnest(v_current_columns) WITH ORDINALITY AS c(column_name, ordinality)
+        JOIN sql_saga.system_time_era AS ste
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+        WHERE NOT c.column_name = ANY (ste.table_columns_snapshot);
+
+        SELECT removed.column_name
+        INTO v_missing_excluded
+        FROM pg_catalog.unnest(coalesce(v_removed_columns, ARRAY[]::name[])) AS removed(column_name)
+        JOIN sql_saga.system_time_era AS ste
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+        WHERE removed.column_name = ANY (ste.excluded_column_names)
+        ORDER BY removed.column_name
+        LIMIT 1;
+
+        IF v_missing_excluded IS NOT NULL THEN
+            IF cardinality(v_removed_columns) = 1 AND cardinality(v_added_columns) = 1 THEN
+                RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
+                    v_missing_excluded, sql_saga.__internal_display_name(v_table_oid);
+            END IF;
+            RAISE EXCEPTION 'cannot determine whether excluded column "%" on table "%" was renamed because ALTER TABLE changed multiple columns; split column-shape changes into separate ALTER TABLE statements',
+                v_missing_excluded, sql_saga.__internal_display_name(v_table_oid);
+        END IF;
     END LOOP;
 
     ---
@@ -614,6 +704,22 @@ BEGIN
                     r.sync_temporal_trg_name, sql_saga.__internal_display_name(r.table_oid), r.era_name;
             END LOOP;
         END IF;
+    END IF;
+
+    IF cardinality(v_shape_changed_table_oids) > 0 THEN
+        UPDATE sql_saga.system_time_era AS ste
+        SET table_columns_snapshot = live.column_names
+        FROM (
+            SELECT c.oid AS table_oid,
+                   pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
+            WHERE c.oid = ANY (v_shape_changed_table_oids)
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            GROUP BY c.oid
+        ) AS live
+        WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = live.table_oid;
     END IF;
 
 END;

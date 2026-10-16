@@ -931,3 +931,340 @@ BEGIN
     END IF;
 END;
 $__internal_sync_history_policies$;
+
+ALTER TABLE sql_saga.system_time_era
+ADD COLUMN table_columns_snapshot name[];
+
+UPDATE sql_saga.system_time_era AS ste
+SET table_columns_snapshot = (
+    SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum)
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
+    WHERE (n.nspname, c.relname) = (ste.table_schema, ste.table_name)
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+);
+
+ALTER TABLE sql_saga.system_time_era
+ALTER COLUMN table_columns_snapshot SET NOT NULL;
+
+CREATE OR REPLACE FUNCTION sql_saga.__internal_alter_table_changes_column_shape(command pg_ddl_command)
+RETURNS boolean
+AS 'sql_saga', 'alter_table_changes_column_shape'
+LANGUAGE c STRICT;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_alter_table_changes_column_shape(pg_ddl_command) FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid oid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_refresh_system_time_columns_snapshot$
+    UPDATE sql_saga.system_time_era AS ste
+    SET table_columns_snapshot = live.column_names
+    FROM (
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = table_oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    ) AS live
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = table_oid;
+$__internal_refresh_system_time_columns_snapshot$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) FROM PUBLIC;
+
+DO $upgrade_snapshot_routines$
+DECLARE
+    definition text;
+    changed text;
+BEGIN
+    definition := pg_catalog.pg_get_functiondef(
+        'sql_saga.__internal_add_system_time_era(regclass,name,name,name,name,name,name[])'::regprocedure);
+    changed := pg_catalog.replace(definition,
+$old_add$
+    INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
+    VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);
+$old_add$,
+$new_add$
+    INSERT INTO sql_saga.system_time_era (
+        table_schema, table_name, era_name, infinity_check_constraint,
+        generated_always_trigger, write_history_trigger, truncate_trigger,
+        excluded_column_names, table_columns_snapshot)
+    SELECT table_schema, table_name, era_name, infinity_check_constraint,
+           generated_always_trigger, write_history_trigger, truncate_trigger,
+           excluded_column_names,
+           pg_catalog.array_agg(a.attname ORDER BY a.attnum)
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = table_oid
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+    GROUP BY table_schema, table_name, era_name, infinity_check_constraint,
+             generated_always_trigger, write_history_trigger, truncate_trigger,
+             excluded_column_names;
+$new_add$);
+    IF changed = definition THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_add_system_time_era snapshot lifecycle';
+    END IF;
+    EXECUTE changed;
+
+    definition := pg_catalog.pg_get_functiondef(
+        'sql_saga.__internal_reconcile_system_versioning_family(regclass,name[])'::regprocedure);
+    changed := pg_catalog.replace(definition,
+$old_reconcile_entry$
+    END IF;
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+$old_reconcile_entry$,
+$new_reconcile_entry$
+    END IF;
+    IF current_setting('sql_saga.rebuilding_system_versioning_views', true) OPERATOR(pg_catalog.=) table_oid::oid::text THEN
+        PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+        PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
+        RETURN;
+    END IF;
+    history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
+$new_reconcile_entry$);
+    changed := pg_catalog.replace(changed,
+$old_reconcile_rebuild$
+      IF needs_rebuild THEN
+          PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, coalesce(without_columns, '{}'));
+      END IF;
+$old_reconcile_rebuild$,
+$new_reconcile_rebuild$
+      IF needs_rebuild THEN
+          PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, coalesce(without_columns, '{}'));
+          PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
+      END IF;
+$new_reconcile_rebuild$);
+    IF changed = definition THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade __internal_reconcile_system_versioning_family snapshot lifecycle';
+    END IF;
+    EXECUTE changed;
+
+    definition := pg_catalog.pg_get_functiondef(
+        'sql_saga.rebuild_system_versioning_views(regclass,name[])'::regprocedure);
+    changed := pg_catalog.replace(definition,
+$old_public_declare$
+    range_column name;
+    excluded name;
+$old_public_declare$,
+$new_public_declare$
+    range_column name;
+    excluded name;
+    previous_rebuild_flag text;
+$new_public_declare$);
+    changed := pg_catalog.replace(changed,
+$old_public_rebuild$
+    PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, without_columns);
+
+    -- Copies of B's policies refer to columns by name: renames on both tables, or policy changes
+    -- made while event triggers were off, are synchronized here (refused if a column is missing).
+    PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+$old_public_rebuild$,
+$new_public_rebuild$
+    PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, without_columns);
+
+    -- Use the existing authorized reconciler as the private refresh gateway.
+    previous_rebuild_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::oid::text, true);
+    BEGIN
+        PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, without_columns);
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+$new_public_rebuild$);
+    IF changed = definition THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rebuild_system_versioning_views snapshot lifecycle';
+    END IF;
+    EXECUTE changed;
+END;
+$upgrade_snapshot_routines$;
+
+DO $upgrade_rename_following$
+DECLARE
+    definition text := pg_catalog.pg_get_functiondef('sql_saga.rename_following()'::regprocedure);
+    changed text;
+BEGIN
+    changed := pg_catalog.replace(definition,
+$old_declare$    cmd record;
+$old_declare$,
+$new_declare$    cmd record;
+    v_command_changes_shape boolean;
+    v_shape_changed_table_oids oid[] := ARRAY[]::oid[];
+    v_table_oid oid;
+    v_current_columns name[];
+    v_removed_columns name[];
+    v_added_columns name[];
+    v_missing_excluded name;
+$new_declare$);
+    changed := pg_catalog.replace(changed,
+$old_collect$    FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
+        IF cmd.command_tag = 'ALTER TABLE' THEN
+            is_alter_table := true;
+            EXIT;
+        END IF;
+    END LOOP;
+$old_collect$,
+$new_collect$    FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
+        IF cmd.command_tag = 'ALTER TABLE' THEN
+            is_alter_table := true;
+            IF cmd.classid = 'pg_catalog.pg_class'::regclass THEN
+                v_command_changes_shape := cmd.objsubid > 0
+                    OR sql_saga.__internal_alter_table_changes_column_shape(cmd.command);
+
+                IF v_command_changes_shape THEN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM sql_saga.system_time_era AS ste
+                        JOIN pg_catalog.pg_class AS c
+                          ON c.oid = cmd.objid
+                        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                        WHERE (ste.table_schema, ste.table_name) = (n.nspname, c.relname))
+                       AND NOT cmd.objid = ANY (v_shape_changed_table_oids) THEN
+                        v_shape_changed_table_oids := pg_catalog.array_append(v_shape_changed_table_oids, cmd.objid);
+                    END IF;
+
+                    -- PostgreSQL propagates column-shape changes through table inheritance. Avoid all
+                    -- pg_inherits work for the overwhelmingly common no-children case.
+                    IF (SELECT c.relhassubclass FROM pg_catalog.pg_class AS c WHERE c.oid = cmd.objid) THEN
+                        FOR v_table_oid IN
+                            WITH RECURSIVE descendants(table_oid) AS (
+                                SELECT i.inhrelid
+                                FROM pg_catalog.pg_inherits AS i
+                                WHERE i.inhparent = cmd.objid
+                                UNION
+                                SELECT i.inhrelid
+                                FROM descendants AS d
+                                JOIN pg_catalog.pg_inherits AS i ON i.inhparent = d.table_oid
+                            )
+                            SELECT c.oid
+                            FROM descendants AS d
+                            JOIN pg_catalog.pg_class AS c ON c.oid = d.table_oid
+                            JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+                            JOIN sql_saga.system_time_era AS ste
+                              ON (ste.table_schema, ste.table_name) = (n.nspname, c.relname)
+                            JOIN LATERAL (
+                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+                                FROM pg_catalog.pg_attribute AS a
+                                WHERE a.attrelid = c.oid
+                                  AND a.attnum > 0
+                                  AND NOT a.attisdropped
+                            ) AS live ON true
+                            WHERE ste.table_columns_snapshot IS DISTINCT FROM live.column_names
+                        LOOP
+                            IF NOT v_table_oid = ANY (v_shape_changed_table_oids) THEN
+                                v_shape_changed_table_oids := pg_catalog.array_append(
+                                    v_shape_changed_table_oids, v_table_oid);
+                            END IF;
+                        END LOOP;
+                    END IF;
+                END IF;
+            END IF;
+        END IF;
+    END LOOP;
+$new_collect$);
+    changed := pg_catalog.replace(changed,
+$old_fast_exit$    IF NOT v_is_alter_trigger AND NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
+$old_fast_exit$,
+$new_fast_exit$    IF NOT v_is_alter_trigger
+       AND cardinality(v_shape_changed_table_oids) = 0
+       AND NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
+$new_fast_exit$);
+    changed := pg_catalog.replace(changed,
+$old_excluded$    /*
+     * We can't reliably find out what a column was renamed to, so just error
+     * out in this case. Note: This is also checked in drop_protection.sql.
+     */
+    FOR r IN
+        SELECT format('%I.%I', ste.table_schema, ste.table_name)::regclass AS table_oid, u.column_name
+        FROM sql_saga.system_time_era AS ste
+        CROSS JOIN LATERAL unnest(ste.excluded_column_names) AS u (column_name)
+        WHERE NOT EXISTS (
+            SELECT FROM pg_catalog.pg_attribute AS a
+            WHERE (a.attrelid, a.attname) = (to_regclass(format('%I.%I', ste.table_schema, ste.table_name)), u.column_name))
+    LOOP
+        RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
+            r.column_name, sql_saga.__internal_display_name(r.table_oid);
+    END LOOP;
+$old_excluded$,
+$new_excluded$    /*
+     * Attribute base-column changes only to registered base relations present in this ALTER TABLE
+     * invocation. The persisted snapshot supplies the pre-command names without storing OIDs.
+     */
+    FOREACH v_table_oid IN ARRAY v_shape_changed_table_oids
+    LOOP
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum)
+        INTO v_current_columns
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = v_table_oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped;
+
+        SELECT pg_catalog.array_agg(s.column_name ORDER BY s.ordinality)
+        INTO v_removed_columns
+        FROM sql_saga.system_time_era AS ste
+        CROSS JOIN LATERAL pg_catalog.unnest(ste.table_columns_snapshot) WITH ORDINALITY AS s(column_name, ordinality)
+        WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+          AND NOT s.column_name = ANY (v_current_columns);
+
+        SELECT pg_catalog.array_agg(c.column_name ORDER BY c.ordinality)
+        INTO v_added_columns
+        FROM pg_catalog.unnest(v_current_columns) WITH ORDINALITY AS c(column_name, ordinality)
+        JOIN sql_saga.system_time_era AS ste
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+        WHERE NOT c.column_name = ANY (ste.table_columns_snapshot);
+
+        SELECT removed.column_name
+        INTO v_missing_excluded
+        FROM pg_catalog.unnest(coalesce(v_removed_columns, ARRAY[]::name[])) AS removed(column_name)
+        JOIN sql_saga.system_time_era AS ste
+          ON pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = v_table_oid
+        WHERE removed.column_name = ANY (ste.excluded_column_names)
+        ORDER BY removed.column_name
+        LIMIT 1;
+
+        IF v_missing_excluded IS NOT NULL THEN
+            IF cardinality(v_removed_columns) = 1 AND cardinality(v_added_columns) = 1 THEN
+                RAISE EXCEPTION 'cannot drop or rename column "%" on table "%" because it is excluded from system_time era',
+                    v_missing_excluded, sql_saga.__internal_display_name(v_table_oid);
+            END IF;
+            RAISE EXCEPTION 'cannot determine whether excluded column "%" on table "%" was renamed because ALTER TABLE changed multiple columns; split column-shape changes into separate ALTER TABLE statements',
+                v_missing_excluded, sql_saga.__internal_display_name(v_table_oid);
+        END IF;
+    END LOOP;
+$new_excluded$);
+    changed := pg_catalog.replace(changed,
+$old_tail$    END IF;
+
+END;
+$old_tail$,
+$new_tail$    END IF;
+
+    IF cardinality(v_shape_changed_table_oids) > 0 THEN
+        UPDATE sql_saga.system_time_era AS ste
+        SET table_columns_snapshot = live.column_names
+        FROM (
+            SELECT c.oid AS table_oid,
+                   pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+            FROM pg_catalog.pg_class AS c
+            JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
+            WHERE c.oid = ANY (v_shape_changed_table_oids)
+              AND a.attnum > 0
+              AND NOT a.attisdropped
+            GROUP BY c.oid
+        ) AS live
+        WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = live.table_oid;
+    END IF;
+
+END;
+$new_tail$);
+    IF changed = definition THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following snapshot attribution';
+    END IF;
+    EXECUTE changed;
+END;
+$upgrade_rename_following$;

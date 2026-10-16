@@ -50,7 +50,9 @@
 #include "lib/stringinfo.h"
 #include "nodes/bitmapset.h"
 #include "nodes/makefuncs.h"
+#include "nodes/parsenodes.h"
 #include "parser/parse_func.h"
+#include "tcop/deparse_utility.h"
 #include "utils/date.h"
 #if (PG_VERSION_NUM >= 100000)
 #include "utils/fmgrprotos.h"
@@ -692,6 +694,29 @@ PG_FUNCTION_INFO_V1(uk_delete_check_c);
 PG_FUNCTION_INFO_V1(uk_update_check_c);
 PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
+PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
+
+Datum
+alter_table_changes_column_shape(PG_FUNCTION_ARGS)
+{
+	CollectedCommand *cmd = (CollectedCommand *) PG_GETARG_POINTER(0);
+	ListCell   *cell;
+
+	if (cmd->type != SCT_AlterTable)
+		PG_RETURN_BOOL(false);
+
+	foreach(cell, cmd->d.alterTable.subcmds)
+	{
+		CollectedATSubcmd *sub = lfirst(cell);
+		AlterTableCmd *alter_cmd = castNode(AlterTableCmd, sub->parsetree);
+
+		if (alter_cmd->subtype == AT_AddColumn ||
+			alter_cmd->subtype == AT_DropColumn)
+			PG_RETURN_BOOL(true);
+	}
+
+	PG_RETURN_BOOL(false);
+}
 
 /*
  * fk_check_c -- shared implementation for fk_insert_check_c / fk_update_check_c.

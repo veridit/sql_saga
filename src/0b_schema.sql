@@ -106,6 +106,7 @@ CREATE TABLE sql_saga.system_time_era (
     write_history_trigger name NOT NULL,
     truncate_trigger name NOT NULL,
     excluded_column_names name[] NOT NULL DEFAULT '{}',
+    table_columns_snapshot name[] NOT NULL,
 
     PRIMARY KEY (table_schema, table_name, era_name),
     FOREIGN KEY (table_schema, table_name, era_name) REFERENCES sql_saga.era(table_schema, table_name, era_name) ON DELETE CASCADE,

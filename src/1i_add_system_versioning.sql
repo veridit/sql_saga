@@ -83,6 +83,26 @@ $__internal_check_history_columns$;
  * fail with PostgreSQL's dependency error). The drops are allowed by drop_protection and the new
  * definitions by health_checks only while sql_saga.rebuilding_system_versioning_views names this table.
  */
+CREATE FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid oid)
+RETURNS void
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_refresh_system_time_columns_snapshot$
+    UPDATE sql_saga.system_time_era AS ste
+    SET table_columns_snapshot = live.column_names
+    FROM (
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+        FROM pg_catalog.pg_attribute AS a
+        WHERE a.attrelid = table_oid
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+    ) AS live
+    WHERE pg_catalog.to_regclass(pg_catalog.format('%I.%I', ste.table_schema, ste.table_name)) = table_oid;
+$__internal_refresh_system_time_columns_snapshot$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_refresh_system_time_columns_snapshot(oid) FROM PUBLIC;
+
 CREATE FUNCTION sql_saga.__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[] DEFAULT '{}')
 RETURNS void
 LANGUAGE plpgsql
@@ -247,6 +267,11 @@ BEGIN
         RAISE EXCEPTION 'sql_saga: table % does not have SYSTEM VERSIONING', table_oid
             USING ERRCODE = 'object_not_in_prerequisite_state';
     END IF;
+    IF current_setting('sql_saga.rebuilding_system_versioning_views', true) OPERATOR(pg_catalog.=) table_oid::oid::text THEN
+        PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+        PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
+        RETURN;
+    END IF;
     history_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', sv.history_schema_name, sv.history_table_name))::oid;
     IF history_table_oid IS NULL THEN
         RAISE EXCEPTION 'sql_saga: history table %.% registered for % does not exist',
@@ -317,6 +342,7 @@ BEGIN
               WHERE pg_catalog.to_regprocedure(f.fn) IS NULL);
       IF needs_rebuild THEN
           PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, coalesce(without_columns, '{}'));
+          PERFORM sql_saga.__internal_refresh_system_time_columns_snapshot(table_oid);
       END IF;
       PERFORM sql_saga.__internal_sync_history_policies(table_oid);
     EXCEPTION WHEN OTHERS THEN
@@ -503,6 +529,7 @@ DECLARE
     history_table_oid oid;
     range_column name;
     excluded name;
+    previous_rebuild_flag text;
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -555,9 +582,16 @@ BEGIN
 
     PERFORM sql_saga.__internal_rebuild_system_versioning_views(table_oid, without_columns);
 
-    -- Copies of B's policies refer to columns by name: renames on both tables, or policy changes
-    -- made while event triggers were off, are synchronized here (refused if a column is missing).
-    PERFORM sql_saga.__internal_sync_history_policies(table_oid);
+    -- Use the existing authorized reconciler as the private refresh gateway.
+    previous_rebuild_flag := current_setting('sql_saga.rebuilding_system_versioning_views', true);
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', table_oid::oid::text, true);
+    BEGIN
+        PERFORM sql_saga.__internal_reconcile_system_versioning_family(table_oid, without_columns);
+    EXCEPTION WHEN OTHERS THEN
+        PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
+        RAISE;
+    END;
+    PERFORM set_config('sql_saga.rebuilding_system_versioning_views', coalesce(previous_rebuild_flag, ''), true);
 
     RAISE NOTICE 'sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table %', table_oid;
 END;

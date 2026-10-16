@@ -106,8 +106,21 @@ BEGIN
     INSERT INTO sql_saga.era (table_schema, table_name, era_name, range_column_name, valid_from_column_name, valid_until_column_name, range_type, multirange_type, range_subtype, range_subtype_category, bounds_check_constraint)
     VALUES (table_schema, table_name, era_name, range_column_name, NULL, NULL, 'tstzrange', 'tstzmultirange', 'timestamptz', 'D', NULL);
 
-    INSERT INTO sql_saga.system_time_era (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names)
-    VALUES (table_schema, table_name, era_name, infinity_check_constraint, generated_always_trigger, write_history_trigger, truncate_trigger, excluded_column_names);
+    INSERT INTO sql_saga.system_time_era (
+        table_schema, table_name, era_name, infinity_check_constraint,
+        generated_always_trigger, write_history_trigger, truncate_trigger,
+        excluded_column_names, table_columns_snapshot)
+    SELECT table_schema, table_name, era_name, infinity_check_constraint,
+           generated_always_trigger, write_history_trigger, truncate_trigger,
+           excluded_column_names,
+           pg_catalog.array_agg(a.attname ORDER BY a.attnum)
+    FROM pg_catalog.pg_attribute AS a
+    WHERE a.attrelid = table_oid
+      AND a.attnum > 0
+      AND NOT a.attisdropped
+    GROUP BY table_schema, table_name, era_name, infinity_check_constraint,
+             generated_always_trigger, write_history_trigger, truncate_trigger,
+             excluded_column_names;
 
     RETURN true;
 END;
