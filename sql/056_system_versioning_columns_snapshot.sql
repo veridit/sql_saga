@@ -378,7 +378,7 @@ SELECT snapshot_test.case_result(
     'SET SCHEMA preserves native refusal',
     $$ALTER TABLE snapshot_test.family_c SET SCHEMA snapshot_moved$$,
     '55006',
-    'cannot rename or move system-versioned table "snapshot_test.family_c"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again');
+    $msg$cannot rename or move system-versioned table "snapshot_test.family_c"; to move it with its history, run sql_saga.drop_system_versioning('snapshot_test.family_c', cleanup => false) and sql_saga.drop_system_time_era('snapshot_test.family_c', cleanup => false), move or rename table "snapshot_test.family_c" and history table "snapshot_test.family_c_history" together, then run sql_saga.add_system_versioning(table_oid, history_table_name => name, history_table_must_exist => true)$msg$);
 SELECT snapshot_test.snapshot_result('SET SCHEMA refusal keeps stale snapshot', 'family_c');
 ROLLBACK TO SAVEPOINT non_shape_set_schema;
 RELEASE SAVEPOINT non_shape_set_schema;
@@ -390,7 +390,7 @@ SELECT snapshot_test.case_result(
     'RENAME TABLE preserves native refusal',
     $$ALTER TABLE snapshot_test.family_c RENAME TO family_c_renamed$$,
     '55006',
-    'cannot rename or move system-versioned table "snapshot_test.family_c"; drop system versioning first with sql_saga.drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean), move the table, then add system versioning again');
+    $msg$cannot rename or move system-versioned table "snapshot_test.family_c"; to move it with its history, run sql_saga.drop_system_versioning('snapshot_test.family_c', cleanup => false) and sql_saga.drop_system_time_era('snapshot_test.family_c', cleanup => false), move or rename table "snapshot_test.family_c" and history table "snapshot_test.family_c_history" together, then run sql_saga.add_system_versioning(table_oid, history_table_name => name, history_table_must_exist => true)$msg$);
 SELECT snapshot_test.snapshot_result('RENAME TABLE refusal keeps stale snapshot', 'family_c');
 ROLLBACK TO SAVEPOINT non_shape_rename_table;
 RELEASE SAVEPOINT non_shape_rename_table;
