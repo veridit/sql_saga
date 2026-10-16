@@ -110,6 +110,27 @@ BEGIN
 END;
 $nondisclosure_attempt$;
 
+CREATE FUNCTION integrity_g4.dependency_restrict_attempt(case_name text, command text, expected_message text)
+RETURNS text LANGUAGE plpgsql AS $dependency_restrict_attempt$
+DECLARE actual_state text; actual_message text; before_state jsonb;
+BEGIN
+    before_state := integrity_g4.snapshot_state();
+    BEGIN
+        EXECUTE command;
+        RETURN case_name || ' | unexpected success';
+    EXCEPTION WHEN OTHERS THEN
+        GET STACKED DIAGNOSTICS actual_state=RETURNED_SQLSTATE, actual_message=MESSAGE_TEXT;
+        IF before_state IS DISTINCT FROM integrity_g4.snapshot_state() THEN
+            RETURN case_name || ' | refusal was not atomic';
+        END IF;
+        IF (actual_state, actual_message) IS DISTINCT FROM ('2BP01', expected_message) THEN
+            RETURN format('%s | unexpected %s: %s', case_name, actual_state, actual_message);
+        END IF;
+        RETURN format('%s | 2BP01: %s | atomic', case_name, actual_message);
+    END;
+END;
+$dependency_restrict_attempt$;
+
 CREATE FUNCTION integrity_g4.function_case(case_name text, damage_sql text)
 RETURNS text LANGUAGE plpgsql AS $function_case$
 DECLARE before_state jsonb; result text;
@@ -620,7 +641,7 @@ CREATE TEMP TABLE replacement_state (kind text PRIMARY KEY, identity text, defin
 SAVEPOINT preserve_function;
 SET session_replication_role = replica;
 DROP FUNCTION sv__as_of(timestamptz);
-CREATE FUNCTION sv__as_of(p_at timestamptz) RETURNS SETOF sv_with_history LANGUAGE sql STABLE AS $user_body$ SELECT * FROM integrity_g4.sv_with_history WHERE false $user_body$;
+CREATE FUNCTION sv__as_of(p_at timestamptz) RETURNS SETOF integer LANGUAGE sql STABLE AS $user_body$ SELECT 1 WHERE false $user_body$;
 RESET session_replication_role;
 INSERT INTO replacement_state
 SELECT 'function', p.oid::regprocedure::text, p.prosrc
@@ -642,6 +663,60 @@ SELECT NOT EXISTS (SELECT FROM sql_saga.era WHERE table_schema='integrity_g4' AN
 SELECT NOT EXISTS (SELECT FROM sql_saga.updatable_view WHERE table_schema='integrity_g4' AND table_name='sv') AS mixed_family_updatable_view_metadata_removed;
 ROLLBACK TO SAVEPOINT preserve_function;
 RELEASE SAVEPOINT preserve_function;
+
+-- (a) v1.1 parity: a separately named user function depends on a managed view.
+-- RESTRICT refuses atomically; CASCADE is explicit consent to native PostgreSQL dependency semantics.
+SAVEPOINT separate_dependent_restrict;
+CREATE FUNCTION separate_user_dep(p_at timestamptz) RETURNS SETOF sv_with_history LANGUAGE sql STABLE AS $user_body$ SELECT * FROM integrity_g4.sv_with_history WHERE false $user_body$;
+SELECT integrity_g4.dependency_restrict_attempt(
+    'separate dependent RESTRICT v1.1 parity',
+    $$SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'RESTRICT')$$,
+    'cannot drop view integrity_g4.sv_with_history because other objects depend on it');
+SELECT to_regprocedure('integrity_g4.separate_user_dep(timestamptz)') IS NOT NULL AS restrict_separate_dependent_survives;
+SELECT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS restrict_separate_family_metadata_survives;
+ROLLBACK TO SAVEPOINT separate_dependent_restrict;
+RELEASE SAVEPOINT separate_dependent_restrict;
+
+SAVEPOINT separate_dependent_cascade;
+CREATE FUNCTION separate_user_dep(p_at timestamptz) RETURNS SETOF sv_with_history LANGUAGE sql STABLE AS $user_body$ SELECT * FROM integrity_g4.sv_with_history WHERE false $user_body$;
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'CASCADE');
+SET LOCAL client_min_messages = warning;
+SELECT to_regprocedure('integrity_g4.separate_user_dep(timestamptz)') IS NULL AS cascade_separate_dependent_dropped;
+SELECT NOT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS cascade_separate_family_metadata_removed;
+ROLLBACK TO SAVEPOINT separate_dependent_cascade;
+RELEASE SAVEPOINT separate_dependent_cascade;
+
+-- (b) New 1.2 semantics: 1.1 deleted this same-named replacement by name even under RESTRICT.
+-- Version 1.2 preserves it, so RESTRICT reaches the native view dependency and refuses atomically;
+-- CASCADE remains explicit consent to remove the dependent replacement with the managed view. Because the
+-- cascade removes it, sql_saga must not claim it was left in place: only PostgreSQL's cascade NOTICE appears.
+SAVEPOINT dependent_replacement_restrict;
+SET session_replication_role = replica;
+DROP FUNCTION sv__as_of(timestamptz);
+CREATE FUNCTION sv__as_of(p_at timestamptz) RETURNS SETOF sv_with_history LANGUAGE sql STABLE AS $user_body$ SELECT * FROM integrity_g4.sv_with_history WHERE false $user_body$;
+RESET session_replication_role;
+SELECT integrity_g4.dependency_restrict_attempt(
+    'dependent replacement RESTRICT',
+    $$SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'RESTRICT')$$,
+    'cannot drop view integrity_g4.sv_with_history because other objects depend on it');
+SELECT to_regprocedure('integrity_g4.sv__as_of(timestamptz)') IS NOT NULL AS restrict_dependent_replacement_survives;
+SELECT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS restrict_family_metadata_survives;
+ROLLBACK TO SAVEPOINT dependent_replacement_restrict;
+RELEASE SAVEPOINT dependent_replacement_restrict;
+
+SAVEPOINT dependent_replacement_cascade;
+SET session_replication_role = replica;
+DROP FUNCTION sv__as_of(timestamptz);
+CREATE FUNCTION sv__as_of(p_at timestamptz) RETURNS SETOF sv_with_history LANGUAGE sql STABLE AS $user_body$ SELECT * FROM integrity_g4.sv_with_history WHERE false $user_body$;
+RESET session_replication_role;
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_system_versioning('integrity_g4.sv', 'CASCADE');
+SET LOCAL client_min_messages = warning;
+SELECT to_regprocedure('integrity_g4.sv__as_of(timestamptz)') IS NULL AS cascade_dependent_replacement_dropped;
+SELECT NOT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS cascade_family_metadata_removed;
+ROLLBACK TO SAVEPOINT dependent_replacement_cascade;
+RELEASE SAVEPOINT dependent_replacement_cascade;
 
 SAVEPOINT preserve_view;
 SET session_replication_role = replica;

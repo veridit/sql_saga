@@ -67,6 +67,20 @@ t
 t
 t
 t
+separate dependent RESTRICT v1.1 parity | 2BP01: cannot drop view integrity_g4.sv_with_history because other objects depend on it | atomic
+t
+t
+NOTICE:  drop cascades to function integrity_g4.separate_user_dep(timestamp with time zone)
+t
+t
+t
+dependent replacement RESTRICT | 2BP01: cannot drop view integrity_g4.sv_with_history because other objects depend on it | atomic
+t
+t
+NOTICE:  drop cascades to function integrity_g4.sv__as_of(timestamp with time zone)
+t
+t
+t
 NOTICE:  sql_saga: Left view "integrity_g4.sv_with_history" in place because it is not the sql_saga-generated view for table "integrity_g4.sv"
 t
 t
