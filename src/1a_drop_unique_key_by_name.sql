@@ -19,6 +19,8 @@ DECLARE
     unique_object_attributable boolean;
     exclude_object_attributable boolean;
     check_object_attributable boolean;
+    range_column_name name;
+    expected_attnums smallint[];
 BEGIN
     IF table_oid IS NULL THEN
         RAISE EXCEPTION 'no table name specified';
@@ -40,9 +42,48 @@ BEGIN
     LOOP
         RAISE DEBUG 'drop_unique_key_by_name: Processing key: %', row_to_json(unique_key_row);
 
-        SELECT a.unique_attributable, a.exclude_attributable, a.check_attributable
-        INTO unique_object_attributable, exclude_object_attributable, check_object_attributable
-        FROM sql_saga.__internal_unique_key_attribution(unique_key_row.unique_key_name) AS a;
+        IF unique_key_row.key_type IN ('primary', 'natural')
+           AND unique_key_row.exclude_constraint IS NULL
+           AND unique_key_row.check_constraint IS NULL THEN
+            SELECT e.range_column_name
+            INTO range_column_name
+            FROM sql_saga.era AS e
+            WHERE (e.table_schema, e.table_name, e.era_name) =
+                  (unique_key_row.table_schema, unique_key_row.table_name, unique_key_row.era_name);
+
+            SELECT pg_catalog.array_agg(a.attnum::smallint ORDER BY u.n)
+            INTO expected_attnums
+            FROM pg_catalog.unnest(unique_key_row.column_names || range_column_name)
+                 WITH ORDINALITY AS u(column_name, n)
+            JOIN pg_catalog.pg_attribute AS a
+              ON a.attrelid = table_oid AND a.attname = u.column_name
+             AND a.attnum > 0 AND NOT a.attisdropped;
+
+            SELECT uc.oid IS NOT NULL
+                   AND pg_catalog.cardinality(expected_attnums) =
+                       pg_catalog.cardinality(unique_key_row.column_names) + 1
+                   AND uc.contype = CASE unique_key_row.key_type WHEN 'primary' THEN 'p' ELSE 'u' END
+                   AND uc.conkey = expected_attnums AND uc.conperiod
+                   AND NOT uc.condeferrable AND NOT uc.condeferred
+                   AND ui.indrelid = table_oid AND ui.indisunique AND ui.indisvalid AND ui.indisready
+                   AND ui.indnkeyatts = pg_catalog.cardinality(expected_attnums)
+                   AND ui.indkey::text = pg_catalog.array_to_string(expected_attnums, ' ')
+                   AND ui.indexprs IS NULL AND ui.indpred IS NULL AND am.amname = 'gist'
+            INTO unique_object_attributable
+            FROM pg_catalog.pg_constraint AS uc
+            JOIN pg_catalog.pg_index AS ui ON ui.indexrelid = uc.conindid
+            JOIN pg_catalog.pg_class AS idx ON idx.oid = ui.indexrelid
+            JOIN pg_catalog.pg_am AS am ON am.oid = idx.relam
+            WHERE uc.conrelid = table_oid AND uc.conname = unique_key_row.unique_constraint;
+
+            unique_object_attributable := coalesce(unique_object_attributable, false);
+            exclude_object_attributable := true;
+            check_object_attributable := true;
+        ELSE
+            SELECT a.unique_attributable, a.exclude_attributable, a.check_attributable
+            INTO unique_object_attributable, exclude_object_attributable, check_object_attributable
+            FROM sql_saga.__internal_unique_key_attribution(unique_key_row.unique_key_name) AS a;
+        END IF;
         /* Propagate the requested drop behavior to foreign keys, if desired */
         FOR foreign_key_row IN
             SELECT fk.*

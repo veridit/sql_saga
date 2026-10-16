@@ -15,6 +15,8 @@ DECLARE
     v_sanctioned_bases jsonb[];
     v_refusal_objects jsonb[];
     v_candidate record;
+    v_object_types text[];
+    v_teardown_family boolean := false;
 BEGIN
     /* Materialize this invocation once. Nested DDL gets its own function frame. */
     SELECT coalesce(
@@ -23,36 +25,160 @@ BEGIN
     INTO v_dropped_objects
     FROM pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj;
 
-    /* Ordinary DDL must not pay for global catalog scans. */
-    IF NOT EXISTS (
+    SELECT pg_catalog.array_agg(DISTINCT u.data->>'object_type' ORDER BY u.data->>'object_type')
+    INTO v_object_types
+    FROM unnest(v_dropped_objects) AS u(data);
+
+    /*
+     * During a recognized clean teardown, any non-policy object addressed on a system-versioned base or
+     * history table must reach the teardown cleanup below (it drops the installation-token history
+     * policies). Neither early exit may skip it. Outside a teardown this costs nothing.
+     */
+    IF v_teardown THEN
+        SELECT EXISTS (
+            SELECT 1
+            FROM unnest(v_dropped_objects) AS u(data)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(object_type text, address_names text[])
+            JOIN sql_saga.system_versioning AS sv
+              ON (d.address_names[1], d.address_names[2]) IN (
+                  (sv.table_schema, sv.table_name), (sv.history_schema_name, sv.history_table_name))
+            WHERE d.object_type <> 'policy')
+        INTO v_teardown_family;
+    END IF;
+
+    IF v_teardown_family THEN
+        NULL; /* Admitted: see above. */
+    ELSIF v_object_types = ARRAY['function'] AND NOT EXISTS (
         SELECT 1
-        FROM unnest(v_dropped_objects) AS d(data)
-        CROSS JOIN LATERAL jsonb_to_record(d.data) AS dobj(
-            objid oid, object_identity text, address_names text[])
+        FROM unnest(v_dropped_objects) AS u(data)
+        JOIN sql_saga.system_versioning AS sv
+          ON u.data->>'object_identity' = ANY (
+              ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])) THEN
+        RETURN;
+    ELSIF v_object_types = ARRAY['view'] AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(v_dropped_objects) AS u(data)
+        CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(address_names text[])
         WHERE EXISTS (
-            SELECT 1
-            FROM sql_saga.era AS e
-            WHERE (e.table_schema, e.table_name) = (dobj.address_names[1], dobj.address_names[2])
-               OR dobj.objid = e.range_type::oid)
+                  SELECT FROM sql_saga.updatable_view AS v
+                  WHERE (v.view_schema, v.view_name) = (d.address_names[1], d.address_names[2]))
            OR EXISTS (
-            SELECT 1
-            FROM sql_saga.updatable_view AS v
-            WHERE (v.view_schema, v.view_name) = (dobj.address_names[1], dobj.address_names[2]))
+                  SELECT FROM sql_saga.system_versioning AS sv
+                  WHERE (d.address_names[1], d.address_names[2]) IN (
+                      (sv.view_schema_name, sv.view_table_name),
+                      (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name))))) THEN
+        RETURN;
+    ELSIF v_object_types = ARRAY['table'] AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(v_dropped_objects) AS u(data)
+        CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(address_names text[])
+        WHERE EXISTS (
+                  SELECT FROM sql_saga.era AS e
+                  WHERE (e.table_schema, e.table_name) = (d.address_names[1], d.address_names[2]))
            OR EXISTS (
-            SELECT 1
-            FROM sql_saga.system_versioning AS sv
-            WHERE (sv.history_schema_name, sv.history_table_name) = (dobj.address_names[1], dobj.address_names[2])
-               OR (sv.view_schema_name, sv.view_table_name) = (dobj.address_names[1], dobj.address_names[2])
-               OR dobj.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]))
+                  SELECT FROM sql_saga.system_versioning AS sv
+                  WHERE (sv.history_schema_name, sv.history_table_name) =
+                        (d.address_names[1], d.address_names[2]))) THEN
+        RETURN;
+    ELSIF v_object_types = ARRAY['trigger'] AND NOT EXISTS (
+        SELECT 1
+        FROM unnest(v_dropped_objects) AS u(data)
+        CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(address_names text[])
+        WHERE EXISTS (
+                  SELECT FROM sql_saga.system_time_era AS ste
+                  WHERE (ste.table_schema, ste.table_name) = (d.address_names[1], d.address_names[2])
+                    AND d.address_names[3] IN (
+                        ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger))
            OR EXISTS (
-            SELECT 1
-            FROM sql_saga.foreign_keys AS fk
-            WHERE (fk.table_schema, fk.table_name) = (dobj.address_names[1], dobj.address_names[2]))
-           OR (cardinality(dobj.address_names) = 2 AND EXISTS (
-            SELECT 1
-            FROM sql_saga.unique_keys AS uk
-            WHERE (uk.table_schema, uk.unique_constraint) =
-                  (dobj.address_names[1], dobj.address_names[2])))
+                  SELECT FROM sql_saga.updatable_view AS v
+                  WHERE (v.view_schema, v.view_name, v.trigger_name) =
+                        (d.address_names[1], d.address_names[2], d.address_names[3]))
+           OR EXISTS (
+                  SELECT FROM sql_saga.foreign_keys AS fk
+                  JOIN sql_saga.unique_keys AS uk USING (unique_key_name)
+                  WHERE (uk.table_schema, uk.table_name) = (d.address_names[1], d.address_names[2])
+                    AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger))) THEN
+        RETURN;
+    END IF;
+
+    /* Ordinary and metadata-first DDL must not pay for protected-object analysis. */
+    IF NOT v_teardown_family AND NOT EXISTS (
+        WITH dropped AS MATERIALIZED (
+            SELECT d.*
+            FROM unnest(v_dropped_objects) AS u(data)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                object_type text, object_identity text, address_names text[], objid oid)
+        )
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.era AS e
+          ON (d.object_type = 'table'
+              AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name))
+          OR (d.object_type = 'table column'
+              AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
+              AND d.address_names[3] IN (e.valid_from_column_name, e.valid_until_column_name))
+          OR d.objid = e.range_type::oid
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.system_time_era AS ste
+          ON (d.object_type = 'table constraint'
+              AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                  (ste.table_schema, ste.table_name, ste.infinity_check_constraint))
+          OR (d.object_type = 'trigger'
+              AND (d.address_names[1], d.address_names[2]) = (ste.table_schema, ste.table_name)
+              AND d.address_names[3] IN (ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger))
+          OR (d.object_type = 'table column'
+              AND (d.address_names[1], d.address_names[2]) = (ste.table_schema, ste.table_name)
+              AND d.address_names[3] = ANY (ste.excluded_column_names))
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.updatable_view AS v
+          ON (d.object_type = 'view'
+              AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name))
+          OR (d.object_type = 'trigger'
+              AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                  (v.view_schema, v.view_name, v.trigger_name))
+          OR (d.object_type IN ('table column', 'table constraint', 'index')
+              AND (d.address_names[1], d.address_names[2]) = (v.table_schema, v.table_name))
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.unique_keys AS uk
+          ON (d.object_type = 'table constraint'
+              AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+              AND (d.address_names[3] IN (uk.unique_constraint, uk.exclude_constraint, uk.check_constraint)
+                   OR d.address_names[3] = ANY (coalesce(uk.pk_consistency_constraint_names, '{}'))))
+          OR (d.object_type = 'index'
+              AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.unique_constraint))
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.foreign_keys AS fk
+          ON d.object_type = 'trigger'
+         AND d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+        JOIN sql_saga.unique_keys AS uk
+          ON uk.unique_key_name = fk.unique_key_name
+         AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        JOIN sql_saga.system_versioning AS sv
+          ON (d.object_type = 'table'
+              AND (d.address_names[1], d.address_names[2]) = (sv.history_schema_name, sv.history_table_name))
+          OR (d.object_type = 'view'
+              AND (d.address_names[1], d.address_names[2]) IN (
+                  (sv.view_schema_name, sv.view_table_name),
+                  (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name))))
+          OR (d.object_type = 'function'
+              AND d.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]))
+        UNION ALL
+        SELECT 1
+        FROM dropped AS d
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(
+            to_regclass(format('%I.%I', d.address_names[1], d.address_names[2]))) AS f
+        WHERE d.object_type = 'policy'
     ) THEN
         RETURN;
     END IF;

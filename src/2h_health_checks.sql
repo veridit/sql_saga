@@ -40,6 +40,11 @@ BEGIN
         END LOOP;
     END IF;
 
+    /* sql_drop protects exact managed members before DROP reaches ddl_command_end. */
+    IF tg_tag LIKE 'DROP %' THEN
+        RETURN;
+    END IF;
+
     -- Exit early if the DDL command does not affect a managed object.
     IF NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
         RETURN;

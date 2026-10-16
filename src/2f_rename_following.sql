@@ -254,6 +254,11 @@ DECLARE
     v_added_columns name[];
     v_missing_excluded name;
 BEGIN
+    /* DROP statements cannot rename or reshape surviving managed objects. */
+    IF tg_tag LIKE 'DROP %' THEN
+        RETURN;
+    END IF;
+
     FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
         IF cmd.command_tag = 'ALTER TABLE' THEN
             is_alter_table := true;
