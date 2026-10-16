@@ -20,6 +20,13 @@ LANGUAGE c;
 
 REVOKE ALL ON FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change() FROM PUBLIC;
 
+CREATE OR REPLACE FUNCTION sql_saga.__internal_record_alter_function_resolved()
+RETURNS event_trigger
+AS 'sql_saga', 'record_alter_function_resolved'
+LANGUAGE c;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_record_alter_function_resolved() FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION sql_saga.fk_insert_check_c()
 RETURNS trigger
 AS 'sql_saga', 'fk_insert_check_c'

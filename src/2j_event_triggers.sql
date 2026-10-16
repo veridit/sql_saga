@@ -4,6 +4,10 @@ CREATE EVENT TRIGGER sql_saga_refuse_managed_relation_identity_change ON ddl_com
     WHEN TAG IN ('ALTER TABLE', 'ALTER VIEW', 'ALTER SCHEMA')
     EXECUTE PROCEDURE sql_saga.__internal_refuse_managed_relation_identity_change();
 
+CREATE EVENT TRIGGER sql_saga_record_alter_function_resolved ON ddl_command_start
+    WHEN TAG IN ('ALTER FUNCTION', 'ALTER ROUTINE')
+    EXECUTE PROCEDURE sql_saga.__internal_record_alter_function_resolved();
+
 CREATE EVENT TRIGGER sql_saga_rename_following ON ddl_command_end EXECUTE PROCEDURE sql_saga.rename_following();
 
 CREATE EVENT TRIGGER sql_saga_health_checks ON ddl_command_end EXECUTE PROCEDURE sql_saga.health_checks();

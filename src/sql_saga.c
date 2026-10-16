@@ -34,6 +34,7 @@
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
+#include "utils/regproc.h"
 #include "utils/array.h"
 #include "utils/datum.h"
 #include "utils/elog.h"
@@ -698,6 +699,7 @@ PG_FUNCTION_INFO_V1(generated_always_as_row_start_end);
 PG_FUNCTION_INFO_V1(write_history);
 PG_FUNCTION_INFO_V1(alter_table_changes_column_shape);
 PG_FUNCTION_INFO_V1(refuse_managed_relation_identity_change);
+PG_FUNCTION_INFO_V1(record_alter_function_resolved);
 
 Datum
 refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
@@ -778,6 +780,76 @@ refuse_managed_relation_identity_change(PG_FUNCTION_ARGS)
 			"SELECT sql_saga.__internal_refuse_managed_relation_identity_change($1)",
 			1, argtypes, values, nulls, false, 0);
 	}
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
+
+	if (SPI_finish() != SPI_OK_FINISH)
+		elog(ERROR, "SPI_finish failed");
+
+	PG_RETURN_NULL();
+}
+
+Datum
+record_alter_function_resolved(PG_FUNCTION_ARGS)
+{
+	EventTriggerData *trigdata;
+	ObjectWithArgs *function = NULL;
+	ObjectType object_type = OBJECT_FUNCTION;
+	Oid function_oid = InvalidOid;
+	Oid argtypes[] = {TEXTOID};
+	Datum values[1];
+	char nulls[] = {'n'};
+	char *function_identity = NULL;
+	int ret;
+
+	if (!CALLED_AS_EVENT_TRIGGER(fcinfo))
+		elog(ERROR, "record_alter_function_resolved: not called by event trigger manager");
+
+	trigdata = (EventTriggerData *) fcinfo->context;
+	if (IsA(trigdata->parsetree, RenameStmt))
+	{
+		RenameStmt *stmt = castNode(RenameStmt, trigdata->parsetree);
+
+		object_type = stmt->renameType;
+		function = castNode(ObjectWithArgs, stmt->object);
+	}
+	else if (IsA(trigdata->parsetree, AlterObjectSchemaStmt))
+	{
+		AlterObjectSchemaStmt *stmt = castNode(AlterObjectSchemaStmt, trigdata->parsetree);
+
+		object_type = stmt->objectType;
+		function = castNode(ObjectWithArgs, stmt->object);
+	}
+	else if (IsA(trigdata->parsetree, AlterOwnerStmt))
+	{
+		AlterOwnerStmt *stmt = castNode(AlterOwnerStmt, trigdata->parsetree);
+
+		object_type = stmt->objectType;
+		function = castNode(ObjectWithArgs, stmt->object);
+	}
+	else if (IsA(trigdata->parsetree, AlterFunctionStmt))
+	{
+		AlterFunctionStmt *stmt = castNode(AlterFunctionStmt, trigdata->parsetree);
+
+		object_type = stmt->objtype;
+		function = stmt->func;
+	}
+
+	if (function != NULL)
+		function_oid = LookupFuncWithArgs(object_type, function, true);
+	if (OidIsValid(function_oid))
+	{
+		function_identity = format_procedure_qualified(function_oid);
+		values[0] = CStringGetTextDatum(function_identity);
+		nulls[0] = ' ';
+	}
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		elog(ERROR, "SPI_connect failed");
+
+	ret = SPI_execute_with_args(
+		"SELECT sql_saga.__internal_set_alter_function_resolved($1)",
+		1, argtypes, values, nulls, false, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "SPI_execute returned %s", SPI_result_code_string(ret));
 

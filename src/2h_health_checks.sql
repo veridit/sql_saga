@@ -13,7 +13,33 @@ DECLARE
     managed_policy record;
     gated_columns text;
     expected_gate text;
+    alter_function_resolved text;
 BEGIN
+    IF tg_tag IN ('ALTER FUNCTION', 'ALTER ROUTINE') THEN
+        alter_function_resolved := current_setting('sql_saga.alter_function_resolved', true);
+        /* Consume the statement snapshot before doing any comparison or raising. */
+        PERFORM set_config('sql_saga.alter_function_resolved', '', true);
+
+        IF alter_function_resolved IS NULL OR alter_function_resolved = '' THEN
+            RETURN;
+        END IF;
+
+        FOR r IN
+            SELECT to_regclass(format('%I.%I', x.table_schema, x.table_name)) AS table_oid,
+                   x.identity
+            FROM jsonb_to_recordset(alter_function_resolved::jsonb) AS x(
+                table_schema name,
+                table_name name,
+                role text,
+                identity text)
+            WHERE to_regprocedure(x.identity) IS NULL
+            ORDER BY x.table_schema, x.table_name, x.role
+        LOOP
+            RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
+                sql_saga.__internal_display_function_name(r.identity), sql_saga.__internal_display_name(r.table_oid);
+        END LOOP;
+    END IF;
+
     -- Exit early if the DDL command does not affect a managed object.
     IF NOT sql_saga.__internal_ddl_command_affects_managed_object() THEN
         RETURN;
@@ -41,24 +67,6 @@ BEGIN
     LOOP
         RAISE EXCEPTION 'history table "%" must remain persistent because it has an era',
             sql_saga.__internal_display_name(r.table_oid);
-    END LOOP;
-
-    /* Check that our system versioning functions are still here */
-    FOR r IN
-        SELECT to_regclass(format('%I.%I', sv.table_schema /* %I */, sv.table_name /* %I */)) AS table_oid,
-               u.fn
-        FROM sql_saga.system_versioning AS sv
-        CROSS JOIN LATERAL UNNEST(ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]) AS u (fn)
-        WHERE NOT EXISTS (
-            SELECT FROM pg_catalog.pg_proc AS p
-            WHERE p.oid = to_regprocedure(u.fn)
-        )
-          -- rebuild_system_versioning_views drops and recreates them.
-          AND NOT sql_saga.__internal_rebuilding_system_versioning_views(to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid)
-          AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on'
-    LOOP
-        RAISE EXCEPTION 'cannot drop or rename function "%" because it is used in SYSTEM VERSIONING for table "%"',
-            sql_saga.__internal_display_function_name(r.fn), sql_saga.__internal_display_name(r.table_oid);
     END LOOP;
 
     /* Fix up history and for-portion objects ownership */
