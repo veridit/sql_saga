@@ -1555,8 +1555,8 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
     check "$label: hint gives the exact way out" "$want_hint" "$hint"
     check "$label: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "$label: refusal is atomic" "$before" "$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
-    # Follow the hint literally: its statements, run as one script.
-    out=$(printf '%s\n' "$want_hint" | sed -e 's/^.*Run: //' | sql "$db")
+    # Follow the hint the update actually returned, literally, as one transaction.
+    out=$(printf 'BEGIN;\n%s\nCOMMIT;\n' "$(printf '%s\n' "$hint" | sed -e 's/^.*Run: //')" | sql "$db")
     check "$label: following the hint succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
     check "$label: following the hint reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "$label: the customisation is re-applied to the new signature" "$want_acl" "$(asv_acl "$db" "$ASV8")"
@@ -1567,16 +1567,21 @@ asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <e
 }
 if [ "$BASELINE_VERSION" = 1.1 ]; then
     new_role "${PREFIX}_asv"
+    # The hint resets the whole set, not only the grantees that differ: a REVOKE ... CASCADE also removes
+    # grants made through a grant option, so every non-owner grantee is revoked and the complete target set
+    # granted again, before and after the update.
+    ASV_ERR="sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over"
+    ASV_HINT="Reset them, update, and apply them to the new signature after the update. Run:"
     asv_case revoke_public \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;" \
-        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
-        "Reset them, update, and apply them to the new signature after the update. Run: GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE EXECUTE ON FUNCTION $ASV8 FROM PUBLIC;" \
+        "$ASV_ERR" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
     asv_case grant_option \
         "GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv WITH GRANT OPTION;" \
-        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
-        "Reset them, update, and apply them to the new signature after the update. Run: REVOKE EXECUTE ON FUNCTION $ASV7 FROM ${PREFIX}_asv CASCADE; ALTER EXTENSION sql_saga UPDATE TO '1.2'; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
+        "$ASV_ERR" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, ${PREFIX}_asv CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
         "PUBLIC,$ASV_OWNER,${PREFIX}_asv*" \
         "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;"
     # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
@@ -1584,10 +1589,28 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
     asv_case new_default \
         "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
-        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
-        "Reset them, update, and apply them to the new signature after the update. Run: GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE EXECUTE ON FUNCTION $ASV8 FROM PUBLIC; REVOKE EXECUTE ON FUNCTION $ASV8 FROM ${PREFIX}_asv;" \
+        "$ASV_ERR" \
+        "$ASV_HINT GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, ${PREFIX}_asv CASCADE;" \
         "$ASV_OWNER" \
         "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
+    # Delegation plus changed defaults (G4 R2.1): A holds EXECUTE WITH GRANT OPTION and granted it to B;
+    # default privileges now give A and B plain EXECUTE. Only A differs, but revoking A's grant option
+    # cascades to B's delegated grant, so the hint must restore B as well. A's name needs quoting.
+    ASV_A_RAW="${PREFIX}_dele gator's"
+    ASV_A="\"${PREFIX}_dele gator's\""
+    ASV_B=${PREFIX}_delegatee
+    new_role "$ASV_A_RAW"
+    new_role "$ASV_B"
+    asv_case delegated \
+        "GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A WITH GRANT OPTION;
+SET ROLE $ASV_A;
+GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B;
+RESET ROLE;
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO $ASV_A, $ASV_B;" \
+        "$ASV_ERR" \
+        "$ASV_HINT REVOKE ALL ON FUNCTION $ASV7 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_A; GRANT EXECUTE ON FUNCTION $ASV7 TO $ASV_B; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE ALL ON FUNCTION $ASV8 FROM PUBLIC, $ASV_A, $ASV_B CASCADE; GRANT EXECUTE ON FUNCTION $ASV8 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_A WITH GRANT OPTION; GRANT EXECUTE ON FUNCTION $ASV8 TO $ASV_B;" \
+        "$ASV_A*,PUBLIC,$ASV_OWNER,$ASV_B" \
+        "GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_A WITH GRANT OPTION;|GRANT ALL ON FUNCTION $ASV8_DUMP TO $ASV_B;"
     # Unmodified hardened installation ({owner=X} from default privileges): no refusal, and the new
     # routine gets what a fresh 1.2 install gets there.
     HARD=${PREFIX}_acl_hardened
