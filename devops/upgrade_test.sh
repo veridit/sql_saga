@@ -1528,6 +1528,81 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
 fi
 
 # ---------------------------------------------------------------------------------------------
+section "custom privileges on add_system_versioning" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# 1.2 adds a trailing parameter to add_system_versioning, so the update replaces the routine. Privileges
+# changed on the 1.1 routine cannot be carried into an extension script without becoming extension
+# initial privileges, which pg_dump omits. The update refuses instead, before any change, and its hint
+# gives the exact statements: reset, update, re-apply on the new signature (as user ACL deltas).
+ASV7="sql_saga.add_system_versioning(regclass, name, name, name, name, name, name)"
+ASV8="sql_saga.add_system_versioning(regclass, name, name, name, name, name, name, boolean)"
+ASV7_DUMP="sql_saga.add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name)"
+ASV8_DUMP="sql_saga.add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name, history_table_must_exist boolean)"
+ASV_OWNER=$(psql -X -At -d postgres -c 'SELECT current_user::regrole::text' 2>>"$LOG")
+asv_acl() {  # asv_acl <db> <regprocedure>: effective EXECUTE grantees, sorted, grantor ignored
+    q "$1" "SELECT coalesce(string_agg(g, ',' ORDER BY g COLLATE \"C\"), '') FROM (SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE a.grantee::regrole::text END || CASE WHEN a.is_grantable THEN '*' ELSE '' END AS g FROM pg_proc AS p, aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS a WHERE p.oid = '$2'::regprocedure AND a.privilege_type = 'EXECUTE') AS e"
+}
+asv_case() {  # asv_case <label> <setup sql> <expected error> <expected hint> <expected acl after> <expected dump lines>
+    local label=$1 setup=$2 want_err=$3 want_hint=$4 want_acl=$5 want_dump=$6 db=${PREFIX}_acl_$1 out before err hint
+    new_db "$db" "$EXT_ROOT"
+    out=$(printf "SET client_min_messages = warning;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n%s\n" "$BASELINE_VERSION" "$setup" | sql "$db")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "acl fixture $label: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    before="$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
+    out=$(printf "\\\\set VERBOSITY default\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | psql -X -q -d "$db" 2>&1 | sed -e 's/^psql:[^ ]*:[0-9]*: //')
+    err=$(printf '%s\n' "$out" | grep -m1 '^ERROR:' | sed 's/^ERROR:  *//')
+    hint=$(printf '%s\n' "$out" | grep -m1 '^HINT:' | sed 's/^HINT:  *//')
+    check "$label: update refused with the exact error" "$want_err" "$err"
+    check "$label: hint gives the exact way out" "$want_hint" "$hint"
+    check "$label: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "$label: refusal is atomic" "$before" "$(ext_snapshot "$db" | md5)$(dump_schema "$db" | md5)"
+    # Follow the hint literally: its statements, run as one script.
+    out=$(printf '%s\n' "$want_hint" | sed -e 's/^.*Run: //' | sql "$db")
+    check "$label: following the hint succeeds" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "$label: following the hint reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "$label: the customisation is re-applied to the new signature" "$want_acl" "$(asv_acl "$db" "$ASV8")"
+    check "$label: the re-applied customisation is a user delta, not an initial privilege" "0" \
+        "$(q "$db" "SELECT count(*) FROM pg_init_privs WHERE objoid = '$ASV8'::regprocedure AND classoid = 'pg_proc'::regclass")"
+    check "$label: pg_dump repeats the re-applied customisation" "$want_dump" \
+        "$(dump_schema "$db" | grep -E "^(GRANT|REVOKE) .* ON FUNCTION sql_saga\.add_system_versioning\(" | paste -sd'|' -)"
+}
+if [ "$BASELINE_VERSION" = 1.1 ]; then
+    new_role "${PREFIX}_asv"
+    asv_case revoke_public \
+        "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;" \
+        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
+        "Reset them, update, and apply them to the new signature after the update. Run: GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE EXECUTE ON FUNCTION $ASV8 FROM PUBLIC;" \
+        "$ASV_OWNER" \
+        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
+    asv_case grant_option \
+        "GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv WITH GRANT OPTION;" \
+        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
+        "Reset them, update, and apply them to the new signature after the update. Run: REVOKE EXECUTE ON FUNCTION $ASV7 FROM ${PREFIX}_asv CASCADE; ALTER EXTENSION sql_saga UPDATE TO '1.2'; GRANT EXECUTE ON FUNCTION $ASV8 TO ${PREFIX}_asv WITH GRANT OPTION;" \
+        "PUBLIC,$ASV_OWNER,${PREFIX}_asv*" \
+        "GRANT ALL ON FUNCTION $ASV8_DUMP TO ${PREFIX}_asv WITH GRANT OPTION;"
+    # Default privileges changed since 1.1: the replacement would gain ${PREFIX}_asv and lose nothing the
+    # site removed. Refused as well, so the new routine never silently gets broader access.
+    asv_case new_default \
+        "REVOKE EXECUTE ON FUNCTION $ASV7 FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES GRANT EXECUTE ON FUNCTIONS TO ${PREFIX}_asv;" \
+        "sql_saga: the privileges on $ASV7 differ from those its 1.2 replacement gets; the update replaces this function, and cannot carry changed privileges over" \
+        "Reset them, update, and apply them to the new signature after the update. Run: GRANT EXECUTE ON FUNCTION $ASV7 TO PUBLIC; GRANT EXECUTE ON FUNCTION $ASV7 TO ${PREFIX}_asv; ALTER EXTENSION sql_saga UPDATE TO '1.2'; REVOKE EXECUTE ON FUNCTION $ASV8 FROM PUBLIC; REVOKE EXECUTE ON FUNCTION $ASV8 FROM ${PREFIX}_asv;" \
+        "$ASV_OWNER" \
+        "REVOKE ALL ON FUNCTION $ASV8_DUMP FROM PUBLIC;"
+    # Unmodified hardened installation ({owner=X} from default privileges): no refusal, and the new
+    # routine gets what a fresh 1.2 install gets there.
+    HARD=${PREFIX}_acl_hardened
+    new_db "$HARD" "$EXT_ROOT"
+    out=$(printf "SET client_min_messages = warning;\nALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;\nCREATE EXTENSION btree_gist;\nCREATE EXTENSION sql_saga VERSION '%s';\n" "$BASELINE_VERSION" | sql "$HARD")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "hardened acl fixture: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "hardened: 1.1 routine is owner-only" "$ASV_OWNER" "$(asv_acl "$HARD" "$ASV7")"
+    check "hardened: unmodified installation updates without refusal" "" "$(q "$HARD" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" | grep '^ERROR')"
+    check "hardened: reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$HARD" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "hardened: new routine is owner-only, as in a fresh $NEW_VERSION install" "$ASV_OWNER" "$(asv_acl "$HARD" "$ASV8")"
+    check "hardened: no leftover probe routine" "0" \
+        "$(q "$HARD" "SELECT count(*) FROM pg_proc WHERE pronamespace = 'sql_saga'::regnamespace AND proname LIKE '%acl_probe%'")"
+fi
+
+# ---------------------------------------------------------------------------------------------
 section "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'" "expected RED"
 # ---------------------------------------------------------------------------------------------
 UPDATE_OUT=$(printf "SET client_min_messages = notice;\nALTER EXTENSION sql_saga UPDATE TO '%s';\n" "$NEW_VERSION" | sql "$OLD")

@@ -113,7 +113,7 @@ BEGIN
             SELECT string_agg(format('%s.%s', sv.table_schema, sv.table_name), ',')
             FROM sql_saga.system_versioning AS sv WHERE (sv.history_schema_name, sv.history_table_name) = (h.hs, history_name)), '');
         RETURN QUERY EXECUTE format($q$
-            SELECT %1$s, %2$L, coalesce(string_agg((to_jsonb(h) - 'system_valid_range')::text, ' ' ORDER BY lower(h.system_valid_range), (to_jsonb(h) - 'system_valid_range')::text), '')
+            SELECT %1$s, %2$L, coalesce(string_agg((to_jsonb(h) - 'system_valid_range')::text, ' ' ORDER BY (to_jsonb(h) - 'system_valid_range')::text), '')
             FROM %3$s AS h$q$, 10 * n + 8, h.hs || '.' || history_name || ' rows', h.hoid::regclass);
     END LOOP;
 END;
@@ -198,14 +198,42 @@ SELECT * FROM mv_new.family_state('mv_new', 'w', 'w_history') ORDER BY ord;
 SELECT mv_new.history_fingerprint('mv_old.w_history') = :'w_history_before' AS old_schema_history_contents_unchanged;
 
 \echo '--- 3c: the history table has another shape'
+-- The shape is checked before any DDL: a ddl_command_start event trigger counts every DDL command
+-- into a sequence, which a failed transaction does not roll back.
+CREATE SEQUENCE mv_new.ddl_count;
+CREATE FUNCTION mv_new.count_ddl() RETURNS event_trigger LANGUAGE plpgsql AS $count_ddl$
+BEGIN
+    PERFORM nextval('mv_new.ddl_count');
+END;
+$count_ddl$;
 CREATE TABLE mv_new.s (id int PRIMARY KEY, v text, system_valid_range tstzrange NOT NULL DEFAULT tstzrange('-infinity', 'infinity'));
 CREATE TABLE mv_new.s_history (id int, system_valid_range tstzrange NOT NULL);
 INSERT INTO mv_new.s_history VALUES (1, tstzrange('2019-01-01', '2020-01-01')), (2, tstzrange('2020-01-01', '2021-01-01'));
 SELECT * FROM mv_new.family_state('mv_new', 's', 's_history') ORDER BY ord;
 SELECT mv_new.history_fingerprint('mv_new.s_history') AS s_history_before \gset
+CREATE EVENT TRIGGER mv_count_ddl ON ddl_command_start EXECUTE FUNCTION mv_new.count_ddl();
+-- Positive control: one real DDL command under the trigger is counted.
+CREATE TABLE mv_new.ddl_control ();
+SELECT is_called AS ddl_control_counted FROM mv_new.ddl_count;
+SELECT setval('mv_new.ddl_count', 1, false) AS ddl_counter_reset;
 SELECT sql_saga.add_system_versioning('mv_new.s', history_table_must_exist => true);
+DROP EVENT TRIGGER mv_count_ddl;
+SELECT is_called AS ddl_ran_before_shape_refusal FROM mv_new.ddl_count;
 SELECT * FROM mv_new.family_state('mv_new', 's', 's_history') ORDER BY ord;
 SELECT mv_new.history_fingerprint('mv_new.s_history') = :'s_history_before' AS other_shape_history_contents_unchanged;
+
+\echo '--- 3c2: the history table lacks the system time column the base table would get'
+-- The comparison is against the base table as it would be versioned, with system_valid_range added.
+CREATE TABLE mv_new.r (id int PRIMARY KEY, v text);
+CREATE TABLE mv_new.r_history (id int, v text);
+INSERT INTO mv_new.r_history VALUES (1, 'r1');
+SELECT * FROM mv_new.family_state('mv_new', 'r', 'r_history') ORDER BY ord;
+SELECT setval('mv_new.ddl_count', 1, false) AS ddl_counter_reset;
+CREATE EVENT TRIGGER mv_count_ddl ON ddl_command_start EXECUTE FUNCTION mv_new.count_ddl();
+SELECT sql_saga.add_system_versioning('mv_new.r', history_table_must_exist => true);
+DROP EVENT TRIGGER mv_count_ddl;
+SELECT is_called AS ddl_ran_before_shape_refusal FROM mv_new.ddl_count;
+SELECT * FROM mv_new.family_state('mv_new', 'r', 'r_history') ORDER BY ord;
 
 \echo '--- 3d: the history table already belongs to another family'
 CREATE TABLE mv_new.x (id int PRIMARY KEY, v text, system_valid_range tstzrange NOT NULL DEFAULT tstzrange('-infinity', 'infinity'));
