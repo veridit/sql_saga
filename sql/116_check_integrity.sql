@@ -109,6 +109,31 @@ BEGIN
             UNION ALL SELECT 1 FROM pg_proc AS p JOIN pg_namespace AS ns ON ns.oid=p.pronamespace WHERE ns.nspname='integrity_test' AND p.proname LIKE 'period_parent__for_portion_of_valid%'
             UNION ALL SELECT 1 FROM pg_policy AS p JOIN pg_class AS c ON c.oid=p.polrelid WHERE c.oid=to_regclass('integrity_test.period_parent__for_portion_of_valid')
         ) AS x;
+    ELSIF family IN ('sv_trigger', 'sv_excluded') THEN
+        SELECT count(*)::integer INTO n FROM (
+            SELECT 1 FROM sql_saga.era AS x WHERE x.table_schema='integrity_test' AND x.table_name=family AND x.era_name='system_time'
+            UNION ALL SELECT 1 FROM sql_saga.system_time_era AS x WHERE x.table_schema='integrity_test' AND x.table_name=family
+            UNION ALL SELECT 1 FROM sql_saga.system_versioning AS x WHERE x.table_schema='integrity_test' AND x.table_name=family
+            UNION ALL SELECT 1 FROM pg_attribute AS a
+                WHERE a.attrelid=format('integrity_test.%I', family)::regclass AND a.attnum > 0 AND NOT a.attisdropped
+                  AND a.attname <> ALL(CASE family WHEN 'sv_excluded' THEN ARRAY['id','tenant','payload']::name[] ELSE ARRAY['id','payload']::name[] END)
+            UNION ALL SELECT 1 FROM pg_constraint AS c
+                WHERE c.conrelid=format('integrity_test.%I', family)::regclass
+                  AND c.conname <> ALL(ARRAY[family || '_id_not_null', family || '_pkey']::name[])
+            UNION ALL SELECT 1 FROM pg_class AS c JOIN pg_index AS i ON i.indexrelid=c.oid
+                WHERE i.indrelid=format('integrity_test.%I', family)::regclass AND c.relname <> family || '_pkey'
+            UNION ALL SELECT 1 FROM pg_trigger AS t
+                WHERE t.tgrelid=format('integrity_test.%I', family)::regclass AND NOT t.tgisinternal
+            UNION ALL SELECT 1 FROM pg_proc AS p JOIN pg_namespace AS ns ON ns.oid=p.pronamespace
+                WHERE ns.nspname='sql_saga' AND p.proname LIKE family || '\_%system_time%' ESCAPE '\'
+            UNION ALL SELECT 1 WHERE to_regclass(format('integrity_test.%I_history', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regclass(format('integrity_test.%I_with_history', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regclass(format('integrity_test.%I_history_gated', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regprocedure(format('integrity_test.%I__as_of(timestamptz)', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regprocedure(format('integrity_test.%I__between(timestamptz,timestamptz)', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regprocedure(format('integrity_test.%I__between_symmetric(timestamptz,timestamptz)', family)) IS NOT NULL
+            UNION ALL SELECT 1 WHERE to_regprocedure(format('integrity_test.%I__from_to(timestamptz,timestamptz)', family)) IS NOT NULL
+        ) AS x;
     ELSE
         SELECT count(*)::integer INTO n FROM (
             SELECT 1 FROM sql_saga.era AS x WHERE x.table_schema='integrity_test' AND x.table_name=family
@@ -128,11 +153,17 @@ BEGIN
 END;
 $managed_leftover_count$;
 
-CREATE FUNCTION integrity_test.repair_attempt(case_name text, repair_kind text, finish_repair boolean DEFAULT true)
+CREATE FUNCTION integrity_test.repair_attempt(case_name text, repair_kind text, finish_repair boolean DEFAULT true, verify_integrity boolean DEFAULT true)
 RETURNS text LANGUAGE plpgsql AS $repair_attempt$
 DECLARE
     drop_result boolean;
     family_name text := CASE repair_kind WHEN 'unique' THEN 'period_parent_predicated' WHEN 'for_portion_of' THEN 'period_parent__for_portion_of_valid' ELSE repair_kind END;
+    managed_trigger_names name[];
+    managed_constraint_names name[];
+    managed_column_names name[];
+    sync_trigger_name name;
+    sync_function_name name;
+    leftover_names text[];
 BEGIN
     BEGIN
         IF integrity_test.managed_leftover_count(family_name) = 0 THEN
@@ -140,33 +171,81 @@ BEGIN
         END IF;
         CASE repair_kind
         WHEN 'sv_trigger' THEN
+            SELECT ARRAY[ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger],
+                   ARRAY[ste.infinity_check_constraint, e.bounds_check_constraint, e.boundary_check_constraint],
+                   array_remove(ARRAY[e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name], NULL),
+                   e.sync_temporal_trg_name,
+                   e.sync_temporal_trg_function_name
+            INTO managed_trigger_names, managed_constraint_names, managed_column_names, sync_trigger_name, sync_function_name
+            FROM sql_saga.system_time_era AS ste
+            JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+            WHERE table_schema='integrity_test' AND table_name='sv_trigger';
             drop_result := sql_saga.drop_system_versioning('integrity_test.sv_trigger');
+            SELECT array_agg(name ORDER BY name COLLATE "C")
+            INTO leftover_names
+            FROM (
+                SELECT t.tgname::text AS name FROM pg_trigger AS t
+                WHERE t.tgrelid='integrity_test.sv_trigger'::regclass
+                  AND (t.tgname = ANY(managed_trigger_names) OR t.tgname=sync_trigger_name)
+                UNION ALL
+                SELECT c.conname::text FROM pg_constraint AS c
+                WHERE c.conrelid='integrity_test.sv_trigger'::regclass AND c.conname=ANY(managed_constraint_names)
+                UNION ALL
+                SELECT a.attname::text FROM pg_attribute AS a
+                WHERE a.attrelid='integrity_test.sv_trigger'::regclass AND a.attname=ANY(managed_column_names) AND NOT a.attisdropped
+                UNION ALL
+                SELECT p.proname::text FROM pg_proc AS p JOIN pg_namespace AS ns ON ns.oid=p.pronamespace
+                WHERE ns.nspname='sql_saga' AND p.proname=sync_function_name
+            ) AS leftovers;
             IF EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_test' AND table_name='sv_trigger')
                OR EXISTS (SELECT FROM sql_saga.system_time_era WHERE table_schema='integrity_test' AND table_name='sv_trigger')
-               OR EXISTS (SELECT FROM pg_trigger WHERE tgrelid='integrity_test.sv_trigger'::regclass AND NOT tgisinternal)
+               OR cardinality(leftover_names) > 0
                OR to_regclass('integrity_test.sv_trigger_history') IS NOT NULL
                OR to_regclass('integrity_test.sv_trigger_with_history') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_trigger__as_of(timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_trigger__between(timestamptz,timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_trigger__between_symmetric(timestamptz,timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_trigger__from_to(timestamptz,timestamptz)') IS NOT NULL THEN
-                RAISE EXCEPTION 'tolerant drop_system_versioning left an orphan';
+                RAISE EXCEPTION 'tolerant drop_system_versioning left managed cleanup orphan(s): %', coalesce(leftover_names::text, '{}');
             END IF;
-            IF finish_repair THEN PERFORM sql_saga.add_system_versioning('integrity_test.sv_trigger'); END IF;
         WHEN 'sv_excluded' THEN
+            SELECT ARRAY[ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger],
+                   ARRAY[ste.infinity_check_constraint, e.bounds_check_constraint, e.boundary_check_constraint],
+                   array_remove(ARRAY[e.range_column_name, e.valid_from_column_name, e.valid_until_column_name, e.valid_to_column_name], NULL),
+                   e.sync_temporal_trg_name,
+                   e.sync_temporal_trg_function_name
+            INTO managed_trigger_names, managed_constraint_names, managed_column_names, sync_trigger_name, sync_function_name
+            FROM sql_saga.system_time_era AS ste
+            JOIN sql_saga.era AS e USING (table_schema, table_name, era_name)
+            WHERE table_schema='integrity_test' AND table_name='sv_excluded';
             drop_result := sql_saga.drop_system_versioning('integrity_test.sv_excluded');
+            SELECT array_agg(name ORDER BY name COLLATE "C")
+            INTO leftover_names
+            FROM (
+                SELECT t.tgname::text AS name FROM pg_trigger AS t
+                WHERE t.tgrelid='integrity_test.sv_excluded'::regclass
+                  AND (t.tgname = ANY(managed_trigger_names) OR t.tgname=sync_trigger_name)
+                UNION ALL
+                SELECT c.conname::text FROM pg_constraint AS c
+                WHERE c.conrelid='integrity_test.sv_excluded'::regclass AND c.conname=ANY(managed_constraint_names)
+                UNION ALL
+                SELECT a.attname::text FROM pg_attribute AS a
+                WHERE a.attrelid='integrity_test.sv_excluded'::regclass AND a.attname=ANY(managed_column_names) AND NOT a.attisdropped
+                UNION ALL
+                SELECT p.proname::text FROM pg_proc AS p JOIN pg_namespace AS ns ON ns.oid=p.pronamespace
+                WHERE ns.nspname='sql_saga' AND p.proname=sync_function_name
+            ) AS leftovers;
             IF EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_test' AND table_name='sv_excluded')
                OR EXISTS (SELECT FROM sql_saga.system_time_era WHERE table_schema='integrity_test' AND table_name='sv_excluded')
-               OR EXISTS (SELECT FROM pg_trigger WHERE tgrelid='integrity_test.sv_excluded'::regclass AND NOT tgisinternal)
+               OR cardinality(leftover_names) > 0
                OR to_regclass('integrity_test.sv_excluded_history') IS NOT NULL
                OR to_regclass('integrity_test.sv_excluded_with_history') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_excluded__as_of(timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_excluded__between(timestamptz,timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_excluded__between_symmetric(timestamptz,timestamptz)') IS NOT NULL
                OR to_regprocedure('integrity_test.sv_excluded__from_to(timestamptz,timestamptz)') IS NOT NULL THEN
-                RAISE EXCEPTION 'tolerant drop_system_versioning left an excluded-family orphan';
+                RAISE EXCEPTION 'tolerant drop_system_versioning left excluded-family managed cleanup orphan(s): %', coalesce(leftover_names::text, '{}');
             END IF;
-            IF finish_repair THEN PERFORM sql_saga.add_system_versioning('integrity_test.sv_excluded'); END IF;
         WHEN 'unique' THEN
             PERFORM sql_saga.drop_unique_key_by_name('integrity_test.period_parent', 'period_parent_predicated');
             IF EXISTS (SELECT FROM sql_saga.unique_keys WHERE table_schema='integrity_test' AND table_name='period_parent' AND unique_key_name='period_parent_predicated')
@@ -174,25 +253,34 @@ BEGIN
                OR EXISTS (SELECT FROM pg_class AS c JOIN pg_namespace AS n ON n.oid=c.relnamespace WHERE n.nspname='integrity_test' AND c.relname LIKE 'period_parent_predicated%') THEN
                 RAISE EXCEPTION 'tolerant drop_unique_key left an orphan';
             END IF;
-            IF finish_repair THEN
-                PERFORM sql_saga.add_unique_key('integrity_test.period_parent', ARRAY['id']::name[], 'valid', key_type => 'predicated', predicate => 'category IS NOT NULL', unique_key_name => 'period_parent_predicated');
-            END IF;
         WHEN 'for_portion_of' THEN
             drop_result := sql_saga.drop_for_portion_of_view('integrity_test.period_parent', 'valid');
             IF to_regclass('integrity_test.period_parent__for_portion_of_valid') IS NOT NULL THEN
                 RAISE EXCEPTION 'tolerant drop_for_portion_of_view left an orphan';
             END IF;
-            IF finish_repair THEN PERFORM sql_saga.add_for_portion_of_view('integrity_test.period_parent', 'valid'); END IF;
         ELSE
             RAISE EXCEPTION 'unknown repair kind %', repair_kind;
         END CASE;
+        -- The orphan inventory and the drop's return value describe the state right after the tolerant
+        -- drop, so they are asserted before the add recreates the family.
         IF integrity_test.managed_leftover_count(family_name) <> 0 THEN
             RAISE EXCEPTION 'tolerant % drop left % managed orphan(s)', repair_kind, integrity_test.managed_leftover_count(family_name);
         END IF;
         IF repair_kind IN ('sv_trigger', 'sv_excluded', 'for_portion_of') AND drop_result IS DISTINCT FROM true THEN
             RAISE EXCEPTION '% returned %, expected true', repair_kind, drop_result;
         END IF;
-        IF finish_repair THEN EXECUTE 'SELECT sql_saga.check_integrity()'; END IF;
+        IF finish_repair THEN
+            CASE repair_kind
+            WHEN 'sv_trigger' THEN PERFORM sql_saga.add_system_versioning('integrity_test.sv_trigger');
+            WHEN 'sv_excluded' THEN PERFORM sql_saga.add_system_versioning('integrity_test.sv_excluded');
+            WHEN 'unique' THEN
+                PERFORM sql_saga.add_unique_key('integrity_test.period_parent', ARRAY['id']::name[], 'valid', key_type => 'predicated', predicate => 'category IS NOT NULL', unique_key_name => 'period_parent_predicated');
+            WHEN 'for_portion_of' THEN PERFORM sql_saga.add_for_portion_of_view('integrity_test.period_parent', 'valid');
+            END CASE;
+            IF verify_integrity THEN
+                EXECUTE 'SELECT sql_saga.check_integrity()';
+            END IF;
+        END IF;
         RETURN format('%s | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=%s; ok', case_name, CASE WHEN repair_kind='unique' THEN 'void' ELSE drop_result::text END);
     EXCEPTION WHEN OTHERS THEN
         RETURN format('%s | unexpected %s: %s', case_name, SQLSTATE, SQLERRM);
@@ -676,7 +764,7 @@ SELECT integrity_test.attempt('cross-class one-family first unique', 'P0001', 's
 SELECT integrity_test.snapshot_unchanged('cross_class_one_family');
 SELECT to_regclass('integrity_test.period_parent_predicated') IS NULL AND NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid='integrity_test.period_parent__for_portion_of_valid'::regclass AND NOT tgisinternal) AS checker_did_not_repair_cross_class_one_family;
 SET LOCAL client_min_messages = notice;
-SELECT integrity_test.repair_attempt('cross-class one-family repair first unique', 'unique');
+SELECT integrity_test.repair_attempt('cross-class one-family repair first unique', 'unique', verify_integrity => false);
 SELECT integrity_test.attempt('cross-class one-family next updatable view', 'P0001', 'sql_saga: integrity violation for updatable view "integrity_test.period_parent__for_portion_of_valid" of table "integrity_test.period_parent": identifier column or trigger is missing; repair with drop_for_portion_of_view and add_for_portion_of_view');
 SELECT integrity_test.repair_attempt('cross-class one-family repair next view', 'for_portion_of');
 SET LOCAL client_min_messages = warning;
@@ -699,7 +787,7 @@ SELECT integrity_test.attempt('cross-class two-family first SYSTEM_TIME', 'P0001
 SELECT integrity_test.snapshot_unchanged('cross_class_two_families');
 SELECT count(*) = 2 AND to_regprocedure('integrity_test.sv_functions__as_of(timestamptz)') IS NULL AS checker_did_not_repair_cross_class_two_families FROM pg_trigger WHERE tgrelid='integrity_test.sv_trigger'::regclass AND NOT tgisinternal;
 SET LOCAL client_min_messages = notice;
-SELECT integrity_test.repair_attempt('cross-class two-family repair first SYSTEM_TIME', 'sv_trigger');
+SELECT integrity_test.repair_attempt('cross-class two-family repair first SYSTEM_TIME', 'sv_trigger', verify_integrity => false);
 SET LOCAL client_min_messages = warning;
 SELECT integrity_test.attempt('cross-class two-family next generated function', 'P0001', 'sql_saga: integrity violation for system-versioned table "integrity_test.sv_functions": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views');
 SELECT sql_saga.rebuild_system_versioning_views('integrity_test.sv_functions');

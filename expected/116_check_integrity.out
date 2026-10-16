@@ -39,6 +39,7 @@ unique_object | unrelated DDL ok
 missing temporal unique object | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_test.period_parent": managed constraint or index is missing; repair with drop_unique_key and add_unique_key
 t
 t
+NOTICE:  sql_saga: Added constraints to table integrity_test.period_parent: ADD CONSTRAINT period_parent_predicated_excl EXCLUDE USING gist (id WITH =, valid_range WITH &&) WHERE (category IS NOT NULL) DEFERRABLE
 temporal unique tolerant drop/add repair | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=void; ok
 foreign-key helper valid before damage | ok
 fk_helper | unrelated DDL ok
@@ -179,6 +180,7 @@ cross_class_one_family | unrelated DDL ok
 cross-class one-family first unique | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_test.period_parent": managed constraint or index is missing; repair with drop_unique_key and add_unique_key
 t
 t
+NOTICE:  sql_saga: Added constraints to table integrity_test.period_parent: ADD CONSTRAINT period_parent_predicated_excl EXCLUDE USING gist (id WITH =, valid_range WITH &&) WHERE (category IS NOT NULL) DEFERRABLE
 cross-class one-family repair first unique | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=void; ok
 cross-class one-family next updatable view | P0001: sql_saga: integrity violation for updatable view "integrity_test.period_parent__for_portion_of_valid" of table "integrity_test.period_parent": identifier column or trigger is missing; repair with drop_for_portion_of_view and add_for_portion_of_view
 cross-class one-family repair next view | inventory_before_nonzero=t; inventory_after_zero=t; drop_return=true; ok
