@@ -224,7 +224,7 @@ SELECT 'Transaction still active';
 
 The ranges are guidance, and several are full. A new test takes a free slot as close to its topic as
 possible rather than renumbering dozens of existing tests. Current overflow: `037-039` drop protection,
-`056` system-versioning column snapshot.
+`056` system-versioning column snapshot, `058` managed relation rename/move.
 
 **Self-Contained Test Template:**
 ```sql
