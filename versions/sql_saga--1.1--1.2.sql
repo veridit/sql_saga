@@ -119,3 +119,815 @@ BEGIN
     END LOOP;
 END;
 $preflight$;
+
+CREATE FUNCTION sql_saga.__internal_display_name(schema_name name, object_name name)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $__internal_display_name$
+    SELECT sql_saga.__internal_display_name(
+        CASE WHEN schema_name = ANY (pg_catalog.current_schemas(true))
+             THEN pg_catalog.quote_ident(object_name)
+             ELSE pg_catalog.format('%I.%I', schema_name, object_name)
+        END);
+$__internal_display_name$;
+/*
+ * Private, transaction-scoped authorization for the nested policy DDL performed by
+ * __internal_sync_history_policies. Names, not OIDs, are stored. Ordinary callers cannot write or
+ * inspect this table; the synchronizer and drop_protection run as the extension owner.
+ */
+CREATE TABLE sql_saga.history_policy_sync_guard (
+    backend_pid integer NOT NULL,
+    transaction_id bigint NOT NULL,
+    base_schema name NOT NULL,
+    base_table name NOT NULL,
+    nesting_depth integer NOT NULL CHECK (nesting_depth > 0),
+    PRIMARY KEY (backend_pid, transaction_id, base_schema, base_table)
+);
+REVOKE ALL ON TABLE sql_saga.history_policy_sync_guard FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_history_policy_sync_active(table_oid oid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_history_policy_sync_active$
+    SELECT EXISTS (
+        SELECT 1
+        FROM sql_saga.history_policy_sync_guard AS g
+        JOIN pg_catalog.pg_class AS c ON c.oid = table_oid
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+          AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+          AND (g.base_schema, g.base_table) = (n.nspname, c.relname));
+$__internal_history_policy_sync_active$;
+REVOKE ALL ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) FROM PUBLIC;
+CREATE OR REPLACE FUNCTION sql_saga.drop_protection()
+ RETURNS event_trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path = sql_saga, pg_catalog, public
+AS
+$function$
+#variable_conflict use_variable
+DECLARE
+    r record;
+    table_oid regclass;
+    era_name name;
+    v_teardown boolean := sql_saga.__internal_is_clean_teardown();
+    v_dropped_objects jsonb[];
+    v_sanctioned_bases jsonb[];
+    v_refusal_objects jsonb[];
+    v_candidate record;
+BEGIN
+    /* Materialize this invocation once. Nested DDL gets its own function frame. */
+    SELECT coalesce(
+        array_agg(to_jsonb(dobj) ORDER BY dobj.ordinality),
+        ARRAY[]::jsonb[])
+    INTO v_dropped_objects
+    FROM pg_catalog.pg_event_trigger_dropped_objects() WITH ORDINALITY AS dobj;
+
+    /* Ordinary DDL must not pay for global catalog scans. */
+    IF NOT EXISTS (
+        SELECT 1
+        FROM unnest(v_dropped_objects) AS d(data)
+        CROSS JOIN LATERAL jsonb_to_record(d.data) AS dobj(
+            objid oid, object_identity text, address_names text[])
+        WHERE EXISTS (
+            SELECT 1
+            FROM sql_saga.era AS e
+            WHERE (e.table_schema, e.table_name) = (dobj.address_names[1], dobj.address_names[2])
+               OR dobj.objid = e.range_type::oid)
+           OR EXISTS (
+            SELECT 1
+            FROM sql_saga.updatable_view AS v
+            WHERE (v.view_schema, v.view_name) = (dobj.address_names[1], dobj.address_names[2]))
+           OR EXISTS (
+            SELECT 1
+            FROM sql_saga.system_versioning AS sv
+            WHERE (sv.history_schema_name, sv.history_table_name) = (dobj.address_names[1], dobj.address_names[2])
+               OR (sv.view_schema_name, sv.view_table_name) = (dobj.address_names[1], dobj.address_names[2])
+               OR dobj.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]))
+           OR EXISTS (
+            SELECT 1
+            FROM sql_saga.foreign_keys AS fk
+            WHERE (fk.table_schema, fk.table_name) = (dobj.address_names[1], dobj.address_names[2]))
+           OR (cardinality(dobj.address_names) = 2 AND EXISTS (
+            SELECT 1
+            FROM sql_saga.unique_keys AS uk
+            WHERE (uk.table_schema, uk.unique_constraint) =
+                  (dobj.address_names[1], dobj.address_names[2])))
+    ) THEN
+        RETURN;
+    END IF;
+
+    /*
+     * Choose exactly one refusal from this statement's payload. Priority preserves the historical
+     * source-class order; ordinality preserves PostgreSQL's dependency order within a class.
+     */
+    IF NOT v_teardown THEN
+        /*
+         * Remove complete families before constructing refusal candidates.  The ordinalities
+         * identify rows in this invocation's materialized payload, so no dropped-object OID is
+         * retained beyond the statement.  Objects not belonging to a dropped base family remain
+         * available for mixed sanctioned/unsanctioned statements.
+         */
+        IF EXISTS (
+            SELECT 1
+            FROM unnest(v_dropped_objects) AS u(data)
+            WHERE u.data->>'object_type' = 'table'
+        ) THEN
+            SELECT coalesce(
+                array_agg(DISTINCT jsonb_build_array(e.table_schema, e.table_name)),
+                ARRAY[]::jsonb[])
+            INTO v_sanctioned_bases
+            FROM unnest(v_dropped_objects) AS u(data)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                object_type text, address_names text[])
+            JOIN sql_saga.era AS e
+              ON d.object_type = 'table'
+             AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name);
+        ELSE
+            v_sanctioned_bases := ARRAY[]::jsonb[];
+        END IF;
+
+        IF cardinality(v_sanctioned_bases) = 0 THEN
+            v_refusal_objects := v_dropped_objects;
+        ELSIF EXISTS (
+            SELECT 1
+            FROM unnest(v_dropped_objects) AS u(data)
+            WHERE u.data->>'object_type' = 'schema'
+        ) AND NOT EXISTS (
+            WITH dropped AS MATERIALIZED (
+                SELECT d.*
+                FROM unnest(v_dropped_objects) AS u(data)
+                CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                    object_type text, object_identity text, address_names text[])
+            )
+            SELECT 1
+            FROM dropped AS d
+            JOIN sql_saga.updatable_view AS v
+              ON ((d.object_type = 'view'
+                   AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name))
+                  OR (d.object_type = 'trigger'
+                      AND (d.address_names[1], d.address_names[2], d.address_names[3]) =
+                          (v.view_schema, v.view_name, v.trigger_name)))
+            WHERE NOT jsonb_build_array(v.table_schema, v.table_name) = ANY (v_sanctioned_bases)
+            UNION ALL
+            SELECT 1
+            FROM dropped AS d
+            JOIN sql_saga.system_versioning AS sv
+              ON (d.object_type = 'table'
+                  AND (d.address_names[1], d.address_names[2]) =
+                      (sv.history_schema_name, sv.history_table_name))
+              OR (d.object_type = 'view'
+                  AND (d.address_names[1], d.address_names[2]) IN (
+                      (sv.view_schema_name, sv.view_table_name),
+                      (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name))))
+              OR (d.object_type = 'function'
+                  AND d.object_identity = ANY (ARRAY[
+                      sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to]))
+            WHERE NOT jsonb_build_array(sv.table_schema, sv.table_name) = ANY (v_sanctioned_bases)
+        ) THEN
+            v_refusal_objects := ARRAY[]::jsonb[];
+        ELSE
+        WITH dropped AS MATERIALIZED (
+            SELECT u.ordinality AS dropped_ordinality, u.data, d.*
+            FROM unnest(v_dropped_objects) WITH ORDINALITY AS u(data, ordinality)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                object_type text, object_identity text, address_names text[], objid oid)
+        ), sanctioned_bases AS MATERIALIZED (
+            SELECT b.data->>0 AS table_schema, b.data->>1 AS table_name
+            FROM unnest(v_sanctioned_bases) AS b(data)
+        )
+        SELECT coalesce(
+            array_agg(d.data ORDER BY d.dropped_ordinality) FILTER (WHERE NOT EXISTS (
+                SELECT 1
+                FROM sanctioned_bases AS b
+                WHERE (d.address_names[1], d.address_names[2]) = (b.table_schema, b.table_name)
+                   OR EXISTS (
+                        SELECT 1
+                        FROM sql_saga.era AS e
+                        WHERE (e.table_schema, e.table_name) = (b.table_schema, b.table_name)
+                          AND d.objid = e.range_type::oid)
+                   OR (d.object_type = 'index' AND EXISTS (
+                        SELECT 1
+                        FROM sql_saga.unique_keys AS uk
+                        WHERE (uk.table_schema, uk.table_name) = (b.table_schema, b.table_name)
+                          AND (d.address_names[1], d.address_names[2]) =
+                              (uk.table_schema, uk.unique_constraint)))
+                   OR EXISTS (
+                        SELECT 1
+                        FROM sql_saga.updatable_view AS v
+                        WHERE (v.table_schema, v.table_name) = (b.table_schema, b.table_name)
+                          AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name))
+                   OR EXISTS (
+                        SELECT 1
+                        FROM sql_saga.system_versioning AS sv
+                        WHERE (sv.table_schema, sv.table_name) = (b.table_schema, b.table_name)
+                          AND ((d.address_names[1], d.address_names[2]) IN (
+                                  (sv.history_schema_name, sv.history_table_name),
+                                  (sv.view_schema_name, sv.view_table_name),
+                                  (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))
+                               OR d.object_identity = ANY (ARRAY[
+                                  sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])))
+            )),
+            ARRAY[]::jsonb[])
+        INTO v_refusal_objects
+        FROM dropped AS d;
+        END IF;
+
+        IF cardinality(v_refusal_objects) > 0 THEN
+        IF NOT EXISTS (
+            SELECT 1
+            FROM unnest(v_refusal_objects) AS u(data)
+            WHERE u.data->>'object_type' <> 'trigger'
+        ) THEN
+        WITH dropped AS (
+            SELECT u.ordinality AS dropped_ordinality, d.*
+            FROM unnest(v_refusal_objects) WITH ORDINALITY AS u(data, ordinality)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                object_type text, address_names text[])
+        ), candidates AS (
+            SELECT CASE d.address_names[3]
+                       WHEN ste.generated_always_trigger THEN 40
+                       WHEN ste.write_history_trigger THEN 50 ELSE 60 END AS priority,
+                   d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in SYSTEM_TIME period',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(ste.table_schema, ste.table_name)) AS message
+            FROM dropped AS d JOIN sql_saga.system_time_era AS ste
+             ON (d.address_names[1], d.address_names[2]) = (ste.table_schema, ste.table_name)
+             AND d.address_names[3] IN (ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger)
+            UNION ALL
+            SELECT 90, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on view "%s" because it is part of an updatable view for era "%s" on table "%s"',
+                          v.trigger_name,
+                          sql_saga.__internal_display_name(d.address_names[1]::name, d.address_names[2]::name),
+                          v.era_name,
+                          sql_saga.__internal_display_name(v.table_schema, v.table_name))
+            FROM dropped AS d JOIN sql_saga.updatable_view AS v
+             ON (d.address_names[1], d.address_names[2], d.address_names[3]) = (v.view_schema, v.view_name, v.trigger_name)
+            UNION ALL
+            SELECT CASE WHEN d.address_names[3] = fk.uk_update_trigger THEN 120 ELSE 130 END,
+                   d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in era foreign key "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
+                          fk.foreign_key_name)
+            FROM dropped AS d
+            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+            WHERE (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+        )
+        SELECT c.message INTO v_candidate
+        FROM candidates AS c
+        ORDER BY c.priority, c.dropped_ordinality
+        LIMIT 1;
+        ELSE
+        WITH dropped AS (
+            SELECT u.ordinality AS dropped_ordinality, d.*
+            FROM unnest(v_refusal_objects) WITH ORDINALITY AS u(data, ordinality)
+            CROSS JOIN LATERAL jsonb_to_record(u.data) AS d(
+                object_type text, object_identity text, address_names text[], objid oid)
+        ), candidates AS (
+            SELECT 10 AS priority, d.dropped_ordinality,
+                   format('cannot drop column "%s" because it is part of the period "%s"', d.object_identity, e.era_name) AS message
+            FROM dropped AS d JOIN sql_saga.era AS e
+             ON d.object_type = 'table column'
+             AND (d.address_names[1], d.address_names[2]) = (e.table_schema, e.table_name)
+             AND d.address_names[3] IN (e.valid_from_column_name, e.valid_until_column_name)
+            UNION ALL
+            SELECT 20, d.dropped_ordinality,
+                   format('cannot drop rangetype "%s" because it is used in period "%s" on table "%s"',
+                          d.object_identity, e.era_name,
+                          sql_saga.__internal_display_name(e.table_schema, e.table_name))
+            FROM dropped AS d JOIN sql_saga.era AS e ON d.objid = e.range_type::oid
+            UNION ALL
+            SELECT 30, d.dropped_ordinality,
+                   format('cannot drop constraint "%s" on table "%s" because it is used in SYSTEM_TIME period',
+                          ste.infinity_check_constraint,
+                          sql_saga.__internal_display_name(ste.table_schema, ste.table_name))
+            FROM dropped AS d JOIN sql_saga.system_time_era AS ste
+             ON d.object_type = 'table constraint'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) = (ste.table_schema, ste.table_name, ste.infinity_check_constraint)
+            UNION ALL
+            SELECT CASE d.address_names[3]
+                       WHEN ste.generated_always_trigger THEN 40
+                       WHEN ste.write_history_trigger THEN 50 ELSE 60 END,
+                   d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in SYSTEM_TIME period',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(ste.table_schema, ste.table_name))
+            FROM dropped AS d JOIN sql_saga.system_time_era AS ste
+             ON d.object_type = 'trigger'
+             AND (d.address_names[1], d.address_names[2]) = (ste.table_schema, ste.table_name)
+             AND d.address_names[3] IN (ste.generated_always_trigger, ste.write_history_trigger, ste.truncate_trigger)
+            UNION ALL
+            SELECT 70, d.dropped_ordinality,
+                   format('cannot drop or rename column "%s" on table "%s" because it is excluded from system_time era',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(ste.table_schema, ste.table_name))
+            FROM dropped AS d JOIN sql_saga.system_time_era AS ste
+             ON d.object_type = 'table column'
+             AND (d.address_names[1], d.address_names[2]) = (ste.table_schema, ste.table_name)
+             AND d.address_names[3] = ANY (ste.excluded_column_names)
+            UNION ALL
+            SELECT 80, d.dropped_ordinality,
+                   format('cannot drop view "%s", call "sql_saga.drop_%s_view()" instead',
+                          sql_saga.__internal_display_name(d.object_identity), v.view_type)
+            FROM dropped AS d JOIN sql_saga.updatable_view AS v
+             ON d.object_type = 'view'
+             AND (d.address_names[1], d.address_names[2]) = (v.view_schema, v.view_name)
+            UNION ALL
+            SELECT 90, d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on view "%s" because it is part of an updatable view for era "%s" on table "%s"',
+                          v.trigger_name,
+                          sql_saga.__internal_display_name(d.address_names[1]::name, d.address_names[2]::name),
+                          v.era_name,
+                          sql_saga.__internal_display_name(v.table_schema, v.table_name))
+            FROM dropped AS d JOIN sql_saga.updatable_view AS v
+             ON d.object_type = 'trigger'
+             AND (d.address_names[1], d.address_names[2], d.address_names[3]) = (v.view_schema, v.view_name, v.trigger_name)
+            UNION ALL
+            SELECT 100, d.dropped_ordinality,
+                   format('table "%s" must have a primary key or a single-column temporal unique key to support its updatable view for era "%s"',
+                          sql_saga.__internal_display_name(v.table_schema, v.table_name), v.era_name)
+            FROM dropped AS d JOIN sql_saga.updatable_view AS v
+             ON d.object_type IN ('table column', 'table constraint', 'index')
+             AND (d.address_names[1], d.address_names[2]) = (v.table_schema, v.table_name)
+            WHERE NOT EXISTS (
+                      SELECT 1 FROM pg_catalog.pg_constraint AS c
+                      WHERE (c.conrelid, c.contype) =
+                            (to_regclass(format('%I.%I', v.table_schema, v.table_name)), 'p'))
+              AND NOT EXISTS (
+                      SELECT 1 FROM sql_saga.unique_keys AS identifier_uk
+                      WHERE (identifier_uk.table_schema, identifier_uk.table_name, identifier_uk.era_name) =
+                            (v.table_schema, v.table_name, v.era_name)
+                        AND array_length(identifier_uk.column_names, 1) = 1
+                        AND NOT EXISTS (
+                                SELECT 1
+                                FROM dropped AS identifier_drop
+                                WHERE (identifier_drop.object_type = 'table constraint'
+                                       AND (identifier_drop.address_names[1], identifier_drop.address_names[2], identifier_drop.address_names[3]) =
+                                           (identifier_uk.table_schema, identifier_uk.table_name, identifier_uk.unique_constraint))
+                                   OR (identifier_drop.object_type = 'index'
+                                       AND (identifier_drop.address_names[1], identifier_drop.address_names[2]) =
+                                           (identifier_uk.table_schema, identifier_uk.unique_constraint))))
+            UNION ALL
+            SELECT 110, d.dropped_ordinality,
+                   format('cannot drop constraint "%s" on table "%s" because it is used in era unique key "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
+                          uk.unique_key_name)
+            FROM dropped AS d JOIN sql_saga.unique_keys AS uk
+             ON d.object_type = 'table constraint'
+             AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+             AND (d.address_names[3] IN (uk.unique_constraint, uk.exclude_constraint, uk.check_constraint)
+                  OR d.address_names[3] = ANY (coalesce(uk.pk_consistency_constraint_names, '{}')))
+            UNION ALL
+            SELECT 110, d.dropped_ordinality,
+                   format('cannot drop index "%s" on table "%s" because it is used in era unique key "%s"',
+                          uk.unique_constraint,
+                          sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
+                          uk.unique_key_name)
+            FROM dropped AS d JOIN sql_saga.unique_keys AS uk
+             ON d.object_type = 'index'
+             AND (d.address_names[1], d.address_names[2]) =
+                 (uk.table_schema, uk.unique_constraint)
+            UNION ALL
+            SELECT CASE WHEN d.address_names[3] = fk.uk_update_trigger THEN 120 ELSE 130 END,
+                   d.dropped_ordinality,
+                   format('cannot drop trigger "%s" on table "%s" because it is used in era foreign key "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(uk.table_schema, uk.table_name),
+                          fk.foreign_key_name)
+            FROM dropped AS d
+            JOIN sql_saga.foreign_keys AS fk ON d.address_names[3] IN (fk.uk_update_trigger, fk.uk_delete_trigger)
+            JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
+            WHERE d.object_type = 'trigger'
+              AND (d.address_names[1], d.address_names[2]) = (uk.table_schema, uk.table_name)
+            UNION ALL
+            SELECT 140, d.dropped_ordinality,
+                   format('cannot drop table "%s" because it is used in SYSTEM VERSIONING for table "%s"',
+                          sql_saga.__internal_display_name(d.object_identity),
+                          sql_saga.__internal_display_name(sv.table_schema, sv.table_name))
+            FROM dropped AS d JOIN sql_saga.system_versioning AS sv
+              ON d.object_type = 'table'
+             AND (d.address_names[1], d.address_names[2]) = (sv.history_schema_name, sv.history_table_name)
+            UNION ALL
+            SELECT 150, d.dropped_ordinality,
+                   format('cannot drop view "%s" because it is used in SYSTEM VERSIONING for table "%s"',
+                          sql_saga.__internal_display_name(d.object_identity),
+                          sql_saga.__internal_display_name(sv.table_schema, sv.table_name))
+            FROM dropped AS d JOIN sql_saga.system_versioning AS sv
+              ON d.object_type = 'view'
+             AND (d.address_names[1], d.address_names[2]) IN (
+                    (sv.view_schema_name, sv.view_table_name),
+                    (sv.history_schema_name, sql_saga.__internal_history_gated_name(sv.history_table_name)))
+             AND sql_saga.__internal_rebuilding_system_versioning_views(
+                     to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid) IS NOT TRUE
+            UNION ALL
+            SELECT 160, d.dropped_ordinality,
+                   format('cannot drop function "%s" because it is used in SYSTEM VERSIONING for table "%s"',
+                          sql_saga.__internal_display_function_name(d.object_identity),
+                          sql_saga.__internal_display_name(sv.table_schema, sv.table_name))
+            FROM dropped AS d JOIN sql_saga.system_versioning AS sv
+              ON d.object_type = 'function'
+             AND d.object_identity = ANY (ARRAY[sv.func_as_of, sv.func_between, sv.func_between_symmetric, sv.func_from_to])
+             AND sql_saga.__internal_rebuilding_system_versioning_views(
+                     to_regclass(format('%I.%I', sv.table_schema, sv.table_name))::oid) IS NOT TRUE
+            UNION ALL
+            SELECT 170, d.dropped_ordinality,
+                   format('cannot drop or alter policy "%s" on "%s" because it is managed by sql_saga for table "%s"',
+                          d.address_names[3],
+                          sql_saga.__internal_display_name(f.history_oid::regclass),
+                          sql_saga.__internal_display_name(f.base_oid::regclass))
+            FROM dropped AS d
+            CROSS JOIN LATERAL sql_saga.__internal_history_family(
+                to_regclass(format('%I.%I', d.address_names[1], d.address_names[2]))) AS f
+            WHERE d.object_type = 'policy'
+              AND to_regclass(format('%I.%I', d.address_names[1], d.address_names[2]))::oid = f.history_oid
+              AND sql_saga.__internal_is_managed_history_policy(d.address_names[3]::name)
+              AND NOT sql_saga.__internal_history_policy_sync_active(f.base_oid)
+        )
+        SELECT c.message INTO v_candidate
+        FROM candidates AS c
+        ORDER BY c.priority, c.dropped_ordinality
+        LIMIT 1;
+        END IF;
+
+        IF FOUND THEN
+            RAISE EXCEPTION '%', v_candidate.message;
+        END IF;
+        END IF;
+    END IF;
+
+    ---
+    --- periods
+    ---
+
+    /*
+     * Teardown by pg_restore --clean (sql_saga.__internal_is_clean_teardown, tmp/design_restore_clean.md).
+     * The checks below that complain about missing objects are skipped, and so is cleanup of objects
+     * pg_restore drops itself. One thing pg_restore cannot do: drop the managed history policies,
+     * whose names carry this installation's token while the dump carries another. They depend on the
+     * base table, so they are dropped here, as soon as any object of their family goes (DROP TABLE of
+     * the base would fail otherwise when the base is dropped before its history). Not on pg_restore's
+     * own DROP POLICY statements: those come first, and a later DROP POLICY (without IF EXISTS) of a
+     * dumped name already gone would fail. Restore plumbing the caller asked for: reported at DEBUG.
+     */
+    IF v_teardown AND current_setting('sql_saga.managing_history_policies', true) IS DISTINCT FROM 'on' THEN
+        DECLARE
+            family_row record;
+            policy_row record;
+            previous_guard text := current_setting('sql_saga.managing_history_policies', true);
+        BEGIN
+            PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
+            FOR family_row IN
+                SELECT DISTINCT to_regclass(format('%I.%I', sv.history_schema_name /* %I */, sv.history_table_name /* %I */)) AS history_oid
+                FROM unnest(v_dropped_objects) AS u(data)
+                CROSS JOIN LATERAL jsonb_to_record(u.data) AS dobj(
+                    object_type text, address_names text[])
+                JOIN sql_saga.system_versioning AS sv
+                  ON (dobj.address_names[1], dobj.address_names[2]) IN ((sv.table_schema, sv.table_name), (sv.history_schema_name, sv.history_table_name))
+                WHERE dobj.object_type <> 'policy'
+            LOOP
+                CONTINUE WHEN family_row.history_oid IS NULL;
+                FOR policy_row IN
+                    SELECT p.polname
+                    FROM pg_catalog.pg_policy AS p
+                    WHERE p.polrelid = family_row.history_oid
+                      AND sql_saga.__internal_is_managed_history_policy(p.polname)
+                    ORDER BY p.polname
+                LOOP
+                    EXECUTE format('DROP POLICY IF EXISTS %I ON %s', policy_row.polname /* %I */, family_row.history_oid::regclass /* %s */);
+                    RAISE DEBUG 'sql_saga: Dropped policy % on %, part of the teardown by pg_restore --clean',
+                        policy_row.polname, family_row.history_oid::regclass;
+                END LOOP;
+            END LOOP;
+            PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
+        END;
+    END IF;
+
+    /* If one of our tables is being dropped, remove references to it */
+    FOR r IN
+        SELECT dobj.schema_name, dobj.object_name
+        FROM unnest(v_dropped_objects) AS u(data)
+        CROSS JOIN LATERAL jsonb_to_record(u.data) AS dobj(
+            object_type text, schema_name text, object_name text)
+        WHERE dobj.object_type = 'table'
+          AND EXISTS (SELECT 1 FROM sql_saga.era e WHERE (e.table_schema, e.table_name) = (dobj.schema_name, dobj.object_name))
+    LOOP
+        -- This table was dropped. Cascade-delete its metadata and any dependent triggers on other tables.
+        -- This logic mirrors drop_era(..., 'CASCADE', true) for a dropped table.
+
+        -- 1. For FKs that reference the dropped table, drop their triggers.
+        -- The metadata will be cleaned up via ON DELETE CASCADE from the unique key.
+        DECLARE
+            fk_row record;
+            fk_table_oid regclass;
+        BEGIN
+            FOR fk_row IN
+                SELECT fk.*
+                FROM sql_saga.foreign_keys fk
+                JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
+                WHERE (uk.table_schema, uk.table_name) = (r.schema_name, r.object_name)
+            LOOP
+                fk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.table_schema /* %I */, fk_row.table_name /* %I */));
+                -- The referencing table might have been dropped in the same CASCADE. If it still exists, drop its triggers/constraints.
+                -- Not during pg_restore --clean: it drops the CHECK (with the table) and the helper function itself.
+                IF fk_table_oid IS NOT NULL AND NOT v_teardown THEN
+                    IF fk_row.type = 'regular_to_temporal' THEN
+                        IF fk_row.fk_check_constraint IS NOT NULL AND EXISTS (SELECT 1 FROM pg_catalog.pg_constraint WHERE conrelid = fk_table_oid AND conname = fk_row.fk_check_constraint) THEN
+                            EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I', fk_table_oid /* %s */, fk_row.fk_check_constraint /* %I */);
+                        END IF;
+                        IF fk_row.fk_helper_function IS NOT NULL THEN
+                           EXECUTE format('DROP FUNCTION IF EXISTS %s', fk_row.fk_helper_function /* %s */);
+                        END IF;
+                    END IF;
+                END IF;
+            END LOOP;
+        END;
+
+        -- 2. For FKs ON the dropped table, remove triggers from the referenced UK table.
+        DECLARE
+            fk_row record;
+            uk_table_oid regclass;
+        BEGIN
+            FOR fk_row IN
+                SELECT fk.*, uk.table_schema AS uk_schema, uk.table_name AS uk_table
+                FROM sql_saga.foreign_keys fk JOIN sql_saga.unique_keys uk ON fk.unique_key_name = uk.unique_key_name
+                WHERE (fk.table_schema, fk.table_name) = (r.schema_name, r.object_name)
+            LOOP
+                uk_table_oid := pg_catalog.to_regclass(format('%I.%I', fk_row.uk_schema /* %I */, fk_row.uk_table /* %I */));
+                -- Use DROP IF EXISTS because the UK table might have been dropped in the same command.
+                IF uk_table_oid IS NOT NULL THEN
+                    IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_update_trigger) THEN
+                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_update_trigger /* %I */, uk_table_oid /* %s */);
+                    END IF;
+                    IF EXISTS (SELECT 1 FROM pg_catalog.pg_trigger WHERE tgrelid = uk_table_oid AND tgname = fk_row.uk_delete_trigger) THEN
+                        EXECUTE format('DROP TRIGGER %I ON %s', fk_row.uk_delete_trigger /* %I */, uk_table_oid /* %s */);
+                    END IF;
+                END IF;
+            END LOOP;
+        END;
+
+        -- 3. Clean up template sync triggers/functions for each era on this table BEFORE deleting metadata
+        DECLARE
+            era_row record;
+            func_name name;
+        BEGIN
+            -- Table has been dropped, but we still need to clean up the functions
+            FOR era_row IN
+                SELECT e.era_name, e.sync_temporal_trg_function_name
+                FROM sql_saga.era e
+                WHERE (e.table_schema, e.table_name) = (r.schema_name, r.object_name)
+                  AND e.sync_temporal_trg_function_name IS NOT NULL  -- Only eras with sync triggers
+                  -- Not during pg_restore --clean: it drops the (dumped) function itself, without IF EXISTS.
+                  AND NOT v_teardown
+            LOOP
+                -- Drop the function directly (trigger already gone with table)
+                func_name := era_row.sync_temporal_trg_function_name;
+                IF to_regprocedure(format('sql_saga.%I()', func_name)) IS NOT NULL THEN
+                    EXECUTE format($$DROP FUNCTION sql_saga.%I() %s$$, func_name, 'CAS' || 'CADE');
+                END IF;
+            END LOOP;
+        END;
+
+        -- 4. Delete all metadata for the dropped table.
+        DELETE FROM sql_saga.updatable_view WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
+        DELETE FROM sql_saga.foreign_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
+        DELETE FROM sql_saga.unique_keys WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
+        DELETE FROM sql_saga.era WHERE (table_schema, table_name) = (r.schema_name, r.object_name);
+    END LOOP;
+
+    /*
+     * Policies (tmp/design_final.md sections 8, 13). A dropped policy on a versioned base table
+     * drops its history copy. Policies sql_saga manages on a history table cannot be dropped
+     * directly. address_names of a policy are {schema, table, policy}.
+     */
+    DECLARE
+    BEGIN
+    FOR r IN
+        SELECT f.base_oid, f.history_oid,
+               to_regclass(format('%I.%I', dobj.address_names[1], dobj.address_names[2]))::oid AS rel_oid,
+               array_agg(dobj.address_names[3]::name ORDER BY dobj.ordinality) AS policy_names
+        FROM unnest(v_dropped_objects) AS u(data)
+        CROSS JOIN LATERAL jsonb_to_record(u.data) AS dobj(
+            object_type text, address_names text[], ordinality bigint)
+        CROSS JOIN LATERAL sql_saga.__internal_history_family(
+            to_regclass(format('%I.%I', dobj.address_names[1], dobj.address_names[2]))) AS f
+        WHERE dobj.object_type = 'policy'
+        GROUP BY 1, 2, 3
+    LOOP
+        -- Not during pg_restore --clean: it drops the dumped copies itself, without IF EXISTS.
+        IF r.rel_oid = r.base_oid AND NOT v_teardown
+           AND NOT sql_saga.__internal_history_policy_sync_active(r.base_oid) THEN
+            PERFORM sql_saga.__internal_sync_history_policies(r.base_oid, r.policy_names);
+        END IF;
+    END LOOP;
+    END;
+END;
+$function$;
+
+COMMENT ON FUNCTION sql_saga.drop_protection() IS
+'An event trigger function that prevents accidental dropping of sql_saga-managed objects. During the teardown phase of pg_restore --clean (see sql_saga.__internal_is_clean_teardown) it lets the drops through and removes the managed history policies the dump cannot name.';
+CREATE OR REPLACE FUNCTION sql_saga.__internal_sync_history_policies(table_oid oid, dropped_base_policies name[] DEFAULT '{}')
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog, public
+AS $__internal_sync_history_policies$
+DECLARE
+    fam record;
+    d record;
+    p record;
+    missing_column name;
+    stmt text;
+    previous_guard text;
+    force_mode text;
+    reader_qual text;
+    base_select_qual text;
+BEGIN
+    SELECT * INTO fam FROM sql_saga.__internal_history_family(table_oid) AS f WHERE f.base_oid = table_oid;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    IF NOT pg_catalog.pg_has_role(session_user,
+            (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid), 'USAGE') THEN
+        RAISE EXCEPTION 'must be owner of table %', fam.base_oid::regclass
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    INSERT INTO sql_saga.history_policy_sync_guard AS g
+        (backend_pid, transaction_id, base_schema, base_table, nesting_depth)
+    SELECT pg_catalog.pg_backend_pid(), pg_catalog.pg_current_xact_id()::text::bigint,
+           n.nspname, c.relname, 1
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = fam.base_oid
+    ON CONFLICT (backend_pid, transaction_id, base_schema, base_table)
+    DO UPDATE SET nesting_depth = g.nesting_depth + 1;
+
+    -- A policy sql_saga does not manage blocks synchronization: sql_saga never drops a user's policy
+    -- (decision 7); the user moves it to the base table.
+    FOR p IN
+        SELECT hp.polname FROM pg_catalog.pg_policy AS hp
+        WHERE hp.polrelid = fam.history_oid AND NOT sql_saga.__internal_is_managed_history_policy(hp.polname)
+        ORDER BY hp.polname
+    LOOP
+        RAISE EXCEPTION 'sql_saga: policies on history table "%" are managed by sql_saga', sql_saga.__internal_display_name(fam.history_oid::regclass)
+            USING HINT = format('Drop policy "%s" on "%s" and create it on "%s"; sql_saga copies its SELECT and ALL policies to the history.',
+                p.polname, sql_saga.__internal_display_name(fam.history_oid::regclass), sql_saga.__internal_display_name(fam.base_oid::regclass));
+    END LOOP;
+
+    -- Validate every desired copy before changing anything, so that a refusal reports only the
+    -- refusal: no NOTICE describes a change that the error then undoes.
+    FOR d IN
+        SELECT c.base_policy, bp.oid AS base_policy_oid
+        FROM sql_saga.__internal_history_policy_copies(fam.base_oid) AS c
+        JOIN pg_catalog.pg_policy AS bp ON bp.polrelid = fam.base_oid AND bp.polname = c.base_policy
+        ORDER BY c.base_policy
+    LOOP
+        missing_column := sql_saga.__internal_policy_missing_history_column(d.base_policy_oid, fam.history_oid);
+        IF missing_column IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: policy % on % references column %, which % lacks',
+                d.base_policy, fam.base_oid::regclass, missing_column, fam.history_oid::regclass;
+        END IF;
+    END LOOP;
+
+    -- While on, the event triggers neither refuse nor re-synchronize the policy DDL issued below
+    -- (otherwise every CREATE POLICY here would start a nested synchronization). The previous value
+    -- is restored at the end, so a nested call cannot switch the guard off for its caller; on error
+    -- the transaction-local setting is discarded with the (sub)transaction.
+    previous_guard := current_setting('sql_saga.managing_history_policies', true);
+    /* The GUC is diagnostic compatibility only. Authorization comes from the private guard row. */
+    PERFORM set_config('sql_saga.managing_history_policies', fam.base_oid::text, true);
+
+    -- RLS enabled, FORCE mirrored from the base.
+    IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid) THEN
+        stmt := format('ALTER TABLE %s ENABLE ROW LEVEL SECURITY', fam.history_oid::regclass);
+        EXECUTE stmt;
+        RAISE DEBUG 'sql_saga: %', stmt;
+    END IF;
+    IF (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid)
+       IS DISTINCT FROM (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid) THEN
+        force_mode := CASE WHEN (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid)
+                           THEN 'FORCE' ELSE 'NO FORCE' END;
+        EXECUTE format('ALTER TABLE %s %s ROW LEVEL SECURITY', fam.history_oid::regclass, force_mode);
+        RAISE NOTICE 'sql_saga: Set row level security on % to %', fam.history_oid::regclass, force_mode;
+    END IF;
+
+    -- The two fixed policies.
+    -- regclass constants: PostgreSQL records a dependency on the base and pg_dump writes them by name.
+    reader_qual := format('(has_table_privilege(%1$L::regclass::oid, ''SELECT''::text) AND (NOT row_security_active(%1$L::regclass::oid)))', sql_saga.__internal_qualified_name(fam.base_oid));
+    base_select_qual := format('has_table_privilege(%L::regclass::oid, ''SELECT''::text)', sql_saga.__internal_qualified_name(fam.base_oid));
+    FOR p IN
+        SELECT sql_saga.__internal_history_reader_policy_name() AS name, true AS permissive, reader_qual AS qual
+        UNION ALL
+        SELECT sql_saga.__internal_history_base_select_policy_name(), false, base_select_qual
+    LOOP
+        IF NOT EXISTS (SELECT FROM pg_catalog.pg_policy AS hp WHERE hp.polrelid = fam.history_oid AND hp.polname = p.name) THEN
+            stmt := format('CREATE POLICY %I ON %s AS %s FOR SELECT TO PUBLIC USING (%s)',
+                p.name, fam.history_oid::regclass, CASE WHEN p.permissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END, p.qual);
+            EXECUTE stmt;
+            -- Part of creating the history (add_system_versioning), or a repair: no NOTICE.
+            RAISE DEBUG 'sql_saga: %', stmt;
+        END IF;
+    END LOOP;
+
+    -- Drop fixed policies of another installation (replayed from a dump).
+    FOR p IN
+        SELECT hp.polname
+        FROM pg_catalog.pg_policy AS hp
+        WHERE hp.polrelid = fam.history_oid
+          AND hp.polname ~ '^sql_saga_history_(reader|base_select)_'
+          AND hp.polname NOT IN (sql_saga.__internal_history_reader_policy_name(),
+                                 sql_saga.__internal_history_base_select_policy_name())
+        ORDER BY hp.polname
+    LOOP
+        EXECUTE format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass);
+        RAISE DEBUG 'sql_saga: dropped policy % on %, a fixed policy of another installation', p.polname, fam.history_oid::regclass;
+    END LOOP;
+
+    -- Drop copies that are orphaned or stale. The base policy of a copy is found by its hash, among
+    -- the current base policies and those just dropped (passed by the sql_drop event trigger).
+    FOR p IN
+        SELECT hp.polname,
+               coalesce(c.base_policy,
+                        (SELECT dp FROM unnest(dropped_base_policies) AS dp
+                         WHERE sql_saga.__internal_history_copy_name(dp) = hp.polname LIMIT 1)) AS base_policy
+        FROM pg_catalog.pg_policy AS hp
+        LEFT JOIN sql_saga.__internal_history_policy_copies(fam.base_oid) AS c ON c.copy_name = hp.polname
+        WHERE hp.polrelid = fam.history_oid
+          AND hp.polname ~ '^sql_saga_[0-9a-f]{16}$'
+          AND (c.copy_name IS NULL
+               OR hp.polcmd <> 'r' OR hp.polpermissive <> c.permissive OR hp.polroles <> c.roles
+               OR pg_catalog.pg_get_expr(hp.polqual, hp.polrelid) IS DISTINCT FROM c.qual)
+        ORDER BY hp.polname
+    LOOP
+        EXECUTE format('DROP POLICY %I ON %s', p.polname, fam.history_oid::regclass);
+        IF p.base_policy IS NOT NULL THEN
+            RAISE NOTICE 'sql_saga: Dropped policy % on %, the history copy of policy % on %',
+                p.polname, fam.history_oid::regclass, p.base_policy, fam.base_oid::regclass;
+        ELSE
+            RAISE NOTICE 'sql_saga: Dropped policy % on %, which copies no current policy of %',
+                p.polname, fam.history_oid::regclass, fam.base_oid::regclass;
+        END IF;
+    END LOOP;
+
+    -- Create missing copies.
+    FOR d IN
+        SELECT c.*, bp.oid AS base_policy_oid
+        FROM sql_saga.__internal_history_policy_copies(fam.base_oid) AS c
+        JOIN pg_catalog.pg_policy AS bp ON bp.polrelid = fam.base_oid AND bp.polname = c.base_policy
+        WHERE NOT EXISTS (SELECT FROM pg_catalog.pg_policy AS hp WHERE hp.polrelid = fam.history_oid AND hp.polname = c.copy_name)
+        ORDER BY c.base_policy
+    LOOP
+        missing_column := sql_saga.__internal_policy_missing_history_column(d.base_policy_oid, fam.history_oid);
+        IF missing_column IS NOT NULL THEN
+            RAISE EXCEPTION 'sql_saga: policy % on % references column %, which % lacks',
+                d.base_policy, fam.base_oid::regclass, missing_column, fam.history_oid::regclass;
+        END IF;
+        stmt := format('CREATE POLICY %I ON %s AS %s FOR SELECT TO %s USING (%s)',
+            d.copy_name, fam.history_oid::regclass,
+            CASE WHEN d.permissive THEN 'PERMISSIVE' ELSE 'RESTRICTIVE' END,
+            sql_saga.__internal_policy_role_list(d.roles), coalesce(d.qual, 'true'));
+        BEGIN
+            EXECUTE stmt;
+        EXCEPTION WHEN undefined_table OR undefined_column THEN
+            -- A self-reference by the base table's name inside a subquery cannot be resolved on history.
+            RAISE EXCEPTION 'sql_saga: policy % on % cannot be applied to %: %',
+                d.base_policy, fam.base_oid::regclass, fam.history_oid::regclass, SQLERRM;
+        END;
+        RAISE NOTICE 'sql_saga: Created policy % on % as the history copy of policy % on %',
+            d.copy_name, fam.history_oid::regclass, d.base_policy, fam.base_oid::regclass;
+    END LOOP;
+
+    PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
+
+    UPDATE sql_saga.history_policy_sync_guard AS g
+    SET nesting_depth = g.nesting_depth - 1
+    WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+      AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+      AND (g.base_schema, g.base_table) = (
+          SELECT n.nspname, c.relname
+          FROM pg_catalog.pg_class AS c
+          JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+          WHERE c.oid = fam.base_oid)
+      AND g.nesting_depth > 1;
+    IF NOT FOUND THEN
+        DELETE FROM sql_saga.history_policy_sync_guard AS g
+        WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+          AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+          AND (g.base_schema, g.base_table) = (
+              SELECT n.nspname, c.relname
+              FROM pg_catalog.pg_class AS c
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+              WHERE c.oid = fam.base_oid);
+    END IF;
+END;
+$__internal_sync_history_policies$;

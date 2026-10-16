@@ -29,6 +29,18 @@ AS $__internal_display_name$
     SELECT array_to_string(parse_ident(object_identity), '.');
 $__internal_display_name$;
 
+CREATE FUNCTION sql_saga.__internal_display_name(schema_name name, object_name name)
+RETURNS text
+LANGUAGE sql
+STABLE
+AS $__internal_display_name$
+    SELECT sql_saga.__internal_display_name(
+        CASE WHEN schema_name = ANY (pg_catalog.current_schemas(true))
+             THEN pg_catalog.quote_ident(object_name)
+             ELSE pg_catalog.format('%I.%I', schema_name, object_name)
+        END);
+$__internal_display_name$;
+
 CREATE FUNCTION sql_saga.__internal_display_function_name(function_identity text)
 RETURNS text
 LANGUAGE sql
@@ -188,4 +200,3 @@ BEGIN
     END LOOP;
 END;
 $function$;
-

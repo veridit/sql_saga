@@ -136,6 +136,39 @@ AS $__internal_rebuilding_system_versioning_views$
 $__internal_rebuilding_system_versioning_views$;
 
 /*
+ * Private, transaction-scoped authorization for the nested policy DDL performed by
+ * __internal_sync_history_policies. Names, not OIDs, are stored. Ordinary callers cannot write or
+ * inspect this table; the synchronizer and drop_protection run as the extension owner.
+ */
+CREATE TABLE sql_saga.history_policy_sync_guard (
+    backend_pid integer NOT NULL,
+    transaction_id bigint NOT NULL,
+    base_schema name NOT NULL,
+    base_table name NOT NULL,
+    nesting_depth integer NOT NULL CHECK (nesting_depth > 0),
+    PRIMARY KEY (backend_pid, transaction_id, base_schema, base_table)
+);
+REVOKE ALL ON TABLE sql_saga.history_policy_sync_guard FROM PUBLIC;
+
+CREATE FUNCTION sql_saga.__internal_history_policy_sync_active(table_oid oid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = sql_saga, pg_catalog
+AS $__internal_history_policy_sync_active$
+    SELECT EXISTS (
+        SELECT 1
+        FROM sql_saga.history_policy_sync_guard AS g
+        JOIN pg_catalog.pg_class AS c ON c.oid = table_oid
+        JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+        WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+          AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+          AND (g.base_schema, g.base_table) = (n.nspname, c.relname));
+$__internal_history_policy_sync_active$;
+REVOKE ALL ON FUNCTION sql_saga.__internal_history_policy_sync_active(oid) FROM PUBLIC;
+
+/*
  * Desired policy copies on B_history: one per SELECT/ALL policy on B. The USING expression is the
  * base policy's, deparsed with column names, so it is resolved by name on the history table.
  */
@@ -289,6 +322,7 @@ GRANT EXECUTE ON FUNCTION sql_saga.__internal_history_policies_synchronized(oid,
 CREATE FUNCTION sql_saga.__internal_sync_history_policies(table_oid oid, dropped_base_policies name[] DEFAULT '{}')
 RETURNS void
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = sql_saga, pg_catalog, public
 AS $__internal_sync_history_policies$
 DECLARE
@@ -306,6 +340,22 @@ BEGIN
     IF NOT FOUND THEN
         RETURN;
     END IF;
+
+    IF NOT pg_catalog.pg_has_role(session_user,
+            (SELECT c.relowner FROM pg_catalog.pg_class AS c WHERE c.oid = fam.base_oid), 'USAGE') THEN
+        RAISE EXCEPTION 'must be owner of table %', fam.base_oid::regclass
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+
+    INSERT INTO sql_saga.history_policy_sync_guard AS g
+        (backend_pid, transaction_id, base_schema, base_table, nesting_depth)
+    SELECT pg_catalog.pg_backend_pid(), pg_catalog.pg_current_xact_id()::text::bigint,
+           n.nspname, c.relname, 1
+    FROM pg_catalog.pg_class AS c
+    JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+    WHERE c.oid = fam.base_oid
+    ON CONFLICT (backend_pid, transaction_id, base_schema, base_table)
+    DO UPDATE SET nesting_depth = g.nesting_depth + 1;
 
     -- A policy sql_saga does not manage blocks synchronization: sql_saga never drops a user's policy
     -- (decision 7); the user moves it to the base table.
@@ -339,7 +389,8 @@ BEGIN
     -- is restored at the end, so a nested call cannot switch the guard off for its caller; on error
     -- the transaction-local setting is discarded with the (sub)transaction.
     previous_guard := current_setting('sql_saga.managing_history_policies', true);
-    PERFORM set_config('sql_saga.managing_history_policies', 'on', true);
+    /* The GUC is diagnostic compatibility only. Authorization comes from the private guard row. */
+    PERFORM set_config('sql_saga.managing_history_policies', fam.base_oid::text, true);
 
     -- RLS enabled, FORCE mirrored from the base.
     IF NOT (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = fam.history_oid) THEN
@@ -442,6 +493,27 @@ BEGIN
     END LOOP;
 
     PERFORM set_config('sql_saga.managing_history_policies', coalesce(previous_guard, 'off'), true);
+
+    UPDATE sql_saga.history_policy_sync_guard AS g
+    SET nesting_depth = g.nesting_depth - 1
+    WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+      AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+      AND (g.base_schema, g.base_table) = (
+          SELECT n.nspname, c.relname
+          FROM pg_catalog.pg_class AS c
+          JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+          WHERE c.oid = fam.base_oid)
+      AND g.nesting_depth > 1;
+    IF NOT FOUND THEN
+        DELETE FROM sql_saga.history_policy_sync_guard AS g
+        WHERE g.backend_pid = pg_catalog.pg_backend_pid()
+          AND g.transaction_id = pg_catalog.pg_current_xact_id()::text::bigint
+          AND (g.base_schema, g.base_table) = (
+              SELECT n.nspname, c.relname
+              FROM pg_catalog.pg_class AS c
+              JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+              WHERE c.oid = fam.base_oid);
+    END IF;
 END;
 $__internal_sync_history_policies$;
 
