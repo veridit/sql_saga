@@ -188,6 +188,9 @@ SELECT integrity_g4.valid('complete inventory baseline');
 
 -- This exact name+identity-argument list was derived from a fresh v1.1 installation.
 -- New 1.2 inspection and formatting helpers are private.
+-- One intentional 1.2 change: add_system_versioning gained a trailing history_table_must_exist boolean
+-- (DEFAULT false, so every 1.1 call form still works); its identity below is the 1.2 one. Everything
+-- else must match 1.1 exactly.
 CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
 INSERT INTO integrity_v11_public_function VALUES
 ('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
@@ -225,7 +228,7 @@ INSERT INTO integrity_v11_public_function VALUES
 ('add_foreign_key(fk_table_oid regclass, fk_column_names name[], pk_table_oid regclass, pk_column_names name[], fk_era_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, create_index boolean)'),
 ('add_regular_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, fk_check_constraint name, fk_helper_function text, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
 ('add_synchronize_temporal_columns_trigger(IN table_oid regclass, IN era_name name)'),
-('add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name)'),
+('add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name, history_table_must_exist boolean)'),
 ('add_temporal_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
 ('add_unique_key(table_oid regclass, column_names name[], era_name name, key_type sql_saga.unique_key_type, enforce_consistency_with_primary_key boolean, unique_key_name name, unique_constraint name, exclude_constraint name, predicate text, mutually_exclusive_columns name[])'),
 ('covers_without_gaps(anyrange, anyrange)'),
