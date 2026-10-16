@@ -4,6 +4,12 @@
 
 
 
+=== rebuild gateway authorization and nondisclosure
+unrelated role before registration | 42501: permission denied for table family_gateway
+
+unrelated role after registration | 42501: permission denied for table family_gateway
+base owner rebuild | ok
+owner member rebuild | ok
 === snapshot lifecycle and content
 family creation A | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t
 family creation B | stored={id,tenant,payload,system_valid_range} | live={id,tenant,payload,system_valid_range} | equal=t

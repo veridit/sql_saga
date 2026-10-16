@@ -159,38 +159,124 @@ SELECT sql_saga.add_foreign_key('period_child', ARRAY['parent_id']::name[], 'per
 \o
 SELECT integrity_g4.valid('complete inventory baseline');
 
--- The explicit allowlist is derived from doc/api.md sections before
--- "Internal and Helper Functions". Everything else in sql_saga is private.
-CREATE TEMP TABLE integrity_public_api (name name PRIMARY KEY) ON COMMIT DROP;
-INSERT INTO integrity_public_api VALUES
-('add_era'),('drop_era'),('set_era_ephemeral_columns'),
-('add_unique_key'),('drop_unique_key'),('drop_unique_key_by_name'),
-('add_foreign_key'),('add_regular_foreign_key'),('add_temporal_foreign_key'),('drop_foreign_key'),('drop_foreign_key_by_name'),
-('add_current_view'),('add_for_portion_of_view'),('drop_current_view'),('drop_for_portion_of_view'),
-('disable_temporal_triggers'),('enable_temporal_triggers'),('manage_temporal_fk_triggers'),('temporal_merge'),
-('add_system_versioning'),('drop_system_time_era'),('drop_system_versioning'),('rebuild_system_versioning_views'),
-('set_system_time_era_excluded_columns'),('sync_history_policies'),
-('covers_without_gaps'),('first'),('check_integrity');
+-- This exact name+identity-argument list was derived from a fresh v1.1 installation.
+-- New 1.2 inspection and formatting helpers are private.
+CREATE TEMP TABLE integrity_v11_public_function (identity text PRIMARY KEY) ON COMMIT DROP;
+INSERT INTO integrity_v11_public_function VALUES
+('__find_or_create_fk_index(p_fk_table_oid regclass, p_fk_column_names name[], p_fk_era_row sql_saga.era, p_type sql_saga.fg_type, p_create_index boolean)'),
+('__internal_add_system_time_era(table_oid regclass, range_column_name name, infinity_check_constraint name, generated_always_trigger name, write_history_trigger name, truncate_trigger name, excluded_column_names name[])'),
+('__internal_check_history_columns(table_oid oid, history_table_oid oid, without_columns name[])'),
+('__internal_column_type_sql(type_oid oid, typmod integer, collation_oid oid)'),
+('__internal_ddl_command_affects_managed_object()'),
+('__internal_deny_history(table_oid oid)'),
+('__internal_display_name(object_name regclass)'),
+('__internal_generate_pk_consistency_constraints(p_unique_key_name name, p_natural_key_columns name[], p_mutually_exclusive_columns name[], p_primary_key_column name)'),
+('__internal_history_base_select_policy_name()'),
+('__internal_history_copy_name(base_policy_name name)'),
+('__internal_history_family(rel oid)'),
+('__internal_history_gated_name(history_table_name name)'),
+('__internal_history_gated_view_sql(table_oid oid, history_table_oid oid, columns text)'),
+('__internal_history_policies_synchronized(table_oid oid, history_table_oid oid)'),
+('__internal_history_policy_copies(table_oid oid)'),
+('__internal_history_policy_drift(table_oid oid, history_table_oid oid, OUT missing integer, OUT stale integer, OUT unmanaged integer)'),
+('__internal_history_reader_policy_name()'),
+('__internal_installation_token()'),
+('__internal_is_managed_history_policy(policy_name name)'),
+('__internal_make_name(resizable text[], fixed text, separator text, extra integer)'),
+('__internal_make_updatable_view_name(table_name name, era_name name, view_type_suffix text)'),
+('__internal_policy_missing_history_column(base_policy_oid oid, history_table_oid oid)'),
+('__internal_policy_role_list(roles oid[])'),
+('__internal_qualified_name(rel oid)'),
+('__internal_rebuild_system_versioning_views(table_oid oid, without_columns name[])'),
+('__internal_rebuilding_system_versioning_views(table_oid oid)'),
+('__internal_reconcile_system_versioning_family(table_oid regclass, without_columns name[])'),
+('__internal_serialize(table_name regclass)'),
+('__internal_sync_history_policies(table_oid oid, dropped_base_policies name[])'),
+('add_current_view(table_oid regclass, era_name name, delete_mode name, current_func_name text)'),
+('add_era(table_oid regclass, range_column_name name, era_name name, synchronize_columns boolean, valid_from_column_name name, valid_until_column_name name, valid_to_column_name name, create_columns boolean, add_defaults boolean, add_bounds_check boolean, range_type regtype, bounds_check_constraint name, ephemeral_columns name[])'),
+('add_for_portion_of_view(table_oid regclass, era_name name, ephemeral_columns name[])'),
+('add_foreign_key(fk_table_oid regclass, fk_column_names name[], pk_table_oid regclass, pk_column_names name[], fk_era_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, create_index boolean)'),
+('add_regular_foreign_key(fk_table_oid regclass, fk_column_names name[], unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, fk_check_constraint name, fk_helper_function text, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
+('add_synchronize_temporal_columns_trigger(IN table_oid regclass, IN era_name name)'),
+('add_system_versioning(table_oid regclass, history_table_name name, view_name name, function_as_of_name name, function_between_name name, function_between_symmetric_name name, function_from_to_name name)'),
+('add_temporal_foreign_key(fk_table_oid regclass, fk_column_names name[], fk_era_name name, unique_key_name name, match_type sql_saga.fk_match_types, update_action sql_saga.fk_actions, delete_action sql_saga.fk_actions, foreign_key_name name, uk_update_trigger name, uk_delete_trigger name, create_index boolean)'),
+('add_unique_key(table_oid regclass, column_names name[], era_name name, key_type sql_saga.unique_key_type, enforce_consistency_with_primary_key boolean, unique_key_name name, unique_constraint name, exclude_constraint name, predicate text, mutually_exclusive_columns name[])'),
+('covers_without_gaps(anyrange, anyrange)'),
+('covers_without_gaps_finalfn(internal, anyrange, anyrange)'),
+('covers_without_gaps_transfn(internal, anyrange, anyrange)'),
+('disable_temporal_triggers(VARIADIC p_table_oids regclass[])'),
+('drop_current_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior)'),
+('drop_era(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('drop_for_portion_of_view(table_oid regclass, era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('drop_foreign_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior, drop_index boolean)'),
+('drop_foreign_key_by_name(table_oid regclass, key_name name, drop_index boolean)'),
+('drop_synchronize_temporal_columns_trigger(IN table_oid regclass, IN era_name name)'),
+('drop_system_time_era(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('drop_system_versioning(table_oid regclass, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('drop_unique_key(table_oid regclass, column_names name[], era_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('drop_unique_key_by_name(table_oid regclass, key_name name, drop_behavior sql_saga.drop_behavior, cleanup boolean)'),
+('enable_temporal_triggers(VARIADIC p_table_oids regclass[])'),
+('first(anyelement)'),
+('first_sfunc(agg_state anyelement, next_val anyelement)'),
+('get_allen_relation(x_from anycompatible, x_until anycompatible, y_from anycompatible, y_until anycompatible)'),
+('manage_temporal_fk_triggers(IN p_action sql_saga.trigger_action, VARIADIC p_table_oids regclass[])'),
+('native_library_version()'),
+('rebuild_system_versioning_views(table_oid regclass, without_columns name[])'),
+('set_era_ephemeral_columns(table_class regclass, era_name name, ephemeral_columns name[])'),
+('set_system_time_era_excluded_columns(table_oid regclass, excluded_column_names name[])'),
+('sync_history_policies(table_oid regclass)'),
+('temporal_merge(IN target_table regclass, IN source_table regclass, IN primary_identity_columns text[], IN mode sql_saga.temporal_merge_mode, IN era_name name, IN row_id_column name, IN founding_id_column name, IN update_source_with_identity boolean, IN natural_identity_columns text[], IN delete_mode sql_saga.temporal_merge_delete_mode, IN update_source_with_feedback boolean, IN feedback_status_column name, IN feedback_status_key name, IN feedback_error_column name, IN feedback_error_key name, IN ephemeral_columns text[], IN delay_constraints boolean)'),
+('temporal_merge_drop_cache()'),
+('temporal_merge_drop_temp_tables()'),
+('temporal_merge_execute(IN target_table regclass, IN source_table regclass, IN identity_columns text[], IN mode sql_saga.temporal_merge_mode, IN era_name name, IN row_id_column name, IN founding_id_column name, IN update_source_with_identity boolean, IN lookup_columns text[], IN delete_mode sql_saga.temporal_merge_delete_mode, IN update_source_with_feedback boolean, IN feedback_status_column name, IN feedback_status_key name, IN feedback_error_column name, IN feedback_error_key name, IN ephemeral_columns text[], IN delay_constraints boolean)'),
+('temporal_merge_executor_introspect(target_table oid, source_table oid, identity_columns text[], lookup_columns text[], era_name text, ephemeral_columns text[], founding_id_column text, row_id_column text)'),
+('temporal_merge_native_cache_reset()'),
+('temporal_merge_native_cache_stats(OUT stat_name text, OUT stat_value bigint)'),
+('temporal_merge_plan(target_table regclass, source_table regclass, mode sql_saga.temporal_merge_mode, era_name name, identity_columns text[], row_id_column name, founding_id_column name, delete_mode sql_saga.temporal_merge_delete_mode, lookup_keys jsonb, ephemeral_columns text[], p_log_trace boolean, p_log_sql boolean)'),
+('temporal_merge_plan_native(target_table oid, source_table oid, mode text, era_name text, identity_columns text[], row_id_column text, founding_id_column text, delete_mode text, lookup_keys jsonb, ephemeral_columns text[], p_log_trace boolean, p_log_sql boolean)');
 
 SELECT p.prorettype IN ('event_trigger'::regtype, 'trigger'::regtype) AS health_checks_is_noncallable_trigger_function
 FROM pg_proc AS p
 JOIN pg_namespace AS n ON n.oid=p.pronamespace
 WHERE n.nspname='sql_saga' AND p.proname='health_checks';
 
-SELECT count(*) = 0 AS every_non_api_sql_saga_function_is_private
-FROM pg_proc AS p
-JOIN pg_namespace AS n ON n.oid=p.pronamespace
-WHERE n.nspname='sql_saga'
-  AND p.prorettype NOT IN ('event_trigger'::regtype, 'trigger'::regtype)
-  AND NOT EXISTS (SELECT FROM integrity_public_api AS a WHERE a.name=p.proname)
-  AND EXISTS (
-      SELECT FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) AS x
-      WHERE x.grantee=0 AND x.privilege_type='EXECUTE');
+SELECT ARRAY(
+           SELECT identity
+           FROM (
+               SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS identity
+               FROM pg_proc AS p
+               JOIN pg_namespace AS n ON n.oid=p.pronamespace
+               WHERE n.nspname='sql_saga'
+                 AND p.prorettype NOT IN ('event_trigger'::regtype, 'trigger'::regtype)
+                 AND has_function_privilege('public', p.oid, 'EXECUTE')) AS public_function
+           ORDER BY identity COLLATE "C")
+       = ARRAY(SELECT identity FROM integrity_v11_public_function ORDER BY identity COLLATE "C")
+       AS public_function_set_matches_v11;
 
 SELECT integrity_g4.acl_attempt(
     'canonical generator private',
     $$SELECT sql_saga.__internal_system_versioning_query_functions('integrity_g4.sv'::regclass::oid)$$,
     '__internal_system_versioning_query_functions');
+SELECT integrity_g4.acl_attempt(
+    'function attribution helper private',
+    $$SELECT sql_saga.__internal_system_versioning_function_is_attributable(NULL, NULL, NULL)$$,
+    '__internal_system_versioning_function_is_attributable');
+SELECT integrity_g4.acl_attempt(
+    'trigger attribution helper private',
+    $$SELECT sql_saga.__internal_trigger_is_attributable(NULL, NULL, NULL, NULL, NULL)$$,
+    '__internal_trigger_is_attributable');
+SELECT integrity_g4.acl_attempt(
+    'view attribution helper private',
+    $$SELECT sql_saga.__internal_system_versioning_view_is_attributable(NULL, NULL, NULL)$$,
+    '__internal_system_versioning_view_is_attributable');
+SELECT integrity_g4.acl_attempt(
+    'integrity checker private',
+    $$SELECT sql_saga.check_integrity()$$,
+    'check_integrity');
+SELECT integrity_g4.acl_attempt(
+    'two-name display helper private',
+    $$SELECT sql_saga.__internal_display_name('integrity_g4'::name, 'sv'::name)$$,
+    '__internal_display_name');
 
 -- 5.3 item 1: base relation kind, persistence, and catalogue coherence.
 SAVEPOINT wrong_base_kind;
@@ -544,6 +630,16 @@ SELECT sql_saga.drop_system_versioning('integrity_g4.sv');
 SET LOCAL client_min_messages = warning;
 SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_proc AS p ON p.oid=to_regprocedure(s.identity) WHERE s.kind='function' AND p.prosrc=s.definition) AS noncanonical_function_identity_and_definition_survive;
 SELECT NOT EXISTS (SELECT FROM sql_saga.system_versioning WHERE table_schema='integrity_g4' AND table_name='sv') AS function_family_metadata_removed;
+SELECT to_regprocedure('integrity_g4.sv__between(timestamptz,timestamptz)') IS NULL AS mixed_family_attributable_between_dropped;
+SELECT to_regprocedure('integrity_g4.sv__between_symmetric(timestamptz,timestamptz)') IS NULL AS mixed_family_attributable_between_symmetric_dropped;
+SELECT to_regprocedure('integrity_g4.sv__from_to(timestamptz,timestamptz)') IS NULL AS mixed_family_attributable_from_to_dropped;
+SELECT to_regclass('integrity_g4.sv_with_history') IS NULL AS mixed_family_attributable_public_view_dropped;
+SELECT to_regclass('integrity_g4.sv_history_gated') IS NULL AS mixed_family_attributable_gated_view_dropped;
+SELECT to_regclass('integrity_g4.sv_history') IS NULL AS mixed_family_attributable_history_table_dropped;
+SELECT NOT EXISTS (SELECT FROM pg_trigger WHERE tgrelid='integrity_g4.sv'::regclass AND tgname IN ('sv_system_time_generated_always','sv_system_time_write_history','sv_system_time_truncate')) AS mixed_family_attributable_triggers_dropped;
+SELECT NOT EXISTS (SELECT FROM sql_saga.system_time_era WHERE table_schema='integrity_g4' AND table_name='sv') AS mixed_family_system_time_metadata_removed;
+SELECT NOT EXISTS (SELECT FROM sql_saga.era WHERE table_schema='integrity_g4' AND table_name='sv') AS mixed_family_era_metadata_removed;
+SELECT NOT EXISTS (SELECT FROM sql_saga.updatable_view WHERE table_schema='integrity_g4' AND table_name='sv') AS mixed_family_updatable_view_metadata_removed;
 ROLLBACK TO SAVEPOINT preserve_function;
 RELEASE SAVEPOINT preserve_function;
 
@@ -590,9 +686,10 @@ SET session_replication_role = replica;
 DO $damage$ DECLARE n name; BEGIN
     SELECT exclude_constraint INTO n FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated';
     EXECUTE format('ALTER TABLE integrity_g4.period_parent DROP CONSTRAINT %I', n);
-    EXECUTE format('ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT %I CHECK (true)', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT %I EXCLUDE USING gist (category WITH =, valid_range WITH &&) WHERE (category IS NULL) DEFERRABLE INITIALLY DEFERRED', n);
 END $damage$;
 RESET session_replication_role;
+SELECT integrity_g4.attempt('wrong same-kind predicated exclusion constraint', 'sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
 INSERT INTO replacement_state
 SELECT 'constraint', c.conname, pg_get_constraintdef(c.oid, false) FROM pg_constraint AS c
 WHERE c.conrelid='integrity_g4.period_parent'::regclass AND c.conname LIKE 'period_parent_predicated%';
@@ -604,14 +701,35 @@ SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='perio
 ROLLBACK TO SAVEPOINT preserve_constraint;
 RELEASE SAVEPOINT preserve_constraint;
 
+SAVEPOINT preserve_exclusion_operator;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT exclude_constraint INTO n FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated';
+    EXECUTE format('ALTER TABLE integrity_g4.period_parent DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT %I EXCLUDE USING gist (id WITH =, valid_range WITH =) WHERE (category IS NOT NULL)', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('predicated exclusion differs only by operator', 'sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
+INSERT INTO replacement_state
+SELECT 'operator_constraint', c.conname, pg_get_constraintdef(c.oid, false) FROM pg_constraint AS c
+WHERE c.conrelid='integrity_g4.period_parent'::regclass AND c.conname LIKE 'period_parent_predicated%';
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_unique_key_by_name('integrity_g4.period_parent', 'period_parent_predicated');
+SET LOCAL client_min_messages = warning;
+SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_constraint AS c ON c.conrelid='integrity_g4.period_parent'::regclass AND c.conname=s.identity WHERE s.kind='operator_constraint' AND pg_get_constraintdef(c.oid,false)=s.definition) AS operator_only_exclusion_survives;
+SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_predicated') AS operator_exclusion_family_metadata_removed;
+ROLLBACK TO SAVEPOINT preserve_exclusion_operator;
+RELEASE SAVEPOINT preserve_exclusion_operator;
+
 SAVEPOINT preserve_index;
 SET session_replication_role = replica;
 DO $damage$ DECLARE n name; BEGIN
     SELECT unique_constraint INTO n FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_natural';
     EXECUTE format('ALTER TABLE integrity_g4.period_parent DROP CONSTRAINT %I', n);
-    EXECUTE format('CREATE INDEX %I ON integrity_g4.period_parent (category)', n);
+    EXECUTE format('CREATE UNIQUE INDEX %I ON integrity_g4.period_parent (category DESC)', n);
 END $damage$;
 RESET session_replication_role;
+SELECT integrity_g4.attempt('wrong exact managed unique index definition', 'sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
 INSERT INTO replacement_state
 SELECT 'index', c.relname, pg_get_indexdef(c.oid) FROM pg_class AS c JOIN pg_namespace AS n ON n.oid=c.relnamespace
 WHERE n.nspname='integrity_g4' AND c.relname LIKE 'period_parent_natural%' AND c.relkind='i';
@@ -622,6 +740,46 @@ SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_class AS c ON c.relnam
 SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_natural') AS index_family_metadata_removed;
 ROLLBACK TO SAVEPOINT preserve_index;
 RELEASE SAVEPOINT preserve_index;
+
+SAVEPOINT preserve_unique_constraint;
+SET session_replication_role = replica;
+DO $damage$ DECLARE n name; BEGIN
+    SELECT unique_constraint INTO n FROM sql_saga.unique_keys WHERE unique_key_name='period_child_primary';
+    EXECUTE format('ALTER TABLE integrity_g4.period_child DROP CONSTRAINT %I', n);
+    EXECUTE format('ALTER TABLE integrity_g4.period_child ADD CONSTRAINT %I UNIQUE (parent_id, valid_range WITHOUT OVERLAPS)', n);
+END $damage$;
+RESET session_replication_role;
+SELECT integrity_g4.attempt('wrong same-kind temporal unique constraint', 'sql_saga: integrity violation for unique key "period_child_primary" on table "integrity_g4.period_child": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
+INSERT INTO replacement_state
+SELECT 'unique_constraint', c.conname, pg_get_constraintdef(c.oid, false) FROM pg_constraint AS c
+JOIN sql_saga.unique_keys AS uk ON uk.unique_constraint=c.conname
+WHERE uk.unique_key_name='period_child_primary' AND c.conrelid='integrity_g4.period_child'::regclass;
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_unique_key_by_name('integrity_g4.period_child', 'period_child_primary');
+SET LOCAL client_min_messages = warning;
+SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_constraint AS c ON c.conrelid='integrity_g4.period_child'::regclass AND c.conname=s.identity WHERE s.kind='unique_constraint' AND pg_get_constraintdef(c.oid,false)=s.definition) AS noncanonical_unique_constraint_survives;
+SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_child_primary') AS unique_constraint_family_metadata_removed;
+ROLLBACK TO SAVEPOINT preserve_unique_constraint;
+RELEASE SAVEPOINT preserve_unique_constraint;
+
+SAVEPOINT preserve_check_constraint;
+SET session_replication_role = replica;
+ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT period_parent_natural_check CHECK (category IS NOT NULL);
+UPDATE sql_saga.unique_keys SET check_constraint='period_parent_natural_check' WHERE unique_key_name='period_parent_natural';
+ALTER TABLE integrity_g4.period_parent DROP CONSTRAINT period_parent_natural_check;
+ALTER TABLE integrity_g4.period_parent ADD CONSTRAINT period_parent_natural_check CHECK (category IS NULL);
+RESET session_replication_role;
+SELECT integrity_g4.attempt('wrong same-name managed check constraint', 'sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key');
+INSERT INTO replacement_state
+SELECT 'check_constraint', c.conname, pg_get_constraintdef(c.oid, false) FROM pg_constraint AS c
+WHERE c.conrelid='integrity_g4.period_parent'::regclass AND c.conname='period_parent_natural_check';
+SET LOCAL client_min_messages = notice;
+SELECT sql_saga.drop_unique_key_by_name('integrity_g4.period_parent', 'period_parent_natural');
+SET LOCAL client_min_messages = warning;
+SELECT EXISTS (SELECT FROM replacement_state AS s JOIN pg_constraint AS c ON c.conrelid='integrity_g4.period_parent'::regclass AND c.conname=s.identity WHERE s.kind='check_constraint' AND pg_get_constraintdef(c.oid,false)=s.definition) AS noncanonical_check_constraint_survives;
+SELECT NOT EXISTS (SELECT FROM sql_saga.unique_keys WHERE unique_key_name='period_parent_natural') AS check_constraint_family_metadata_removed;
+ROLLBACK TO SAVEPOINT preserve_check_constraint;
+RELEASE SAVEPOINT preserve_check_constraint;
 
 -- Canonical attributable counterparts are removed by the same shared attribution layer.
 SAVEPOINT attributable_system_versioning_members;

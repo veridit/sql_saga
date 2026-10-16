@@ -9,7 +9,10 @@ BEGIN;
 CREATE SCHEMA snapshot_test;
 CREATE ROLE snapshot_table_owner;
 CREATE ROLE snapshot_unrelated_role;
+CREATE ROLE snapshot_owner_member;
+GRANT snapshot_table_owner TO snapshot_owner_member;
 GRANT USAGE ON SCHEMA snapshot_test TO snapshot_table_owner, snapshot_unrelated_role;
+GRANT USAGE ON SCHEMA snapshot_test TO snapshot_owner_member;
 SET search_path = snapshot_test, public;
 
 CREATE FUNCTION snapshot_test.live_columns(base regclass)
@@ -94,9 +97,36 @@ BEGIN
 END;
 $case_result$;
 
+CREATE FUNCTION snapshot_test.role_case_result(case_name text, role_name name, command text, expected_sqlstate text, expected_message text)
+RETURNS text LANGUAGE plpgsql AS $role_case_result$
+DECLARE
+    actual_sqlstate text;
+    actual_message text;
+BEGIN
+    BEGIN
+        EXECUTE format('SET LOCAL ROLE %I', role_name);
+        EXECUTE command;
+        EXECUTE 'RESET ROLE';
+        IF expected_sqlstate IS NULL THEN
+            RETURN case_name || ' | ok';
+        END IF;
+        RETURN format('%s | unexpected success, expected %s: %s', case_name, expected_sqlstate, expected_message);
+    EXCEPTION WHEN OTHERS THEN
+        GET STACKED DIAGNOSTICS actual_sqlstate = RETURNED_SQLSTATE, actual_message = MESSAGE_TEXT;
+        EXECUTE 'RESET ROLE';
+        IF (actual_sqlstate, actual_message) IS DISTINCT FROM (expected_sqlstate, expected_message) THEN
+            RETURN format('%s | unexpected error %s: %s', case_name, actual_sqlstate, actual_message);
+        END IF;
+        RETURN format('%s | %s: %s', case_name, actual_sqlstate, actual_message);
+    END;
+END;
+$role_case_result$;
+
 CREATE TABLE family_a (id int PRIMARY KEY, tenant text, payload text);
 CREATE TABLE family_b (id int PRIMARY KEY, tenant text, payload text);
 CREATE TABLE family_c (id int PRIMARY KEY, payload text);
+CREATE TABLE family_gateway (id int PRIMARY KEY, payload text);
+ALTER TABLE family_gateway OWNER TO snapshot_table_owner;
 CREATE INDEX family_c_payload_idx ON family_c (payload);
 CREATE UNIQUE INDEX family_c_replica_idx ON family_c (id);
 CREATE FUNCTION snapshot_test.family_c_user_trigger()
@@ -113,6 +143,33 @@ SELECT sql_saga.add_system_versioning('family_b');
 SELECT sql_saga.add_system_versioning('family_c');
 SELECT sql_saga.set_system_time_era_excluded_columns('family_a', ARRAY['tenant']::name[]);
 SELECT sql_saga.set_system_time_era_excluded_columns('family_b', ARRAY['tenant']::name[]);
+
+\echo === rebuild gateway authorization and nondisclosure
+SELECT snapshot_test.role_case_result(
+    'unrelated role before registration',
+    'snapshot_unrelated_role',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
+    '42501',
+    'permission denied for table family_gateway');
+SELECT sql_saga.add_system_versioning('family_gateway');
+SELECT snapshot_test.role_case_result(
+    'unrelated role after registration',
+    'snapshot_unrelated_role',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
+    '42501',
+    'permission denied for table family_gateway');
+SELECT snapshot_test.role_case_result(
+    'base owner rebuild',
+    'snapshot_table_owner',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
+    NULL,
+    NULL);
+SELECT snapshot_test.role_case_result(
+    'owner member rebuild',
+    'snapshot_owner_member',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.family_gateway')$$,
+    NULL,
+    NULL);
 
 -- Inheritance fixtures: the parent is unmanaged and each child is independently managed.
 CREATE TABLE inherit_one_parent (id int, payload text);
@@ -474,6 +531,7 @@ WHERE n.nspname = 'sql_saga'
       'sql_saga.generated_always_as_row_start_end()',
       'sql_saga.health_checks()',
       'sql_saga.rename_following()',
+      'sql_saga.rebuild_system_versioning_views(regclass,name[])',
       'sql_saga.set_era_ephemeral_columns(regclass,name,name[])',
       'sql_saga.set_system_time_era_excluded_columns(regclass,name[])',
       'sql_saga.truncate_system_versioning()',

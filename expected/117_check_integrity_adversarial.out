@@ -3,6 +3,11 @@ complete inventory baseline | ok
 t
 t
 canonical generator private | 42501: permission denied for function __internal_system_versioning_query_functions
+function attribution helper private | 42501: permission denied for function __internal_system_versioning_function_is_attributable
+trigger attribution helper private | 42501: permission denied for function __internal_trigger_is_attributable
+view attribution helper private | 42501: permission denied for function __internal_system_versioning_view_is_attributable
+integrity checker private | 42501: permission denied for function check_integrity
+two-name display helper private | 42501: permission denied for function __internal_display_name
 catalogued base wrong relation kind | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era
 catalogued base wrong persistence | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era
 incoherent era catalogue relationship | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogue relationships are incoherent; repair with drop_era and add_era
@@ -52,6 +57,16 @@ NOTICE:  sql_saga: Left function "integrity_g4.sv__as_of(timestamp with time zon
 t
 t
 t
+t
+t
+t
+t
+t
+t
+t
+t
+t
+t
 NOTICE:  sql_saga: Left view "integrity_g4.sv_with_history" in place because it is not the sql_saga-generated view for table "integrity_g4.sv"
 t
 t
@@ -60,11 +75,28 @@ NOTICE:  sql_saga: Left trigger "sv_system_time_generated_always" on table "inte
 t
 t
 t
+wrong same-kind predicated exclusion constraint | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
 NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
 
 t
 t
+predicated exclusion differs only by operator | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
+
+t
+t
+wrong exact managed unique index definition | P0001: sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
 NOTICE:  sql_saga: Left index "period_parent_natural_uniq" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed index
+
+t
+t
+wrong same-kind temporal unique constraint | P0001: sql_saga: integrity violation for unique key "period_child_primary" on table "integrity_g4.period_child": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+NOTICE:  sql_saga: Left constraint "period_child_pkey" on table "integrity_g4.period_child" in place because it is not the sql_saga-managed constraint
+
+t
+t
+wrong same-name managed check constraint | P0001: sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+NOTICE:  sql_saga: Left constraint "period_parent_natural_check" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
 
 t
 t

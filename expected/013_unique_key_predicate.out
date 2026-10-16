@@ -125,7 +125,6 @@ SELECT unique_key_name FROM sql_saga.unique_keys WHERE table_schema = 'public' A
  valid_until   | date      |           |          | 
 Indexes:
     "employees_name_idx" btree (name)
-    "employees_name_if_department_valid_excl" EXCLUDE USING gist (name WITH =, valid_range WITH &&) WHERE (department_id IS NOT NULL) DEFERRABLE
     "employees_name_valid_range_idx" btree (name, valid_range)
     "employees_valid_range_gist_idx" gist (valid_range) WITH (fillfactor='90')
 Check constraints:
