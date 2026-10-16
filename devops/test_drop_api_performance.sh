@@ -71,13 +71,75 @@ build_install() {
     label=$3
     run_logged "$WORK/build_${label}.log" "$MAKE" -C "$source_dir" -j2 PG_CONFIG="$PG_CONFIG"
     run_logged "$WORK/install_${label}.log" "$MAKE" -C "$source_dir" install PG_CONFIG="$PG_CONFIG" DESTDIR="$install_root"
+    # Script marker: the private control file's comment names this build, so a database that
+    # resolves sql_saga from anywhere else (for example the server's own install) is detected.
+    control="$install_root$SHAREDIR/extension/sql_saga.control"
+    [ -f "$control" ] || harness_error "no control file at $control"
+    grep -v '^comment[[:space:]]*=' "$control" >"$control.tmp" || harness_error "marking $control"
+    echo "comment = '$(build_marker "$label")'" >>"$control.tmp"
+    mv "$control.tmp" "$control" || harness_error "marking $control"
+}
+
+build_marker() { echo "sql_saga drop-perf build $1 $$"; }
+
+# assert_private_build <database> <install_root> <label> <version>: hard check that the database
+# runs THIS build: the extension was created from the marked private control directory, and the
+# backend loaded sql_saga and sql_saga_native from <install_root> (both functions' probin resolve
+# through dynamic_library_path; the mapped files are read from /proc/<pid>/maps or lsof).
+# Any mismatch is a harness error (exit 2), never a timing.
+assert_private_build() {
+    database=$1
+    install_root=$2
+    label=$3
+    version=$4
+    control_path="$install_root$SHAREDIR:\$system"
+    library_path="$install_root$PKGLIBDIR:\$libdir"
+    check="$WORK/assert_${database}.log"
+    maps="$WORK/assert_${database}.maps"
+    rm -f "$maps"
+    "$PSQL" -X --no-psqlrc -Atq -h "$SOCKET" -p "$PORT" -d "$database" -v ON_ERROR_STOP=1 >"$check" 2>&1 <<SQL || { cat "$check" >&2; harness_error "build assertion query for $database"; }
+SET extension_control_path TO '$control_path';
+SET dynamic_library_path TO '$library_path';
+SELECT 'extversion=' || extversion FROM pg_extension WHERE extname = 'sql_saga';
+SELECT 'available_comment=' || comment FROM pg_available_extensions WHERE name = 'sql_saga';
+SELECT 'extension_comment=' || obj_description(e.oid, 'pg_extension') FROM pg_extension AS e WHERE e.extname = 'sql_saga';
+SELECT 'probin=' || string_agg(DISTINCT p.probin, ',' ORDER BY p.probin) FROM pg_proc AS p JOIN pg_language AS l ON l.oid = p.prolang WHERE p.pronamespace = 'sql_saga'::regnamespace AND l.lanname = 'c';
+-- Load both libraries in this backend.
+SELECT 'native_version=' || sql_saga.native_library_version();
+SELECT 'covers=' || sql_saga.covers_without_gaps(r, r) FROM (VALUES (int4range(1, 2))) AS v(r);
+SELECT pg_backend_pid() AS backend_pid \gset
+\setenv ASSERT_PID :backend_pid
+\! if [ -r /proc/\$ASSERT_PID/maps ]; then awk '{print \$NF}' /proc/\$ASSERT_PID/maps; else lsof -p \$ASSERT_PID -Fn 2>/dev/null | sed -n 's/^n//p'; fi | grep -E 'sql_saga(_native)?\.(so|dylib)\$' | sort -u > '$maps'
+SQL
+    expect_line() {
+        grep -qxF "$1" "$check" || { cat "$check" >&2; harness_error "$database: expected '$1'"; }
+    }
+    expect_line "extversion=$version"
+    expect_line "available_comment=$(build_marker "$label")"
+    expect_line "extension_comment=$(build_marker "$label")"
+    expect_line "probin=sql_saga,sql_saga_native"
+    [ -s "$maps" ] || harness_error "$database: could not read the backend's mapped libraries (need /proc or lsof)"
+    # Fixed-string prefix comparison (install paths contain regex metacharacters such as '.').
+    libdir="$install_root$PKGLIBDIR"
+    seen_core=0
+    seen_native=0
+    while IFS= read -r mapped; do
+        case "$mapped" in
+            "$libdir/sql_saga.so"|"$libdir/sql_saga.dylib") seen_core=1 ;;
+            "$libdir/sql_saga_native.so"|"$libdir/sql_saga_native.dylib") seen_native=1 ;;
+            *) cat "$maps" >&2; harness_error "$database: loaded $mapped, outside $libdir" ;;
+        esac
+    done <"$maps"
+    [ "$seen_core" = 1 ] || { cat "$maps" >&2; harness_error "$database: sql_saga not loaded from $libdir"; }
+    [ "$seen_native" = 1 ] || { cat "$maps" >&2; harness_error "$database: sql_saga_native not loaded from $libdir"; }
+    echo "verified $database: sql_saga $version from $install_root (control marker, sql_saga + sql_saga_native mapped)"
 }
 
 setup_database() {
     database=$1
     install_root=$2
     version=$3
-    control_path="$install_root$SHAREDIR/extension:\$system"
+    control_path="$install_root$SHAREDIR:\$system"
     library_path="$install_root$PKGLIBDIR:\$libdir"
     run_logged "$WORK/setup_${database}.log" "$CREATEDB" -h "$SOCKET" -p "$PORT" "$database"
     "$PSQL" -X --no-psqlrc -h "$SOCKET" -p "$PORT" -d "$database" -v ON_ERROR_STOP=1 \
@@ -93,7 +155,7 @@ run_round() {
     database=$1
     install_root=$2
     round=$3
-    control_path="$install_root$SHAREDIR/extension:\$system"
+    control_path="$install_root$SHAREDIR:\$system"
     library_path="$install_root$PKGLIBDIR:\$libdir"
     "$PSQL" -X --no-psqlrc -Atq -h "$SOCKET" -p "$PORT" -d "$database" -v ON_ERROR_STOP=1 \
         -c "SET extension_control_path TO '$control_path'; SET dynamic_library_path TO '$library_path'; SET track_functions = 'none'; SET client_min_messages = warning; SELECT bench.round_once($round);" \
@@ -129,6 +191,8 @@ SERVER_STARTED=1
 
 setup_database perf_v11 "$WORK/install/v11" 1.1
 setup_database perf_current "$WORK/install/current" 1.2
+assert_private_build perf_v11 "$WORK/install/v11" v11 1.1
+assert_private_build perf_current "$WORK/install/current" current 1.2
 
 warm=1
 while [ "$warm" -le 3 ]; do
