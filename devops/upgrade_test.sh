@@ -1176,7 +1176,7 @@ EOF
 
 assert_integrity() {
     local db=$1 result
-    result=$(q "$db" "SELECT sql_saga.check_integrity() IS NULL")
+    result=$(q "$db" "SELECT sql_saga.check_integrity()::text = ''")
     check "check_integrity passes on $db" "t" "$result"
 }
 

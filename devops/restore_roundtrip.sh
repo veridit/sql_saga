@@ -542,7 +542,7 @@ restore_variant() {
     reads=$(tenant_reads "$dst"); local iso; iso=$(rls_isolation "$dst")
     manual_state=$(manual_schema_state "$dst"); snapshots=$(snapshot_faults "$dst")
     local integrity
-    integrity=$(psql -X -At -d "$dst" -c 'SELECT sql_saga.check_integrity() IS NULL' 2>&1)
+    integrity=$(psql -X -At -d "$dst" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
     dropdb --if-exists "$dst" >>"$LOG" 2>&1
     if [ "$d" != "$src_digest" ]; then
         echo "    $variant: ACL digest differs (source $src_digest, restored $d)"
@@ -611,7 +611,7 @@ run_case() {
     src_faults=$(policy_copy_faults "$src")
     src_snapshots=$(snapshot_faults "$src")
     local src_integrity
-    src_integrity=$(psql -X -At -d "$src" -c 'SELECT sql_saga.check_integrity() IS NULL' 2>&1)
+    src_integrity=$(psql -X -At -d "$src" -c "SELECT sql_saga.check_integrity()::text = ''" 2>&1)
     if [ "$src_snapshots" != "0" ]; then
         echo "    source: SYSTEM_TIME column snapshots invalid ($src_snapshots)"
         ok=0

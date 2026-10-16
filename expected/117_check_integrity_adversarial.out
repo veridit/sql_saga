@@ -1,0 +1,75 @@
+\set ECHO none
+complete inventory baseline | ok
+t
+t
+canonical generator private | 42501: permission denied for function __internal_system_versioning_query_functions
+catalogued base wrong relation kind | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era
+catalogued base wrong persistence | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogued base relation kind or persistence is noncanonical; repair with drop_era and add_era
+incoherent era catalogue relationship | P0001: sql_saga: integrity violation for table "integrity_g4.era_wrong": catalogue relationships are incoherent; repair with drop_era and add_era
+wrong era range column type | P0001: sql_saga: integrity violation for era "valid" on table "integrity_g4.era_wrong": column or range type metadata is noncanonical; repair with drop_era and add_era
+wrong named era check | P0001: sql_saga: integrity violation for era "valid" on table "integrity_g4.era_wrong": named check or synchronization object is noncanonical; repair with drop_era and add_era
+wrong era synchronization trigger | P0001: sql_saga: integrity violation for era "valid" on table "integrity_g4.era_wrong": named check or synchronization object is noncanonical; repair with drop_era and add_era
+stored function identity resolves wrong object | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+wrong-function SYSTEM_TIME trigger | P0001: sql_saga: integrity violation for table "integrity_g4.sv": SYSTEM_TIME trigger definition is noncanonical; repair with drop_system_versioning and add_system_versioning
+wrong temporal unique constraint | P0001: sql_saga: integrity violation for unique key "period_parent_predicated" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+wrong temporal unique index | P0001: sql_saga: integrity violation for unique key "period_parent_natural" on table "integrity_g4.period_parent": managed constraint or index is noncanonical; repair with drop_unique_key and add_unique_key
+wrong temporal foreign-key constraint | P0001: sql_saga: integrity violation for foreign key on table "integrity_g4.period_child": managed constraint or trigger is noncanonical; repair with drop_foreign_key and add_foreign_key
+wrong updatable-view trigger | P0001: sql_saga: integrity violation for updatable view "integrity_g4.period_parent__for_portion_of_valid" of table "integrity_g4.period_parent": identifier column or trigger definition is noncanonical; repair with drop_for_portion_of_view and add_for_portion_of_view
+missing identifier with surviving trigger | P0001: sql_saga: integrity violation for updatable view "integrity_g4.period_parent__for_portion_of_valid" of table "integrity_g4.period_parent": identifier column or trigger definition is noncanonical; repair with drop_for_portion_of_view and add_for_portion_of_view
+wrong public history view shape | no disclosure
+wrong gated history view shape | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": history family definition is noncanonical; repair with rebuild_system_versioning_views
+wrong public history view options | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": history family definition is noncanonical; repair with rebuild_system_versioning_views
+wrong history RLS flags | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": history family definition is noncanonical; repair with sync_history_policies or rebuild_system_versioning_views
+wrong history owner | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": history family definition is noncanonical; repair with drop_system_versioning and add_system_versioning
+wrong history ACL | no disclosure
+wrong history policy expression | no disclosure
+function kind | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+argument vector | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+result-set behavior | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+language | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+volatility | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+strictness | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+security definer | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+leakproof | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+parallel | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+support function | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+cost | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+rows estimate | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+configuration | no disclosure
+owner | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+ACL | no disclosure
+parsed SQL body | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+actual argument type vector | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" is missing; repair with rebuild_system_versioning_views
+actual argument mode vector | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views
+exact return type | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views
+canonical source body hidden | no disclosure
+exactly one normal return dependency | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views
+dependency to exact family composite | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views
+family composite points to exact view | P0001: sql_saga: integrity violation for system-versioned table "integrity_g4.sv": generated query function role "as_of" has a noncanonical return-type dependency; repair with rebuild_system_versioning_views
+multi-defect cross-class priority | P0001: sql_saga: integrity violation for table "integrity_g4.sv": SYSTEM_TIME trigger definition is noncanonical; repair with drop_system_versioning and add_system_versioning
+multi-defect same-class stable order | P0001: sql_saga: integrity violation for table "integrity_g4.a_sv": SYSTEM_TIME trigger definition is noncanonical; repair with drop_system_versioning and add_system_versioning
+NOTICE:  sql_saga: Left function "integrity_g4.sv__as_of(timestamp with time zone)" in place because it is not the sql_saga-generated function for table "integrity_g4.sv"
+t
+t
+NOTICE:  sql_saga: Left view "integrity_g4.sv_with_history" in place because it is not the sql_saga-generated view for table "integrity_g4.sv"
+t
+t
+NOTICE:  sql_saga: Left trigger "sv_system_time_generated_always" on table "integrity_g4.sv" in place because it is not the sql_saga-generated trigger
+t
+t
+NOTICE:  sql_saga: Left constraint "period_parent_predicated_excl" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed constraint
+
+t
+t
+NOTICE:  sql_saga: Left index "period_parent_natural_uniq" on table "integrity_g4.period_parent" in place because it is not the sql_saga-managed index
+
+t
+t
+t
+t
+t
+t
+
+t
+
+t
