@@ -1,4 +1,5 @@
 \set ECHO none
+ERROR:  cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"
 1|as_of rename|P0001|cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
 2|as_of set schema|P0001|cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
 3|between rename|P0001|cannot drop or rename function "function_guard.family_a__between(timestamp with time zone,timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"|t|t
@@ -18,7 +19,6 @@
 17|between_symmetric property|NO_ERROR|command succeeded|t|t
 18|from_to owner|NO_ERROR|command succeeded|t|t
 19|from_to property|NO_ERROR|command succeeded|t|t
-ERROR:  cannot drop or rename function "function_guard.family_a__as_of(timestamp with time zone)" because it is used in SYSTEM VERSIONING for table "function_guard.family_a"
 20|absent snapshot property|NO_ERROR|command succeeded|t|t
 21|absent snapshot rename|NO_ERROR|command succeeded|t|t
 as_of|owner|t|t|t
