@@ -274,6 +274,12 @@ test-upgrade:
 test-function-attribution-concurrency:
 	devops/test_function_attribution_concurrency.sh
 
+# Local private-cluster performance gate for metadata-first drop APIs against released v1.1.
+# This builds both revisions under a scratch directory and is intentionally not part of CI.
+.PHONY: test-drop-api-performance
+test-drop-api-performance:
+	devops/test_drop_api_performance.sh
+
 # Renumber test files to make room for a new test at a specific slot.
 # Usage: make renumber-tests-from SLOT=066
 # This shifts 066->067, 067->068, etc. in both sql/ and expected/ directories.
