@@ -75,6 +75,31 @@ RENAME TABLE preserves native refusal | 42P01: relation "snapshot_test.family_c"
 RENAME TABLE refusal keeps stale snapshot | stored={stale} | live={id,payload,system_valid_range} | equal=f
 === ALTER COLUMN TYPE preserves existing native behavior
 ALTER COLUMN TYPE on managed base | 0A000: cannot alter type of a column used by a view or rule
+=== inherited parent column-shape changes follow managed children
+one managed child follows parent ADD | stored={id,payload,system_valid_range,parent_added} | live={id,payload,system_valid_range,parent_added} | equal=t
+first managed child follows shared parent ADD | stored={id,payload,system_valid_range,parent_added} | live={id,payload,system_valid_range,parent_added} | equal=t
+second managed child follows shared parent ADD | stored={id,payload,system_valid_range,parent_added} | live={id,payload,system_valid_range,parent_added} | equal=t
+parent DROP inherited used column preserves direct refusal | P0001: cannot drop view "snapshot_test.inherit_drop_child_with_history" because it is used in SYSTEM VERSIONING for table "snapshot_test.inherit_drop_child"
+refused parent DROP preserves child snapshot | stored={id,payload,drop_me,system_valid_range} | live={id,payload,drop_me,system_valid_range} | equal=t
+refused parent DROP family usable | with_history=t | as_of=t
+supported parent DROP pre-rebuild excludes child column | ok
+supported parent DROP after view exclusion | ok
+supported parent DROP final rebuild | ok
+supported parent DROP refreshes child snapshot | stored={id,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=t
+supported parent DROP family usable | with_history=t | as_of=t
+managed child follows parent RENAME | stored={id,renamed_payload,system_valid_range} | live={id,renamed_payload,system_valid_range} | equal=t
+parent RENAME of child excluded column | P0001: cannot drop or rename column "excluded" on table "snapshot_test.inherit_excluded_child" because it is excluded from system_time era
+excluded parent RENAME refusal preserves child | stored={id,excluded,system_valid_range} | live={id,excluded,system_valid_range} | equal=t
+=== ALTER TABLE ONLY parent inheritance behavior
+ONLY parent ADD preserves native refusal | 42P16: column must be added to child tables too
+ONLY parent ADD leaves child unchanged | stored={id,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=t
+ONLY parent DROP leaves child column local | stored={id,payload,keep_local,system_valid_range} | live={id,payload,keep_local,system_valid_range} | equal=t
+ONLY parent RENAME preserves native refusal | 42P16: inherited column "payload" must be renamed in child tables too
+ONLY parent RENAME leaves child unchanged | stored={id,payload,system_valid_range} | live={id,payload,system_valid_range} | equal=t
+=== inherited stale-child precondition follows direct DDL semantics
+t
+inherited child stale precondition | stored={stale} | live={id,payload,system_valid_range} | equal=f
+parent ADD absorbs inherited child pre-existing discrepancy | stored={id,payload,system_valid_range,parent_added} | live={id,payload,system_valid_range,parent_added} | equal=t
 === snapshot refresh helper is not externally executable
 table owner cannot refresh snapshot | 42501: permission denied for function __internal_refresh_system_time_columns_snapshot
 unrelated role cannot refresh snapshot | 42501: permission denied for function __internal_refresh_system_time_columns_snapshot

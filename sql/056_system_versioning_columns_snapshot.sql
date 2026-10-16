@@ -114,6 +114,43 @@ SELECT sql_saga.add_system_versioning('family_c');
 SELECT sql_saga.set_system_time_era_excluded_columns('family_a', ARRAY['tenant']::name[]);
 SELECT sql_saga.set_system_time_era_excluded_columns('family_b', ARRAY['tenant']::name[]);
 
+-- Inheritance fixtures: the parent is unmanaged and each child is independently managed.
+CREATE TABLE inherit_one_parent (id int, payload text);
+CREATE TABLE inherit_one_child () INHERITS (inherit_one_parent);
+CREATE TABLE inherit_two_parent (id int, payload text);
+CREATE TABLE inherit_two_child_a () INHERITS (inherit_two_parent);
+CREATE TABLE inherit_two_child_b () INHERITS (inherit_two_parent);
+CREATE TABLE inherit_drop_parent (id int, payload text, drop_me text);
+CREATE TABLE inherit_drop_child () INHERITS (inherit_drop_parent);
+CREATE TABLE inherit_rename_parent (id int, payload text);
+CREATE TABLE inherit_rename_child () INHERITS (inherit_rename_parent);
+CREATE TABLE inherit_excluded_parent (id int, excluded text);
+CREATE TABLE inherit_excluded_child () INHERITS (inherit_excluded_parent);
+CREATE TABLE inherit_only_add_parent (id int, payload text);
+CREATE TABLE inherit_only_add_child () INHERITS (inherit_only_add_parent);
+CREATE TABLE inherit_only_drop_parent (id int, payload text, keep_local text);
+CREATE TABLE inherit_only_drop_child () INHERITS (inherit_only_drop_parent);
+CREATE TABLE inherit_only_rename_parent (id int, payload text);
+CREATE TABLE inherit_only_rename_child () INHERITS (inherit_only_rename_parent);
+CREATE TABLE inherit_stale_parent (id int, payload text);
+CREATE TABLE inherit_stale_child () INHERITS (inherit_stale_parent);
+DO $inheritance_fixtures$
+BEGIN
+    PERFORM sql_saga.add_system_versioning('inherit_one_child');
+    PERFORM sql_saga.add_system_versioning('inherit_two_child_a');
+    PERFORM sql_saga.add_system_versioning('inherit_two_child_b');
+    PERFORM sql_saga.add_system_versioning('inherit_drop_child');
+    PERFORM sql_saga.add_system_versioning('inherit_rename_child');
+    PERFORM sql_saga.add_system_versioning('inherit_excluded_child');
+    PERFORM sql_saga.add_system_versioning('inherit_only_add_child');
+    PERFORM sql_saga.add_system_versioning('inherit_only_drop_child');
+    PERFORM sql_saga.add_system_versioning('inherit_only_rename_child');
+    PERFORM sql_saga.add_system_versioning('inherit_stale_child');
+    PERFORM sql_saga.set_system_time_era_excluded_columns(
+        'inherit_excluded_child', ARRAY['excluded']::name[]);
+END;
+$inheritance_fixtures$;
+
 \echo === snapshot lifecycle and content
 SELECT snapshot_test.snapshot_result('family creation A', 'family_a');
 SELECT snapshot_test.snapshot_result('family creation B', 'family_b');
@@ -308,6 +345,83 @@ SELECT snapshot_test.case_result(
     'cannot alter type of a column used by a view or rule');
 ROLLBACK TO SAVEPOINT alter_column_type;
 RELEASE SAVEPOINT alter_column_type;
+
+\echo === inherited parent column-shape changes follow managed children
+ALTER TABLE inherit_one_parent ADD COLUMN parent_added text;
+SELECT snapshot_test.snapshot_result('one managed child follows parent ADD', 'inherit_one_child');
+
+ALTER TABLE inherit_two_parent ADD COLUMN parent_added text;
+SELECT snapshot_test.snapshot_result('first managed child follows shared parent ADD', 'inherit_two_child_a');
+SELECT snapshot_test.snapshot_result('second managed child follows shared parent ADD', 'inherit_two_child_b');
+
+SELECT snapshot_test.case_result(
+    'parent DROP inherited used column preserves direct refusal',
+    $$ALTER TABLE snapshot_test.inherit_drop_parent DROP COLUMN drop_me CASCADE$$,
+    'P0001',
+    'cannot drop view "snapshot_test.inherit_drop_child_with_history" because it is used in SYSTEM VERSIONING for table "snapshot_test.inherit_drop_child"');
+SELECT snapshot_test.snapshot_result('refused parent DROP preserves child snapshot', 'inherit_drop_child');
+SELECT format(
+    'refused parent DROP family usable | with_history=%s | as_of=%s',
+    (SELECT count(*) >= 0 FROM inherit_drop_child_with_history),
+    (SELECT count(*) >= 0 FROM inherit_drop_child__as_of(pg_catalog.now())));
+SELECT snapshot_test.case_result(
+    'supported parent DROP pre-rebuild excludes child column',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.inherit_drop_child', ARRAY['drop_me']::name[])$$,
+    NULL,
+    NULL);
+SELECT snapshot_test.case_result(
+    'supported parent DROP after view exclusion',
+    $$ALTER TABLE snapshot_test.inherit_drop_parent DROP COLUMN drop_me$$,
+    NULL,
+    NULL);
+ALTER TABLE inherit_drop_child_history DROP COLUMN drop_me;
+SELECT snapshot_test.case_result(
+    'supported parent DROP final rebuild',
+    $$SELECT sql_saga.rebuild_system_versioning_views('snapshot_test.inherit_drop_child')$$,
+    NULL,
+    NULL);
+SELECT snapshot_test.snapshot_result('supported parent DROP refreshes child snapshot', 'inherit_drop_child');
+SELECT format(
+    'supported parent DROP family usable | with_history=%s | as_of=%s',
+    (SELECT count(*) >= 0 FROM inherit_drop_child_with_history),
+    (SELECT count(*) >= 0 FROM inherit_drop_child__as_of(pg_catalog.now())));
+
+ALTER TABLE inherit_rename_parent RENAME COLUMN payload TO renamed_payload;
+SELECT snapshot_test.snapshot_result('managed child follows parent RENAME', 'inherit_rename_child');
+
+SAVEPOINT inherited_excluded_rename;
+SELECT snapshot_test.case_result(
+    'parent RENAME of child excluded column',
+    $$ALTER TABLE snapshot_test.inherit_excluded_parent RENAME COLUMN excluded TO account$$,
+    'P0001',
+    'cannot drop or rename column "excluded" on table "snapshot_test.inherit_excluded_child" because it is excluded from system_time era');
+ROLLBACK TO SAVEPOINT inherited_excluded_rename;
+RELEASE SAVEPOINT inherited_excluded_rename;
+SELECT snapshot_test.snapshot_result('excluded parent RENAME refusal preserves child', 'inherit_excluded_child');
+
+\echo === ALTER TABLE ONLY parent inheritance behavior
+SELECT snapshot_test.case_result(
+    'ONLY parent ADD preserves native refusal',
+    $$ALTER TABLE ONLY snapshot_test.inherit_only_add_parent ADD COLUMN only_added text$$,
+    '42P16',
+    'column must be added to child tables too');
+SELECT snapshot_test.snapshot_result('ONLY parent ADD leaves child unchanged', 'inherit_only_add_child');
+
+ALTER TABLE ONLY inherit_only_drop_parent DROP COLUMN keep_local;
+SELECT snapshot_test.snapshot_result('ONLY parent DROP leaves child column local', 'inherit_only_drop_child');
+
+SELECT snapshot_test.case_result(
+    'ONLY parent RENAME preserves native refusal',
+    $$ALTER TABLE ONLY snapshot_test.inherit_only_rename_parent RENAME COLUMN payload TO body$$,
+    '42P16',
+    'inherited column "payload" must be renamed in child tables too');
+SELECT snapshot_test.snapshot_result('ONLY parent RENAME leaves child unchanged', 'inherit_only_rename_child');
+
+\echo === inherited stale-child precondition follows direct DDL semantics
+SELECT snapshot_test.replace_snapshot('inherit_stale_child', ARRAY['stale']::name[]) AS inherited_stale_damage_installed;
+SELECT snapshot_test.snapshot_result('inherited child stale precondition', 'inherit_stale_child');
+ALTER TABLE inherit_stale_parent ADD COLUMN parent_added text;
+SELECT snapshot_test.snapshot_result('parent ADD absorbs inherited child pre-existing discrepancy', 'inherit_stale_child');
 
 \echo === snapshot refresh helper is not externally executable
 SET ROLE snapshot_table_owner;
