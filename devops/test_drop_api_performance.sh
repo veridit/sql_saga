@@ -2,7 +2,9 @@
 #
 # Compare metadata-first drop API latency in the working tree against released v1.1.
 # This is a local performance gate, not part of the default regression suite or CI.
-# Exit status: 0 below the 10 ms hard ceiling, 1 ceiling failure, 2 harness/setup error.
+# Exit status: 0 below the 15 ms hard ceiling, 1 ceiling failure, 2 harness/setup error.
+# The ceiling is an order-of-magnitude bound for these admin APIs (owner decision 2026-10-17:
+# 12.8 ms for drop_system_versioning is acceptable; a regression to tens of ms is not).
 # Compatible with macOS /bin/bash 3.2 and set -u.
 #
 set -u
@@ -218,7 +220,7 @@ printf '%-25s %12s %12s %10s %10s %s\n' API v1.1_ms current_ms ratio ratio_gate 
 for api in drop_foreign_key drop_system_versioning drop_unique_key; do
     baseline=$(median perf_v11 "$api")
     current=$(median perf_current "$api")
-    result=$(awk -v baseline="$baseline" -v current="$current" 'BEGIN { ratio=current/baseline; printf "%.3f|%s|%s", ratio, (ratio <= 1.05 ? "PASS" : "INFO_FAIL"), (current < 10.0 ? "PASS" : "FAIL") }')
+    result=$(awk -v baseline="$baseline" -v current="$current" 'BEGIN { ratio=current/baseline; printf "%.3f|%s|%s", ratio, (ratio <= 1.05 ? "PASS" : "INFO_FAIL"), (current < 15.0 ? "PASS" : "FAIL") }')
     ratio=${result%%|*}
     remainder=${result#*|}
     ratio_verdict=${remainder%%|*}
@@ -230,9 +232,9 @@ for api in drop_foreign_key drop_system_versioning drop_unique_key; do
 done
 
 if [ "$FAILED" = 1 ]; then
-    echo "RED: at least one drop API median is >= 10 ms"
+    echo "RED: at least one drop API median is >= 15 ms"
     exit 1
 fi
 
-echo "GREEN: every drop API median is < 10 ms; ratios versus v1.1 are informational"
+echo "GREEN: every drop API median is < 15 ms; ratios versus v1.1 are informational"
 exit 0
