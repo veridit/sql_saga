@@ -327,13 +327,16 @@ BEGIN
                             JOIN sql_saga.system_time_era AS ste
                               ON (ste.table_schema, ste.table_name) = (n.nspname, c.relname)
                             JOIN LATERAL (
-                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname COLLATE "C") AS column_names
                                 FROM pg_catalog.pg_attribute AS a
                                 WHERE a.attrelid = c.oid
                                   AND a.attnum > 0
                                   AND NOT a.attisdropped
                             ) AS live ON true
-                            WHERE ste.table_columns_snapshot IS DISTINCT FROM live.column_names
+                            -- Set comparison: only added/removed columns are shape changes.
+                            WHERE (SELECT pg_catalog.array_agg(s.attname ORDER BY s.attname COLLATE "C")
+                                   FROM pg_catalog.unnest(ste.table_columns_snapshot) AS s(attname))
+                                  IS DISTINCT FROM live.column_names
                         LOOP
                             IF NOT v_table_oid = ANY (v_shape_changed_table_oids) THEN
                                 v_shape_changed_table_oids := pg_catalog.array_append(
@@ -832,7 +835,10 @@ BEGIN
                 LIMIT 1;
 
                 -- If columns are unchanged, we are done with this table
-                IF snapshot = current_columns THEN
+                -- Set comparison: a restore can recreate the table with another column order.
+                IF (SELECT array_agg(u.c ORDER BY u.c COLLATE "C") FROM unnest(snapshot) AS u(c))
+                   IS NOT DISTINCT FROM
+                   (SELECT array_agg(u.c ORDER BY u.c COLLATE "C") FROM unnest(current_columns) AS u(c)) THEN
                     CONTINUE;
                 END IF;
 

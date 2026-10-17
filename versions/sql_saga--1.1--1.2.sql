@@ -1367,13 +1367,16 @@ $new_collect$    FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
                             JOIN sql_saga.system_time_era AS ste
                               ON (ste.table_schema, ste.table_name) = (n.nspname, c.relname)
                             JOIN LATERAL (
-                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) AS column_names
+                                SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname COLLATE "C") AS column_names
                                 FROM pg_catalog.pg_attribute AS a
                                 WHERE a.attrelid = c.oid
                                   AND a.attnum > 0
                                   AND NOT a.attisdropped
                             ) AS live ON true
-                            WHERE ste.table_columns_snapshot IS DISTINCT FROM live.column_names
+                            -- Set comparison: only added/removed columns are shape changes.
+                            WHERE (SELECT pg_catalog.array_agg(s.attname ORDER BY s.attname COLLATE "C")
+                                   FROM pg_catalog.unnest(ste.table_columns_snapshot) AS s(attname))
+                                  IS DISTINCT FROM live.column_names
                         LOOP
                             IF NOT v_table_oid = ANY (v_shape_changed_table_oids) THEN
                                 v_shape_changed_table_oids := pg_catalog.array_append(
@@ -1493,6 +1496,24 @@ $new_begin$BEGIN
 
     FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands() LOOP
 $new_begin$);
+    changed := pg_catalog.replace(changed,
+$old_fk_snapshot$                -- If columns are unchanged, we are done with this table
+                IF snapshot = current_columns THEN
+                    CONTINUE;
+                END IF;
+$old_fk_snapshot$,
+$new_fk_snapshot$                -- If columns are unchanged, we are done with this table
+                -- Set comparison: a restore can recreate the table with another column order.
+                IF (SELECT array_agg(u.c ORDER BY u.c COLLATE "C") FROM unnest(snapshot) AS u(c))
+                   IS NOT DISTINCT FROM
+                   (SELECT array_agg(u.c ORDER BY u.c COLLATE "C") FROM unnest(current_columns) AS u(c)) THEN
+                    CONTINUE;
+                END IF;
+$new_fk_snapshot$);
+    IF pg_catalog.strpos(changed, 'IF snapshot = current_columns THEN') > 0
+       OR pg_catalog.strpos(changed, '-- Set comparison: a restore can recreate the table with another column order.') = 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following foreign key snapshot comparison';
+    END IF;
     IF changed = definition THEN
         RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following snapshot attribution';
     END IF;
@@ -4880,10 +4901,14 @@ BEGIN
                 sql_saga.__internal_display_name(base_oid::regclass), missing_column;
         END IF;
 
-        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) INTO expected_columns
+        /* The snapshot detects added and removed columns only; compare it as a set, because a
+         * restore recreates inherited children with inherited columns first. */
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname COLLATE "C") INTO expected_columns
         FROM pg_catalog.pg_attribute AS a
         WHERE a.attrelid = base_oid AND a.attnum > 0 AND NOT a.attisdropped;
-        IF expected_columns IS DISTINCT FROM r.table_columns_snapshot THEN
+        IF expected_columns IS DISTINCT FROM (
+                SELECT pg_catalog.array_agg(s.attname ORDER BY s.attname COLLATE "C")
+                FROM pg_catalog.unnest(r.table_columns_snapshot) AS s(attname)) THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views',
                 sql_saga.__internal_display_name(base_oid::regclass);
         END IF;
@@ -5545,10 +5570,14 @@ BEGIN
                 sql_saga.__internal_display_name(base_oid::regclass), missing_column;
         END IF;
 
-        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) INTO expected_columns
+        /* The snapshot detects added and removed columns only; compare it as a set, because a
+         * restore recreates inherited children with inherited columns first. */
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname COLLATE "C") INTO expected_columns
         FROM pg_catalog.pg_attribute AS a
         WHERE a.attrelid = base_oid AND a.attnum > 0 AND NOT a.attisdropped;
-        IF expected_columns IS DISTINCT FROM r.table_columns_snapshot THEN
+        IF expected_columns IS DISTINCT FROM (
+                SELECT pg_catalog.array_agg(s.attname ORDER BY s.attname COLLATE "C")
+                FROM pg_catalog.unnest(r.table_columns_snapshot) AS s(attname)) THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views',
                 sql_saga.__internal_display_name(base_oid::regclass);
         END IF;
@@ -6430,3 +6459,11 @@ REVOKE ALL ON FUNCTION sql_saga.__internal_temporal_foreign_key_is_attributable(
 REVOKE ALL ON FUNCTION sql_saga.__internal_unique_key_object_is_attributable(name, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.__internal_display_name(name, name) FROM PUBLIC;
 REVOKE ALL ON FUNCTION sql_saga.check_integrity() FROM PUBLIC;
+
+/*
+ * Final integrity gate. Runs after every definition and privilege change above, inside the
+ * extension update transaction: a damaged managed family raises the checker's exact message and
+ * the whole update rolls back, leaving the previous version installed. Repair as the message says
+ * and run ALTER EXTENSION sql_saga UPDATE again.
+ */
+SELECT sql_saga.check_integrity();

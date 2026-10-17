@@ -992,10 +992,14 @@ BEGIN
                 sql_saga.__internal_display_name(base_oid::regclass), missing_column;
         END IF;
 
-        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attnum) INTO expected_columns
+        /* The snapshot detects added and removed columns only; compare it as a set, because a
+         * restore recreates inherited children with inherited columns first. */
+        SELECT pg_catalog.array_agg(a.attname ORDER BY a.attname COLLATE "C") INTO expected_columns
         FROM pg_catalog.pg_attribute AS a
         WHERE a.attrelid = base_oid AND a.attnum > 0 AND NOT a.attisdropped;
-        IF expected_columns IS DISTINCT FROM r.table_columns_snapshot THEN
+        IF expected_columns IS DISTINCT FROM (
+                SELECT pg_catalog.array_agg(s.attname ORDER BY s.attname COLLATE "C")
+                FROM pg_catalog.unnest(r.table_columns_snapshot) AS s(attname)) THEN
             RAISE EXCEPTION 'sql_saga: integrity violation for table "%": SYSTEM_TIME column snapshot is stale; repair with rebuild_system_versioning_views',
                 sql_saga.__internal_display_name(base_oid::regclass);
         END IF;
