@@ -1303,6 +1303,131 @@ $new_public_rebuild$);
 END;
 $upgrade_snapshot_routines$;
 
+/*
+ * Re-create the referenced-side triggers of a regular foreign key, under their stored names, with
+ * arguments taken from the current sql_saga.foreign_keys row (used after a referencing column rename).
+ * drop_protection refuses dropping a trigger that sql_saga.foreign_keys names, so the names are
+ * withdrawn from the row for the duration of the DROP and restored afterwards (the metadata-first
+ * pattern of drop_foreign_key_by_name). Everything runs in the caller's transaction; no setting or
+ * argument lets a caller skip the protection.
+ */
+CREATE FUNCTION sql_saga.__internal_recreate_regular_fk_uk_triggers(foreign_key_name name)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = sql_saga, pg_catalog
+AS $__internal_recreate_regular_fk_uk_triggers$
+#variable_conflict use_variable
+DECLARE
+    fk sql_saga.foreign_keys;
+    uk sql_saga.unique_keys;
+    uk_era sql_saga.era;
+    uk_table_oid regclass;
+    update_columns text;
+    update_enabled "char";
+    delete_enabled "char";
+BEGIN
+    SELECT * INTO fk FROM sql_saga.foreign_keys AS f
+    WHERE f.foreign_key_name = foreign_key_name AND f.type = 'regular_to_temporal';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'sql_saga: regular foreign key "%" not found', foreign_key_name;
+    END IF;
+    SELECT * INTO uk FROM sql_saga.unique_keys AS u WHERE u.unique_key_name = fk.unique_key_name;
+    SELECT * INTO uk_era FROM sql_saga.era AS e
+    WHERE (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name);
+    uk_table_oid := pg_catalog.to_regclass(pg_catalog.format('%I.%I', uk.table_schema, uk.table_name));
+    IF uk_table_oid IS NULL OR uk_era.era_name IS NULL THEN
+        RAISE EXCEPTION 'sql_saga: referenced table of foreign key "%" not found', foreign_key_name;
+    END IF;
+
+    SELECT pg_catalog.string_agg(pg_catalog.quote_ident(u.column_name), ', ' ORDER BY u.ordinality)
+    INTO update_columns
+    FROM pg_catalog.unnest(uk.column_names || uk_era.valid_from_column_name || uk_era.valid_until_column_name)
+         WITH ORDINALITY AS u (column_name, ordinality);
+
+    /* The firing mode (DISABLE / ENABLE / ENABLE REPLICA / ENABLE ALWAYS) of each trigger survives the rebuild. */
+    SELECT t.tgenabled INTO update_enabled FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_update_trigger;
+    SELECT t.tgenabled INTO delete_enabled FROM pg_catalog.pg_trigger AS t
+    WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_delete_trigger;
+
+    UPDATE sql_saga.foreign_keys AS f
+    SET uk_update_trigger = NULL, uk_delete_trigger = NULL
+    WHERE f.foreign_key_name = fk.foreign_key_name;
+
+    IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_update_trigger) THEN
+        EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.uk_update_trigger, uk_table_oid);
+    END IF;
+    IF EXISTS (SELECT FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = uk_table_oid AND t.tgname = fk.uk_delete_trigger) THEN
+        EXECUTE pg_catalog.format('DROP TRIGGER %I ON %s', fk.uk_delete_trigger, uk_table_oid);
+    END IF;
+
+    /* Same definitions as add_regular_foreign_key. */
+    EXECUTE pg_catalog.format($$
+        CREATE CONSTRAINT TRIGGER %1$I AFTER UPDATE OF %2$s ON %3$I.%4$I FROM %5$I.%6$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+        sql_saga.uk_update_check_c(%7$L, %5$L, %6$L, %8$L, %9$L, %10$L, %11$L, %3$L, %4$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, %18$L, 'regular_to_temporal');
+        $$
+        , /* %1$I */ fk.uk_update_trigger
+        , /* %2$s */ update_columns
+        , /* %3$I */ uk.table_schema
+        , /* %4$I */ uk.table_name
+        , /* %5$I */ fk.table_schema
+        , /* %6$I */ fk.table_name
+        , /* %7$L */ fk.foreign_key_name
+        , /* %8$L */ fk.column_names::text
+        , /* %9$L */ ''
+        , /* %10$L*/ ''
+        , /* %11$L*/ ''
+        , /* %12$L*/ uk.column_names::text
+        , /* %13$L*/ uk_era.era_name
+        , /* %14$L*/ uk_era.valid_from_column_name
+        , /* %15$L*/ uk_era.valid_until_column_name
+        , /* %16$L*/ fk.match_type
+        , /* %17$L*/ fk.update_action
+        , /* %18$L*/ fk.delete_action
+    );
+    EXECUTE pg_catalog.format($$
+        CREATE CONSTRAINT TRIGGER %1$I AFTER DELETE ON %2$I.%3$I FROM %4$I.%5$I DEFERRABLE FOR EACH ROW EXECUTE PROCEDURE
+        sql_saga.uk_delete_check_c(%6$L, %4$L, %5$L, %7$L, %8$L, %9$L, %10$L, %2$L, %3$L, %11$L, %12$L, %13$L, %14$L, %15$L, %16$L, %17$L, 'regular_to_temporal');
+        $$
+        , /* %1$I */ fk.uk_delete_trigger
+        , /* %2$I */ uk.table_schema
+        , /* %3$I */ uk.table_name
+        , /* %4$I */ fk.table_schema
+        , /* %5$I */ fk.table_name
+        , /* %6$L */ fk.foreign_key_name
+        , /* %7$L */ fk.column_names::text
+        , /* %8$L */ ''
+        , /* %9$L */ ''
+        , /* %10$L*/ ''
+        , /* %11$L*/ uk.column_names::text
+        , /* %12$L*/ uk_era.era_name
+        , /* %13$L*/ uk_era.valid_from_column_name
+        , /* %14$L*/ uk_era.valid_until_column_name
+        , /* %15$L*/ fk.match_type
+        , /* %16$L*/ fk.update_action
+        , /* %17$L*/ fk.delete_action
+    );
+
+    /* A new trigger fires in origin mode ('O'); reapply each trigger's previous mode. */
+    IF update_enabled IS DISTINCT FROM 'O' AND update_enabled IS NOT NULL THEN
+        EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', uk_table_oid,
+            CASE update_enabled WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,
+            fk.uk_update_trigger);
+    END IF;
+    IF delete_enabled IS DISTINCT FROM 'O' AND delete_enabled IS NOT NULL THEN
+        EXECUTE pg_catalog.format('ALTER TABLE %s %s TRIGGER %I', uk_table_oid,
+            CASE delete_enabled WHEN 'D' THEN 'DISABLE' WHEN 'R' THEN 'ENABLE REPLICA' WHEN 'A' THEN 'ENABLE ALWAYS' END,
+            fk.uk_delete_trigger);
+    END IF;
+
+    UPDATE sql_saga.foreign_keys AS f
+    SET uk_update_trigger = fk.uk_update_trigger, uk_delete_trigger = fk.uk_delete_trigger
+    WHERE f.foreign_key_name = fk.foreign_key_name;
+END;
+$__internal_recreate_regular_fk_uk_triggers$;
+
+REVOKE ALL ON FUNCTION sql_saga.__internal_recreate_regular_fk_uk_triggers(name) FROM PUBLIC;
+
 DO $upgrade_rename_following$
 DECLARE
     definition text := pg_catalog.pg_get_functiondef('sql_saga.rename_following()'::regprocedure);
@@ -1510,6 +1635,99 @@ $new_fk_snapshot$                -- If columns are unchanged, we are done with t
                     CONTINUE;
                 END IF;
 $new_fk_snapshot$);
+    changed := pg_catalog.replace(changed,
+$old_fk_rename$                    -- We have a rename. Find all affected FKs, rename their triggers and update their metadata.
+                    DECLARE
+                        fk_rec RECORD;
+                        uk_rec RECORD;
+                        new_column_names name[];
+                        new_foreign_key_name name;
+                        new_uk_update_trigger name;
+                        new_uk_delete_trigger name;
+                    BEGIN
+                        FOR fk_rec IN
+                            SELECT * FROM sql_saga.foreign_keys
+                            WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name)
+                              AND old_col_name = ANY(column_names)
+                        LOOP
+                            -- Get UK info for uk-side trigger renames
+                            SELECT * INTO uk_rec FROM sql_saga.unique_keys WHERE unique_key_name = fk_rec.unique_key_name;
+
+                            -- 1. Calculate all the new names
+                            DECLARE
+                                old_base_foreign_key_name name;
+                                new_base_foreign_key_name name;
+                                name_suffix text;
+                            BEGIN
+                                new_column_names := array_replace(fk_rec.column_names, old_col_name, new_col_name);
+
+                                -- To correctly rename, we must preserve any suffix that was added
+                                -- to the original foreign key name to ensure uniqueness.
+                                old_base_foreign_key_name := sql_saga.__internal_make_name(
+                                    ARRAY[fk_rec.table_name] || fk_rec.column_names || ARRAY[fk_rec.fk_era_name]
+                                );
+                                name_suffix := regexp_replace(fk_rec.foreign_key_name, '^' || old_base_foreign_key_name, '');
+
+                                new_base_foreign_key_name := sql_saga.__internal_make_name(
+                                    ARRAY[fk_rec.table_name] || new_column_names || ARRAY[fk_rec.fk_era_name]
+                                );
+                                new_foreign_key_name := new_base_foreign_key_name || name_suffix;
+
+                                -- Regenerate trigger names with the full new name
+                                new_uk_update_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'uk_update');
+                                new_uk_delete_trigger := sql_saga.__internal_make_name(ARRAY[new_foreign_key_name], 'uk_delete');
+                            END;
+
+                            -- It appears that Postgres automatically renames triggers when a column that is part
+                            -- of the trigger's name is renamed. Therefore, we do not need to rename them
+                            -- manually; we only need to update our metadata to reflect the new names.
+                            UPDATE sql_saga.foreign_keys
+                            SET
+                                foreign_key_name = new_foreign_key_name,
+                                column_names = new_column_names,
+                                uk_update_trigger = new_uk_update_trigger,
+                                uk_delete_trigger = new_uk_delete_trigger
+                            WHERE foreign_key_name = fk_rec.foreign_key_name;
+                        END LOOP;
+                    END;
+                END IF;
+
+$old_fk_rename$,
+$new_fk_rename$                    -- We have a rename. PostgreSQL renames neither constraints, indexes nor triggers when a
+                    -- column is renamed, so every stored object name stays unchanged; only column_names and
+                    -- the snapshot follow. A regular FK's referenced-side triggers carry the referencing
+                    -- column list in their arguments, so they are re-created with the same names.
+                    DECLARE
+                        fk_rec RECORD;
+                    BEGIN
+                        -- Snapshot first: the trigger DDL below re-enters this event trigger, which must
+                        -- then see no pending rename.
+                        UPDATE sql_saga.foreign_keys
+                        SET fk_table_columns_snapshot = current_columns
+                        WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name);
+
+                        FOR fk_rec IN
+                            SELECT * FROM sql_saga.foreign_keys
+                            WHERE (table_schema, table_name) = (fk_table.table_schema, fk_table.table_name)
+                              AND old_col_name = ANY(column_names)
+                            ORDER BY foreign_key_name
+                        LOOP
+                            UPDATE sql_saga.foreign_keys
+                            SET column_names = array_replace(fk_rec.column_names, old_col_name, new_col_name)
+                            WHERE foreign_key_name = fk_rec.foreign_key_name;
+
+                            IF fk_rec.type = 'regular_to_temporal' THEN
+                                PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);
+                            END IF;
+                        END LOOP;
+                    END;
+                END IF;
+
+$new_fk_rename$);
+    IF pg_catalog.strpos(changed, 'It appears that Postgres automatically renames triggers') > 0
+       OR pg_catalog.strpos(changed, 'PERFORM sql_saga.__internal_recreate_regular_fk_uk_triggers(fk_rec.foreign_key_name);') = 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following foreign key column rename';
+    END IF;
     IF pg_catalog.strpos(changed, 'IF snapshot = current_columns THEN') > 0
        OR pg_catalog.strpos(changed, '-- Set comparison: a restore can recreate the table with another column order.') = 0 THEN
         RAISE EXCEPTION 'sql_saga: cannot upgrade rename_following foreign key snapshot comparison';
