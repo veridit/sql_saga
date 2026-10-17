@@ -336,6 +336,26 @@ GRANT INSERT ON rchild TO ${PREFIX}_blind;
 -- with several granted families can have. Same statement on the fresh 1.1 side.
 GRANT SELECT ON sv, rdoc, fdoc, zbase TO ${PREFIX}_r1, ${PREFIX}_regular;
 
+-- (12) managed table inheritance, after every GRANT (1.0 refuses later GRANTs, see above). A
+-- system-versioned parent with an independently system-versioned child (the child inherits the
+-- parent's system_valid_range column), and an era parent with an era child carrying its own natural
+-- key and FOR PORTION OF view. Writes through the parent reach the child's family as well.
+CREATE TABLE ip (id int PRIMARY KEY, x text);
+CREATE TABLE ic (y text) INHERITS (ip);
+ALTER TABLE ic ADD PRIMARY KEY (id);
+SELECT sql_saga.add_system_versioning('ip');
+SELECT sql_saga.add_system_versioning('ic');
+INSERT INTO ip VALUES (1, 'a');
+INSERT INTO ic VALUES (2, 'b', 'c');
+UPDATE ip SET x = x || '2';
+CREATE TABLE ep (id int, valid_range daterange NOT NULL, valid_from date, valid_until date, x text);
+CREATE TABLE ec (y text) INHERITS (ep);
+SELECT sql_saga.add_era('ep', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_era('ec', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');
+SELECT sql_saga.add_unique_key('ec', ARRAY['id']::name[], 'valid', key_type => 'natural');
+SELECT sql_saga.add_for_portion_of_view('ec', 'valid');
+INSERT INTO ec (id, valid_from, valid_until, x, y) VALUES (1, '2024-01-01', 'infinity', 'a', 'b');
+
 -- temporal_merge on the range-only era (populates the 1.0 shared cache)
 CREATE TEMP TABLE src_fp (row_id int, id int, valid_range daterange, x text);
 INSERT INTO src_fp VALUES (1, 3, '[2024-06-01,infinity)', 'c');
@@ -474,8 +494,10 @@ SQL
 # <token>, fixed policy suffixes become <token>, and copied-policy hashes become copy-of-<base-name>.
 # No timestamps are normalized because this is schema/catalog state, not volatile history data.
 # OID references are rendered as qualified reg* names so object identity is preserved across DBs.
-semantic_snapshot() {
-    sql "$1" <<'SQL'
+# Aggregates have no pg_get_functiondef: their routine line marks them, and a separate aggregate line
+# carries every pg_aggregate field. Initial privileges of current members are compared in full.
+semantic_sql() {
+    cat <<'SQL'
 WITH token AS (
     SELECT CASE WHEN to_regclass('sql_saga.installation') IS NULL THEN NULL
                 ELSE (xpath('//row/token/text()', query_to_xml('SELECT token FROM sql_saga.installation', false, false, '')))[1]::text END AS value
@@ -517,7 +539,7 @@ WITH token AS (
                   p.oid::regprocedure,p.prokind,p.prosecdef,p.provolatile,p.proparallel,p.proleakproof,coalesce(p.proconfig::text,''),
                   p.prorettype::regtype,pg_get_function_arguments(p.oid),p.proowner::regrole,
                   coalesce((SELECT string_agg(CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END||':'||x.privilege_type,',' ORDER BY 1) FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) AS x),''),
-                  md5(pg_get_functiondef(p.oid)))
+                  CASE WHEN p.prokind IN ('f','p','w') THEN md5(pg_get_functiondef(p.oid)) ELSE '<aggregate: see aggregate line>' END)
     FROM pg_proc AS p WHERE p.pronamespace='sql_saga'::regnamespace
     UNION ALL
     SELECT format('type|%s|kind=%s|enum=%s|domain_base=%s|domain_default=%s|domain_notnull=%s|composite=%s',t.oid::regtype,t.typtype,
@@ -538,9 +560,80 @@ WITH token AS (
     UNION ALL SELECT 'catalog-updatable_view|'||to_jsonb(v)::text FROM sql_saga.updatable_view AS v
     UNION ALL SELECT 'catalog-system_versioning|'||to_jsonb(s)::text FROM sql_saga.system_versioning AS s
     UNION ALL SELECT 'catalog-system_time_era|'||to_jsonb(s)::text FROM sql_saga.system_time_era AS s
+    UNION ALL
+    SELECT format('aggregate|%s|kind=%s|transfn=%s|finalfn=%s|combinefn=%s|serialfn=%s|deserialfn=%s|mtransfn=%s|minvtransfn=%s|mfinalfn=%s|finalextra=%s|mfinalextra=%s|finalmodify=%s|mfinalmodify=%s|sortop=%s|transtype=%s|transspace=%s|mtranstype=%s|mtransspace=%s|initval=%s|minitval=%s|numdirect=%s|parallel=%s|strict=%s|volatile=%s|owner=%s|acl=%s',
+                  p.oid::regprocedure, ag.aggkind, ag.aggtransfn::regprocedure,
+                  CASE WHEN ag.aggfinalfn = 0 THEN '' ELSE ag.aggfinalfn::regprocedure::text END,
+                  CASE WHEN ag.aggcombinefn = 0 THEN '' ELSE ag.aggcombinefn::regprocedure::text END,
+                  CASE WHEN ag.aggserialfn = 0 THEN '' ELSE ag.aggserialfn::regprocedure::text END,
+                  CASE WHEN ag.aggdeserialfn = 0 THEN '' ELSE ag.aggdeserialfn::regprocedure::text END,
+                  CASE WHEN ag.aggmtransfn = 0 THEN '' ELSE ag.aggmtransfn::regprocedure::text END,
+                  CASE WHEN ag.aggminvtransfn = 0 THEN '' ELSE ag.aggminvtransfn::regprocedure::text END,
+                  CASE WHEN ag.aggmfinalfn = 0 THEN '' ELSE ag.aggmfinalfn::regprocedure::text END,
+                  ag.aggfinalextra, ag.aggmfinalextra, ag.aggfinalmodify, ag.aggmfinalmodify,
+                  CASE WHEN ag.aggsortop = 0 THEN '' ELSE ag.aggsortop::regoperator::text END,
+                  ag.aggtranstype::regtype, ag.aggtransspace,
+                  CASE WHEN ag.aggmtranstype = 0 THEN '' ELSE ag.aggmtranstype::regtype::text END, ag.aggmtransspace,
+                  coalesce(ag.agginitval, '<null>'), coalesce(ag.aggminitval, '<null>'), ag.aggnumdirectargs,
+                  p.proparallel, p.proisstrict, p.provolatile, p.proowner::regrole,
+                  coalesce((SELECT string_agg(CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END||':'||x.privilege_type,',' ORDER BY 1) FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) AS x),''))
+    FROM pg_proc AS p JOIN pg_aggregate AS ag ON ag.aggfnoid = p.oid
+    WHERE p.pronamespace='sql_saga'::regnamespace
+    UNION ALL
+    -- Initial privileges of every current sql_saga member, fresh and upgraded alike.
+    SELECT format('initpriv|%s|privtype=%s|acl=%s', pg_describe_object(i.classoid, i.objoid, i.objsubid), i.privtype,
+                  coalesce((SELECT string_agg(CASE WHEN x.grantee=0 THEN 'PUBLIC' ELSE x.grantee::regrole::text END||':'||x.privilege_type||CASE WHEN x.is_grantable THEN '*' ELSE '' END||'/'||CASE WHEN x.grantor=0 THEN 'PUBLIC' ELSE x.grantor::regrole::text END,',' ORDER BY 1) FROM aclexplode(i.initprivs) AS x),''))
+    FROM pg_init_privs AS i
+    WHERE EXISTS (SELECT FROM pg_depend AS d JOIN pg_extension AS e ON e.oid = d.refobjid
+                  WHERE e.extname = 'sql_saga' AND d.deptype = 'e'
+                    AND (d.classid, d.objid) = (i.classoid, i.objoid))
 )
-SELECT replace(line,(SELECT value FROM token),'<token>') FROM lines ORDER BY 1;
+-- One record per output line: embedded newlines (multi-line comments, expressions) are escaped.
+SELECT replace(replace(replace(line,(SELECT value FROM token),'<token>'), E'\\', E'\\\\'), E'\n', E'\\n') FROM lines ORDER BY 1;
 SQL
+}
+semantic_snapshot() { semantic_sql | sql "$1"; }
+
+# Minimum line count per semantic_snapshot section for the core fixture, fresh or upgraded. Catalog
+# sections are exact fixture counts (13 eras: 6 system_time + fp, par, pred, pkey, tchild, ep, ec;
+# 6 system-versioned families; 4 unique keys; 2 foreign keys; 4 updatable views). Object sections are
+# floors below the observed counts, so routine growth does not break them, while an erroring, empty
+# or truncated snapshot (the ERROR-only false positive of the step 6 audit) fails at once. Every
+# section the snapshot emits must be listed; an unlisted section or a continuation line fails too.
+SEMANTIC_COVERAGE="relation:45 column:250 policy:20 routine:100 aggregate:2 type:20 comment:1000 catalog-era:13 catalog-unique_keys:4 catalog-foreign_keys:2 catalog-updatable_view:4 catalog-system_versioning:6 catalog-system_time_era:6 initpriv:40"
+# semantic_coverage_faults <file>: one line per missing/thin section or foreign line; empty = covered.
+semantic_coverage_faults() {
+    local file=$1 spec sec min n
+    if [ ! -s "$file" ]; then echo "snapshot is empty"; return; fi
+    if grep -q -E '^(ERROR|FATAL|WARNING|psql:)' "$file"; then
+        echo "snapshot contains diagnostics: $(grep -m1 -E '^(ERROR|FATAL|WARNING|psql:)' "$file")"
+    fi
+    for spec in $SEMANTIC_COVERAGE; do
+        sec=${spec%%:*}; min=${spec#*:}
+        n=$(grep -c "^$sec|" "$file" || true)
+        [ "$n" -ge "$min" ] || echo "section $sec has $n lines, expected at least $min"
+    done
+    cut -d'|' -f1 "$file" | LC_ALL=C sort -u | while IFS= read -r sec; do
+        case " $SEMANTIC_COVERAGE " in *" $sec:"*) ;; *) echo "unexpected section or line '$sec'" ;; esac
+    done
+}
+# semantic_capture <db> <file>: run semantic_snapshot with its real exit status (no stderr folding),
+# then require full coverage. Any failure is fatal for the comparison: prints faults and returns 1.
+semantic_capture() {
+    local db=$1 file=$2 status faults
+    semantic_snapshot_raw "$db" >"$file" 2>"$file.stderr"
+    status=$?
+    faults=$(semantic_coverage_faults "$file")
+    if [ "$status" -ne 0 ] || [ -s "$file.stderr" ] || [ -n "$faults" ]; then
+        printf 'semantic snapshot of %s failed (psql status %s): %s %s\n' "$db" "$status" \
+            "$(head -1 "$file.stderr" 2>/dev/null)" "$(printf '%s' "$faults" | paste -sd';' -)"
+        return 1
+    fi
+    return 0
+}
+# The snapshot query itself, unfolded: psql's own status and stderr are what semantic_capture checks.
+semantic_snapshot_raw() {
+    semantic_sql | psql -X -At -q -v ON_ERROR_STOP=1 -d "$1"
 }
 
 # All four generated query functions of every family. This captures exact definitions, execution
@@ -668,14 +761,17 @@ ROLLBACK;
 SQL
 }
 
-# Missing or stale SYSTEM_TIME base-column snapshots (0 = every family matches live attnum order).
+# Missing or stale SYSTEM_TIME base-column snapshots (0 = every family's snapshot equals its live
+# columns as a set). The snapshot only detects added/removed columns, so column order is not part of
+# the contract: a restore recreates inherited children with inherited columns first (coordinator
+# decision, step 6). Snapshot writes stay attnum-ordered; only comparisons are order-independent.
 snapshot_faults() {
     local db=$1
     if [ "$(q "$db" "SELECT EXISTS (SELECT FROM pg_catalog.pg_attribute AS a WHERE a.attrelid = 'sql_saga.system_time_era'::regclass AND a.attname = 'table_columns_snapshot' AND a.attnum > 0 AND NOT a.attisdropped)")" != t ]; then
         echo missing
         return
     fi
-    q "$db" "SELECT count(*) FROM sql_saga.system_time_era AS ste WHERE ste.table_columns_snapshot IS DISTINCT FROM (SELECT array_agg(a.attname ORDER BY a.attnum) FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid WHERE (ns.nspname, c.relname) = (ste.table_schema, ste.table_name) AND a.attnum > 0 AND NOT a.attisdropped)"
+    q "$db" "SELECT count(*) FROM sql_saga.system_time_era AS ste WHERE (SELECT array_agg(s ORDER BY s COLLATE \"C\") FROM unnest(ste.table_columns_snapshot) AS s) IS DISTINCT FROM (SELECT array_agg(a.attname ORDER BY a.attname COLLATE \"C\") FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid WHERE (ns.nspname, c.relname) = (ste.table_schema, ste.table_name) AND a.attnum > 0 AND NOT a.attisdropped)"
 }
 
 ids_as() {  # ids_as <db> <role> <relation>: sorted ids, or denied
@@ -773,8 +869,8 @@ BEGIN
         EXECUTE \$snapshot\$
             SELECT count(*)
             FROM sql_saga.system_time_era AS ste
-            WHERE ste.table_columns_snapshot IS DISTINCT FROM (
-                SELECT array_agg(a.attname ORDER BY a.attnum)
+            WHERE (SELECT array_agg(s ORDER BY s COLLATE "C") FROM unnest(ste.table_columns_snapshot) AS s) IS DISTINCT FROM (
+                SELECT array_agg(a.attname ORDER BY a.attname COLLATE "C")
                 FROM pg_catalog.pg_class AS c
                 JOIN pg_catalog.pg_namespace AS ns ON ns.oid = c.relnamespace
                 JOIN pg_catalog.pg_attribute AS a ON a.attrelid = c.oid
@@ -1105,6 +1201,34 @@ SQL
     check "rebuild_system_versioning_views after a manual column add" "NOTICE:  sql_saga: Rebuilt SYSTEM VERSIONING views and query functions for table sv,cols=1,r1=2" \
         "$(printf '%s\n' "$out" | grep -E 'Rebuilt|^cols=|^r1=|ERROR' | paste -sd, -)"
 
+    # Managed table inheritance: the parent and child families both stay managed, a write through the
+    # parent records history in the child's own family, and a parent column add propagates to the
+    # child's snapshot (the inheritance branch of the rename/shape follower) and rebuilds cleanly.
+    check "inheritance fixture: ip and ic are a managed parent/child pair, ep and ec too" "ic<ip,ec<ep|ic,ip|ec,ep" \
+        "$(q "$db" "SELECT (SELECT string_agg(i.inhrelid::regclass || '<' || i.inhparent::regclass, ',' ORDER BY 1) FROM pg_inherits AS i WHERE i.inhparent IN ('ip'::regclass, 'ep'::regclass)) || '|' || (SELECT string_agg(table_name, ',' ORDER BY table_name) FROM sql_saga.system_versioning WHERE table_name IN ('ip','ic')) || '|' || (SELECT string_agg(table_name, ',' ORDER BY table_name) FROM sql_saga.era WHERE table_name IN ('ep','ec'))")"
+    out=$(sql "$db" <<SQL
+BEGIN;
+SET client_min_messages = warning;
+UPDATE ip SET x = x || '3';
+SET LOCAL row_security = off;
+SELECT 'hist=' || (SELECT count(*) FROM ONLY ip_history) || ',' || (SELECT count(*) FROM ic_history);
+ALTER TABLE ip ADD COLUMN z int;
+ALTER TABLE ip_history ADD COLUMN z int;
+ALTER TABLE ic_history ADD COLUMN z int;
+SELECT sql_saga.rebuild_system_versioning_views('ip');
+SELECT sql_saga.rebuild_system_versioning_views('ic');
+SELECT 'snap=' || (SELECT string_agg(s, ',' ORDER BY s COLLATE "C") FROM sql_saga.system_time_era, unnest(table_columns_snapshot) AS s WHERE table_name = 'ic');
+SELECT sql_saga.check_integrity();
+SELECT 'integrity=ok';
+UPDATE ec__for_portion_of_valid SET x = 'q', valid_from = '2025-01-01', valid_until = 'infinity' WHERE id = 1;
+SELECT 'ec=' || count(*) FROM ec;
+ROLLBACK;
+SQL
+)
+    check "inheritance: parent write records child history, parent column add reaches the child family, FOR PORTION OF on the era child splits" \
+        "hist=2,2,snap=id,system_valid_range,x,y,z,integrity=ok,ec=2" \
+        "$(printf '%s\n' "$out" | grep -E '^(hist|snap|integrity|ec)=|ERROR' | paste -sd, -)"
+
     # Foreign keys created under 1.0 (temporal and regular) still enforce after the upgrade.
     out=$(sql "$db" <<SQL
 BEGIN;
@@ -1371,7 +1495,7 @@ else
     if [ -n "$OLD_LIB" ]; then
         check "fixture sessions run the $BASELINE_TAG C library (by-name writer)" "by-name writer" "$(writer_probe "$OLD_LIB")"
     fi
-    check "1.1 baseline: installation token and gated views exist" "false|4" \
+    check "1.1 baseline: installation token and gated views exist" "false|6" \
         "$(q "$OLD" "SELECT (to_regclass('sql_saga.installation') IS NULL) || '|' || (SELECT count(*) FROM pg_class WHERE relname LIKE '%\_gated')")"
     check "1.1 baseline: shared cache is absent" "t" "$(q "$OLD" "SELECT to_regclass('sql_saga.temporal_merge_cache') IS NULL")"
 fi
@@ -1525,6 +1649,124 @@ if [ "$BASELINE_VERSION" = 1.1 ]; then
         "$(q "$DOWNLEVEL" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
     check "downlevel-helper refusal is atomic" "$downlevel_before" \
         "$(ext_snapshot "$DOWNLEVEL" | md5)$(dump_schema "$DOWNLEVEL" | md5)"
+fi
+
+# ---------------------------------------------------------------------------------------------
+section "atomic failure (damaged family, complete final integrity gate)" "expected RED"
+# ---------------------------------------------------------------------------------------------
+# Design 6.2 item 7: the update ends with the complete check_integrity() gate, after every definition
+# and privilege change, inside the update transaction. Each case clones the fixture, applies one
+# damage that the legacy (pre-1.2) drop-protection checks accept, and requires that the update fails
+# with exactly the message check_integrity() gives for it, leaves extversion and every prior object
+# untouched, and then succeeds once the damage is repaired the way that message says.
+# 1.0 path: query functions, history RLS and policy copies are rebuilt by the frozen 1.0--1.1 hop
+# (1.0 has no copies), so that damage is reconciled, not refused. Era synchronization objects are
+# carried over as they are on both paths.
+# Contents of every sql_saga configuration/catalog table that is an extension member, whatever the
+# baseline has (1.0: temporal_merge_cache, no installation; 1.1: installation). Rows are rendered as
+# jsonb, sorted; reg* columns render by name. Nothing is masked, the installation token included: the
+# fingerprint compares one database before and after a refused update, which must not change it.
+catalog_rows_sql() {
+    cat <<'SQL'
+DO $catalog_rows$
+DECLARE
+    r record;
+    line text;
+BEGIN
+    CREATE TEMP TABLE pg_temp.catalog_rows (line text) ON COMMIT PRESERVE ROWS;
+    FOR r IN
+        SELECT c.oid::regclass AS rel, c.relname
+        FROM pg_class AS c
+        JOIN pg_depend AS d ON (d.classid, d.objid, d.deptype) = ('pg_class'::regclass, c.oid, 'e')
+        JOIN pg_extension AS x ON x.oid = d.refobjid AND x.extname = 'sql_saga'
+        WHERE c.relnamespace = 'sql_saga'::regnamespace AND c.relkind IN ('r', 'p')
+        ORDER BY c.relname COLLATE "C"
+    LOOP
+        EXECUTE format($q$
+            INSERT INTO pg_temp.catalog_rows (line)
+            SELECT %L || '|' || to_jsonb(t)::text
+            FROM %s AS t
+            UNION ALL SELECT %L || '|rows=' || count(*) FROM %s
+        $q$, r.relname, r.rel, r.relname, r.rel);
+    END LOOP;
+END;
+$catalog_rows$;
+SELECT line FROM pg_temp.catalog_rows ORDER BY line COLLATE "C";
+SQL
+}
+# fingerprint_part <label> <cmd...>: run a capture, print its md5. Any nonzero status, stderr output,
+# ERROR line or empty stream is a capture failure: print a token that never equals a hash, return 1.
+fingerprint_part() {
+    local label=$1 out err status
+    shift
+    err=$(mktemp "$WORK/fp.XXXXXX")
+    # In this subshell only, sql() keeps psql's own exit status and stderr instead of folding errors
+    # into stdout, so ext_snapshot/query_function_snapshot failures are visible as failures.
+    out=$(sql() { local db=$1; shift; psql -X -At -q -v ON_ERROR_STOP=1 -d "$db" "$@"; }
+          "$@" 2>"$err"; echo "status=$?")
+    status=${out##*status=}
+    out=${out%status=*}
+    if [ "$status" != 0 ] || [ -s "$err" ] || [ -z "$out" ] || printf '%s\n' "$out" | grep -q -E '^(ERROR|FATAL)'; then
+        echo "CAPTURE-FAILED:$label:$status:$(head -c 200 "$err")$(printf '%s\n' "$out" | grep -m1 -E '^(ERROR|FATAL)')"
+        rm -f "$err"
+        return 1
+    fi
+    rm -f "$err"
+    printf '%s' "$out" | md5
+}
+raw_dump_schema() { pg_dump -s -d "$1" | grep -v -E '^-- Dumped (from|by)|^\\(un)?restrict '; return "${PIPESTATUS[0]}"; }
+raw_catalog_rows() { catalog_rows_sql | psql -X -At -q -v ON_ERROR_STOP=1 -d "$1"; }
+damage_state() {  # damage_state <db>: extension objects + user dump + query functions + catalog rows
+    local parts="" p rc=0
+    p=$(fingerprint_part ext ext_snapshot "$1") || rc=1; parts="$p"
+    p=$(fingerprint_part dump raw_dump_schema "$1") || rc=1; parts="$parts|$p"
+    p=$(fingerprint_part query_functions query_function_snapshot "$1") || rc=1; parts="$parts|$p"
+    p=$(fingerprint_part catalog_rows raw_catalog_rows "$1") || rc=1; parts="$parts|$p"
+    echo "$parts"
+    return $rc
+}
+damage_case() {  # damage_case <label> <damage sql> <exact checker message> <repair sql>
+    local label=$1 damage=$2 want=$3 repair=$4 db=${PREFIX}_damage_$1 out before
+    createdb -T "$OLD" "$db" >>"$LOG" 2>&1 || die "createdb $db from $OLD"
+    CREATED_DBS+=("$db")
+    psql -X -q -d postgres -c "ALTER DATABASE $db SET extension_control_path = '$EXT_ROOT:\$system'" >>"$LOG" 2>&1 || die "extension_control_path on $db"
+    out=$(printf '%s\n' "$damage" | sql "$db")
+    printf '%s\n' "$out" | grep -q '^ERROR' && die "damage fixture $label: $(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    before=$(damage_state "$db") || die "damage fixture $label: prior-state capture failed: $before"
+    out=$(q "$db" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
+    check "$label: update refused with check_integrity's exact message" "ERROR:  $want" "$out"
+    check "$label: refusal leaves extversion $BASELINE_VERSION" "$BASELINE_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    check "$label: refusal leaves extension objects, user schema, query functions and catalog rows unchanged" "$before" "$(damage_state "$db")"
+    out=$(printf 'SET client_min_messages = warning;\n%s\n' "$repair" | sql "$db")
+    check "$label: the repair the message names succeeds on $BASELINE_VERSION" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    out=$(q "$db" "ALTER EXTENSION sql_saga UPDATE TO '$NEW_VERSION'")
+    check "$label: update succeeds after the repair" "" "$(printf '%s\n' "$out" | grep -m1 '^ERROR')"
+    check "$label: repaired installation reaches $NEW_VERSION" "$NEW_VERSION" "$(q "$db" "SELECT extversion FROM pg_extension WHERE extname = 'sql_saga'")"
+    assert_integrity "$db"
+}
+# Era with synchronized columns and no dependents, so drop_era/add_era is the plain repair.
+DMG_ERA="SET client_min_messages = warning;
+CREATE TABLE dmg (id int, valid_range daterange NOT NULL, valid_from date, valid_until date);
+SELECT sql_saga.add_era('dmg', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');"
+damage_case sync_trigger \
+    "$DMG_ERA
+SET session_replication_role = replica;
+SELECT format('DROP TRIGGER %I ON dmg', sync_temporal_trg_name) FROM sql_saga.era WHERE table_name = 'dmg' \\gexec
+RESET session_replication_role;" \
+    'sql_saga: integrity violation for era "valid" on table "public.dmg": named check or synchronization object is noncanonical; repair with drop_era and add_era' \
+    "SELECT sql_saga.drop_era('dmg', 'valid');
+SELECT sql_saga.add_era('dmg', 'valid_range', 'valid', valid_from_column_name => 'valid_from', valid_until_column_name => 'valid_until');"
+if [ "$BASELINE_VERSION" = 1.1 ]; then
+    damage_case volatile_as_of \
+        "ALTER FUNCTION sv__as_of(timestamptz) VOLATILE;" \
+        'sql_saga: integrity violation for system-versioned table "public.sv": generated query function role "as_of" definition is noncanonical; repair with rebuild_system_versioning_views' \
+        "SELECT sql_saga.rebuild_system_versioning_views('sv');"
+    damage_case missing_policy_copy \
+        "SET session_replication_role = replica;
+SELECT format('DROP POLICY %I ON rdoc_history', 'sql_saga_' || left(md5('tenant_a' || token), 16)) FROM sql_saga.installation \\gexec
+RESET session_replication_role;" \
+        'sql_saga: integrity violation for system-versioned table "public.rdoc": managed history policy set is inconsistent; repair with sync_history_policies' \
+        "SELECT sql_saga.sync_history_policies('rdoc');"
 fi
 
 # ---------------------------------------------------------------------------------------------
@@ -1697,9 +1939,15 @@ fi
 if [ $UPGRADED = 0 ] || [ $FRESH_OK = 0 ]; then
     fail "comparison not meaningful: needs a successful update and a fresh $NEW_VERSION install (both run above)"
 else
+SEMANTIC_OK=1
 for db in "$OLD" "$FRESH"; do
-	 ext_snapshot "$db" >"$WORK/$db.ext"
-	 semantic_snapshot "$db" >"$WORK/$db.semantic"
+    ext_snapshot "$db" >"$WORK/$db.ext"
+    if out=$(semantic_capture "$db" "$WORK/$db.semantic"); then
+        ok "semantic snapshot of $db ran cleanly and covers every section ($(wc -l <"$WORK/$db.semantic" | tr -d ' ') lines)"
+    else
+        fail "$out"
+        SEMANTIC_OK=0
+    fi
     token_sed "$db" >"$WORK/$db.sed" 2>/dev/null
     grep -q '^ERROR' "$WORK/$db.sed" && : >"$WORK/$db.sed"
     dump_schema "$db" | sed -f "$WORK/$db.sed" >"$WORK/$db.schema.unsorted"
@@ -1714,8 +1962,21 @@ else
     fail "extension objects differ between fresh and upgraded: $(grep -c '^[-+][^-+]' "$WORK/ext.diff") lines (see $WORK/ext.diff)"
     grep '^[-+][^-+]' "$WORK/ext.diff" | head -8 | sed 's/^/          /'
 fi
-if diff -u "$WORK/$FRESH.semantic" "$WORK/$OLD.semantic" >"$WORK/semantic.diff"; then ok "exhaustive normalized semantic catalogs identical"
+if [ $SEMANTIC_OK = 0 ]; then fail "exhaustive semantic comparison not run: a snapshot failed or lacks coverage"
+elif diff -u "$WORK/$FRESH.semantic" "$WORK/$OLD.semantic" >"$WORK/semantic.diff"; then ok "exhaustive normalized semantic catalogs identical, including aggregates and member initial privileges"
 else fail "semantic catalogs differ between fresh and upgraded (see $WORK/semantic.diff)"; grep '^[-+][^-+]' "$WORK/semantic.diff" | head -8 | sed 's/^/          /'; fi
+# Member initial privileges, compared on their own so a difference is named even when other sections
+# also differ: every pg_init_privs row of a current sql_saga member, privtype and full ACL.
+if [ $SEMANTIC_OK = 1 ]; then
+    grep '^initpriv|' "$WORK/$FRESH.semantic" >"$WORK/$FRESH.initprivs"
+    grep '^initpriv|' "$WORK/$OLD.semantic" >"$WORK/$OLD.initprivs"
+    if diff -u "$WORK/$FRESH.initprivs" "$WORK/$OLD.initprivs" >"$WORK/initprivs.diff"; then
+        ok "pg_init_privs of every sql_saga member identical fresh versus upgraded ($(wc -l <"$WORK/$OLD.initprivs" | tr -d ' ') rows)"
+    else
+        fail "pg_init_privs of sql_saga members differ fresh versus upgraded: $(grep -c '^[-+][^-+]' "$WORK/initprivs.diff") lines (see $WORK/initprivs.diff)"
+        grep '^[-+][^-+]' "$WORK/initprivs.diff" | head -6 | sed 's/^/          /'
+    fi
+fi
 if [ $FRESH_OK = 1 ]; then
     role_matrix "$OLD" >"$WORK/$OLD.roles"; role_matrix "$FRESH" >"$WORK/$FRESH.roles"
     if diff -u "$WORK/$FRESH.roles" "$WORK/$OLD.roles" >"$WORK/roles.diff"; then ok "per-role reads and DML rights identical on every relation"
