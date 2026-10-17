@@ -160,6 +160,42 @@ SELECT conname FROM pg_catalog.pg_constraint WHERE conrelid = 'fkr.tchild'::regc
 TABLE fkr.fk_state;
 ROLLBACK;
 
+\echo '--- Trigger firing modes survive the rename (each trigger keeps its own tgenabled)'
+CREATE VIEW fkr.par_trigger_modes AS
+SELECT t.tgname, t.tgenabled
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid = 'fkr.par'::regclass AND NOT t.tgisinternal
+ORDER BY t.tgname;
+
+-- Modes D (update trigger) and A (delete trigger).
+BEGIN;
+ALTER TABLE fkr.par DISABLE TRIGGER rchild_par_id_fkey_uk_update;
+ALTER TABLE fkr.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
+TABLE fkr.par_trigger_modes;
+ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
+TABLE fkr.par_trigger_modes;
+SELECT sql_saga.check_integrity();
+-- The ALWAYS delete trigger still enforces under replica role.
+SET LOCAL session_replication_role = replica;
+SAVEPOINT replica_delete;
+DELETE FROM fkr.par WHERE id = 3;
+ROLLBACK TO SAVEPOINT replica_delete;
+ROLLBACK;
+
+-- Modes R (update trigger) and O (delete trigger).
+BEGIN;
+ALTER TABLE fkr.par ENABLE REPLICA TRIGGER rchild_par_id_fkey_uk_update;
+TABLE fkr.par_trigger_modes;
+ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
+TABLE fkr.par_trigger_modes;
+SELECT sql_saga.check_integrity();
+-- The REPLICA update trigger still enforces under replica role.
+SET LOCAL session_replication_role = replica;
+SAVEPOINT replica_update;
+UPDATE fkr.par SET id = 4 WHERE id = 3;
+ROLLBACK TO SAVEPOINT replica_update;
+ROLLBACK;
+
 \echo '--- Final check_integrity'
 SELECT sql_saga.check_integrity();
 SELECT 'integrity checked' AS done;

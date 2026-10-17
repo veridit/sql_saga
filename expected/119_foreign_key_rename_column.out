@@ -298,6 +298,76 @@ TABLE fkr.fk_state;
 (1 row)
 
 ROLLBACK;
+\echo '--- Trigger firing modes survive the rename (each trigger keeps its own tgenabled)'
+--- Trigger firing modes survive the rename (each trigger keeps its own tgenabled)
+CREATE VIEW fkr.par_trigger_modes AS
+SELECT t.tgname, t.tgenabled
+FROM pg_catalog.pg_trigger AS t
+WHERE t.tgrelid = 'fkr.par'::regclass AND NOT t.tgisinternal
+ORDER BY t.tgname;
+-- Modes D (update trigger) and A (delete trigger).
+BEGIN;
+ALTER TABLE fkr.par DISABLE TRIGGER rchild_par_id_fkey_uk_update;
+ALTER TABLE fkr.par ENABLE ALWAYS TRIGGER rchild_par_id_fkey_uk_delete;
+TABLE fkr.par_trigger_modes;
+            tgname            | tgenabled 
+------------------------------+-----------
+ rchild_par_id_fkey_uk_delete | A
+ rchild_par_id_fkey_uk_update | D
+(2 rows)
+
+ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
+TABLE fkr.par_trigger_modes;
+            tgname            | tgenabled 
+------------------------------+-----------
+ rchild_par_id_fkey_uk_delete | A
+ rchild_par_id_fkey_uk_update | D
+(2 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+-- The ALWAYS delete trigger still enforces under replica role.
+SET LOCAL session_replication_role = replica;
+SAVEPOINT replica_delete;
+DELETE FROM fkr.par WHERE id = 3;
+ERROR:  update or delete on table "fkr.par" violates foreign key constraint "rchild_par_id_fkey" on table "fkr.rchild"
+ROLLBACK TO SAVEPOINT replica_delete;
+ROLLBACK;
+-- Modes R (update trigger) and O (delete trigger).
+BEGIN;
+ALTER TABLE fkr.par ENABLE REPLICA TRIGGER rchild_par_id_fkey_uk_update;
+TABLE fkr.par_trigger_modes;
+            tgname            | tgenabled 
+------------------------------+-----------
+ rchild_par_id_fkey_uk_delete | O
+ rchild_par_id_fkey_uk_update | R
+(2 rows)
+
+ALTER TABLE fkr.rchild RENAME COLUMN parent_id TO par_ref;
+TABLE fkr.par_trigger_modes;
+            tgname            | tgenabled 
+------------------------------+-----------
+ rchild_par_id_fkey_uk_delete | O
+ rchild_par_id_fkey_uk_update | R
+(2 rows)
+
+SELECT sql_saga.check_integrity();
+ check_integrity 
+-----------------
+ 
+(1 row)
+
+-- The REPLICA update trigger still enforces under replica role.
+SET LOCAL session_replication_role = replica;
+SAVEPOINT replica_update;
+UPDATE fkr.par SET id = 4 WHERE id = 3;
+ERROR:  update or delete on table "fkr.par" violates foreign key constraint "rchild_par_id_fkey" on table "fkr.rchild"
+ROLLBACK TO SAVEPOINT replica_update;
+ROLLBACK;
 \echo '--- Final check_integrity'
 --- Final check_integrity
 SELECT sql_saga.check_integrity();
