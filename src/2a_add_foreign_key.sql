@@ -393,13 +393,9 @@ BEGIN
             uk_where_clause /* %s */
         );
 
-        -- Check if a function with this signature already exists.
-        SELECT p.oid INTO existing_proc
-        FROM pg_catalog.pg_proc p
-        JOIN pg_catalog.pg_namespace n ON p.pronamespace = n.oid
-        WHERE p.proname = split_part(fk_helper_function, '.', 2)
-          AND n.nspname = split_part(fk_helper_function, '.', 1)
-          AND pg_catalog.pg_get_function_identity_arguments(p.oid) = fk_column_signatures;
+        -- Check if a function with this signature already exists. The signature is parsed as SQL, so a
+        -- schema or function name that needs quoting (format %I above) resolves too.
+        existing_proc := pg_catalog.to_regprocedure(helper_signature);
 
         IF existing_proc IS NULL THEN
              EXECUTE helper_body;

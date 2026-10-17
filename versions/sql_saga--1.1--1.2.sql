@@ -106,7 +106,9 @@ BEGIN
     FOR h IN
         SELECT fk.fk_helper_function, uk.table_schema, uk.table_name, tc.relowner,
                pg_catalog.array_agg(c.name ORDER BY c.ordinality) AS stable_columns
-        FROM sql_saga.foreign_keys AS fk
+        -- One row per helper and key: regular foreign keys on the same key share one helper, and
+        -- aggregating per foreign key would repeat the key columns.
+        FROM (SELECT DISTINCT f.fk_helper_function, f.unique_key_name, f.type FROM sql_saga.foreign_keys AS f) AS fk
         JOIN sql_saga.unique_keys AS uk ON uk.unique_key_name = fk.unique_key_name
         JOIN sql_saga.era AS e
           ON (e.table_schema, e.table_name, e.era_name) = (uk.table_schema, uk.table_name, uk.era_name)
@@ -2145,6 +2147,39 @@ $new_rk2$);
     EXECUTE changed;
 END;
 $upgrade_rename_following$;
+
+/*
+ * add_regular_foreign_key: find an existing (shared) helper by its parsed signature, so a helper whose
+ * schema or name needs quoting is reused instead of re-created. Exact replacement of the single released
+ * 1.1 lookup; fails closed when the released fragment is absent or the new one is already present.
+ */
+DO $upgrade_add_regular_foreign_key$
+DECLARE
+    definition text := pg_catalog.pg_get_functiondef(
+        'sql_saga.add_regular_foreign_key(regclass, name[], name, sql_saga.fk_match_types, sql_saga.fk_actions, sql_saga.fk_actions, name, name, text, name, name, boolean)'::regprocedure);
+    old_lookup text := $old_lookup$        -- Check if a function with this signature already exists.
+        SELECT p.oid INTO existing_proc
+        FROM pg_catalog.pg_proc p
+        JOIN pg_catalog.pg_namespace n ON p.pronamespace = n.oid
+        WHERE p.proname = split_part(fk_helper_function, '.', 2)
+          AND n.nspname = split_part(fk_helper_function, '.', 1)
+          AND pg_catalog.pg_get_function_identity_arguments(p.oid) = fk_column_signatures;
+$old_lookup$;
+    new_lookup text := $new_lookup$        -- Check if a function with this signature already exists. The signature is parsed as SQL, so a
+        -- schema or function name that needs quoting (format %I above) resolves too.
+        existing_proc := pg_catalog.to_regprocedure(helper_signature);
+$new_lookup$;
+    changed text;
+BEGIN
+    IF (pg_catalog.length(definition) - pg_catalog.length(pg_catalog.replace(definition, old_lookup, '')))
+           OPERATOR(pg_catalog.<>) pg_catalog.length(old_lookup)
+       OR pg_catalog.strpos(definition, new_lookup) > 0 THEN
+        RAISE EXCEPTION 'sql_saga: cannot upgrade add_regular_foreign_key shared helper lookup';
+    END IF;
+    changed := pg_catalog.replace(definition, old_lookup, new_lookup);
+    EXECUTE changed;
+END;
+$upgrade_add_regular_foreign_key$;
 
 CREATE OR REPLACE FUNCTION sql_saga.__internal_refuse_managed_relation_identity_change()
 RETURNS event_trigger

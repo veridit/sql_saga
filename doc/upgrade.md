@@ -12,10 +12,18 @@ sql_saga 1.2 supports in-place upgrades from the released 1.0 and 1.1 builds. Pl
 
 ## Supported paths
 
-- **1.0 to 1.2:** PostgreSQL selects the generated direct `sql_saga--1.0--1.2.sql` script. This performs the frozen 1.0-to-1.1 migration with its native guard retargeted to 1.2, followed by the 1.1-to-1.2 body.
+- **1.0 to 1.2:** PostgreSQL selects the generated direct `sql_saga--1.0--1.2.sql` script. This performs the frozen 1.0-to-1.1 migration, followed by the 1.1-to-1.2 body. The build authenticates the frozen script by SHA-256 and changes exactly two lines of it: the native guard is retargeted to 1.2, and the regular foreign key helper validation reads one row per helper and key (see "Shared regular foreign key helpers" below). The build fails if either change does not apply to exactly one line or touches any other line.
 - **1.1 to 1.2:** PostgreSQL uses `sql_saga--1.1--1.2.sql` directly.
 
 Do not force an intermediate 1.0-to-1.1 hop while the 1.2 native library is loaded. The immutable 1.0-to-1.1 script correctly requires the 1.1 native library.
+
+### Shared regular foreign key helpers
+
+Regular foreign keys that reference the same unique key share one generated helper function. The released 1.0-to-1.1 script checks each helper, but builds the expected helper from the key columns once per foreign key. With two or more regular foreign keys on one key it therefore refuses a healthy, canonical helper (`is not the exact released 1.0 or canonical 1.1 regular foreign key helper`). Both 1.2 paths, 1.0 to 1.2 and 1.1 to 1.2, check one row per helper and key, and accept such databases.
+
+The released standalone `sql_saga--1.0--1.1.sql` is frozen and keeps the defect. Update 1.0 directly to 1.2. If you must stop at 1.1, first drop all but one regular foreign key per referenced key with `sql_saga.drop_foreign_key`, run `ALTER EXTENSION sql_saga UPDATE TO '1.1'`, and then re-add them with `sql_saga.add_regular_foreign_key`.
+
+1.2 also lets regular foreign keys share a helper whose schema or name needs quoting (for example a referenced table in a schema with a space). Before 1.2, adding the second such foreign key failed with `function ... already exists with same argument types`.
 
 ## Before the maintenance window
 

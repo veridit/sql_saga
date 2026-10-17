@@ -124,12 +124,19 @@ $(EXTENSION)--$(EXTVERSION).sql: $(wildcard src/[0-9][a-z]_*.sql)
 # 1.0--1.1 artifact, changing only its exact native-version guard, then append the headerless current
 # update body. The checks intentionally fail if the frozen guard changes or the transformation touches
 # any other line.
+# The frozen $$validate_fk_helpers$$ aggregates the key columns once per foreign key, so a helper shared by
+# several regular foreign keys on one key is refused. The direct script also replaces that one FROM line
+# (identified by its unique preceding line) with one row per helper and key; the released standalone
+# 1.0--1.1 file keeps the defect (see doc/upgrade.md).
 $(DIRECT_UPDATE): versions/$(EXTENSION)--1.0--1.1.sql versions/$(EXTENSION)--1.1--$(EXTVERSION).sql
 	@set -eu; \
 	old="DO \$$native_guard\$$ BEGIN IF sql_saga.native_library_version() <> '1.1' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version 1.1', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga 1.1 native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$$native_guard\$$;"; \
 	new="DO \$$native_guard\$$ BEGIN IF sql_saga.native_library_version() <> '$(EXTVERSION)' THEN RAISE EXCEPTION 'sql_saga: native library version % does not match extension update version $(EXTVERSION)', sql_saga.native_library_version() USING ERRCODE = 'object_not_in_prerequisite_state', HINT = 'Install the sql_saga $(EXTVERSION) native library and restart PostgreSQL before retrying ALTER EXTENSION.'; END IF; END; \$$native_guard\$$;"; \
-	tmp='$@.tmp'; retargeted='$@.retargeted'; restored='$@.restored'; \
-	trap 'rm -f "$$tmp" "$$retargeted" "$$restored"' EXIT HUP INT TERM; \
+	fk_anchor='               pg_catalog.array_agg(c.name ORDER BY c.ordinality) AS stable_columns'; \
+	fk_old='        FROM sql_saga.foreign_keys AS fk'; \
+	fk_new='        FROM (SELECT DISTINCT f.fk_helper_function, f.unique_key_name, f.type FROM sql_saga.foreign_keys AS f) AS fk'; \
+	tmp='$@.tmp'; retargeted='$@.retargeted'; restored='$@.restored'; fkfixed='$@.fkfixed'; \
+	trap 'rm -f "$$tmp" "$$retargeted" "$$restored" "$$fkfixed"' EXIT HUP INT TERM; \
 	if command -v sha256sum >/dev/null 2>&1; then \
 		actual_hash=$$(sha256sum '$<' | awk '{print $$1}'); \
 	elif command -v shasum >/dev/null 2>&1; then \
@@ -148,7 +155,14 @@ $(DIRECT_UPDATE): versions/$(EXTENSION)--1.0--1.1.sql versions/$(EXTENSION)--1.1
 	[ "$$new_count" = 1 ] || { echo "failed to generate exactly one $(EXTVERSION) native guard" >&2; exit 1; }; \
 	awk -v old="$$old" -v new="$$new" '{ if ($$0 == new) print old; else print }' "$$retargeted" >"$$restored"; \
 	cmp -s '$<' "$$restored" || { echo "native-guard transformation changed another line" >&2; exit 1; }; \
-	cat "$$retargeted" >"$$tmp"; \
+	anchor_count=$$(grep -Fxc "$$fk_anchor" '$<' || true); \
+	[ "$$anchor_count" = 1 ] || { echo "expected exactly one frozen validate_fk_helpers stable_columns line in $<, found $$anchor_count" >&2; exit 1; }; \
+	[ "$$(grep -Fxc "$$fk_new" '$<' || true)" = 0 ] || { echo "frozen $< already contains the shared-helper validator line" >&2; exit 1; }; \
+	awk -v anchor="$$fk_anchor" -v old="$$fk_old" -v new="$$fk_new" '{ if (prev == anchor && $$0 == old) print new; else print; prev = $$0 }' "$$retargeted" >"$$fkfixed"; \
+	[ "$$(grep -Fxc "$$fk_new" "$$fkfixed" || true)" = 1 ] || { echo "failed to generate exactly one shared-helper validator line" >&2; exit 1; }; \
+	awk -v old="$$fk_old" -v new="$$fk_new" '{ if ($$0 == new) print old; else print }' "$$fkfixed" >"$$restored"; \
+	cmp -s "$$retargeted" "$$restored" || { echo "shared-helper validator transformation changed another line" >&2; exit 1; }; \
+	cat "$$fkfixed" >"$$tmp"; \
 	sed '1d' 'versions/$(EXTENSION)--1.1--$(EXTVERSION).sql' >>"$$tmp"; \
 	mv "$$tmp" '$@'
 
